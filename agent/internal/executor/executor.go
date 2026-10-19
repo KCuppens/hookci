@@ -88,7 +88,7 @@ type Options struct {
 	// JobUser is who jobs run as: isolation.JobCredential under systemd,
 	// which then owns the checkout, HOME and TMPDIR. Zero: the agent's user.
 	JobUser JobUser
-	Source  source.Source   // checkout of local/ repos, and of every repo when Mirrors is nil
+	Source  source.Source   // checkout of local runs, and of every run when Mirrors is nil
 	Mirrors *source.Mirrors // shared clones of mirrored repos; nil: Source checks out everything
 	// Config loads the run's checks from its checked-out tree.
 	Config func(run store.Run, workdir string) (*config.ResolvedChecks, error)
@@ -276,11 +276,11 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 }
 
 // checkout materialises the run into Src() as the job user. Mirrored repos
-// get a shared clone whose release FinishRun calls; local/ repos, and every
-// repo when Mirrors is nil, go through Source.
+// get a clone whose release FinishRun calls; local runs, and every run when
+// Mirrors is nil, go through Source, whose Release FinishRun calls too.
 func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 	run := rs.run
-	if e.o.Mirrors != nil && !strings.HasPrefix(run.Repo, "local/") {
+	if e.o.Mirrors != nil && run.Event != "local" {
 		release, err := e.o.Mirrors.CloneShared(ctx, run.Repo, run.SHA, rs.dir.Src(), e.o.JobUser.Cred)
 		if err != nil {
 			return err
@@ -293,11 +293,23 @@ func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 	if err != nil {
 		return err
 	}
+	rs.release = co.Release
 	if co.SHA != "" {
 		rs.run.SHA = co.SHA
 	}
 	rs.logf("checkout %s %s", run.Repo, rs.run.SHA)
 	return nil
+}
+
+// cacheDomain is the trust domain naming the run's cache dir. Local runs
+// keep "trusted:local/<name>" as their trust domain but store caches under
+// source.LocalStorageRepo, which no GitHub repo can name.
+func cacheDomain(run store.Run) string {
+	if run.Event != "local" {
+		return run.TrustDomain
+	}
+	prefix, repo, _ := strings.Cut(run.TrustDomain, ":")
+	return prefix + ":" + source.LocalStorageRepo(repo)
 }
 
 // startNetwork decides the network mode and starts the egress proxy and,
@@ -407,7 +419,7 @@ func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 			rs.logf("cache setup[%d]: %v", i, err)
 			continue
 		}
-		k, err := cache.ComputeKey(rs.run.TrustDomain, platform, rs.dir.Root, keyFiles, paths)
+		k, err := cache.ComputeKey(cacheDomain(rs.run), platform, rs.dir.Root, keyFiles, paths)
 		if err != nil {
 			rs.logf("cache setup[%d]: key: %v", i, err)
 			continue
@@ -552,6 +564,7 @@ func (e *Executor) execute(ctx context.Context, rs *runState, job, script string
 		Limits:         lim,
 		NetNSPath:      nsPath,
 		ReadWritePaths: []string{rs.dir.Src(), rs.dir.Home(), rs.dir.Tmp(), rs.dir.PG()},
+		Hide:           filepath.Dir(rs.dir.Root),
 		User:           isolation.DefaultUser,
 		Stdout:         pipe.Stdout(),
 		Stderr:         pipe.Stderr(),

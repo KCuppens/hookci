@@ -153,3 +153,24 @@ func TestEntryDirSanitizesTrustDomain(t *testing.T) {
 		t.Error("key with fields that do not match its hash accepted")
 	}
 }
+
+// Fields are length-prefixed, so moving a separator between or across
+// fields and lists never yields the same hash.
+func TestKeySumFramesFields(t *testing.T) {
+	base := Key{TrustDomain: "trusted:o/r", Platform: "linux-amd64"}
+	with := func(files, paths []string) Key {
+		k := base
+		k.FileHashes, k.Paths = files, paths
+		return k
+	}
+	for _, pair := range [][2]Key{
+		{with(nil, []string{"a", "b"}), with(nil, []string{"a\nb"})},
+		{with([]string{"x"}, nil), with(nil, []string{"x"})},
+		{with([]string{"a"}, []string{"b"}), with([]string{"a", "b"}, nil)},
+		{{TrustDomain: "trusted:o/r\nlinux", Platform: "amd64"}, {TrustDomain: "trusted:o/r", Platform: "linux\namd64"}},
+	} {
+		if pair[0].sum() == pair[1].sum() {
+			t.Errorf("%+v and %+v share a hash", pair[0], pair[1])
+		}
+	}
+}

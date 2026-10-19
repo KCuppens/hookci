@@ -57,14 +57,14 @@ func TestLocalCleanCheckoutFlow(t *testing.T) {
 	}
 
 	g := l.Git
-	mirror := filepath.Join(l.Mirrors.Root, "local__my-app.git")
+	mirror := filepath.Join(l.Mirrors.Root, "_local__my-app.git")
 	want := [][]string{
 		g.Args("rev-parse", "--show-toplevel"),
 		g.Args("rev-parse", "HEAD"),
 		g.Args("status", "--porcelain"),
 		g.Args("init", "--quiet", "--bare", mirror),
 		g.Args("-C", mirror, "config", "remote.origin.url", "/work/my app"),
-		g.Args("-C", mirror, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", testSHA),
+		g.Args("-C", mirror, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/zeroci/"+testSHA),
 		g.Args("clone", "--shared", "--no-checkout", mirror, dir),
 		g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA),
 	}
@@ -79,9 +79,33 @@ func TestLocalCleanCheckoutFlow(t *testing.T) {
 	if f.Calls[0].Dir != "/work/my app/sub" || f.Calls[1].Dir != "/work/my app" {
 		t.Errorf("rev-parse dirs = %q, %q", f.Calls[0].Dir, f.Calls[1].Dir)
 	}
-	// The local mirror is released once the checkout is complete.
-	if err := l.Mirrors.GC(context.Background(), "local/my-app"); err != nil {
-		t.Fatalf("GC after Local.Checkout = %v", err)
+	// The mirror is held until the checkout is released.
+	if err := l.Mirrors.GC(context.Background(), LocalStorageRepo(co.Repo)); !errors.Is(err, ErrBusy) {
+		t.Fatalf("GC before Release = %v, want ErrBusy", err)
+	}
+	co.Release()
+	if err := l.Mirrors.GC(context.Background(), LocalStorageRepo(co.Repo)); err != nil {
+		t.Fatalf("GC after Release = %v", err)
+	}
+}
+
+// A GitHub owner named "local" must not share a mirror with a local repo.
+func TestLocalStorageRepoAvoidsGitHubNames(t *testing.T) {
+	m := NewMirrors("/state/mirrors", Git{})
+	github, err := m.Path("local/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := LocalRepo("/work/x")
+	if repo != "local/x" {
+		t.Fatalf("LocalRepo = %q, want local/x", repo)
+	}
+	local, err := m.Path(LocalStorageRepo(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if github == local {
+		t.Fatalf("GitHub local/x and local x share mirror %s", local)
 	}
 }
 

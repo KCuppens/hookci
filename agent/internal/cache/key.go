@@ -2,6 +2,7 @@ package cache
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,11 +17,11 @@ import (
 
 // Key identifies one snapshot.
 type Key struct {
-	TrustDomain string   `json:"trust_domain"` // "trusted:<repo>" or "untrusted:<repo>" (store.Run.TrustDomain)
+	TrustDomain string   `json:"trust_domain"` // "trusted:<repo>" or "untrusted:<repo>"; local runs use source.LocalStorageRepo for <repo>
 	Platform    string   `json:"platform"`     // runtime.GOOS + "-" + runtime.GOARCH
 	FileHashes  []string `json:"file_hashes"`  // "<relpath>:<sha256 hex>" for every key file, sorted
 	Paths       []string `json:"paths"`        // cleaned relative cache paths, sorted
-	Hash        string   `json:"hash"`         // hex sha256 over all of the above, newline joined
+	Hash        string   `json:"hash"`         // hex sha256 over all of the above, each field length-prefixed
 }
 
 // ComputeKey hashes key files relative to workdir. Missing key files hash as "<relpath>:missing".
@@ -64,12 +65,28 @@ func ComputeKey(trustDomain, platform, workdir string, keyFiles, paths []string)
 	return k, nil
 }
 
-// sum is the hex sha256 of the key fields, newline joined.
+// sum is the hex sha256 of the key fields. Every field is prefixed with its
+// length and each list with its count, so no two distinct keys share input.
 func (k Key) sum() string {
-	fields := append([]string{k.TrustDomain, k.Platform}, k.FileHashes...)
-	fields = append(fields, k.Paths...)
-	sum := sha256.Sum256([]byte(strings.Join(fields, "\n")))
-	return hex.EncodeToString(sum[:])
+	h := sha256.New()
+	var n [8]byte
+	put := func(v int) {
+		binary.BigEndian.PutUint64(n[:], uint64(v))
+		h.Write(n[:])
+	}
+	field := func(s string) {
+		put(len(s))
+		h.Write([]byte(s))
+	}
+	field(k.TrustDomain)
+	field(k.Platform)
+	for _, list := range [][]string{k.FileHashes, k.Paths} {
+		put(len(list))
+		for _, s := range list {
+			field(s)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // entryRel validates k and returns its entry directory relative to the

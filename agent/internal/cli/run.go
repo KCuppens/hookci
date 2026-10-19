@@ -131,6 +131,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		}
 		return ExitInternal
 	}
+	defer co.Release()
 
 	checks, code := loadChecks(dir.Src(), stderr)
 	if code == ExitOK && len(pos) == 1 {

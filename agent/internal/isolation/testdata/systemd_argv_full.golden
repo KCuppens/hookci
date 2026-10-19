@@ -1,7 +1,6 @@
 systemd-run
 --wait
 --pipe
---collect
 --quiet
 --unit
 zeroci-run-01HXRUN-lint
@@ -22,7 +21,15 @@ PrivateTmp=yes
 -p
 PrivateDevices=yes
 -p
+ProtectProc=invisible
+-p
+ProcSubset=pid
+-p
 ReadWritePaths=/var/lib/zeroci/runs/01HXRUN
+-p
+TemporaryFileSystem=/var/lib/zeroci/runs:ro
+-p
+BindPaths=/var/lib/zeroci/runs/01HXRUN
 -p
 CPUQuota=150%
 -p

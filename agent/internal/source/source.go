@@ -33,6 +33,10 @@ type Checkout struct {
 	Ref      string
 	Dirty    bool // Local only: working tree had uncommitted changes
 	Duration time.Duration
+	// Release ends the checkout's hold on its mirror, after which GC may
+	// prune the objects it borrowed. It is idempotent; nil when nothing is
+	// held.
+	Release func()
 }
 
 var (

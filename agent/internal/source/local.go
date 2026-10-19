@@ -25,8 +25,9 @@ type Local struct {
 // Name implements Source.
 func (l *Local) Name() string { return "local" }
 
-// Checkout implements Source. It fetches the commit into the mirror for
-// "local/<basename of toplevel>" and shared-clones it into dir.
+// Checkout implements Source. It fetches the commit into the mirror of
+// LocalStorageRepo("local/<basename of toplevel>") and clones it into dir.
+// The returned Checkout holds the mirror until its Release is called.
 func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout, error) {
 	start := time.Now()
 	env := gitEnv()
@@ -64,21 +65,18 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 	}
 
 	repo := LocalRepo(top)
-	if _, err := l.Mirrors.Ensure(ctx, repo, top); err != nil {
+	stored := LocalStorageRepo(repo)
+	if _, err := l.Mirrors.Ensure(ctx, stored, top); err != nil {
 		return Checkout{}, err
 	}
-	if err := l.Mirrors.Fetch(ctx, repo, []string{sha}, nil); err != nil {
+	if err := l.Mirrors.Fetch(ctx, stored, []string{sha}, nil); err != nil {
 		return Checkout{}, err
 	}
-	release, err := l.Mirrors.CloneShared(ctx, repo, sha, dir, req.RunAs)
+	release, err := l.Mirrors.CloneShared(ctx, stored, sha, dir, req.RunAs)
 	if err != nil {
 		return Checkout{}, err
 	}
-	// Local runs come from one-shot `zeroci run`; the checkout is complete
-	// here and the Source interface has no teardown hook to hold it longer.
-	release()
-
-	return Checkout{Dir: dir, Repo: repo, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start)}, nil
+	return Checkout{Dir: dir, Repo: repo, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start), Release: release}, nil
 }
 
 // LocalRepo returns the "local/<name>" repo for a checkout directory. The
@@ -86,6 +84,18 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 // valid mirror path and cache trust domain.
 func LocalRepo(dir string) string {
 	return "local/" + localName(filepath.Base(dir))
+}
+
+// localStorageOwner is the owner local repos are stored under on disk.
+// GitHub owners are letters, digits and inner hyphens, so no GitHub repo,
+// not even "local/<name>", shares a mirror or cache dir with a local repo.
+const localStorageOwner = "_local"
+
+// LocalStorageRepo returns the repo naming the mirror and cache dirs of the
+// LocalRepo result repo: "local/<name>" becomes "_local/<name>". Run records
+// and trust domains keep "local/<name>".
+func LocalStorageRepo(repo string) string {
+	return localStorageOwner + "/" + strings.TrimPrefix(repo, "local/")
 }
 
 // localName maps a directory name onto the slug alphabet.

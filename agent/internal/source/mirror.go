@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,22 +20,38 @@ var (
 	refRefspecRe = regexp.MustCompile(`^\+refs/[A-Za-z0-9._/-]+:refs/zeroci/[A-Za-z0-9._/-]+$`)
 )
 
-// Mirrors keeps one full bare mirror per repo under Root. Fetches and GC are
-// serialised per repo; shared clones are counted so GC never prunes objects
-// a running checkout borrows through alternates.
+// Mirrors keeps one full bare mirror per repo under Root, which only the
+// agent can read. Fetches and GC are serialised per repo. A sha fetched by
+// Fetch is kept by refs/zeroci/<sha> until its fetches are cloned and every
+// clone of it is released, and GC waits while any clone of the repo is live,
+// so neither can prune objects a run needs.
 type Mirrors struct {
-	Root string // <state>/mirrors
-	Git  Git
+	Root  string // <state>/mirrors, mode 0700
+	Git   Git
+	Chown func(path string, uid, gid int) error // hands a clone to its job user; nil: os.Lchown
 
 	mu     sync.Mutex
 	repoMu map[string]*sync.Mutex
-	active map[string]int
+	pins   map[pinKey]*pin
+}
+
+// pinKey is one sha of one mirror, keyed by slug.
+type pinKey struct{ slug, sha string }
+
+// pin counts the fetches of a sha that wait for their clone and the live
+// clones of it. ref is set once Fetch has written refs/zeroci/<sha>.
+type pin struct {
+	waiting, clones int
+	ref             bool
 }
 
 // NewMirrors returns Mirrors rooted at root.
 func NewMirrors(root string, g Git) *Mirrors {
-	return &Mirrors{Root: root, Git: g, repoMu: map[string]*sync.Mutex{}, active: map[string]int{}}
+	return &Mirrors{Root: root, Git: g, repoMu: map[string]*sync.Mutex{}, pins: map[pinKey]*pin{}}
 }
+
+// shaRef is the mirror ref that keeps a fetched sha's objects from GC.
+func shaRef(sha string) string { return "refs/zeroci/" + sha }
 
 // Path returns <root>/<slug>.git.
 func (m *Mirrors) Path(repo string) (string, error) {
@@ -68,15 +85,18 @@ func (m *Mirrors) Ensure(ctx context.Context, repo, remoteURL string) (string, e
 	}
 	defer m.lockRepo(filepath.Base(path))()
 
+	// Jobs never read a mirror: a job's checkout carries its own objects.
+	// The chmod tightens a root that older agents made 0755.
+	if err := os.MkdirAll(m.Root, 0o700); err != nil {
+		return "", fmt.Errorf("source: create mirror root: %w", err)
+	}
+	if err := os.Chmod(m.Root, 0o700); err != nil {
+		return "", fmt.Errorf("source: restrict mirror root: %w", err)
+	}
 	switch fi, err := os.Stat(path); {
 	case err == nil && !fi.IsDir():
 		return "", fmt.Errorf("source: mirror %s is not a directory", path)
 	case errors.Is(err, os.ErrNotExist):
-		// The job user reads the mirror through --shared alternates, so the
-		// root stays traversable like the object dirs git creates.
-		if err := os.MkdirAll(m.Root, 0o755); err != nil {
-			return "", fmt.Errorf("source: create mirror root: %w", err)
-		}
 		if _, err := m.Git.Run(ctx, "", gitEnv(), nil, "init", "--quiet", "--bare", path); err != nil {
 			return "", err
 		}
@@ -90,9 +110,10 @@ func (m *Mirrors) Ensure(ctx context.Context, repo, remoteURL string) (string, e
 }
 
 // Fetch fetches exactly the given refspecs into the mirror, serialised per
-// repo. Each refspec is a 40-hex sha or "+refs/...:refs/zeroci/...". env
-// carries extra variables (askpass) on top of SafeGitEnv. The mirror keeps
-// full history: never shallow.
+// repo. Each refspec is a 40-hex sha or "+refs/...:refs/zeroci/...". A sha
+// is stored as refs/zeroci/<sha> and counts as waiting for one CloneShared,
+// so GC cannot prune it in between. env carries extra variables (askpass) on
+// top of SafeGitEnv. The mirror keeps full history: never shallow.
 func (m *Mirrors) Fetch(ctx context.Context, repo string, refspecs []string, env []string) error {
 	if len(refspecs) == 0 {
 		return errors.New("source: fetch needs at least one refspec")
@@ -106,19 +127,64 @@ func (m *Mirrors) Fetch(ctx context.Context, repo string, refspecs []string, env
 	if err != nil {
 		return err
 	}
-	defer m.lockRepo(filepath.Base(path))()
+	slug := filepath.Base(path)
+	defer m.lockRepo(slug)()
 
-	args := append([]string{"-C", path, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin"}, refspecs...)
-	_, err = m.Git.Run(ctx, "", gitEnv(env...), nil, args...)
-	return err
+	args := []string{"-C", path, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin"}
+	var shas []string
+	for _, r := range refspecs {
+		if shaRe.MatchString(r) {
+			shas = append(shas, r)
+			r = "+" + r + ":" + shaRef(r)
+		}
+		args = append(args, r)
+	}
+	if _, err := m.Git.Run(ctx, "", gitEnv(env...), nil, args...); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	for _, sha := range shas {
+		p := m.pinFor(pinKey{slug, sha})
+		p.waiting++
+		p.ref = true
+	}
+	m.mu.Unlock()
+	return nil
 }
 
-// CloneShared runs git clone --shared --no-checkout <mirror> <dir>, then
-// git -C <dir> checkout --detach --quiet <sha>, both as cred when non-nil.
-// A clone as cred marks the agent-owned mirror as a safe.directory, since git
-// refuses repositories owned by another user.
-// dir must not exist or be empty. The repo counts as active until release
-// is called; release is idempotent.
+// pinFor returns the pin of k, creating it. m.mu must be held.
+func (m *Mirrors) pinFor(k pinKey) *pin {
+	p, ok := m.pins[k]
+	if !ok {
+		p = &pin{}
+		m.pins[k] = p
+	}
+	return p
+}
+
+// unpin ends one clone of k. The last user of a fetched sha deletes its
+// ref under the repo lock, so a concurrent Fetch of the sha cannot lose it.
+func (m *Mirrors) unpin(path string, k pinKey) {
+	defer m.lockRepo(k.slug)()
+	m.mu.Lock()
+	p := m.pins[k]
+	p.clones--
+	drop := p.clones == 0 && p.waiting == 0
+	if drop {
+		delete(m.pins, k)
+	}
+	m.mu.Unlock()
+	if drop && p.ref {
+		// A ref left behind only keeps objects alive, so failure is ignored.
+		_, _ = m.Git.Run(context.Background(), "", gitEnv(), nil, "-C", path, "update-ref", "-d", shaRef(k.sha))
+	}
+}
+
+// CloneShared checks sha out into dir, which must not exist or be empty.
+// With cred nil the clone borrows the mirror's objects (git clone --shared).
+// With cred set the job user must not read the mirror, so the agent clones
+// with copied objects (--no-hardlinks), checks out, and hands every file to
+// cred. sha stays pinned in the mirror until release, which is idempotent.
 func (m *Mirrors) CloneShared(ctx context.Context, repo, sha, dir string, cred *syscall.Credential) (func(), error) {
 	if !shaRe.MatchString(sha) {
 		return nil, fmt.Errorf("%w: %q", ErrBadSHA, sha)
@@ -130,38 +196,58 @@ func (m *Mirrors) CloneShared(ctx context.Context, repo, sha, dir string, cred *
 	if err := requireEmptyDir(dir); err != nil {
 		return nil, err
 	}
-	slug := filepath.Base(path)
+	k := pinKey{filepath.Base(path), sha}
 
 	// Count the clone under the repo lock so it cannot start while GC runs.
-	unlock := m.lockRepo(slug)
+	unlock := m.lockRepo(k.slug)
 	m.mu.Lock()
-	m.active[slug]++
+	p := m.pinFor(k)
+	if p.waiting > 0 {
+		p.waiting--
+	}
+	p.clones++
 	m.mu.Unlock()
 	unlock()
 
 	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			m.mu.Lock()
-			m.active[slug]--
-			m.mu.Unlock()
-		})
-	}
-
-	env := gitEnv()
-	clone := []string{"clone", "--shared", "--no-checkout", path, dir}
-	if cred != nil {
-		clone = append([]string{"-c", "safe.directory=" + path}, clone...)
-	}
-	if _, err := m.Git.Run(ctx, "", env, cred, clone...); err != nil {
-		release()
-		return nil, err
-	}
-	if _, err := m.Git.Run(ctx, "", env, cred, "-C", dir, "checkout", "--detach", "--quiet", sha); err != nil {
+	release := func() { once.Do(func() { m.unpin(path, k) }) }
+	if err := m.clone(ctx, path, sha, dir, cred); err != nil {
 		release()
 		return nil, err
 	}
 	return release, nil
+}
+
+func (m *Mirrors) clone(ctx context.Context, path, sha, dir string, cred *syscall.Credential) error {
+	env := gitEnv()
+	if cred == nil {
+		if _, err := m.Git.Run(ctx, "", env, nil, "clone", "--shared", "--no-checkout", path, dir); err != nil {
+			return err
+		}
+		_, err := m.Git.Run(ctx, "", env, nil, "-C", dir, "checkout", "--detach", "--quiet", sha)
+		return err
+	}
+	if _, err := m.Git.Run(ctx, "", env, nil, "clone", "--no-hardlinks", "--no-checkout", path, dir); err != nil {
+		return err
+	}
+	// dir belongs to the job user, so git needs it marked safe.
+	if _, err := m.Git.Run(ctx, "", env, nil, "-c", "safe.directory="+dir, "-C", dir, "checkout", "--detach", "--quiet", sha); err != nil {
+		return err
+	}
+	chown := m.Chown
+	if chown == nil {
+		chown = os.Lchown
+	}
+	err := filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return chown(p, int(cred.Uid), int(cred.Gid))
+	})
+	if err != nil {
+		return fmt.Errorf("source: hand checkout to job user: %w", err)
+	}
+	return nil
 }
 
 // GC runs git gc --prune=now --auto when no shared clone of repo is active,
@@ -175,7 +261,13 @@ func (m *Mirrors) GC(ctx context.Context, repo string) error {
 	defer m.lockRepo(slug)()
 
 	m.mu.Lock()
-	busy := m.active[slug] > 0
+	busy := false
+	for k, p := range m.pins {
+		if k.slug == slug && p.clones > 0 {
+			busy = true
+			break
+		}
+	}
 	m.mu.Unlock()
 	if busy {
 		return ErrBusy

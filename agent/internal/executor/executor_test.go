@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -100,6 +101,9 @@ func TestRunJobSuccess(t *testing.T) {
 	}
 	if want := []string{dir.Src(), dir.Home(), dir.Tmp(), dir.PG()}; !slices.Equal(s.ReadWritePaths, want) {
 		t.Errorf("ReadWritePaths = %q, want %q", s.ReadWritePaths, want)
+	}
+	if want := filepath.Dir(dir.Root); s.Hide != want {
+		t.Errorf("Hide = %q, want the runs dir %q", s.Hide, want)
 	}
 	if want := (isolation.Limits{CPUs: 2, MemoryBytes: 1 << 30, Tasks: 256, Timeout: time.Minute}); s.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", s.Limits, want)
@@ -485,6 +489,58 @@ func TestCacheSaveGatedByPolicy(t *testing.T) {
 	}
 }
 
+// A GitHub repo "local/app" must not share a cache with the local run of a
+// directory named app, though both have trust domain "trusted:local/app".
+func TestLocalRunCacheApartFromGitHubLocalOwner(t *testing.T) {
+	cfg := &config.ResolvedChecks{
+		Setup: []config.SetupStep{{Run: "npm ci", Cache: &config.SetupStepCache{Key: []string{"package-lock.json"}, Paths: []string{"node_modules"}}}},
+		Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	setUp(t, h, run)
+	finish(t, h, run, store.RunSuccess)
+	if len(h.cache.restored) != 1 {
+		t.Fatalf("restores = %d, want 1", len(h.cache.restored))
+	}
+	local := h.cache.restored[0]
+
+	c, err := cache.New(cache.Options{Root: t.TempDir(), Mode: cache.ModeCopy, Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wd, "src", "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	github, err := cache.ComputeKey("trusted:local/app", local.Platform, wd, []string{"src/package-lock.json"}, local.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(github.FileHashes, local.FileHashes) || !slices.Equal(github.Paths, local.Paths) {
+		t.Fatalf("keys differ beyond the trust domain: %+v vs %+v", github, local)
+	}
+	if err := c.Save(context.Background(), github, cache.Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}, wd); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		k    cache.Key
+		hit  bool
+	}{{"GitHub local/app", github, true}, {"local app", local, false}} {
+		hit, cleanup, err := c.Restore(context.Background(), tc.k, t.TempDir())
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if cleanup != nil {
+			cleanup()
+		}
+		if hit != tc.hit {
+			t.Errorf("%s restore hit = %v, want %v", tc.name, hit, tc.hit)
+		}
+	}
+}
+
 func TestSetupFailureMarksRunFailed(t *testing.T) {
 	cfg := &config.ResolvedChecks{
 		Setup:    []config.SetupStep{{Run: "npm ci"}},
@@ -538,12 +594,16 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 	finish(t, h, run, store.RunFailed)
 }
 
-// Under systemd jobs run as the job user, so the job user checks the run out
-// and owns the dirs jobs write.
+// Under systemd jobs run as the job user, so the agent clones the run out
+// without sharing the mirror, then hands the checkout and the dirs jobs
+// write to the job user.
 func TestSetupHandsRunDirToJobUser(t *testing.T) {
 	git := &execx.Fake{}
 	git.On("git", nil, execx.FakeResponse{})
-	mirrors := source.NewMirrors(filepath.Join(t.TempDir(), "mirrors"), source.Git{Runner: git})
+	g := source.Git{Runner: git}
+	mirrors := source.NewMirrors(filepath.Join(t.TempDir(), "mirrors"), g)
+	var srcChowns []chownCall
+	mirrors.Chown = recordChown(&srcChowns)
 	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "build", Run: "make"}}}
 	cred := selfCred()
 	var chowns []chownCall
@@ -555,16 +615,19 @@ func TestSetupHandsRunDirToJobUser(t *testing.T) {
 	mirrored := store.Run{ID: "01run", Repo: "o/r", SHA: strings.Repeat("a", 40), Ref: "refs/heads/main", Event: "push", Kind: "check", TrustDomain: "trusted:o/r"}
 	setUp(t, h, mirrored)
 	finish(t, h, mirrored, store.RunSuccess)
-	if len(git.Calls) != 2 {
-		t.Fatalf("git calls = %+v, want clone and checkout", git.Calls)
+	dir := h.runDir(mirrored.ID)
+	if len(git.Calls) != 2 || !slices.Equal(git.Calls[0].Args, g.Args("clone", "--no-hardlinks", "--no-checkout", filepath.Join(mirrors.Root, "o__r.git"), dir.Src())) {
+		t.Fatalf("git calls = %+v, want a copying clone and checkout", git.Calls)
 	}
 	for _, c := range git.Calls {
-		if c.Credential != cred {
-			t.Errorf("git %q ran as %v, want the job user", c.Args, c.Credential)
+		if c.Credential != nil {
+			t.Errorf("git %q ran as %v, want the agent: the job user cannot read the mirror", c.Args, c.Credential)
 		}
 	}
-	dir := h.runDir(mirrored.ID)
 	uid, gid := int(cred.Uid), int(cred.Gid)
+	if want := []chownCall{{dir.Src(), uid, gid}}; !slices.Equal(srcChowns, want) {
+		t.Errorf("checkout chown calls = %+v, want %+v", srcChowns, want)
+	}
 	if want := []chownCall{{dir.Src(), uid, gid}, {dir.Home(), uid, gid}, {dir.Tmp(), uid, gid}}; !slices.Equal(chowns, want) {
 		t.Errorf("chown calls = %+v, want %+v", chowns, want)
 	}
@@ -575,5 +638,8 @@ func TestSetupHandsRunDirToJobUser(t *testing.T) {
 	finish(t, h, local, store.RunSuccess)
 	if len(h.src.reqs) != 1 || h.src.reqs[0].RunAs != cred {
 		t.Errorf("local checkout requests = %+v, want one as the job user", h.src.reqs)
+	}
+	if h.src.released != 1 {
+		t.Errorf("local checkout released %d times, want once at teardown", h.src.released)
 	}
 }

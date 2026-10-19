@@ -37,9 +37,13 @@ type Spec struct {
 	Limits         Limits
 	NetNSPath      string   // netns.Network.NSPath ("/run/netns/zc-<run>") when a netns exists, else ""
 	ReadWritePaths []string // usually exactly [<rundir>]
-	User           string   // default "zeroci-run"; empty means default
-	Stdout         io.Writer
-	Stderr         io.Writer
+	// Hide is a dir the unit sees as an empty read-only tmpfs, with only the
+	// ReadWritePaths under it bound back in. The executor hides <state>/runs
+	// so a job cannot reach other runs' dirs. Empty hides nothing.
+	Hide   string
+	User   string // default "zeroci-run"; empty means default
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // Result is the outcome of one isolated process. It carries no stderr text:

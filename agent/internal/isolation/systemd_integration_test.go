@@ -104,6 +104,8 @@ func TestSystemdIntegrationProperties(t *testing.T) {
 		"ProtectHome":     "yes",
 		"PrivateTmp":      "yes",
 		"PrivateDevices":  "yes",
+		"ProtectProc":     "invisible",
+		"ProcSubset":      "pid",
 		"MemoryMax":       "268435456",
 		"TasksMax":        "64",
 		"Nice":            "10",

@@ -92,15 +92,16 @@ func (f *fakeIso) spec(t *testing.T, job string) isolation.Spec {
 }
 
 type fakeSource struct {
-	sha  string
-	reqs []source.Request
+	sha      string
+	reqs     []source.Request
+	released int
 }
 
 func (f *fakeSource) Name() string { return "fake" }
 
 func (f *fakeSource) Checkout(_ context.Context, req source.Request, dir string) (source.Checkout, error) {
 	f.reqs = append(f.reqs, req)
-	return source.Checkout{Dir: dir, SHA: f.sha}, nil
+	return source.Checkout{Dir: dir, SHA: f.sha, Release: func() { f.released++ }}, nil
 }
 
 type fakeNetns struct {

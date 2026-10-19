@@ -19,8 +19,8 @@ const NoneWarning = "isolation none: jobs run as your user with no sandbox, no r
 const defaultGrace = 10 * time.Second
 
 // None runs each job as a plain process group of the agent's user. It is for
-// local development only: NetNSPath, User, ReadWritePaths and resource limits
-// are ignored. The zero value is ready to use.
+// local development only: NetNSPath, User, ReadWritePaths, Hide and resource
+// limits are ignored. The zero value is ready to use.
 type None struct {
 	Grace time.Duration // default 10s between SIGTERM and SIGKILL
 	Warn  func(string)

@@ -56,6 +56,32 @@ func TestEnsureInitsOnceAndSetsRemote(t *testing.T) {
 	}
 }
 
+// Jobs must not read other repos' mirrors, so the root is the agent's alone,
+// and Ensure tightens a root an older agent left 0755.
+func TestEnsureMirrorRootPrivate(t *testing.T) {
+	f := &execx.Fake{}
+	f.On("git", nil, execx.FakeResponse{})
+	root := filepath.Join(t.TempDir(), "mirrors")
+	m := NewMirrors(root, Git{Runner: f})
+	for _, before := range []os.FileMode{0, 0o755} {
+		if before != 0 {
+			if err := os.Chmod(root, before); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := m.Ensure(context.Background(), "o/r", "https://github.com/o/r.git"); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o700 {
+			t.Errorf("root mode after Ensure on %o = %o, want 700", before, fi.Mode().Perm())
+		}
+	}
+}
+
 func TestFetchSerialisedPerRepo(t *testing.T) {
 	t.Run("same repo never overlaps", func(t *testing.T) {
 		var mu sync.Mutex
@@ -137,7 +163,7 @@ func TestFetchArgv(t *testing.T) {
 	if err := m.Fetch(context.Background(), "o/r", refspecs, []string{"ZEROCI_ASKPASS=1"}); err != nil {
 		t.Fatal(err)
 	}
-	want := g.Args("-C", "/state/mirrors/o__r.git", "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", testSHA, "+refs/pull/12/head:refs/zeroci/pull/12")
+	want := g.Args("-C", "/state/mirrors/o__r.git", "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/zeroci/"+testSHA, "+refs/pull/12/head:refs/zeroci/pull/12")
 	c := f.Calls[0]
 	if !slices.Equal(c.Args, want) {
 		t.Fatalf("argv = %q\nwant %q", c.Args, want)
@@ -184,37 +210,135 @@ func TestFetchRejectsBadSHA(t *testing.T) {
 
 func TestCloneSharedArgv(t *testing.T) {
 	const mirror = "/state/mirrors/o__r.git"
-	jobUser := &syscall.Credential{Uid: 990, Gid: 990}
-	for _, cred := range []*syscall.Credential{nil, jobUser} {
-		f := &execx.Fake{}
-		f.On("git", nil, execx.FakeResponse{})
-		g := Git{Runner: f}
-		m := NewMirrors("/state/mirrors", g)
-		dir := filepath.Join(t.TempDir(), "src")
+	f := &execx.Fake{}
+	f.On("git", nil, execx.FakeResponse{})
+	g := Git{Runner: f}
+	m := NewMirrors("/state/mirrors", g)
+	dir := filepath.Join(t.TempDir(), "src")
 
-		release, err := m.CloneShared(context.Background(), "o/r", testSHA, dir, cred)
+	release, err := m.CloneShared(context.Background(), "o/r", testSHA, dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	want := [][]string{
+		g.Args("clone", "--shared", "--no-checkout", mirror, dir),
+		g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA),
+	}
+	if len(f.Calls) != len(want) {
+		t.Fatalf("calls = %+v", f.Calls)
+	}
+	for i, c := range f.Calls {
+		if !slices.Equal(c.Args, want[i]) {
+			t.Errorf("call %d argv = %q\nwant %q", i, c.Args, want[i])
+		}
+		if c.Credential != nil {
+			t.Errorf("call %d credential = %v, want the agent", i, c.Credential)
+		}
+	}
+}
+
+// A job user's checkout must not need the mirror: the agent clones with
+// copied objects, checks out, and hands every file to the job user.
+func TestCloneSharedAsJobUserCopiesObjects(t *testing.T) {
+	const mirror = "/state/mirrors/o__r.git"
+	jobUser := &syscall.Credential{Uid: 990, Gid: 991}
+	dir := filepath.Join(t.TempDir(), "src")
+	f := &execx.Fake{}
+	g := Git{Runner: f}
+	f.On("git", g.Args("clone"), execx.FakeResponse{Fn: func(execx.Cmd) error {
+		return os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0o755)
+	}})
+	f.On("git", nil, execx.FakeResponse{Fn: func(execx.Cmd) error {
+		return os.WriteFile(filepath.Join(dir, "main.go"), nil, 0o644)
+	}})
+	m := NewMirrors("/state/mirrors", g)
+	var chowned []string
+	m.Chown = func(path string, uid, gid int) error {
+		if uid != 990 || gid != 991 {
+			t.Errorf("chown %s to %d:%d, want 990:991", path, uid, gid)
+		}
+		chowned = append(chowned, path)
+		return nil
+	}
+
+	release, err := m.CloneShared(context.Background(), "o/r", testSHA, dir, jobUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	want := [][]string{
+		g.Args("clone", "--no-hardlinks", "--no-checkout", mirror, dir),
+		g.Args("-c", "safe.directory="+dir, "-C", dir, "checkout", "--detach", "--quiet", testSHA),
+	}
+	if len(f.Calls) != len(want) {
+		t.Fatalf("calls = %+v", f.Calls)
+	}
+	for i, c := range f.Calls {
+		if !slices.Equal(c.Args, want[i]) {
+			t.Errorf("call %d argv = %q\nwant %q", i, c.Args, want[i])
+		}
+		if c.Credential != nil {
+			t.Errorf("call %d ran as %v, want the agent: the job user cannot read the mirror", i, c.Credential)
+		}
+	}
+	wantChown := []string{dir, filepath.Join(dir, ".git"), filepath.Join(dir, ".git", "objects"), filepath.Join(dir, "main.go")}
+	if !slices.Equal(chowned, wantChown) {
+		t.Errorf("chowned %q, want %q", chowned, wantChown)
+	}
+}
+
+// A fetched sha stays referenced until its last clone is released, so GC
+// between a fetch and its clone, or during a run, cannot prune it.
+func TestFetchPinsSHAUntilLastRelease(t *testing.T) {
+	f := &execx.Fake{}
+	f.On("git", nil, execx.FakeResponse{})
+	g := Git{Runner: f}
+	m := NewMirrors("/state/mirrors", g)
+	ctx := context.Background()
+	deleteRef := g.Args("-C", "/state/mirrors/o__r.git", "update-ref", "-d", "refs/zeroci/"+testSHA)
+	clone := func() func() {
+		t.Helper()
+		release, err := m.CloneShared(ctx, "o/r", testSHA, filepath.Join(t.TempDir(), "src"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		release()
+		return release
+	}
 
-		clone := g.Args("clone", "--shared", "--no-checkout", mirror, dir)
-		if cred != nil {
-			// git refuses a mirror owned by the agent when cloning as the job user.
-			clone = g.Args("-c", "safe.directory="+mirror, "clone", "--shared", "--no-checkout", mirror, dir)
+	if err := m.Fetch(ctx, "o/r", []string{testSHA}, nil); err != nil {
+		t.Fatal(err)
+	}
+	releaseA := clone()
+	if err := m.Fetch(ctx, "o/r", []string{testSHA}, nil); err != nil {
+		t.Fatal(err)
+	}
+	releaseA()
+	if f.Called("git", deleteRef...) {
+		t.Fatal("ref deleted while a fetch still waits for its clone")
+	}
+	releaseB := clone()
+	releaseC := clone()
+	releaseB()
+	if f.Called("git", deleteRef...) {
+		t.Fatal("ref deleted while a clone is live")
+	}
+	if err := m.GC(ctx, "o/r"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("GC with a live clone = %v, want ErrBusy", err)
+	}
+	releaseC()
+	releaseC()
+	n := 0
+	for _, c := range f.Calls {
+		if slices.Equal(c.Args, deleteRef) {
+			n++
 		}
-		want := [][]string{clone, g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA)}
-		if len(f.Calls) != 2 {
-			t.Fatalf("cred %v: calls = %+v", cred, f.Calls)
-		}
-		for i, c := range f.Calls {
-			if !slices.Equal(c.Args, want[i]) {
-				t.Errorf("cred %v: call %d argv = %q\nwant %q", cred, i, c.Args, want[i])
-			}
-			if c.Credential != cred {
-				t.Errorf("call %d credential = %v, want %v", i, c.Credential, cred)
-			}
-		}
+	}
+	if n != 1 {
+		t.Fatalf("ref deleted %d times after the last release, want 1", n)
+	}
+	if err := m.GC(ctx, "o/r"); err != nil {
+		t.Fatalf("GC after the last release = %v", err)
 	}
 }
 
@@ -265,6 +389,9 @@ func TestGCBusy(t *testing.T) {
 
 	release()
 	release() // idempotent: must not drive the counter negative
+	if f.Called("git", g.Args("-C", "/state/mirrors/o__r.git", "update-ref")...) {
+		t.Fatal("release deleted a ref no Fetch created")
+	}
 	if err := m.GC(ctx, "o/r"); err != nil {
 		t.Fatalf("GC after release = %v", err)
 	}

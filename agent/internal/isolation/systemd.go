@@ -52,7 +52,7 @@ func orDefault(v, def string) string {
 // BuildSystemdRunArgv is pure and deterministic (properties in a fixed order).
 // argv[0] is bin. --working-directory is omitted when spec.Dir is empty.
 func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
-	argv := []string{bin, "--wait", "--pipe", "--collect", "--quiet",
+	argv := []string{bin, "--wait", "--pipe", "--quiet",
 		"--unit", UnitName(spec.RunID, spec.Job), "--slice", slice}
 	if spec.Dir != "" {
 		argv = append(argv, "--working-directory", spec.Dir)
@@ -65,8 +65,16 @@ func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
 	prop("ProtectHome=yes")
 	prop("PrivateTmp=yes")
 	prop("PrivateDevices=yes")
+	prop("ProtectProc=invisible")
+	prop("ProcSubset=pid")
 	if len(spec.ReadWritePaths) > 0 {
 		prop("ReadWritePaths=" + strings.Join(spec.ReadWritePaths, " "))
+	}
+	if spec.Hide != "" {
+		prop("TemporaryFileSystem=" + spec.Hide + ":ro")
+		if len(spec.ReadWritePaths) > 0 {
+			prop("BindPaths=" + strings.Join(spec.ReadWritePaths, " "))
+		}
 	}
 
 	l := spec.Limits
@@ -181,11 +189,14 @@ func (s *Systemd) Run(ctx context.Context, spec Spec) (Result, error) {
 	if s.unitResult(ctx, unit) == "timeout" {
 		res.TimedOut = true
 	}
+	// Without --collect a failed unit stays loaded so its Result can be read
+	// above; reset-failed then unloads it.
+	s.resetFailed(ctx, unit)
 	return res, nil
 }
 
-// unitResult reads the unit's Result property. It is best effort: --collect
-// may already have unloaded the unit, in which case it returns "".
+// unitResult reads the unit's Result property. It is best effort and returns
+// "" when systemctl fails.
 func (s *Systemd) unitResult(ctx context.Context, unit string) string {
 	var out bytes.Buffer
 	err := s.runner().Run(ctx, execx.Cmd{
@@ -199,15 +210,28 @@ func (s *Systemd) unitResult(ctx context.Context, unit string) string {
 	return strings.TrimSpace(out.String())
 }
 
-// Stop runs systemctl stop on the unit. A unit that is not loaded (exit 5)
-// is already gone and is not an error.
+// resetFailed unloads a failed unit. It is best effort and survives a
+// cancelled ctx: a unit left failed only lingers in systemctl list-units.
+func (s *Systemd) resetFailed(ctx context.Context, unit string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
+	_ = s.runner().Run(ctx, execx.Cmd{Name: s.systemctl(), Args: []string{"reset-failed", unit + ".service"}})
+}
+
+// Stop runs systemctl stop on the unit, then reset-failed so a unit that
+// failed is unloaded too. A unit that is not loaded (exit 5) is already gone
+// and is not an error.
 func (s *Systemd) Stop(ctx context.Context, unit string) error {
 	err := s.runner().Run(ctx, execx.Cmd{Name: s.systemctl(), Args: []string{"stop", unit + ".service"}})
 	var exitErr *execx.ExitError
-	if err == nil || errors.As(err, &exitErr) && exitErr.Code == 5 {
+	if errors.As(err, &exitErr) && exitErr.Code == 5 {
 		return nil
 	}
-	return fmt.Errorf("isolation systemd: stop %s: %w", unit, err)
+	if err != nil {
+		return fmt.Errorf("isolation systemd: stop %s: %w", unit, err)
+	}
+	s.resetFailed(ctx, unit)
+	return nil
 }
 
 // ListUnits returns every loaded unit whose name starts with prefix.

@@ -118,12 +118,21 @@ func TestRealGitLocalCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mirror, err := l.Mirrors.Path("local/app")
+	mirror, err := l.Mirrors.Path(LocalStorageRepo("local/app"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := evalPath(t, strings.TrimSpace(string(alt))), evalPath(t, filepath.Join(mirror, "objects")); got != want {
 		t.Fatalf("alternates = %q, want %q", got, want)
+	}
+
+	// The fetched sha is pinned by a ref until the checkout is released.
+	if got, want := plainGit(t, mirror, "for-each-ref", "--format=%(refname)", "refs/zeroci/"), "refs/zeroci/"+head; got != want {
+		t.Fatalf("refs before release = %q, want %q", got, want)
+	}
+	co.Release()
+	if got := plainGit(t, mirror, "for-each-ref", "refs/zeroci/"); got != "" {
+		t.Fatalf("refs after release = %q, want none", got)
 	}
 }
 
