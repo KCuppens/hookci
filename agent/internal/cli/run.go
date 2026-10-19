@@ -14,12 +14,14 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/detect"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/sink"
+	"github.com/KCuppens/zerocideploy/agent/internal/source"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
@@ -32,7 +34,6 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		stateDir   string
 		slots      int
 		isoName    string
-		timeoutStr string
 	)
 
 	fs.StringVar(&configFile, "c", "", "path to .zeroci.yml config file")
@@ -41,7 +42,6 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&stateDir, "state-dir", defaultStateDir(), "path to state directory")
 	fs.IntVar(&slots, "slots", scheduler.DefaultSlots(), "parallel job slots")
 	fs.StringVar(&isoName, "isolation", "auto", "job isolation backend: auto, systemd or none")
-	fs.StringVar(&timeoutStr, "timeout", "10m", "default timeout for check jobs")
 
 	fs.Usage = func() {
 		fmt.Fprintln(stdout, "Usage: zeroci run [flags] [dir]")
@@ -147,9 +147,13 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	docker := &services.Docker{}
-	cacheStore, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")})
-	if err != nil {
+	git := source.Git{Runner: execx.OS{}}
+	mirrors := source.NewMirrors(filepath.Join(stateDir, "mirrors"), git)
+	var hooks executor.Hooks
+	if cacheStore, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")}); err != nil {
 		fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
+	} else {
+		hooks.Cache = cacheStore
 	}
 
 	// 4. Perform crash recovery before starting new run
@@ -160,15 +164,16 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// 5. Create new Run record in store
 	runID := ids.NewRunID()
-	resolved := cfg.Checks().Jobs
-	jobs := make([]store.Job, 0, len(resolved))
-	for _, job := range resolved {
+	checks := cfg.Checks()
+	jobs := make([]store.Job, 0, len(checks.Jobs))
+	for _, job := range checks.Jobs {
 		jobs = append(jobs, store.Job{Name: job.Name, Needs: job.Needs})
 	}
 
 	// Each local invocation is its own run, so the run ID stands in for the commit SHA
-	// to keep the (repo, sha, event, env, attempt) key unique.
-	localRepo := "local/" + filepath.Base(absWorkDir)
+	// to keep the (repo, sha, event, env, attempt) key unique. The executor
+	// checks out the working tree's committed HEAD.
+	localRepo := source.LocalRepo(absWorkDir)
 	runRec := store.Run{
 		ID:          runID,
 		Repo:        localRepo,
@@ -183,6 +188,22 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitInternal
 	}
 
+	ex, err := executor.New(executor.Options{
+		StateDir:  stateDir,
+		Store:     db,
+		Isolation: iso,
+		Source:    &source.Local{Git: git, Dir: absWorkDir, Mirrors: mirrors, Warn: stderr},
+		Mirrors:   mirrors,
+		Config: func(store.Run, string) (*config.ResolvedChecks, error) {
+			return checks, nil
+		},
+		Hooks: hooks,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitInternal
+	}
+
 	// 6. Print run progress from the outbox while the run executes.
 	pump := &sink.Pump{
 		Store: db,
@@ -193,18 +214,11 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	pumpErr := make(chan error, 1)
 	go func() { pumpErr <- pump.Run(pumpCtx) }()
 
-	// 7. Execute the run
-	exec := executor.New(executor.Options{
-		StateDir:       stateDir,
-		Store:          db,
-		Isolation:      iso,
-		Docker:         docker,
-		Cache:          cacheStore,
-		Slots:          slots,
-		DefaultTimeout: executor.ParseTimeout(&timeoutStr, 10*time.Minute),
-	})
-
-	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, true)
+	// 7. Execute the run. Interrupting ctx cancels it through the scheduler,
+	// which tears it down before Wait returns.
+	if err := driveRun(ctx, scheduler.New(db, ex, scheduler.Options{Slots: slots}), runID); err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+	}
 
 	// Stop the pump; Run drains once more before returning.
 	stopPump()
@@ -222,7 +236,30 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if finalRun.State == store.RunSuccess {
 		return ExitOK
 	}
+	if finalRun.Reason != "" {
+		fmt.Fprintf(stderr, "zeroci: run %s: %s\n", finalRun.State, finalRun.Reason)
+	}
 	return ExitRunFailed
+}
+
+// driveRun submits runID to sched and waits for it to end. When ctx ends
+// first the run is cancelled and waited for, so its teardown completes
+// before sched closes.
+func driveRun(ctx context.Context, sched *scheduler.Scheduler, runID string) error {
+	defer sched.Close()
+	if _, err := sched.Submit(ctx, runID); err != nil {
+		return err
+	}
+	_, err := sched.Wait(ctx, runID)
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	bg := context.WithoutCancel(ctx)
+	if err := sched.Cancel(bg, runID, "cancelled"); err != nil {
+		return err
+	}
+	_, err = sched.Wait(bg, runID)
+	return err
 }
 
 // loadRunConfig loads the config at path and prints its diagnostics. It

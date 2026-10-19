@@ -2,6 +2,7 @@ package config
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"time"
 )
@@ -18,6 +19,9 @@ type ResolvedChecks struct {
 	Services Services
 	Egress   []string
 	Redact   []*regexp.Regexp
+	// EnvFiles are the deployments' env_file paths, sorted. Their values are
+	// never given to check jobs; the executor masks them in job logs.
+	EnvFiles []string
 }
 
 // OnSpec says which GitHub events run the checks.
@@ -76,6 +80,13 @@ func resolveChecks(cfg *ZeroCIConfig, raw any) *ResolvedChecks {
 	for _, p := range cfg.Redact {
 		rc.Redact = append(rc.Redact, regexp.MustCompile(p)) // checkRedact compiled it already
 	}
+	for _, d := range cfg.Deployments {
+		if d.EnvFile != nil {
+			rc.EnvFiles = append(rc.EnvFiles, *d.EnvFile)
+		}
+	}
+	sort.Strings(rc.EnvFiles)
+	rc.EnvFiles = slices.Compact(rc.EnvFiles)
 	c := cfg.Checks
 	if c == nil {
 		return rc

@@ -35,8 +35,8 @@ checks:
       image: postgres:17-alpine
   egress:
     - registry.npmjs.org
-    - "*.github.com"
-    - api.example.com:443
+    - github.com
+    - api.example.com
 deployments:
   production:
     on:

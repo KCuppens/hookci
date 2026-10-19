@@ -100,7 +100,7 @@ export interface Checks {
     };
   };
   /**
-   * Extra hosts the jobs may reach through the egress proxy, as host, *.domain or host:port.
+   * Extra exact host names the jobs may reach through the egress proxy on port 443.
    *
    * @maxItems 64
    */

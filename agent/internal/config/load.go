@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"net"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
@@ -514,10 +516,7 @@ var egressPathRe = regexp.MustCompile(`^checks\.egress\[[0-9]+\]$`)
 func patternProblem(path, got, want string) (msg, fix string) {
 	switch {
 	case egressPathRe.MatchString(path):
-		if msg, fix := egressProblem(got); msg != "" {
-			return msg, fix
-		}
-		return fmt.Sprintf("%s is not a host name", quote(got)), "use a host such as registry.npmjs.org, *.example.com or api.example.com:443"
+		return egressProblem(got)
 	case strings.HasPrefix(path, "deployments.") && strings.HasSuffix(path, ".env_file"):
 		return fmt.Sprintf("env_file %s must be an absolute path", quote(got)), "use a path that starts with /, for example /etc/zeroci/production.env"
 	case strings.HasSuffix(path, ".memory"):
@@ -527,6 +526,75 @@ func patternProblem(path, got, want string) (msg, fix string) {
 	default:
 		return fmt.Sprintf("%s does not match the pattern %s", quote(got), want), ""
 	}
+}
+
+// egressProblem explains why a checks.egress entry fails the schema pattern.
+// The pattern admits only exact lowercase host names, the one form the egress
+// proxy's allow-list (egress.NewAllowList) accepts; it proxies port 443 only.
+func egressProblem(entry string) (msg, fix string) {
+	switch {
+	case entry == "":
+		return "an empty entry is not a host name", "remove it"
+	case entry == "*":
+		return "a bare * would allow every host", "list each exact host name the jobs need"
+	case strings.Contains(entry, "*"):
+		example := "api.example.com"
+		if domain, ok := strings.CutPrefix(entry, "*."); ok && !strings.Contains(domain, "*") {
+			example = "api." + strings.ToLower(domain)
+		}
+		return fmt.Sprintf("wildcard %s is not allowed; list each exact host name", quote(entry)),
+			"list every host the jobs reach by its full name, for example " + quote(example)
+	case strings.Contains(entry, "://"):
+		_, rest, _ := strings.Cut(entry, "://")
+		return fmt.Sprintf("%s has a scheme; egress takes host names", quote(entry)), egressHostFix(rest)
+	case strings.Contains(entry, "/"):
+		return fmt.Sprintf("%s has a path; egress takes host names", quote(entry)), egressHostFix(entry)
+	}
+	host, port := splitHostPort(entry)
+	if net.ParseIP(host) != nil {
+		return fmt.Sprintf("IP literal %s is not allowed; egress takes host names", quote(entry)),
+			"use the host name instead; the egress proxy resolves names itself"
+	}
+	if port != "" {
+		return fmt.Sprintf("%s has a port; egress takes host names and only port 443 is proxied", quote(entry)),
+			"use " + quote(strings.ToLower(host))
+	}
+	if lower := strings.ToLower(entry); lower != entry {
+		return fmt.Sprintf("%s must be lowercase", quote(entry)), "use " + quote(lower)
+	}
+	if i := strings.IndexFunc(entry, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '-'
+	}); i >= 0 {
+		r, _ := utf8.DecodeRuneInString(entry[i:])
+		return fmt.Sprintf("%s has %s; host names use only a-z, 0-9, . and -", quote(entry), quote(string(r))),
+			"use a host name such as registry.npmjs.org"
+	}
+	return fmt.Sprintf("%s is not a host name", quote(entry)),
+		"use a host name such as registry.npmjs.org; each dot-separated label starts and ends with a letter or digit, and the last starts with a letter"
+}
+
+// egressHostFix suggests the host inside an entry that carries a scheme or
+// path: everything before the first / with any port removed.
+func egressHostFix(s string) string {
+	s, _, _ = strings.Cut(s, "/")
+	if host, _ := splitHostPort(s); host != "" {
+		return "use " + quote(strings.ToLower(host))
+	}
+	return "use a host name such as registry.npmjs.org"
+}
+
+// splitHostPort splits host:port, accepting bracketed and bare IPv6.
+func splitHostPort(s string) (host, port string) {
+	if strings.HasPrefix(s, "[") {
+		if end := strings.IndexByte(s, ']'); end > 0 {
+			return s[1:end], strings.TrimPrefix(s[end+1:], ":")
+		}
+	}
+	if strings.Count(s, ":") == 1 {
+		host, port, _ = strings.Cut(s, ":")
+		return host, port
+	}
+	return s, ""
 }
 
 func unknownKeyFix(key string, allowed []string) string {

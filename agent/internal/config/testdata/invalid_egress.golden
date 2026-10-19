@@ -1,8 +1,18 @@
 invalid_egress.yml:7: error: checks.egress[0]: a bare * would allow every host
-  fix: list the hosts the jobs need, or use *.example.com for one domain
+  fix: list each exact host name the jobs need
 invalid_egress.yml:8: error: checks.egress[1]: IP literal "10.0.0.1" is not allowed; egress takes host names
   fix: use the host name instead; the egress proxy resolves names itself
 invalid_egress.yml:9: error: checks.egress[2]: IP literal "[2001:db8::1]:443" is not allowed; egress takes host names
   fix: use the host name instead; the egress proxy resolves names itself
 invalid_egress.yml:10: error: checks.egress[3]: "Registry.NPMjs.org" must be lowercase
   fix: use "registry.npmjs.org"
+invalid_egress.yml:11: error: checks.egress[4]: wildcard "*.github.com" is not allowed; list each exact host name
+  fix: list every host the jobs reach by its full name, for example "api.github.com"
+invalid_egress.yml:12: error: checks.egress[5]: "https://api.example.com/v1" has a scheme; egress takes host names
+  fix: use "api.example.com"
+invalid_egress.yml:13: error: checks.egress[6]: "api.example.com/v1" has a path; egress takes host names
+  fix: use "api.example.com"
+invalid_egress.yml:14: error: checks.egress[7]: "api_example.com" has "_"; host names use only a-z, 0-9, . and -
+  fix: use a host name such as registry.npmjs.org
+invalid_egress.yml:15: error: checks.egress[8]: "-bad.example.com" is not a host name
+  fix: use a host name such as registry.npmjs.org; each dot-separated label starts and ends with a letter or digit, and the last starts with a letter

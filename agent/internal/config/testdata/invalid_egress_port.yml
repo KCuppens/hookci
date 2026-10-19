@@ -5,5 +5,4 @@ checks:
       run: go test ./...
   egress:
     - api.example.com:443
-    - api.example.com:0
-    - api.example.com:70000
+    - registry.npmjs.org:8080

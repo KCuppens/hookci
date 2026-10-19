@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"net/url"
 	"os"
 	"path"
@@ -29,7 +28,6 @@ func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnost
 		diags = append(diags, checkCommands(c, li)...)
 		diags = append(diags, checkCachePaths(c.Setup, li)...)
 		diags = append(diags, checkLimits(c, li)...)
-		diags = append(diags, checkEgress(c.Egress, li)...)
 	}
 	diags = append(diags, checkTrust(cfg, opts, li)...)
 	diags = append(diags, checkRedact(cfg.Redact, li)...)
@@ -179,55 +177,6 @@ func checkLimits(c *Checks, li lineIndex) Diagnostics {
 		}
 	}
 	return diags
-}
-
-// checkEgress rejects egress entries that are not host names. The schema
-// pattern already refuses most of these; egressProblem also words those
-// schema failures.
-func checkEgress(entries []string, li lineIndex) Diagnostics {
-	var diags Diagnostics
-	for i, entry := range entries {
-		if msg, fix := egressProblem(entry); msg != "" {
-			diags = append(diags, li.errorf(joinIndex("checks.egress", i), fix, "%s", msg))
-		}
-	}
-	return diags
-}
-
-// egressProblem explains why entry is not a valid egress host, or returns
-// empty strings when it is.
-func egressProblem(entry string) (msg, fix string) {
-	if entry == "*" {
-		return "a bare * would allow every host", "list the hosts the jobs need, or use *.example.com for one domain"
-	}
-	host, port := splitHostPort(entry)
-	if net.ParseIP(host) != nil {
-		return fmt.Sprintf("IP literal %s is not allowed; egress takes host names", quote(entry)),
-			"use the host name instead; the egress proxy resolves names itself"
-	}
-	if lower := strings.ToLower(entry); lower != entry {
-		return fmt.Sprintf("%s must be lowercase", quote(entry)), "use " + quote(lower)
-	}
-	if port != "" {
-		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-			return fmt.Sprintf("port %s is out of range 1 to 65535", quote(port)), "use a port between 1 and 65535, or leave it out"
-		}
-	}
-	return "", ""
-}
-
-// splitHostPort splits host:port, accepting bracketed and bare IPv6.
-func splitHostPort(s string) (host, port string) {
-	if strings.HasPrefix(s, "[") {
-		if end := strings.IndexByte(s, ']'); end > 0 {
-			return s[1:end], strings.TrimPrefix(s[end+1:], ":")
-		}
-	}
-	if strings.Count(s, ":") == 1 {
-		host, port, _ = strings.Cut(s, ":")
-		return host, port
-	}
-	return s, ""
 }
 
 // checkTrust refuses trust: all except on a self-hosted hub with no

@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -20,7 +21,20 @@ func TestNodeAppEndToEnd(t *testing.T) {
 		t.Fatal("failed to get caller path")
 	}
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	nodeAppDir := filepath.Join(repoRoot, "examples", "node-app")
+	entries, err := os.ReadDir(filepath.Join(repoRoot, "examples", "node-app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(repoRoot, "examples", "node-app", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[e.Name()] = string(b)
+	}
+	// zeroci run executes the committed HEAD, so run a repository of its own.
+	nodeAppDir := cli.CommitWorkDir(t, files)
 
 	det, err := detect.DetectDir(nodeAppDir)
 	if err != nil {

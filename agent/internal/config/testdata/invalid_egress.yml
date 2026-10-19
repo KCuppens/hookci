@@ -8,3 +8,8 @@ checks:
     - 10.0.0.1
     - "[2001:db8::1]:443"
     - Registry.NPMjs.org
+    - "*.github.com"
+    - https://api.example.com/v1
+    - api.example.com/v1
+    - api_example.com
+    - -bad.example.com

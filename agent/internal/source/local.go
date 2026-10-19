@@ -63,7 +63,7 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 		fmt.Fprintf(l.Warn, "warning: working tree has uncommitted changes; zeroci runs the committed HEAD %s\n", sha[:7])
 	}
 
-	repo := "local/" + localName(filepath.Base(top))
+	repo := LocalRepo(top)
 	if _, err := l.Mirrors.Ensure(ctx, repo, top); err != nil {
 		return Checkout{}, err
 	}
@@ -81,8 +81,14 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 	return Checkout{Dir: dir, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start)}, nil
 }
 
-// localName maps a directory name onto the slug alphabet so any checkout
-// directory yields a valid "local/<name>" repo.
+// LocalRepo returns the "local/<name>" repo for a checkout directory. The
+// directory name is mapped onto the slug alphabet, so the repo always forms a
+// valid mirror path and cache trust domain.
+func LocalRepo(dir string) string {
+	return "local/" + localName(filepath.Base(dir))
+}
+
+// localName maps a directory name onto the slug alphabet.
 func localName(base string) string {
 	b := []byte(base)
 	for i, c := range b {

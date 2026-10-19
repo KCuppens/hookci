@@ -75,31 +75,6 @@ func TestTrustAllRefusedSelfHostedWithDeploy(t *testing.T) {
 	}
 }
 
-func TestEgressRejectsIP(t *testing.T) {
-	_, diags := parseString(t, readFixture(t, "invalid_egress.yml"), ParseOptions{})
-	for _, p := range []string{"checks.egress[1]", "checks.egress[2]"} {
-		if d := findDiag(t, diags, p); !strings.Contains(d.Message, "IP literal") {
-			t.Errorf("%s: diagnostic = %+v", p, d)
-		}
-	}
-	if d := findDiag(t, diags, "checks.egress[0]"); !strings.Contains(d.Message, "bare *") {
-		t.Errorf("bare * diagnostic = %+v", d)
-	}
-	if d := findDiag(t, diags, "checks.egress[3]"); d.Fix != `use "registry.npmjs.org"` {
-		t.Errorf("uppercase diagnostic = %+v", d)
-	}
-
-	_, diags = parseString(t, readFixture(t, "invalid_egress_port.yml"), ParseOptions{})
-	if len(diags) != 2 {
-		t.Fatalf("port diagnostics:\n%s", diags.Format("test.yml"))
-	}
-	for i, p := range []string{"checks.egress[1]", "checks.egress[2]"} {
-		if diags[i].Path != p || !strings.Contains(diags[i].Message, "out of range 1 to 65535") {
-			t.Errorf("diagnostic %d = %+v", i, diags[i])
-		}
-	}
-}
-
 func TestRedactInvalidRegex(t *testing.T) {
 	_, diags := parseString(t, readFixture(t, "invalid_redact.yml"), ParseOptions{})
 	if len(diags) != 2 {

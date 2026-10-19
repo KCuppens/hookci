@@ -18,8 +18,9 @@ const (
 
 // Outbox kinds written by the store. The kind is the protocol frame type.
 const (
-	KindEvent      = "event"
-	KindJobPlanned = "job_planned"
+	KindEvent       = "event"
+	KindJobPlanned  = "job_planned"
+	KindAnnotations = "annotations"
 )
 
 // OutboxItem is one queued frame for the hub. Seq is the frame's agent_seq.
@@ -132,27 +133,54 @@ func checkDirection(dir string) error {
 	return nil
 }
 
-// appendEvent writes ev as an "event" frame whose agent_seq is the row's seq:
-// it inserts a placeholder, reads the seq, then stores the real payload.
-func (s *Store) appendEvent(ctx context.Context, tx *sql.Tx, ev protocol.Event) error {
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO outbox (kind, payload, created_at) VALUES (?, x'', ?)`, KindEvent, s.timestamp())
+// AppendSeqFrame appends a frame of the given kind whose agent_seq equals its
+// outbox seq: build receives the seq and returns the message to marshal. It
+// returns the seq.
+func (s *Store) AppendSeqFrame(ctx context.Context, kind string, build func(seq int) any) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: append event: %w", err)
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
+	}
+	defer tx.Rollback()
+	seq, err := s.appendSeqFrame(ctx, tx, kind, build)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
+	}
+	return seq, nil
+}
+
+// appendEvent writes ev as an "event" frame whose agent_seq is the row's seq.
+func (s *Store) appendEvent(ctx context.Context, tx *sql.Tx, ev protocol.Event) error {
+	_, err := s.appendSeqFrame(ctx, tx, KindEvent, func(seq int) any {
+		ev.AgentSeq = seq
+		return ev
+	})
+	return err
+}
+
+// appendSeqFrame inserts a placeholder, reads the seq, then stores the frame
+// build makes for that seq, all inside tx.
+func (s *Store) appendSeqFrame(ctx context.Context, tx *sql.Tx, kind string, build func(seq int) any) (int64, error) {
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO outbox (kind, payload, created_at) VALUES (?, x'', ?)`, kind, s.timestamp())
+	if err != nil {
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
 	}
 	seq, err := res.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("store: append event: %w", err)
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
 	}
-	ev.AgentSeq = int(seq)
-	payload, err := protocol.Marshal(KindEvent, ev)
+	payload, err := protocol.Marshal(kind, build(int(seq)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE outbox SET payload = ? WHERE seq = ?`, payload, seq); err != nil {
-		return fmt.Errorf("store: append event: %w", err)
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
 	}
-	return nil
+	return seq, nil
 }
 
 // appendFrame writes msg as a frame of type kind inside tx.

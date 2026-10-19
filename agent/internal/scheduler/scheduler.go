@@ -32,7 +32,8 @@ type JobRunner interface {
 type JobOutcome struct {
 	State    store.JobState // success, failed or cancelled
 	ExitCode int
-	Reason   string // e.g. "timeout", "exit 1", "superseded by <sha>"
+	Reason   string   // e.g. "timeout", "exit 1", "superseded by <sha>"
+	Tail     []string // last log lines; the store keeps them on failed events
 }
 
 // Options configures a Scheduler.
@@ -580,7 +581,7 @@ func (s *Scheduler) settleJob(rs *runState, r result) {
 		}
 	}
 
-	upd := store.JobUpdate{Reason: reason, DurationMS: &r.dur}
+	upd := store.JobUpdate{Reason: reason, DurationMS: &r.dur, Tail: r.out.Tail}
 	if st == store.JobSuccess || st == store.JobFailed {
 		upd.ExitCode = &exit
 	}

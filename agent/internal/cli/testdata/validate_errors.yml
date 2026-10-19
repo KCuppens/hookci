@@ -9,7 +9,7 @@ checks:
       run: npm test
       needs: [lint, biuld]
   egress:
-    - registry.npmjs.org:99999
+    - registry.npmjs.org
 deployments:
   production:
     on:

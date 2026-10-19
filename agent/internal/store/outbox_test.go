@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
 func seqs(items []OutboxItem) []int64 {
@@ -68,6 +70,31 @@ func TestOutboxAckAndPending(t *testing.T) {
 	seq, err := s.AppendOutbox(ctx, "test", []byte("p6"))
 	if err != nil || seq != 6 {
 		t.Errorf("AppendOutbox after ack = %d, %v; want seq 6 (never reused)", seq, err)
+	}
+}
+
+func TestAppendSeqFrameStampsSeq(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	if _, err := s.AppendOutbox(ctx, "test", []byte("p1")); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := s.AppendSeqFrame(ctx, "annotations", func(seq int) any {
+		return protocol.Annotations{AgentSeq: seq, RunId: "r1", Job: "lint", Items: []protocol.AnnotationsItemsElem{}}
+	})
+	if err != nil || seq != 2 {
+		t.Fatalf("AppendSeqFrame = %d, %v; want seq 2", seq, err)
+	}
+	items, err := s.Pending(ctx, 1, 0)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("Pending = %v, %v", items, err)
+	}
+	var a protocol.Annotations
+	if err := protocol.Unmarshal(items[0].Payload, &a); err != nil {
+		t.Fatal(err)
+	}
+	if items[0].Kind != "annotations" || a.AgentSeq != 2 || a.Job != "lint" {
+		t.Errorf("item = %s %+v, want annotations frame with agent_seq 2", items[0].Kind, a)
 	}
 }
 

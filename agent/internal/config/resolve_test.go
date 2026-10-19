@@ -3,8 +3,23 @@ package config
 import (
 	"reflect"
 	"testing"
+	"testing/fstest"
 	"time"
 )
+
+func TestEnvFilesCollected(t *testing.T) {
+	src := oneJob + "deployments:\n" +
+		"  staging:\n    on:\n      push:\n        branch: dev\n    env_file: /etc/b.env\n" +
+		"  production:\n    on:\n      push:\n        branch: main\n    env_file: /etc/a.env\n"
+	fsys := fstest.MapFS{"etc/a.env": {Mode: 0o600}, "etc/b.env": {Mode: 0o600}}
+	cfg, _ := Parse([]byte(src), ParseOptions{FS: fsys})
+	if cfg == nil || cfg.Checks() == nil {
+		t.Fatal("Parse returned no checks")
+	}
+	if got, want := cfg.Checks().EnvFiles, []string{"/etc/a.env", "/etc/b.env"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("EnvFiles = %v, want %v", got, want)
+	}
+}
 
 func TestJobsTopoSorted(t *testing.T) {
 	src := `version: 1

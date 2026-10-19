@@ -72,11 +72,8 @@ func TestLogsFollowStopsOnCancel(t *testing.T) {
 
 func TestRunRefusesLockedStateDir(t *testing.T) {
 	ctx := context.Background()
-	workDir := t.TempDir()
+	workDir := CommitWorkDir(t, map[string]string{".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo ok\n"})
 	stateDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte("version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo ok\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	unlock, err := lockStateDir(stateDir)
 	if err != nil {
 		t.Fatalf("lockStateDir: %v", err)
@@ -101,10 +98,8 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 
 func TestRunAndInspectStatusAndLogs(t *testing.T) {
 	ctx := context.Background()
-	workDir := t.TempDir()
 	stateDir := filepath.Join(t.TempDir(), "state")
 
-	// Create .zeroci.yml
 	cfgContent := `version: 1
 checks:
   jobs:
@@ -114,9 +109,7 @@ checks:
       needs: [lint]
       run: echo "testing unit"
 `
-	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte(cfgContent), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	workDir := CommitWorkDir(t, map[string]string{".zeroci.yml": cfgContent})
 
 	// 1. Execute run
 	var stdout, stderr bytes.Buffer
@@ -190,7 +183,6 @@ checks:
 
 func TestRunFailingJob(t *testing.T) {
 	ctx := context.Background()
-	workDir := t.TempDir()
 	stateDir := filepath.Join(t.TempDir(), "state")
 
 	cfgContent := `version: 1
@@ -199,9 +191,7 @@ checks:
     broken:
       run: "false"
 `
-	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte(cfgContent), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	workDir := CommitWorkDir(t, map[string]string{".zeroci.yml": cfgContent})
 
 	var stdout, stderr bytes.Buffer
 	code := dispatch(ctx, []string{"run", "-s", stateDir, "--isolation", "none", workDir}, &stdout, &stderr)

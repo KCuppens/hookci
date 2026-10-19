@@ -11,8 +11,7 @@ import "unicode/utf8"
 // Check configuration: triggers, trust policy, limits, setup, jobs, services and
 // egress.
 type Checks struct {
-	// Extra hosts the jobs may reach through the egress proxy, as host, *.domain or
-	// host:port.
+	// Extra exact host names the jobs may reach through the egress proxy on port 443.
 	Egress []string `json:"egress,omitempty,omitzero" yaml:"egress,omitempty"`
 
 	// Fork pull requests: gated behind approval, or never run.
