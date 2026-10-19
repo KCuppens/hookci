@@ -88,14 +88,16 @@ export interface Session {
 	/** Installations GitHub reported this user can access. */
 	installationIds: number[];
 	githubUserId: number;
+	/** GitHub logins hold only letters, digits and hyphens, so they never contain the "." separator. */
+	githubLogin: string;
 }
 
 /**
  * Set-Cookie value for a session valid for 30 minutes from now. The value is
- * "<id>-<id>.<github user id>.<expires at ms>.<hmac>".
+ * "<id>-<id>.<github user id>.<github login>.<expires at ms>.<hmac>".
  */
 export async function issueSession(env: Env, session: Session, now: number): Promise<string> {
-	const body = `${session.installationIds.join("-")}.${session.githubUserId}.${now + SESSION_TTL_MS}`;
+	const body = `${session.installationIds.join("-")}.${session.githubUserId}.${session.githubLogin}.${now + SESSION_TTL_MS}`;
 	return setCookie(SESSION_COOKIE, `${body}.${await sign(env, `session.${body}`)}`, SESSION_TTL_MS / 1000);
 }
 
@@ -108,12 +110,12 @@ export async function readSession(
 ): Promise<Session | null> {
 	const value = readCookie(cookieHeader, SESSION_COOKIE);
 	if (!value) return null;
-	const [ids, user, expires, signature, ...rest] = value.split(".");
-	if (!ids || !user || !expires || !signature || rest.length > 0) return null;
-	const body = `${ids}.${user}.${expires}`;
+	const [ids, user, login, expires, signature, ...rest] = value.split(".");
+	if (!ids || !user || !login || !expires || !signature || rest.length > 0) return null;
+	const body = `${ids}.${user}.${login}.${expires}`;
 	if (!timingSafeEqual(signature, await sign(env, `session.${body}`))) return null;
 	if (Number(expires) <= now) return null;
 	const installationIds = ids.split("-").map(Number);
 	if (!installationIds.includes(installationId)) return null;
-	return { installationIds, githubUserId: Number(user) };
+	return { installationIds, githubUserId: Number(user), githubLogin: login };
 }

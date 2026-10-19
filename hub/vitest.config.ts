@@ -13,7 +13,7 @@ const testSecrets = {
   SLACK_CLIENT_ID: "test-slack-client-id",
   SLACK_CLIENT_SECRET: "test-slack-client-secret",
   SLACK_SIGNING_SECRET: "test-slack-signing-secret",
-  TOKEN_ENC_KEYS: JSON.stringify({ "1": testKey }),
+  TOKEN_ENC_KEYS: JSON.stringify({ current: 1, keys: { "1": testKey } }),
   STATE_SIGNING_KEY: "test-state-signing-key",
   LOG_SIGNING_KEYS: JSON.stringify({ "1": testKey }),
 };

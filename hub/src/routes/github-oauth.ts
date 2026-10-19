@@ -55,12 +55,12 @@ async function completeCallback(env: Env, clock: Clock, q: CallbackQuery): Promi
 				? accessible[0]
 				: undefined;
 	if (!chosen && (q.installationId !== undefined || accessible.length === 0)) throw new HubError("github_no_access", 403);
-	const { id: githubUserId } = await getUser(user);
+	const { id: githubUserId, login: githubLogin } = await getUser(user);
 	const cookies = [CLEAR_STATE_COOKIE];
 
 	if (!chosen) {
 		for (const inst of accessible) await syncInstallation(env, github, inst, clock.now());
-		const session = await issueSession(env, { installationIds: accessible.map((i) => i.id), githubUserId }, clock.now());
+		const session = await issueSession(env, { installationIds: accessible.map((i) => i.id), githubUserId, githubLogin }, clock.now());
 		return pickerPage(
 			accessible.map((i) => ({ id: i.id, accountLogin: i.account.login })),
 			[...cookies, session],
@@ -72,6 +72,7 @@ async function completeCallback(env: Env, clock: Clock, q: CallbackQuery): Promi
 		installationId: chosen.id,
 		accountLogin: chosen.account.login,
 		githubUserId,
+		githubLogin,
 		accessibleIds: accessible.map((i) => i.id),
 		cookies,
 		now: clock.now(),

@@ -1,6 +1,6 @@
 # zeroci-hub Worker. Secrets are set with `wrangler secret put` and typed in
-# src/env.ts; none belong in this file. Database ids are placeholders until
-# the Cloudflare resources are created (M1-29).
+# src/env.ts; none belong in this file. Database ids and SLACK_APP_ID are
+# placeholders until the Cloudflare resources and Slack Apps are created (M1-29).
 
 name = "zeroci-hub"
 main = "src/index.ts"
@@ -11,6 +11,7 @@ compatibility_flags = ["nodejs_compat"]
 HUB_ORIGIN = "https://ci.webuno.io"
 HUB_VERSION = "dev"
 GITHUB_APP_SLUG = "zeroci"
+SLACK_APP_ID = "A0000000000"
 
 [observability]
 enabled = true
@@ -52,6 +53,7 @@ name = "zeroci-hub-staging"
 HUB_ORIGIN = "https://ci-staging.webuno.io"
 HUB_VERSION = "dev"
 GITHUB_APP_SLUG = "zeroci-staging"
+SLACK_APP_ID = "A0000000001"
 
 [env.staging.observability]
 enabled = true

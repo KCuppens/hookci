@@ -1,11 +1,12 @@
 import type { Env } from "../env";
 import { reportError } from "../observability";
+import { reencryptTokens } from "./reencrypt";
 
-type CronTask = { name: string; run(env: Env): Promise<void> };
+type CronTask = { name: string; run(env: Env): Promise<unknown> };
 
 // Tasks per cron expression from wrangler.toml [triggers].
 const SCHEDULES: Record<string, readonly CronTask[]> = {
-	"*/5 * * * *": [],
+	"*/5 * * * *": [{ name: "reencrypt", run: reencryptTokens }],
 };
 
 /** Runs the tasks for cron in order; a failing task is reported and does not stop the rest. */

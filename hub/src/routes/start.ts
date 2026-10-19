@@ -18,7 +18,7 @@ import { createPairToken, PAIR_TOKEN_TTL_MS } from "../pairing/tokens";
 type AppContext = Context<{ Bindings: Env }>;
 
 /** The installation_id query parameter when it is a positive integer, else null. */
-function installationIdParam(c: AppContext): number | null {
+export function installationIdParam(c: AppContext): number | null {
 	const raw = c.req.query("installation_id") ?? "";
 	return /^[1-9][0-9]{0,15}$/.test(raw) ? Number(raw) : null;
 }
@@ -27,6 +27,7 @@ export interface FinishInstall {
 	installationId: number;
 	accountLogin: string;
 	githubUserId: number;
+	githubLogin: string;
 	/** Every installation the user can access; the new session covers them all. */
 	accessibleIds: number[];
 	/** Set-Cookie values to send besides the session. */
@@ -37,7 +38,11 @@ export interface FinishInstall {
 /** Mints the pair token for the installation and renders the success page with a fresh session cookie. */
 export async function finishInstall(env: Env, f: FinishInstall): Promise<Response> {
 	const { token } = await createPairToken(env, { installationId: f.installationId, createdByGithubId: f.githubUserId });
-	const session = await issueSession(env, { installationIds: f.accessibleIds, githubUserId: f.githubUserId }, f.now);
+	const session = await issueSession(
+		env,
+		{ installationIds: f.accessibleIds, githubUserId: f.githubUserId, githubLogin: f.githubLogin },
+		f.now,
+	);
 	logEvent("github_install", { installation_id: f.installationId, github_user_id: f.githubUserId });
 	return installedPage({
 		installationId: f.installationId,
@@ -59,6 +64,7 @@ async function finishPicked(env: Env, clock: Clock, installationId: number, cook
 			installationId,
 			accountLogin: installation.account_login,
 			githubUserId: session.githubUserId,
+			githubLogin: session.githubLogin,
 			accessibleIds: session.installationIds,
 			cookies: [],
 			now,

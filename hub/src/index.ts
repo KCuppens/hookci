@@ -10,6 +10,7 @@ import { githubWebhook } from "./routes/github-webhook";
 import { agentConnect } from "./routes/agent-connect";
 import { pairRedeem } from "./routes/pair";
 import { githubOAuthCallback } from "./routes/github-oauth";
+import { slackInstall, slackOAuthCallback } from "./routes/slack-install";
 import { start, startStatus } from "./routes/start";
 import "./webhook/installation";
 
@@ -34,6 +35,8 @@ app.post("/v1/pair/redeem", pairRedeem);
 app.get("/start", start);
 app.get("/start/status", startStatus);
 app.get("/github/oauth/callback", githubOAuthCallback);
+app.get("/slack/install", slackInstall);
+app.get("/slack/oauth/callback", slackOAuthCallback);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);
