@@ -153,6 +153,11 @@ export class GitHubClient {
 		return new Requester(`Bearer ${userToken}`, this.fetcher, this.now);
 	}
 
+	/** Authenticated as the app's OAuth client (Basic client id and secret), for /applications/{client_id} endpoints. */
+	oauthApp(): GitHubRequester {
+		return new Requester(`Basic ${btoa(`${this.env.GITHUB_CLIENT_ID}:${this.env.GITHUB_CLIENT_SECRET}`)}`, this.fetcher, this.now);
+	}
+
 	/**
 	 * A fresh contents:read token for one repository, handed to the agent for
 	 * a single checkout. Never cached: every run gets its own token.

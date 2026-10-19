@@ -7,7 +7,13 @@ export const S = {
 		slowDown: "Slow down: too many /zeroci commands in this workspace, try again in a minute.",
 		updating: "ZeroCI is updating, try again in a minute.",
 		failed: "Something went wrong running that. Try again in a minute.",
-		help: "Usage: /zeroci <command>. Commands are not available yet.",
+		help: "Usage: /zeroci <command>. Available now: `/zeroci me` links your GitHub account.",
+		linkedAs: (login: string) => `You are linked as ${login}. Run \`/zeroci me unlink\` to remove.`,
+		linkPrompt: "Link your GitHub account so ZeroCI can check your permissions on repositories. The button works once and expires in 10 minutes.",
+		linkButton: "Link your GitHub account",
+		unlinked: (login: string) => `Unlinked ${login}. Run \`/zeroci me\` to link again.`,
+		notLinkedNothing: "You have no linked GitHub account. Run `/zeroci me` to link one.",
+		notLinked: "Link your GitHub account first: run `/zeroci me`.",
 	},
 	agentProtocolUnsupported: (version: string, min: number, max: number) =>
 		`Agent protocol ${version} is not supported; this hub accepts ${min} to ${max}.`,
@@ -50,6 +56,8 @@ export const S = {
 		slackOpenApp: "Open ZeroCI in Slack",
 		slackGridTitle: "Enterprise Grid is not supported yet",
 		slackGridBody: "ZeroCI cannot be installed on an Enterprise Grid organization yet, so nothing was saved. Install it on a single Slack workspace instead.",
+		linkedTitle: "GitHub account linked",
+		linkedAs: (login: string) => `Linked as ${login}. You can close this tab.`,
 		errors: {
 			oauth_state_invalid: "This sign-in link expired or was already used.",
 			github_no_access: "Your GitHub account cannot access that installation.",

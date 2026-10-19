@@ -52,6 +52,31 @@ function isPayload(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The nonce of state when its signature holds for kind; throws oauth_state_invalid otherwise. */
+async function signedNonce(env: Env, kind: OAuthKind, state: string): Promise<string> {
+	const [nonce, signature, ...rest] = state.split(".");
+	if (!nonce || !signature || rest.length > 0) throw new HubError("oauth_state_invalid", 400);
+	if (!timingSafeEqual(signature, await sign(env, `${kind}.${nonce}`))) throw new HubError("oauth_state_invalid", 400);
+	return nonce;
+}
+
+/**
+ * Checks, without using it, that state is a known, unused, unexpired state of
+ * kind, and returns the Set-Cookie value binding this browser to it until it
+ * expires. For a state issued outside the browser, as in a Slack link.
+ * Throws oauth_state_invalid (400) otherwise.
+ */
+export async function checkState(env: Env, kind: OAuthKind, state: string, now: number): Promise<string> {
+	const nonce = await signedNonce(env, kind, state);
+	const row = await env.DB.prepare(
+		"SELECT expires_at FROM oauth_states WHERE nonce_hash = ?1 AND kind = ?2 AND used_at IS NULL AND expires_at > ?3",
+	)
+		.bind(await sha256Hex(nonce), kind, now)
+		.first<{ expires_at: number }>();
+	if (!row) throw new HubError("oauth_state_invalid", 400);
+	return setCookie(STATE_COOKIE, nonce, Math.ceil((row.expires_at - now) / 1000));
+}
+
 /**
  * Marks the state used and returns its payload. Throws oauth_state_invalid
  * (400) on a bad signature, another kind, a cookie that does not hold the
@@ -65,9 +90,7 @@ export async function consumeState(
 	now: number,
 ): Promise<Record<string, unknown>> {
 	const invalid = new HubError("oauth_state_invalid", 400);
-	const [nonce, signature, ...rest] = state.split(".");
-	if (!nonce || !signature || rest.length > 0) throw invalid;
-	if (!timingSafeEqual(signature, await sign(env, `${kind}.${nonce}`))) throw invalid;
+	const nonce = await signedNonce(env, kind, state);
 	if (!timingSafeEqual(readCookie(cookieHeader, STATE_COOKIE) ?? "", nonce)) throw invalid;
 	const row = await env.DB.prepare(
 		`UPDATE oauth_states SET used_at = ?3

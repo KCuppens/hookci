@@ -18,9 +18,17 @@ export interface ButtonElement {
 	style?: "primary" | "danger";
 }
 
+/** A button that opens url in the browser; Slack needs no handler for it. */
+export interface LinkButtonElement {
+	type: "button";
+	text: { type: "plain_text"; text: string; emoji: true };
+	url: string;
+	style?: "primary" | "danger";
+}
+
 export interface ActionsBlock {
 	type: "actions";
-	elements: ButtonElement[];
+	elements: (ButtonElement | LinkButtonElement)[];
 }
 
 export function section(text: string): SectionBlock {
@@ -35,6 +43,10 @@ export function button(actionId: string, text: string, value: string, style?: "p
 	return { type: "button", action_id: actionId, text: { type: "plain_text", text, emoji: true }, value, ...(style ? { style } : {}) };
 }
 
-export function actions(...buttons: ButtonElement[]): ActionsBlock {
+export function linkButton(text: string, url: string, style?: "primary" | "danger"): LinkButtonElement {
+	return { type: "button", text: { type: "plain_text", text, emoji: true }, url, ...(style ? { style } : {}) };
+}
+
+export function actions(...buttons: (ButtonElement | LinkButtonElement)[]): ActionsBlock {
 	return { type: "actions", elements: buttons };
 }

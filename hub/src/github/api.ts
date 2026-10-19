@@ -63,6 +63,16 @@ export async function getUser(user: GitHubRequester): Promise<User> {
 	return (await user.request<User>("GET", "/user")).data;
 }
 
+/** Revokes a user-to-server token (oauthApp requester); a token GitHub no longer knows (404) counts as revoked. */
+export async function deleteUserToken(oauthApp: GitHubRequester, clientId: string, userToken: string): Promise<void> {
+	try {
+		await oauthApp.request("DELETE", `/applications/${clientId}/token`, { access_token: userToken });
+	} catch (err) {
+		if (err instanceof GitHubApiError && err.githubStatus === 404) return;
+		throw err;
+	}
+}
+
 /** Repositories the installation token can access. */
 export function listInstallationRepos(inst: GitHubRequester): Promise<Repository[]> {
 	return paginate<"repositories", Repository>(inst, "/installation/repositories", "repositories");

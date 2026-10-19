@@ -7,10 +7,19 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { defaultFetcher } from "../http";
 import { reportError } from "../observability";
+import "../slack/commands";
 import { type SlackActionRequest, type SlackCommandRequest, type SlackReply, actionFor, commandFor } from "../slack/registry";
 import { S } from "../strings";
 
 const FAILED_REPLY: SlackReply = { response_type: "ephemeral", text: S.slack.failed };
+const NOT_LINKED_REPLY: SlackReply = { response_type: "ephemeral", text: S.slack.notLinked };
+
+/** The reply for a handler that threw: the /zeroci me prompt when requireLinkedUser refused the caller, else a reported failure. */
+function errorReply(err: unknown, ctx: Record<string, string>): SlackReply {
+	if (err instanceof HubError && err.code === "not_linked") return NOT_LINKED_REPLY;
+	reportError(err, ctx);
+	return FAILED_REPLY;
+}
 
 /** Calls `POST https://do/<path>` on the team's SlackWorkspaceDO, which answers once the handler ran. */
 export async function callSlackDo(
@@ -39,8 +48,7 @@ export class SlackWorkspaceDO extends DurableObject<Env> {
 		try {
 			reply = await handler({ ...req, env: this.env });
 		} catch (err) {
-			reportError(err, { team_id: req.teamId, command: req.text.trim().split(/\s+/, 1)[0] ?? "" });
-			reply = FAILED_REPLY;
+			reply = errorReply(err, { team_id: req.teamId, command: req.text.trim().split(/\s+/, 1)[0] ?? "" });
 		}
 		await this.postReply(req.teamId, req.responseUrl, reply);
 		return new Response(null, { status: 204 });
@@ -53,8 +61,7 @@ export class SlackWorkspaceDO extends DurableObject<Env> {
 		try {
 			reply = await handler({ ...req, env: this.env });
 		} catch (err) {
-			reportError(err, { team_id: req.teamId, action_id: req.actionId });
-			reply = FAILED_REPLY;
+			reply = errorReply(err, { team_id: req.teamId, action_id: req.actionId });
 		}
 		if (reply !== null && req.responseUrl !== null) await this.postReply(req.teamId, req.responseUrl, reply);
 		return new Response(null, { status: 204 });
