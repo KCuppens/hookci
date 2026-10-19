@@ -75,8 +75,8 @@ type runState struct {
 	failedJob string
 
 	// stopState is set when the run must end early: failed (supersede,
-	// cancel, setup failure) or interrupted (Close). Queued jobs then become
-	// stopJobs and stopReason is recorded on the run.
+	// setup failure), cancelled (Cancel) or interrupted (Close). Queued jobs
+	// then become stopJobs and stopReason is recorded on the run.
 	stopState  store.RunState
 	stopReason string
 	stopJobs   store.JobState
@@ -279,7 +279,7 @@ func createdBefore(a, b store.Run) bool {
 }
 
 // Cancel cancels a run: queued -> cancelled; running -> running jobs
-// cancelled, queued jobs skipped, run failed with reason. Deploy runs in
+// cancelled, queued jobs skipped, run cancelled with reason. Deploy runs in
 // running/verifying/rolling_back return ErrDeployNotCancellable. Cancelling a
 // run that already ended or is already stopping is a no-op.
 func (s *Scheduler) Cancel(ctx context.Context, runID, reason string) error {
@@ -307,7 +307,7 @@ func (s *Scheduler) Cancel(ctx context.Context, runID, reason string) error {
 	case rs.run.Kind == kindDeploy:
 		return ErrDeployNotCancellable
 	default:
-		s.stop(rs, store.RunFailed, reason, store.JobSkipped)
+		s.stop(rs, store.RunCancelled, reason, store.JobSkipped)
 	}
 	s.wake()
 	return nil

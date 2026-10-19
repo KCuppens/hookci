@@ -78,7 +78,7 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 	// here and the Source interface has no teardown hook to hold it longer.
 	release()
 
-	return Checkout{Dir: dir, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start)}, nil
+	return Checkout{Dir: dir, Repo: repo, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start)}, nil
 }
 
 // LocalRepo returns the "local/<name>" repo for a checkout directory. The

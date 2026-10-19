@@ -147,14 +147,14 @@ func TestCancelRunningCheck(t *testing.T) {
 	if err := h.s.Cancel(h.ctx, "r", "user cancelled"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
-	if st := h.wait("r"); st != store.RunFailed {
-		t.Fatalf("run = %s, want failed", st)
+	if st := h.wait("r"); st != store.RunCancelled {
+		t.Fatalf("run = %s, want cancelled", st)
 	}
-	h.wantRun("r", store.RunFailed, "user cancelled")
+	h.wantRun("r", store.RunCancelled, "user cancelled")
 	h.wantJob("r", "a", store.JobCancelled, "user cancelled")
 	h.wantJob("r", "b", store.JobSkipped, "user cancelled")
-	if got := h.runner.Finishes("r"); !slices.Equal(got, []store.RunState{store.RunFailed}) {
-		t.Errorf("FinishRun calls = %v, want [failed]", got)
+	if got := h.runner.Finishes("r"); !slices.Equal(got, []store.RunState{store.RunCancelled}) {
+		t.Errorf("FinishRun calls = %v, want [cancelled]", got)
 	}
 }
 

@@ -52,7 +52,8 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "zeroci-state")
 
 	var stdout, stderr bytes.Buffer
-	code := cli.Main([]string{"run", "-s", stateDir, "--isolation", "none", nodeAppDir}, &stdout, &stderr)
+	t.Chdir(nodeAppDir)
+	code := cli.Main([]string{"--state-dir", stateDir, "--isolation", "none", "run"}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("expected ExitOK (%d), got %d (stderr: %s, stdout: %s)",
 			cli.ExitOK, code, stderr.String(), stdout.String())
@@ -69,7 +70,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	// Verify status command on state directory
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Main([]string{"status", "-s", stateDir}, &stdout, &stderr)
+	code = cli.Main([]string{"--state-dir", stateDir, "status"}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("status failed: %d (stderr: %s)", code, stderr.String())
 	}
@@ -87,7 +88,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	// Verify logs for test job
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Main([]string{"logs", "-s", stateDir, runID, "test"}, &stdout, &stderr)
+	code = cli.Main([]string{"--state-dir", stateDir, "logs", runID, "test"}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("logs failed: %d (stderr: %s)", code, stderr.String())
 	}

@@ -1,9 +1,8 @@
 // Package cli implements the zeroci command-line interface: argument
 // parsing, subcommand dispatch, and help/version output.
 //
-// Subcommands live in the commands map below, one entry per command. Later
-// tickets add commands (build, deploy, status, ...) by adding one map entry
-// each; dispatch and help generation here do not change.
+// Subcommands live in the commands map below, one entry per command. Global
+// flags (--state-dir, --slots, --isolation, -v) come before the command.
 package cli
 
 import (
@@ -22,45 +21,52 @@ import (
 
 type command struct {
 	summary string
-	run     func(ctx context.Context, args []string, stdout, stderr io.Writer) int
+	run     func(ctx context.Context, d deps, args []string, stdout, stderr io.Writer) int
+}
+
+// noDeps adapts a command that needs no host deps.
+func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Writer) int) func(context.Context, deps, []string, io.Writer, io.Writer) int {
+	return func(ctx context.Context, _ deps, args []string, stdout, stderr io.Writer) int {
+		return run(ctx, args, stdout, stderr)
+	}
 }
 
 func commandTable() map[string]command {
 	return map[string]command{
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
-			run:     runDetect,
+			run:     noDeps(runDetect),
 		},
 		"help": {
 			summary: "show help for zeroci",
-			run: func(_ context.Context, _ []string, stdout, _ io.Writer) int {
+			run: func(_ context.Context, _ deps, _ []string, stdout, _ io.Writer) int {
 				printUsage(stdout)
 				return ExitOK
 			},
 		},
 		"init": {
 			summary: "scaffold a .zeroci.yml config file for the project",
-			run:     runInit,
+			run:     noDeps(runInit),
 		},
 		"logs": {
-			summary: "view or tail check job logs",
-			run:     runLogs,
+			summary: "print or follow job logs: logs <run> [job] [-f]",
+			run:     cmdLogs,
 		},
 		"run": {
-			summary: "execute check jobs locally",
-			run:     runRun,
+			summary: "run the checks of the current repo's HEAD: run [job]",
+			run:     cmdRun,
 		},
 		"status": {
-			summary: "show run and job status",
-			run:     runStatus,
+			summary: "list recent runs, or one run's jobs: status [run] [--json]",
+			run:     cmdStatus,
 		},
 		"validate": {
 			summary: "validate a zeroci configuration file",
-			run:     runValidate,
+			run:     noDeps(runValidate),
 		},
 		"version": {
 			summary: "print the zeroci version",
-			run: func(_ context.Context, _ []string, stdout, _ io.Writer) int {
+			run: func(_ context.Context, _ deps, _ []string, stdout, _ io.Writer) int {
 				fmt.Fprintln(stdout, version.String())
 				return ExitOK
 			},
@@ -78,40 +84,45 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	return dispatch(ctx, args, stdout, stderr)
 }
 
-// dispatch parses global flags and runs the named subcommand with ctx.
+// dispatch parses the global flags and runs the named command with ctx and
+// the host deps.
 func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }
 
-	if err := fs.Parse(args); err != nil {
+	g, rest, err := parseGlobals(fs, args, os.Getenv)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitOK
 		}
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
 		printUsage(stderr)
 		return ExitUsage
 	}
-
-	rest := fs.Args()
 	if len(rest) == 0 {
 		printUsage(stdout)
 		return ExitOK
 	}
 
 	name := rest[0]
-	cmds := commandTable()
-	cmd, ok := cmds[name]
+	cmd, ok := commandTable()[name]
 	if !ok {
 		fmt.Fprintf(stderr, "zeroci: unknown command %q\n", name)
 		printUsage(stderr)
 		return ExitUsage
 	}
-	return cmd.run(ctx, rest[1:], stdout, stderr)
+	return cmd.run(ctx, defaultDeps(g, stderr), rest[1:], stdout, stderr)
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: zeroci <command> [arguments]")
+	fmt.Fprintln(w, "usage: zeroci [global flags] <command> [arguments]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "global flags:")
+	fmt.Fprintln(w, "  --state-dir DIR   state directory (default $ZEROCI_STATE_DIR, $XDG_STATE_HOME/zeroci or ~/.local/state/zeroci)")
+	fmt.Fprintln(w, "  --slots N         parallel job slots (default half the CPUs, at least 1)")
+	fmt.Fprintln(w, "  --isolation MODE  job isolation: auto, systemd or none (default auto)")
+	fmt.Fprintln(w, "  -v                print step events and mirror job output")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
 

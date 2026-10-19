@@ -50,7 +50,8 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	}
 	defer logFile.Close()
 	output := func() string { b, _ := os.ReadFile(logFile.Name()); return string(b) }
-	agent := exec.Command(bin, "run", "-s", stateDir, "--isolation", "systemd", work)
+	agent := exec.Command(bin, "--state-dir", stateDir, "--isolation", "systemd", "run")
+	agent.Dir = work
 	agent.Stdout, agent.Stderr = logFile, logFile
 	if err := agent.Start(); err != nil {
 		t.Fatalf("start zeroci run: %v", err)

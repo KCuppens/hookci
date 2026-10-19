@@ -274,8 +274,7 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 
 // checkout materialises the run into Src(). Mirrored repos get a shared
 // clone whose release FinishRun calls; local/ repos, and every repo when
-// Mirrors is nil, go through Source. A local run's stored SHA is not a
-// commit, so Source checks out the working tree's HEAD instead.
+// Mirrors is nil, go through Source.
 func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 	run := rs.run
 	if e.o.Mirrors != nil && !strings.HasPrefix(run.Repo, "local/") {
@@ -287,11 +286,7 @@ func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 		rs.logf("checkout %s %s", run.Repo, run.SHA)
 		return nil
 	}
-	req := source.Request{Repo: run.Repo, SHA: run.SHA, Ref: run.Ref}
-	if run.Event == "local" {
-		req.SHA = ""
-	}
-	co, err := e.o.Source.Checkout(ctx, req, rs.dir.Src())
+	co, err := e.o.Source.Checkout(ctx, source.Request{Repo: run.Repo, SHA: run.SHA, Ref: run.Ref}, rs.dir.Src())
 	if err != nil {
 		return err
 	}

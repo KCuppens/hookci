@@ -27,6 +27,7 @@ type Request struct {
 
 // Checkout describes a materialised working tree.
 type Checkout struct {
+	Repo     string // the checked-out repo; Local fills "local/<basename of the toplevel>"
 	Dir      string
 	SHA      string
 	Ref      string
