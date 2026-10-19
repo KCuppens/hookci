@@ -26,7 +26,7 @@ type DAG struct {
 }
 
 // BuildDAG creates a DAG from the provided check jobs map.
-func BuildDAG(checks config.ConfigChecks) (*DAG, error) {
+func BuildDAG(checks config.ChecksJobs) (*DAG, error) {
 	dag := &DAG{
 		Nodes: make(map[string]*Node, len(checks)),
 	}

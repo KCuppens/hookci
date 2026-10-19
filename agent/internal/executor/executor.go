@@ -91,9 +91,10 @@ func (e *Executor) ExecuteRun(
 	domain egress.TrustDomain,
 	isProtected bool,
 ) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
+	if cfg == nil || cfg.Checks == nil {
+		return fmt.Errorf("config has no checks")
 	}
+	checks := cfg.Checks
 
 	// 1. Prepare run-level service directories and environment
 	var (
@@ -101,21 +102,19 @@ func (e *Executor) ExecuteRun(
 		runningServices []*services.Service
 	)
 
-	if e.services != nil && len(cfg.Services) > 0 {
+	if e.services != nil && checks.Services != nil && checks.Services.Postgres != nil {
 		serviceDir := filepath.Join(e.stateDir, "runs", runID, "services")
 		if err := os.MkdirAll(serviceDir, 0o755); err != nil {
 			return fmt.Errorf("create service dir: %w", err)
 		}
 
-		for name, sCfg := range cfg.Services {
-			svc, err := e.services.Start(ctx, runID, name, sCfg, serviceDir)
-			if err != nil {
-				return fmt.Errorf("start service %s: %w", name, err)
-			}
-			runningServices = append(runningServices, svc)
-			for k, v := range svc.Env {
-				serviceEnv = append(serviceEnv, fmt.Sprintf("%s=%s", k, v))
-			}
+		svc, err := e.services.Start(ctx, runID, *checks.Services.Postgres, serviceDir)
+		if err != nil {
+			return fmt.Errorf("start service postgres: %w", err)
+		}
+		runningServices = append(runningServices, svc)
+		for k, v := range svc.Env {
+			serviceEnv = append(serviceEnv, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
 
@@ -133,16 +132,20 @@ func (e *Executor) ExecuteRun(
 
 	redactor := redact.New(e.secrets...)
 
-	// 2. Restore caches before setup and checks
-	if e.cache != nil && len(cfg.Caches) > 0 {
-		for _, c := range cfg.Caches {
-			destPath := filepath.Join(workDir, c.Path)
-			_, _ = e.cache.Restore(ctx, domain, c.Key, destPath)
+	// 2. Restore setup step caches before setup and checks
+	if e.cache != nil {
+		for _, step := range checks.Setup {
+			if step.Cache == nil {
+				continue
+			}
+			for _, p := range step.Cache.Paths {
+				_, _ = e.cache.Restore(ctx, domain, cacheKey(step.Cache, p), filepath.Join(workDir, p))
+			}
 		}
 	}
 
 	// 3. Run setup commands if present
-	if len(cfg.Setup) > 0 {
+	if len(checks.Setup) > 0 {
 		setupLogPath := logpipe.LogPath(e.stateDir, runID, "setup")
 		setupPipe, err := logpipe.New(setupLogPath, redactor)
 		if err != nil {
@@ -150,11 +153,11 @@ func (e *Executor) ExecuteRun(
 		}
 		defer setupPipe.Close()
 
-		for _, cmdStr := range cfg.Setup {
+		for _, step := range checks.Setup {
 			spec := isolation.Spec{
 				RunID:          runID,
 				JobName:        "setup",
-				Command:        []string{"sh", "-c", cmdStr},
+				Command:        []string{"sh", "-c", step.Run},
 				Dir:            workDir,
 				Env:            serviceEnv,
 				Stdout:         setupPipe,
@@ -168,13 +171,13 @@ func (e *Executor) ExecuteRun(
 				return fmt.Errorf("setup execution error: %w", err)
 			}
 			if res.ExitCode != 0 {
-				return fmt.Errorf("setup command failed with exit code %d: %s", res.ExitCode, cmdStr)
+				return fmt.Errorf("setup command failed with exit code %d: %s", res.ExitCode, step.Run)
 			}
 		}
 	}
 
 	// 4. Job runner implementation
-	runner := scheduler.RunnerFunc(func(jobCtx context.Context, rID string, jobName string, job config.CheckJob) scheduler.JobResult {
+	runner := scheduler.RunnerFunc(func(jobCtx context.Context, rID string, jobName string, job config.Job) scheduler.JobResult {
 		logPath := logpipe.LogPath(e.stateDir, rID, jobName)
 		pipe, err := logpipe.New(logPath, redactor)
 		if err != nil {
@@ -186,19 +189,12 @@ func (e *Executor) ExecuteRun(
 		execCtx, cancel := context.WithTimeout(jobCtx, timeout)
 		defer cancel()
 
-		// Prepare job environment
-		var jobEnvs []string
-		jobEnvs = append(jobEnvs, serviceEnv...)
-		for k, v := range job.Env {
-			jobEnvs = append(jobEnvs, fmt.Sprintf("%s=%s", k, v))
-		}
-
 		spec := isolation.Spec{
 			RunID:          rID,
 			JobName:        jobName,
 			Command:        []string{"sh", "-c", job.Run},
 			Dir:            workDir,
-			Env:            jobEnvs,
+			Env:            serviceEnv,
 			Stdout:         pipe,
 			Stderr:         pipe,
 			ReadWritePaths: []string{workDir},
@@ -215,17 +211,27 @@ func (e *Executor) ExecuteRun(
 
 	// 5. Run scheduler across checks DAG
 	sched := scheduler.New(e.store, runner, scheduler.Options{Slots: e.slots})
-	if err := sched.Run(ctx, runID, cfg.Checks); err != nil {
+	if err := sched.Run(ctx, runID, checks.Jobs); err != nil {
 		return err
 	}
 
-	// 6. Save caches on success
-	if e.cache != nil && len(cfg.Caches) > 0 {
-		for _, c := range cfg.Caches {
-			srcPath := filepath.Join(workDir, c.Path)
-			_ = e.cache.Save(ctx, domain, isProtected, c.Key, srcPath)
+	// 6. Save setup step caches on success
+	if e.cache != nil {
+		for _, step := range checks.Setup {
+			if step.Cache == nil {
+				continue
+			}
+			for _, p := range step.Cache.Paths {
+				_ = e.cache.Save(ctx, domain, isProtected, cacheKey(step.Cache, p), filepath.Join(workDir, p))
+			}
 		}
 	}
 
 	return nil
+}
+
+// cacheKey names the cache entry for one path of a setup step cache. The key
+// files are named, not hashed.
+func cacheKey(c *config.SetupStepCache, path string) string {
+	return strings.Join(c.Key, "+") + "/" + path
 }

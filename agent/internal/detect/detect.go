@@ -77,6 +77,13 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func newConfig(setup []config.SetupStep, jobs config.ChecksJobs) *config.Config {
+	return &config.Config{ZeroCIConfig: config.ZeroCIConfig{
+		Version: 1,
+		Checks:  &config.Checks{Setup: setup, Jobs: jobs},
+	}}
+}
+
 // detectGo detects Go projects via go.mod.
 func detectGo(dir string) (*Result, error) {
 	goModPath := filepath.Join(dir, "go.mod")
@@ -84,27 +91,17 @@ func detectGo(dir string) (*Result, error) {
 		return nil, nil
 	}
 
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   []string{"go mod download"},
-		Checks: config.ConfigChecks{
-			"fmt": config.CheckJob{
-				Run: "test -z \"$(gofmt -l .)\"",
-			},
-			"vet": config.CheckJob{
-				Run: "go vet ./...",
-			},
-			"test": config.CheckJob{
-				Run: "go test ./...",
-			},
+	cfg := newConfig(
+		[]config.SetupStep{{
+			Run:   "go mod download",
+			Cache: &config.SetupStepCache{Key: []string{"go.sum"}, Paths: []string{"go.sum"}},
+		}},
+		config.ChecksJobs{
+			"fmt":  {Run: "test -z \"$(gofmt -l .)\""},
+			"vet":  {Run: "go vet ./..."},
+			"test": {Run: "go test ./..."},
 		},
-		Caches: config.ConfigCaches{
-			"go-mod": config.CacheConfig{
-				Path: "go.sum",
-				Key:  "go.sum",
-			},
-		},
-	}
+	)
 
 	return &Result{
 		Ecosystem: EcosystemGo,
@@ -119,26 +116,11 @@ func detectRust(dir string) (*Result, error) {
 		return nil, nil
 	}
 
-	cfg := &config.Config{
-		Version: 1,
-		Checks: config.ConfigChecks{
-			"fmt": config.CheckJob{
-				Run: "cargo fmt --check",
-			},
-			"check": config.CheckJob{
-				Run: "cargo check",
-			},
-			"test": config.CheckJob{
-				Run: "cargo test",
-			},
-		},
-		Caches: config.ConfigCaches{
-			"target": config.CacheConfig{
-				Path: "target",
-				Key:  "Cargo.lock",
-			},
-		},
-	}
+	cfg := newConfig(nil, config.ChecksJobs{
+		"fmt":   {Run: "cargo fmt --check"},
+		"check": {Run: "cargo check"},
+		"test":  {Run: "cargo test"},
+	})
 
 	return &Result{
 		Ecosystem: EcosystemRust,
@@ -188,24 +170,16 @@ func detectNode(dir string) (*Result, error) {
 }
 
 func detectPnpmTurbo(dir string, pkg packageJSON, hasTurbo bool) (*Result, error) {
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   []string{"pnpm install --frozen-lockfile"},
-		Checks:  make(config.ConfigChecks),
-		Caches: config.ConfigCaches{
-			"pnpm": config.CacheConfig{
-				Path: ".pnpm-store",
-				Key:  "pnpm-lock.yaml",
-			},
-		},
+	step := config.SetupStep{
+		Run:   "pnpm install --frozen-lockfile",
+		Cache: &config.SetupStepCache{Key: []string{"pnpm-lock.yaml"}, Paths: []string{".pnpm-store"}},
 	}
+	jobs := make(config.ChecksJobs)
 
 	tasks := make(map[string]bool)
 	if hasTurbo {
-		cfg.Caches["turbo"] = config.CacheConfig{
-			Path: ".turbo",
-			Key:  "turbo.json",
-		}
+		step.Cache.Key = append(step.Cache.Key, "turbo.json")
+		step.Cache.Paths = append(step.Cache.Paths, ".turbo")
 		turboData, err := os.ReadFile(filepath.Join(dir, "turbo.json"))
 		if err == nil {
 			var tj turboJSON
@@ -226,11 +200,11 @@ func detectPnpmTurbo(dir string, pkg packageJSON, hasTurbo bool) (*Result, error
 
 	hasAny := false
 	if tasks["lint"] {
-		cfg.Checks["lint"] = config.CheckJob{Run: "pnpm turbo run lint"}
+		jobs["lint"] = config.Job{Run: "pnpm turbo run lint"}
 		hasAny = true
 	}
 	if tasks["typecheck"] {
-		cfg.Checks["typecheck"] = config.CheckJob{Run: "pnpm turbo run typecheck"}
+		jobs["typecheck"] = config.Job{Run: "pnpm turbo run typecheck"}
 		hasAny = true
 	}
 	if tasks["test"] || tasks["unit"] {
@@ -238,17 +212,18 @@ func detectPnpmTurbo(dir string, pkg packageJSON, hasTurbo bool) (*Result, error
 		if !tasks["test"] && tasks["unit"] {
 			runCmd = "pnpm turbo run unit"
 		}
-		cfg.Checks["unit"] = config.CheckJob{Run: runCmd}
+		jobs["unit"] = config.Job{Run: runCmd}
 		hasAny = true
 	}
 	if tasks["build"] && !hasAny {
-		cfg.Checks["build"] = config.CheckJob{Run: "pnpm turbo run build"}
+		jobs["build"] = config.Job{Run: "pnpm turbo run build"}
 		hasAny = true
 	}
 
 	if !hasAny {
-		cfg.Checks["test"] = config.CheckJob{Run: "pnpm test"}
+		jobs["test"] = config.Job{Run: "pnpm test"}
 	}
+	cfg := newConfig([]config.SetupStep{step}, jobs)
 
 	return &Result{
 		Ecosystem: EcosystemNodePnpm,
@@ -257,36 +232,33 @@ func detectPnpmTurbo(dir string, pkg packageJSON, hasTurbo bool) (*Result, error
 }
 
 func detectYarn(pkg packageJSON) (*Result, error) {
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   []string{"yarn install --frozen-lockfile"},
-		Checks:  make(config.ConfigChecks),
-	}
+	jobs := make(config.ChecksJobs)
 
 	hasAny := false
 	if _, ok := pkg.Scripts["lint"]; ok {
-		cfg.Checks["lint"] = config.CheckJob{Run: "yarn lint"}
+		jobs["lint"] = config.Job{Run: "yarn lint"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["typecheck"]; ok {
-		cfg.Checks["typecheck"] = config.CheckJob{Run: "yarn typecheck"}
+		jobs["typecheck"] = config.Job{Run: "yarn typecheck"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["test"]; ok {
-		cfg.Checks["unit"] = config.CheckJob{Run: "yarn test"}
+		jobs["unit"] = config.Job{Run: "yarn test"}
 		hasAny = true
 	} else if _, ok := pkg.Scripts["unit"]; ok {
-		cfg.Checks["unit"] = config.CheckJob{Run: "yarn run unit"}
+		jobs["unit"] = config.Job{Run: "yarn run unit"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["build"]; ok && !hasAny {
-		cfg.Checks["build"] = config.CheckJob{Run: "yarn build"}
+		jobs["build"] = config.Job{Run: "yarn build"}
 		hasAny = true
 	}
 
 	if !hasAny {
-		cfg.Checks["test"] = config.CheckJob{Run: "yarn test"}
+		jobs["test"] = config.Job{Run: "yarn test"}
 	}
+	cfg := newConfig([]config.SetupStep{{Run: "yarn install --frozen-lockfile"}}, jobs)
 
 	return &Result{
 		Ecosystem: EcosystemNodeYarn,
@@ -300,36 +272,33 @@ func detectNpm(dir string, pkg packageJSON) (*Result, error) {
 		setupCmd = "npm ci"
 	}
 
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   []string{setupCmd},
-		Checks:  make(config.ConfigChecks),
-	}
+	jobs := make(config.ChecksJobs)
 
 	hasAny := false
 	if _, ok := pkg.Scripts["lint"]; ok {
-		cfg.Checks["lint"] = config.CheckJob{Run: "npm run lint"}
+		jobs["lint"] = config.Job{Run: "npm run lint"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["typecheck"]; ok {
-		cfg.Checks["typecheck"] = config.CheckJob{Run: "npm run typecheck"}
+		jobs["typecheck"] = config.Job{Run: "npm run typecheck"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["test"]; ok {
-		cfg.Checks["unit"] = config.CheckJob{Run: "npm test"}
+		jobs["unit"] = config.Job{Run: "npm test"}
 		hasAny = true
 	} else if _, ok := pkg.Scripts["unit"]; ok {
-		cfg.Checks["unit"] = config.CheckJob{Run: "npm run unit"}
+		jobs["unit"] = config.Job{Run: "npm run unit"}
 		hasAny = true
 	}
 	if _, ok := pkg.Scripts["build"]; ok && !hasAny {
-		cfg.Checks["build"] = config.CheckJob{Run: "npm run build"}
+		jobs["build"] = config.Job{Run: "npm run build"}
 		hasAny = true
 	}
 
 	if !hasAny {
-		cfg.Checks["test"] = config.CheckJob{Run: "npm test"}
+		jobs["test"] = config.Job{Run: "npm test"}
 	}
+	cfg := newConfig([]config.SetupStep{{Run: setupCmd}}, jobs)
 
 	return &Result{
 		Ecosystem: EcosystemNodeNpm,
@@ -348,18 +317,18 @@ func detectPython(dir string) (*Result, error) {
 		return nil, nil
 	}
 
-	var setup []string
+	var setup []config.SetupStep
 	if fileExists(filepath.Join(dir, "poetry.lock")) {
-		setup = []string{"poetry install"}
+		setup = []config.SetupStep{{Run: "poetry install"}}
 	} else if hasPipfile {
-		setup = []string{"pipenv install --dev"}
+		setup = []config.SetupStep{{Run: "pipenv install --dev"}}
 	} else if hasReqs {
-		setup = []string{"pip install -r requirements.txt"}
+		setup = []config.SetupStep{{Run: "pip install -r requirements.txt"}}
 	} else if hasSetupPy || hasPyproject {
-		setup = []string{"pip install -e ."}
+		setup = []config.SetupStep{{Run: "pip install -e ."}}
 	}
 
-	checks := make(config.ConfigChecks)
+	checks := make(config.ChecksJobs)
 
 	var pyprojectContent string
 	if hasPyproject {
@@ -369,28 +338,24 @@ func detectPython(dir string) (*Result, error) {
 
 	// Lint detection (ruff, flake8)
 	if fileExists(filepath.Join(dir, "ruff.toml")) || fileExists(filepath.Join(dir, ".ruff.toml")) || strings.Contains(pyprojectContent, "[tool.ruff]") {
-		checks["lint"] = config.CheckJob{Run: "ruff check ."}
+		checks["lint"] = config.Job{Run: "ruff check ."}
 	} else if fileExists(filepath.Join(dir, ".flake8")) {
-		checks["lint"] = config.CheckJob{Run: "flake8"}
+		checks["lint"] = config.Job{Run: "flake8"}
 	}
 
 	// Typecheck detection (mypy)
 	if fileExists(filepath.Join(dir, "mypy.ini")) || strings.Contains(pyprojectContent, "[tool.mypy]") {
-		checks["typecheck"] = config.CheckJob{Run: "mypy ."}
+		checks["typecheck"] = config.Job{Run: "mypy ."}
 	}
 
 	// Test detection
 	if strings.Contains(pyprojectContent, "[tool.pytest") || fileExists(filepath.Join(dir, "pytest.ini")) || dirExists(filepath.Join(dir, "tests")) {
-		checks["test"] = config.CheckJob{Run: "pytest"}
+		checks["test"] = config.Job{Run: "pytest"}
 	} else {
-		checks["test"] = config.CheckJob{Run: "python -m unittest"}
+		checks["test"] = config.Job{Run: "python -m unittest"}
 	}
 
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   setup,
-		Checks:  checks,
-	}
+	cfg := newConfig(setup, checks)
 
 	return &Result{
 		Ecosystem: EcosystemPython,

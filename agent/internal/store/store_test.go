@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
 func newTestDB(t *testing.T) *DB {
@@ -62,7 +61,7 @@ func TestRunLifecycle(t *testing.T) {
 		ID:          runID,
 		Repo:        "github.com/example/repo",
 		Ref:         "refs/heads/main",
-		TrustDomain: protocol.TrustDomainTrusted,
+		TrustDomain: TrustDomainTrusted,
 		ConfigYAML:  "version: 1\n",
 	}
 
@@ -76,7 +75,7 @@ func TestRunLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun failed: %v", err)
 	}
-	if fetched.State != protocol.RunStateQueued {
+	if fetched.State != RunStateQueued {
 		t.Errorf("run state = %s, want Queued", fetched.State)
 	}
 	if fetched.StartedAt != nil {
@@ -92,20 +91,20 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("expected 2 jobs, got %d", len(jobs))
 	}
 	for _, j := range jobs {
-		if j.State != protocol.JobStateQueued {
+		if j.State != JobStateQueued {
 			t.Errorf("job %s state = %s, want queued", j.Name, j.State)
 		}
 	}
 
 	// Transition Queued -> Running
-	if err := db.TransitionRun(ctx, runID, protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+	if err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateRunning, ""); err != nil {
 		t.Fatalf("TransitionRun Queued->Running failed: %v", err)
 	}
 	runningRun, err := db.GetRun(ctx, runID)
 	if err != nil {
 		t.Fatalf("GetRun failed: %v", err)
 	}
-	if runningRun.State != protocol.RunStateRunning {
+	if runningRun.State != RunStateRunning {
 		t.Errorf("run state = %s, want Running", runningRun.State)
 	}
 	if runningRun.StartedAt == nil {
@@ -113,19 +112,19 @@ func TestRunLifecycle(t *testing.T) {
 	}
 
 	// Transition Running -> Verifying
-	if err := db.TransitionRun(ctx, runID, protocol.RunStateRunning, protocol.RunStateVerifying, ""); err != nil {
+	if err := db.TransitionRun(ctx, runID, RunStateRunning, RunStateVerifying, ""); err != nil {
 		t.Fatalf("TransitionRun Running->Verifying failed: %v", err)
 	}
 
 	// Transition Verifying -> Success
-	if err := db.TransitionRun(ctx, runID, protocol.RunStateVerifying, protocol.RunStateSuccess, ""); err != nil {
+	if err := db.TransitionRun(ctx, runID, RunStateVerifying, RunStateSuccess, ""); err != nil {
 		t.Fatalf("TransitionRun Verifying->Success failed: %v", err)
 	}
 	finishedRun, err := db.GetRun(ctx, runID)
 	if err != nil {
 		t.Fatalf("GetRun failed: %v", err)
 	}
-	if finishedRun.State != protocol.RunStateSuccess {
+	if finishedRun.State != RunStateSuccess {
 		t.Errorf("run state = %s, want Success", finishedRun.State)
 	}
 	if finishedRun.FinishedAt == nil {
@@ -142,7 +141,7 @@ func TestRunInvalidTransitions(t *testing.T) {
 		ID:          runID,
 		Repo:        "github.com/example/repo",
 		Ref:         "refs/heads/main",
-		TrustDomain: protocol.TrustDomainUntrusted,
+		TrustDomain: TrustDomainUntrusted,
 	}
 
 	if err := db.CreateRun(ctx, run, []string{"test"}); err != nil {
@@ -150,29 +149,29 @@ func TestRunInvalidTransitions(t *testing.T) {
 	}
 
 	// Queued -> Success directly is invalid
-	err := db.TransitionRun(ctx, runID, protocol.RunStateQueued, protocol.RunStateSuccess, "")
+	err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateSuccess, "")
 	if err == nil {
 		t.Fatalf("expected error for Queued -> Success, got nil")
 	}
 
 	// Transition to Running
-	if err := db.TransitionRun(ctx, runID, protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+	if err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateRunning, ""); err != nil {
 		t.Fatalf("TransitionRun Queued->Running failed: %v", err)
 	}
 
 	// Transition with wrong 'from' state
-	err = db.TransitionRun(ctx, runID, protocol.RunStateQueued, protocol.RunStateSuccess, "")
+	err = db.TransitionRun(ctx, runID, RunStateQueued, RunStateSuccess, "")
 	if err == nil {
 		t.Fatalf("expected error for mismatch from state, got nil")
 	}
 
 	// Terminate with Failed
-	if err := db.TransitionRun(ctx, runID, protocol.RunStateRunning, protocol.RunStateFailed, "test failed"); err != nil {
+	if err := db.TransitionRun(ctx, runID, RunStateRunning, RunStateFailed, "test failed"); err != nil {
 		t.Fatalf("TransitionRun Running->Failed failed: %v", err)
 	}
 
 	// Transition from terminal state should be rejected
-	err = db.TransitionRun(ctx, runID, protocol.RunStateFailed, protocol.RunStateRunning, "")
+	err = db.TransitionRun(ctx, runID, RunStateFailed, RunStateRunning, "")
 	if err == nil {
 		t.Fatalf("expected error for transition from terminal state, got nil")
 	}
@@ -187,7 +186,7 @@ func TestJobLifecycle(t *testing.T) {
 		ID:          runID,
 		Repo:        "github.com/example/repo",
 		Ref:         "refs/heads/main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: TrustDomainLocal,
 	}
 
 	if err := db.CreateRun(ctx, run, []string{"build", "lint"}); err != nil {
@@ -195,7 +194,7 @@ func TestJobLifecycle(t *testing.T) {
 	}
 
 	// Transition job: queued -> running
-	if err := db.TransitionJob(ctx, runID, "build", protocol.JobStateQueued, protocol.JobStateRunning, nil, ""); err != nil {
+	if err := db.TransitionJob(ctx, runID, "build", JobStateQueued, JobStateRunning, nil, ""); err != nil {
 		t.Fatalf("TransitionJob queued->running failed: %v", err)
 	}
 
@@ -203,13 +202,13 @@ func TestJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob failed: %v", err)
 	}
-	if j.State != protocol.JobStateRunning || j.StartedAt == nil {
+	if j.State != JobStateRunning || j.StartedAt == nil {
 		t.Errorf("job state or started_at mismatch: %+v", j)
 	}
 
 	// Transition job: running -> success with exit code 0
 	exit0 := 0
-	if err := db.TransitionJob(ctx, runID, "build", protocol.JobStateRunning, protocol.JobStateSuccess, &exit0, ""); err != nil {
+	if err := db.TransitionJob(ctx, runID, "build", JobStateRunning, JobStateSuccess, &exit0, ""); err != nil {
 		t.Fatalf("TransitionJob running->success failed: %v", err)
 	}
 
@@ -217,12 +216,12 @@ func TestJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob failed: %v", err)
 	}
-	if j.State != protocol.JobStateSuccess || j.FinishedAt == nil || j.ExitCode == nil || *j.ExitCode != 0 {
+	if j.State != JobStateSuccess || j.FinishedAt == nil || j.ExitCode == nil || *j.ExitCode != 0 {
 		t.Errorf("job state, finished_at or exit_code mismatch: %+v", j)
 	}
 
 	// Transition lint: queued -> cancelled
-	if err := db.TransitionJob(ctx, runID, "lint", protocol.JobStateQueued, protocol.JobStateCancelled, nil, "superseded"); err != nil {
+	if err := db.TransitionJob(ctx, runID, "lint", JobStateQueued, JobStateCancelled, nil, "superseded"); err != nil {
 		t.Fatalf("TransitionJob queued->cancelled failed: %v", err)
 	}
 
@@ -230,7 +229,7 @@ func TestJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob failed: %v", err)
 	}
-	if j.State != protocol.JobStateCancelled || j.Error != "superseded" {
+	if j.State != JobStateCancelled || j.Error != "superseded" {
 		t.Errorf("job mismatch: %+v", j)
 	}
 }
@@ -244,7 +243,7 @@ func TestOutboxAndHWM(t *testing.T) {
 		ID:          runID,
 		Repo:        "github.com/example/repo",
 		Ref:         "refs/heads/main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: TrustDomainLocal,
 	}
 
 	if err := db.CreateRun(ctx, run, []string{"lint"}); err != nil {
@@ -316,12 +315,12 @@ func TestSupersedeQueuedRuns(t *testing.T) {
 	repo := "github.com/example/repo"
 	ref := "refs/heads/main"
 
-	_ = db.CreateRun(ctx, &Run{ID: run1, Repo: repo, Ref: ref, TrustDomain: protocol.TrustDomainLocal}, nil)
+	_ = db.CreateRun(ctx, &Run{ID: run1, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
 	time.Sleep(10 * time.Millisecond)
-	_ = db.CreateRun(ctx, &Run{ID: run2, Repo: repo, Ref: ref, TrustDomain: protocol.TrustDomainLocal}, nil)
+	_ = db.CreateRun(ctx, &Run{ID: run2, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
 	time.Sleep(10 * time.Millisecond)
-	_ = db.CreateRun(ctx, &Run{ID: run3, Repo: repo, Ref: ref, TrustDomain: protocol.TrustDomainLocal}, nil)
-	_ = db.CreateRun(ctx, &Run{ID: runOther, Repo: "other/repo", Ref: ref, TrustDomain: protocol.TrustDomainLocal}, nil)
+	_ = db.CreateRun(ctx, &Run{ID: run3, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
+	_ = db.CreateRun(ctx, &Run{ID: runOther, Repo: "other/repo", Ref: ref, TrustDomain: TrustDomainLocal}, nil)
 
 	// Supersede queued runs on repo/ref except run3
 	superseded, err := db.SupersedeQueuedRuns(ctx, repo, ref, run3)
@@ -333,19 +332,19 @@ func TestSupersedeQueuedRuns(t *testing.T) {
 	}
 
 	r1, _ := db.GetRun(ctx, run1)
-	if r1.State != protocol.RunStateSuperseded {
+	if r1.State != RunStateSuperseded {
 		t.Errorf("run1 state = %s, want Superseded", r1.State)
 	}
 	r2, _ := db.GetRun(ctx, run2)
-	if r2.State != protocol.RunStateSuperseded {
+	if r2.State != RunStateSuperseded {
 		t.Errorf("run2 state = %s, want Superseded", r2.State)
 	}
 	r3, _ := db.GetRun(ctx, run3)
-	if r3.State != protocol.RunStateQueued {
+	if r3.State != RunStateQueued {
 		t.Errorf("run3 state = %s, want Queued", r3.State)
 	}
 	rOther, _ := db.GetRun(ctx, runOther)
-	if rOther.State != protocol.RunStateQueued {
+	if rOther.State != RunStateQueued {
 		t.Errorf("runOther state = %s, want Queued", rOther.State)
 	}
 }

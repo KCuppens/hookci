@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
 var (
@@ -16,14 +14,14 @@ var (
 
 // Job represents an individual check job execution record within a run.
 type Job struct {
-	ID         string            `json:"id"`
-	RunID      string            `json:"run_id"`
-	Name       string            `json:"name"`
-	State      protocol.JobState `json:"state"`
-	StartedAt  *time.Time        `json:"started_at,omitempty"`
-	FinishedAt *time.Time        `json:"finished_at,omitempty"`
-	ExitCode   *int              `json:"exit_code,omitempty"`
-	Error      string            `json:"error,omitempty"`
+	ID         string     `json:"id"`
+	RunID      string     `json:"run_id"`
+	Name       string     `json:"name"`
+	State      JobState   `json:"state"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	Error      string     `json:"error,omitempty"`
 }
 
 // GetJob returns a job by runID and job name.
@@ -50,7 +48,7 @@ func (db *DB) GetJob(ctx context.Context, runID, name string) (*Job, error) {
 		return nil, fmt.Errorf("get job %s in run %s: %w", name, runID, err)
 	}
 
-	j.State = protocol.JobState(stateStr)
+	j.State = JobState(stateStr)
 	if startedAt.Valid {
 		j.StartedAt = &startedAt.Time
 	}
@@ -91,7 +89,7 @@ func (db *DB) ListJobs(ctx context.Context, runID string) ([]*Job, error) {
 		if err := rows.Scan(&j.ID, &j.RunID, &j.Name, &stateStr, &startedAt, &finishedAt, &exitCode, &j.Error); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
-		j.State = protocol.JobState(stateStr)
+		j.State = JobState(stateStr)
 		if startedAt.Valid {
 			j.StartedAt = &startedAt.Time
 		}
@@ -110,7 +108,7 @@ func (db *DB) ListJobs(ctx context.Context, runID string) ([]*Job, error) {
 
 // TransitionJob transitions a job's state within a transaction, writes the
 // transition event to the outbox, and manages exit code and timestamps.
-func (db *DB) TransitionJob(ctx context.Context, runID, name string, from, to protocol.JobState, exitCode *int, errMsg string) error {
+func (db *DB) TransitionJob(ctx context.Context, runID, name string, from, to JobState, exitCode *int, errMsg string) error {
 	if !IsValidJobTransition(from, to) {
 		return &ErrInvalidTransition{Entity: "job", From: string(from), To: string(to)}
 	}
@@ -140,7 +138,7 @@ func (db *DB) TransitionJob(ctx context.Context, runID, name string, from, to pr
 		return fmt.Errorf("query job %s in run %s: %w", name, runID, err)
 	}
 
-	if protocol.JobState(currState) != from {
+	if JobState(currState) != from {
 		return fmt.Errorf("%w: current is %s, expected %s", ErrConflictState, currState, from)
 	}
 
@@ -148,7 +146,7 @@ func (db *DB) TransitionJob(ctx context.Context, runID, name string, from, to pr
 	var newStartedAt, newFinishedAt any
 	if startedAt.Valid {
 		newStartedAt = startedAt.Time
-	} else if to == protocol.JobStateRunning {
+	} else if to == JobStateRunning {
 		newStartedAt = now
 	}
 

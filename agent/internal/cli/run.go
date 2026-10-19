@@ -18,7 +18,6 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
@@ -102,7 +101,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// Fallback to auto-detect if no config file present
 		if cfg == nil {
 			det, err := detect.Detect(absWorkDir)
-			if err != nil || det == nil || det.Config == nil || len(det.Config.Checks) == 0 {
+			if err != nil || det == nil || det.Config == nil || det.Config.Checks == nil || len(det.Config.Checks.Jobs) == 0 {
 				fmt.Fprintln(stderr, "zeroci: no checks detected")
 				return ExitNoChecks
 			}
@@ -110,7 +109,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	if len(cfg.Checks) == 0 {
+	if cfg.Checks == nil || len(cfg.Checks.Jobs) == 0 {
 		fmt.Fprintln(stderr, "zeroci: no checks configured")
 		return ExitNoChecks
 	}
@@ -155,7 +154,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// 5. Create new Run record in store
 	runID := ids.NewRunID()
 	var jobNames []string
-	for name := range cfg.Checks {
+	for name := range cfg.Checks.Jobs {
 		jobNames = append(jobNames, name)
 	}
 	sort.Strings(jobNames)
@@ -164,7 +163,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ID:          runID,
 		Repo:        "local",
 		Ref:         "HEAD",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}
 	if err := db.CreateRun(ctx, runRec, jobNames); err != nil {
 		fmt.Fprintf(stderr, "zeroci: create run in store: %v\n", err)
@@ -205,7 +204,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitInternal
 	}
 
-	if finalRun.State == protocol.RunStateSuccess {
+	if finalRun.State == store.RunStateSuccess {
 		return ExitOK
 	}
 	return ExitRunFailed

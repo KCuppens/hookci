@@ -74,7 +74,7 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 	ctx := context.Background()
 	workDir := t.TempDir()
 	stateDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte("version: 1\nchecks:\n  lint:\n    run: echo ok\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte("version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo ok\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := lockStateDir(stateDir)
@@ -107,11 +107,12 @@ func TestRunAndInspectStatusAndLogs(t *testing.T) {
 	// Create .zeroci.yml
 	cfgContent := `version: 1
 checks:
-  lint:
-    run: echo "linting code"
-  unit:
-    needs: [lint]
-    run: echo "testing unit"
+  jobs:
+    lint:
+      run: echo "linting code"
+    unit:
+      needs: [lint]
+      run: echo "testing unit"
 `
 	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -192,8 +193,9 @@ func TestRunFailingJob(t *testing.T) {
 
 	cfgContent := `version: 1
 checks:
-  broken:
-    run: "false"
+  jobs:
+    broken:
+      run: "false"
 `
 	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)

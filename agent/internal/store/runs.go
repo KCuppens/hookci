@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
 var (
@@ -17,16 +15,16 @@ var (
 
 // Run represents a persisted run entity.
 type Run struct {
-	ID          string               `json:"id"`
-	Repo        string               `json:"repo"`
-	Ref         string               `json:"ref"`
-	TrustDomain protocol.TrustDomain `json:"trust_domain"`
-	State       protocol.RunState    `json:"state"`
-	QueuedAt    time.Time            `json:"queued_at"`
-	StartedAt   *time.Time           `json:"started_at,omitempty"`
-	FinishedAt  *time.Time           `json:"finished_at,omitempty"`
-	Error       string               `json:"error,omitempty"`
-	ConfigYAML  string               `json:"config_yaml,omitempty"`
+	ID          string      `json:"id"`
+	Repo        string      `json:"repo"`
+	Ref         string      `json:"ref"`
+	TrustDomain TrustDomain `json:"trust_domain"`
+	State       RunState    `json:"state"`
+	QueuedAt    time.Time   `json:"queued_at"`
+	StartedAt   *time.Time  `json:"started_at,omitempty"`
+	FinishedAt  *time.Time  `json:"finished_at,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	ConfigYAML  string      `json:"config_yaml,omitempty"`
 }
 
 // CreateRun inserts a new run and its initial check jobs in state Queued,
@@ -36,11 +34,11 @@ func (db *DB) CreateRun(ctx context.Context, run *Run, initialJobs []string) err
 		return errors.New("run ID is required")
 	}
 
-	if !IsValidRunTransition("", protocol.RunStateQueued) {
+	if !IsValidRunTransition("", RunStateQueued) {
 		// Just ensuring valid state
 	}
 
-	run.State = protocol.RunStateQueued
+	run.State = RunStateQueued
 	if run.QueuedAt.IsZero() {
 		run.QueuedAt = time.Now().UTC()
 	}
@@ -64,7 +62,7 @@ func (db *DB) CreateRun(ctx context.Context, run *Run, initialJobs []string) err
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO jobs (id, run_id, name, state)
 			VALUES (?, ?, ?, ?)
-		`, jobID, run.ID, jobName, string(protocol.JobStateQueued))
+		`, jobID, run.ID, jobName, string(JobStateQueued))
 		if err != nil {
 			return fmt.Errorf("insert initial job %s: %w", jobName, err)
 		}
@@ -73,7 +71,7 @@ func (db *DB) CreateRun(ctx context.Context, run *Run, initialJobs []string) err
 			RunID:     run.ID,
 			JobName:   jobName,
 			FromState: "",
-			ToState:   string(protocol.JobStateQueued),
+			ToState:   string(JobStateQueued),
 			Timestamp: run.QueuedAt,
 		}
 		if err := writeOutboxTx(ctx, tx, run.ID, EventJobTransition, payload); err != nil {
@@ -86,7 +84,7 @@ func (db *DB) CreateRun(ctx context.Context, run *Run, initialJobs []string) err
 		Repo:      run.Repo,
 		Ref:       run.Ref,
 		FromState: "",
-		ToState:   string(protocol.RunStateQueued),
+		ToState:   string(RunStateQueued),
 		Timestamp: run.QueuedAt,
 	}
 	if err := writeOutboxTx(ctx, tx, run.ID, EventRunTransition, payload); err != nil {
@@ -120,8 +118,8 @@ func (db *DB) GetRun(ctx context.Context, id string) (*Run, error) {
 		return nil, fmt.Errorf("get run %s: %w", id, err)
 	}
 
-	r.TrustDomain = protocol.TrustDomain(domainStr)
-	r.State = protocol.RunState(stateStr)
+	r.TrustDomain = TrustDomain(domainStr)
+	r.State = RunState(stateStr)
 	if startedAt.Valid {
 		r.StartedAt = &startedAt.Time
 	}
@@ -162,8 +160,8 @@ func (db *DB) ListRuns(ctx context.Context, limit int) ([]*Run, error) {
 		if err := rows.Scan(&r.ID, &r.Repo, &r.Ref, &domainStr, &stateStr, &r.QueuedAt, &startedAt, &finishedAt, &r.Error, &r.ConfigYAML); err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
-		r.TrustDomain = protocol.TrustDomain(domainStr)
-		r.State = protocol.RunState(stateStr)
+		r.TrustDomain = TrustDomain(domainStr)
+		r.State = RunState(stateStr)
 		if startedAt.Valid {
 			r.StartedAt = &startedAt.Time
 		}
@@ -203,8 +201,8 @@ func (db *DB) GetIncompleteRuns(ctx context.Context) ([]*Run, error) {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
 
-		r.TrustDomain = protocol.TrustDomain(domainStr)
-		r.State = protocol.RunState(stateStr)
+		r.TrustDomain = TrustDomain(domainStr)
+		r.State = RunState(stateStr)
 		if startedAt.Valid {
 			r.StartedAt = &startedAt.Time
 		}
@@ -220,7 +218,7 @@ func (db *DB) GetIncompleteRuns(ctx context.Context) ([]*Run, error) {
 
 // TransitionRun advances the run state, enforces transition rules, updates timestamps,
 // and emits an outbox transition event in the same transaction.
-func (db *DB) TransitionRun(ctx context.Context, id string, from protocol.RunState, to protocol.RunState, errMsg string) error {
+func (db *DB) TransitionRun(ctx context.Context, id string, from RunState, to RunState, errMsg string) error {
 	if !IsValidRunTransition(from, to) {
 		return &ErrInvalidTransition{Entity: "run", From: string(from), To: string(to)}
 	}
@@ -252,7 +250,7 @@ func (db *DB) TransitionRun(ctx context.Context, id string, from protocol.RunSta
 		return fmt.Errorf("query run %s: %w", id, err)
 	}
 
-	if protocol.RunState(currState) != from {
+	if RunState(currState) != from {
 		return fmt.Errorf("%w: current is %s, expected %s", ErrConflictState, currState, from)
 	}
 
@@ -260,7 +258,7 @@ func (db *DB) TransitionRun(ctx context.Context, id string, from protocol.RunSta
 	var newStartedAt, newFinishedAt any
 	if startedAt.Valid {
 		newStartedAt = startedAt.Time
-	} else if to == protocol.RunStateRunning {
+	} else if to == RunStateRunning {
 		newStartedAt = now
 	}
 
@@ -307,7 +305,7 @@ func (db *DB) SupersedeQueuedRuns(ctx context.Context, repo, ref, exceptRunID st
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id FROM runs
 		WHERE repo = ? AND ref = ? AND id != ? AND state = ?
-	`, repo, ref, exceptRunID, string(protocol.RunStateQueued))
+	`, repo, ref, exceptRunID, string(RunStateQueued))
 	if err != nil {
 		return nil, fmt.Errorf("query superseded runs: %w", err)
 	}
@@ -331,7 +329,7 @@ func (db *DB) SupersedeQueuedRuns(ctx context.Context, repo, ref, exceptRunID st
 			UPDATE runs
 			SET state = ?, finished_at = ?
 			WHERE id = ?
-		`, string(protocol.RunStateSuperseded), now, id)
+		`, string(RunStateSuperseded), now, id)
 		if err != nil {
 			return nil, fmt.Errorf("update superseded run %s: %w", id, err)
 		}
@@ -340,8 +338,8 @@ func (db *DB) SupersedeQueuedRuns(ctx context.Context, repo, ref, exceptRunID st
 			RunID:     id,
 			Repo:      repo,
 			Ref:       ref,
-			FromState: string(protocol.RunStateQueued),
-			ToState:   string(protocol.RunStateSuperseded),
+			FromState: string(RunStateQueued),
+			ToState:   string(RunStateSuperseded),
 			Timestamp: now,
 		}
 		if err := writeOutboxTx(ctx, tx, id, EventRunTransition, payload); err != nil {

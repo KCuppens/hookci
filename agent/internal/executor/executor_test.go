@@ -9,7 +9,6 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation/isolationtest"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
@@ -58,7 +57,7 @@ func TestExecuteRunSuccess(t *testing.T) {
 		ID:          runID,
 		Repo:        "owner/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}
 	if err := db.CreateRun(ctx, run, []string{"lint", "unit"}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
@@ -72,19 +71,16 @@ func TestExecuteRunSuccess(t *testing.T) {
 		Slots:     2,
 	})
 
-	cfg := &config.Config{
+	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
 		Version: 1,
-		Setup:   []string{"echo setup"},
-		Checks: config.ConfigChecks{
-			"lint": config.CheckJob{
-				Run: "go vet ./...",
-			},
-			"unit": config.CheckJob{
-				Run:   "go test ./...",
-				Needs: []string{"lint"},
+		Checks: &config.Checks{
+			Setup: []config.SetupStep{{Run: "echo setup"}},
+			Jobs: config.ChecksJobs{
+				"lint": {Run: "go vet ./..."},
+				"unit": {Run: "go test ./...", Needs: []string{"lint"}},
 			},
 		},
-	}
+	}}
 	err = exec.ExecuteRun(ctx, runID, cfg, workDir, "local", true)
 	if err != nil {
 		t.Fatalf("ExecuteRun failed: %v", err)
@@ -103,7 +99,7 @@ func TestExecuteRunSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if savedRun.State != protocol.RunStateSuccess {
+	if savedRun.State != store.RunStateSuccess {
 		t.Errorf("expected run state Success, got %s", savedRun.State)
 	}
 }
@@ -121,15 +117,13 @@ func TestExecuteRunSetupFailure(t *testing.T) {
 		Isolation: fakeIso,
 	})
 
-	cfg := &config.Config{
+	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
 		Version: 1,
-		Setup:   []string{"false"},
-		Checks: config.ConfigChecks{
-			"lint": config.CheckJob{
-				Run: "go vet",
-			},
+		Checks: &config.Checks{
+			Setup: []config.SetupStep{{Run: "false"}},
+			Jobs:  config.ChecksJobs{"lint": {Run: "go vet"}},
 		},
-	}
+	}}
 
 	err := exec.ExecuteRun(ctx, "01j7failsetup", cfg, workDir, "local", false)
 	if err == nil {

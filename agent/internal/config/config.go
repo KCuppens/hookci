@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,10 +31,7 @@ var (
 	// ErrCyclicDependency is returned when check jobs have a cyclic dependency.
 	ErrCyclicDependency = errors.New("cyclic dependency detected")
 
-	// ErrUnknownService is returned when a check job references an undefined service.
-	ErrUnknownService = errors.New("unknown service")
-
-	// ErrInvalidIdentifier is returned when an identifier format is invalid.
+	// ErrInvalidIdentifier is returned when a job name does not match the schema's propertyNames pattern.
 	ErrInvalidIdentifier = errors.New("invalid identifier")
 
 	// ErrInvalidPath is returned when a path is invalid or unsafe.
@@ -54,7 +52,14 @@ var getCompiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	return c.Compile(schemaURL)
 })
 
-var identRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
+// jobNameRegex mirrors $defs.Checks.jobs.propertyNames so configs built in code
+// (detect) get the same check as parsed ones.
+var jobNameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// Config is a parsed .zeroci.yml. Its fields come from the generated root type.
+type Config struct {
+	ZeroCIConfig `yaml:",inline"`
+}
 
 // Load reads and validates the configuration from the given file path.
 func Load(path string) (*Config, error) {
@@ -89,9 +94,14 @@ func Parse(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("%w: %v", ErrSchemaValidation, err)
 	}
 
+	// Decode through JSON so the generated UnmarshalJSON methods fill schema defaults.
+	doc, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("re-encode config: %w", err)
+	}
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("yaml decode: %w", err)
+	if err := json.Unmarshal(doc, &cfg.ZeroCIConfig); err != nil {
+		return nil, fmt.Errorf("decode config: %w", err)
 	}
 
 	if err := ValidateSemantics(&cfg); err != nil {
@@ -107,78 +117,44 @@ func ValidateSemantics(cfg *Config) error {
 		return fmt.Errorf("unsupported config version: %d (expected 1)", cfg.Version)
 	}
 
-	if len(cfg.Checks) == 0 {
+	if cfg.Checks == nil || len(cfg.Checks.Jobs) == 0 {
 		return ErrNoChecks
 	}
 
-	// Validate setup commands
-	for i, step := range cfg.Setup {
-		if strings.TrimSpace(step) == "" {
+	for i, step := range cfg.Checks.Setup {
+		if strings.TrimSpace(step.Run) == "" {
 			return fmt.Errorf("setup step [%d]: command cannot be empty", i)
 		}
-	}
-
-	// Validate services
-	for name, svc := range cfg.Services {
-		if !identRegex.MatchString(name) {
-			return fmt.Errorf("%w: service name %q does not match pattern %s", ErrInvalidIdentifier, name, identRegex.String())
+		if step.Cache == nil {
+			continue
 		}
-		if strings.TrimSpace(svc.Image) == "" {
-			return fmt.Errorf("service %q: image cannot be empty", name)
-		}
-	}
-
-	// Validate caches
-	for name, cache := range cfg.Caches {
-		if !identRegex.MatchString(name) {
-			return fmt.Errorf("%w: cache name %q does not match pattern %s", ErrInvalidIdentifier, name, identRegex.String())
-		}
-		if strings.TrimSpace(cache.Key) == "" {
-			return fmt.Errorf("cache %q: key cannot be empty", name)
-		}
-		cleanPath := filepath.Clean(cache.Path)
-		if filepath.IsAbs(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("%w: cache %q path %q must be relative to repository root", ErrInvalidPath, name, cache.Path)
+		for _, p := range step.Cache.Paths {
+			cleanPath := filepath.Clean(p)
+			if filepath.IsAbs(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("%w: setup step [%d] cache path %q must be relative to repository root", ErrInvalidPath, i, p)
+			}
 		}
 	}
 
-	// Validate check jobs and build DAG
-	for name, job := range cfg.Checks {
-		if !identRegex.MatchString(name) {
-			return fmt.Errorf("%w: check job name %q does not match pattern %s", ErrInvalidIdentifier, name, identRegex.String())
+	for name, job := range cfg.Checks.Jobs {
+		if !jobNameRegex.MatchString(name) {
+			return fmt.Errorf("%w: check job name %q does not match pattern %s", ErrInvalidIdentifier, name, jobNameRegex.String())
 		}
 		if strings.TrimSpace(job.Run) == "" {
 			return fmt.Errorf("check job %q: run command cannot be empty", name)
-		}
-		for _, svc := range job.Services {
-			if _, ok := cfg.Services[svc]; !ok {
-				return fmt.Errorf("%w: check job %q references undefined service %q", ErrUnknownService, name, svc)
-			}
 		}
 		for _, need := range job.Needs {
 			if need == name {
 				return fmt.Errorf("%w: check job %q cannot depend on itself", ErrCyclicDependency, name)
 			}
-			if _, ok := cfg.Checks[need]; !ok {
+			if _, ok := cfg.Checks.Jobs[need]; !ok {
 				return fmt.Errorf("%w: check job %q depends on undefined job %q", ErrUnknownJob, name, need)
 			}
 		}
 	}
 
-	// Detect cycles in check DAG
 	if _, err := cfg.TopologicalSort(); err != nil {
 		return err
-	}
-
-	// Validate egress hosts
-	for i, host := range cfg.Egress {
-		trimmed := strings.TrimSpace(host)
-		if trimmed == "" {
-			return fmt.Errorf("egress host [%d] cannot be empty", i)
-		}
-		if strings.Contains(trimmed, "://") || strings.Contains(trimmed, "/") {
-			return fmt.Errorf("egress host %q must be a bare hostname or domain, not a URL", host)
-		}
 	}
 
 	return nil
@@ -187,14 +163,18 @@ func ValidateSemantics(cfg *Config) error {
 // TopologicalSort returns job names in dependency order (dependencies before dependents).
 // If a dependency cycle exists, ErrCyclicDependency is returned.
 func (c *Config) TopologicalSort() ([]string, error) {
-	inDegree := make(map[string]int, len(c.Checks))
-	dependents := make(map[string][]string, len(c.Checks))
+	var jobs ChecksJobs
+	if c.Checks != nil {
+		jobs = c.Checks.Jobs
+	}
+	inDegree := make(map[string]int, len(jobs))
+	dependents := make(map[string][]string, len(jobs))
 
-	for name := range c.Checks {
+	for name := range jobs {
 		inDegree[name] = 0
 	}
 
-	for name, job := range c.Checks {
+	for name, job := range jobs {
 		for _, need := range job.Needs {
 			dependents[need] = append(dependents[need], name)
 			inDegree[name]++
@@ -225,7 +205,7 @@ func (c *Config) TopologicalSort() ([]string, error) {
 		}
 	}
 
-	if len(ordered) != len(c.Checks) {
+	if len(ordered) != len(jobs) {
 		// Identify jobs involved in cycle
 		var unvisited []string
 		for name, deg := range inDegree {

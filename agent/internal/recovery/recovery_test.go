@@ -11,7 +11,6 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation/isolationtest"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
@@ -30,15 +29,15 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 		ID:          "01j7run1",
 		Repo:        "owner/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}
 	if err := db.CreateRun(ctx, run1, []string{"job1", "job2"}); err != nil {
 		t.Fatalf("CreateRun run1: %v", err)
 	}
-	if err := db.TransitionRun(ctx, "01j7run1", protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+	if err := db.TransitionRun(ctx, "01j7run1", store.RunStateQueued, store.RunStateRunning, ""); err != nil {
 		t.Fatalf("TransitionRun run1: %v", err)
 	}
-	if err := db.TransitionJob(ctx, "01j7run1", "job1", protocol.JobStateQueued, protocol.JobStateRunning, nil, ""); err != nil {
+	if err := db.TransitionJob(ctx, "01j7run1", "job1", store.JobStateQueued, store.JobStateRunning, nil, ""); err != nil {
 		t.Fatalf("TransitionJob run1/job1: %v", err)
 	}
 
@@ -47,22 +46,22 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 		ID:          "01j7run2",
 		Repo:        "owner/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}
 	if err := db.CreateRun(ctx, run2, []string{"job1"}); err != nil {
 		t.Fatalf("CreateRun run2: %v", err)
 	}
-	if err := db.TransitionRun(ctx, "01j7run2", protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+	if err := db.TransitionRun(ctx, "01j7run2", store.RunStateQueued, store.RunStateRunning, ""); err != nil {
 		t.Fatalf("TransitionRun run2: %v", err)
 	}
-	if err := db.TransitionJob(ctx, "01j7run2", "job1", protocol.JobStateQueued, protocol.JobStateRunning, nil, ""); err != nil {
+	if err := db.TransitionJob(ctx, "01j7run2", "job1", store.JobStateQueued, store.JobStateRunning, nil, ""); err != nil {
 		t.Fatalf("TransitionJob run2/job1 running: %v", err)
 	}
 	code := 0
-	if err := db.TransitionJob(ctx, "01j7run2", "job1", protocol.JobStateRunning, protocol.JobStateSuccess, &code, ""); err != nil {
+	if err := db.TransitionJob(ctx, "01j7run2", "job1", store.JobStateRunning, store.JobStateSuccess, &code, ""); err != nil {
 		t.Fatalf("TransitionJob run2/job1 success: %v", err)
 	}
-	if err := db.TransitionRun(ctx, "01j7run2", protocol.RunStateRunning, protocol.RunStateSuccess, ""); err != nil {
+	if err := db.TransitionRun(ctx, "01j7run2", store.RunStateRunning, store.RunStateSuccess, ""); err != nil {
 		t.Fatalf("TransitionRun run2 success: %v", err)
 	}
 
@@ -86,7 +85,7 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun run1: %v", err)
 	}
-	if r1.State != protocol.RunStateInterrupted {
+	if r1.State != store.RunStateInterrupted {
 		t.Errorf("expected run1 state Interrupted, got %s", r1.State)
 	}
 	if r1.Error != InterruptedReason {
@@ -98,7 +97,7 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun run2: %v", err)
 	}
-	if r2.State != protocol.RunStateSuccess {
+	if r2.State != store.RunStateSuccess {
 		t.Errorf("expected run2 state Success, got %s", r2.State)
 	}
 
@@ -130,18 +129,18 @@ func newRunningRuns(t *testing.T, ctx context.Context, ids ...string) *store.DB 
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, id := range ids {
-		run := &store.Run{ID: id, Repo: "owner/repo", Ref: "main", TrustDomain: protocol.TrustDomainLocal}
+		run := &store.Run{ID: id, Repo: "owner/repo", Ref: "main", TrustDomain: store.TrustDomainLocal}
 		if err := db.CreateRun(ctx, run, []string{"job1"}); err != nil {
 			t.Fatalf("CreateRun %s: %v", id, err)
 		}
-		if err := db.TransitionRun(ctx, id, protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+		if err := db.TransitionRun(ctx, id, store.RunStateQueued, store.RunStateRunning, ""); err != nil {
 			t.Fatalf("TransitionRun %s: %v", id, err)
 		}
 	}
 	return db
 }
 
-func assertRunState(t *testing.T, ctx context.Context, db *store.DB, id string, want protocol.RunState) {
+func assertRunState(t *testing.T, ctx context.Context, db *store.DB, id string, want store.RunState) {
 	t.Helper()
 	r, err := db.GetRun(ctx, id)
 	if err != nil {
@@ -171,7 +170,7 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 		if !strings.Contains(err.Error(), id) {
 			t.Errorf("error %q does not name run %s", err, id)
 		}
-		assertRunState(t, ctx, db, id, protocol.RunStateRunning)
+		assertRunState(t, ctx, db, id, store.RunStateRunning)
 	}
 	if len(brokenIso.Cleanups) != 0 {
 		t.Errorf("isolation cleaned up %v for runs left active", brokenIso.Cleanups)
@@ -188,7 +187,7 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 		t.Fatalf("retry recovered = %v, want %v", recovered, runIDs)
 	}
 	for _, id := range runIDs {
-		assertRunState(t, ctx, db, id, protocol.RunStateInterrupted)
+		assertRunState(t, ctx, db, id, store.RunStateInterrupted)
 	}
 }
 
@@ -208,7 +207,7 @@ func TestRecoverTransitionFailureKeepsCleanupErrors(t *testing.T) {
 		}
 		for _, id := range runIDs {
 			if c.Args[len(c.Args)-1] == "name="+services.ContainerName(id, "") {
-				return db.TransitionRun(ctx, id, protocol.RunStateRunning, protocol.RunStateInterrupted, "")
+				return db.TransitionRun(ctx, id, store.RunStateRunning, store.RunStateInterrupted, "")
 			}
 		}
 		return fmt.Errorf("unexpected ps args %v", c.Args)

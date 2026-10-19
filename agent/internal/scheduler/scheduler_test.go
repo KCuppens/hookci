@@ -11,7 +11,6 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
@@ -30,7 +29,7 @@ func newTestDB(t *testing.T) *store.DB {
 
 func TestDAGBuild(t *testing.T) {
 	t.Run("valid dag", func(t *testing.T) {
-		checks := config.ConfigChecks{
+		checks := config.ChecksJobs{
 			"lint":      {Run: "npm run lint"},
 			"typecheck": {Run: "npm run typecheck"},
 			"unit":      {Run: "npm test", Needs: []string{"lint", "typecheck"}},
@@ -53,7 +52,7 @@ func TestDAGBuild(t *testing.T) {
 	})
 
 	t.Run("missing dependency", func(t *testing.T) {
-		checks := config.ConfigChecks{
+		checks := config.ChecksJobs{
 			"unit": {Run: "npm test", Needs: []string{"nonexistent"}},
 		}
 		_, err := BuildDAG(checks)
@@ -63,7 +62,7 @@ func TestDAGBuild(t *testing.T) {
 	})
 
 	t.Run("cycle detected", func(t *testing.T) {
-		checks := config.ConfigChecks{
+		checks := config.ChecksJobs{
 			"a": {Run: "echo a", Needs: []string{"b"}},
 			"b": {Run: "echo b", Needs: []string{"a"}},
 		}
@@ -74,7 +73,7 @@ func TestDAGBuild(t *testing.T) {
 	})
 
 	t.Run("duplicate dependency deduplicated", func(t *testing.T) {
-		checks := config.ConfigChecks{
+		checks := config.ChecksJobs{
 			"lint": {Run: "npm run lint"},
 			"unit": {Run: "npm test", Needs: []string{"lint", "lint"}},
 		}
@@ -97,7 +96,7 @@ func TestSchedulerSlotLimiter(t *testing.T) {
 	ctx := context.Background()
 
 	runID := ids.NewRunID()
-	checks := config.ConfigChecks{
+	checks := config.ChecksJobs{
 		"job1": {Run: "sleep"},
 		"job2": {Run: "sleep"},
 		"job3": {Run: "sleep"},
@@ -109,14 +108,14 @@ func TestSchedulerSlotLimiter(t *testing.T) {
 		ID:          runID,
 		Repo:        "test/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}, initialJobs)
 
 	slots := 2
 	var currentActive int32
 	var maxActive int32
 
-	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult {
+	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		active := atomic.AddInt32(&currentActive, 1)
 		for {
 			max := atomic.LoadInt32(&maxActive)
@@ -142,7 +141,7 @@ func TestSchedulerSlotLimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun failed: %v", err)
 	}
-	if r.State != protocol.RunStateSuccess {
+	if r.State != store.RunStateSuccess {
 		t.Errorf("run state = %s, want Success", r.State)
 	}
 }
@@ -152,7 +151,7 @@ func TestSchedulerDependencyOrder(t *testing.T) {
 	ctx := context.Background()
 
 	runID := ids.NewRunID()
-	checks := config.ConfigChecks{
+	checks := config.ChecksJobs{
 		"setup_step": {Run: "echo setup"},
 		"build":      {Run: "echo build", Needs: []string{"setup_step"}},
 		"test":       {Run: "echo test", Needs: []string{"build"}},
@@ -162,13 +161,13 @@ func TestSchedulerDependencyOrder(t *testing.T) {
 		ID:          runID,
 		Repo:        "test/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}, []string{"setup_step", "build", "test"})
 
 	var mu sync.Mutex
 	var order []string
 
-	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult {
+	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		mu.Lock()
 		order = append(order, jobName)
 		mu.Unlock()
@@ -192,7 +191,7 @@ func TestSchedulerFailureSkipDownstream(t *testing.T) {
 	ctx := context.Background()
 
 	runID := ids.NewRunID()
-	checks := config.ConfigChecks{
+	checks := config.ChecksJobs{
 		"lint":      {Run: "exit 1"},
 		"unit":      {Run: "echo test", Needs: []string{"lint"}},
 		"unrelated": {Run: "echo ok"},
@@ -202,10 +201,10 @@ func TestSchedulerFailureSkipDownstream(t *testing.T) {
 		ID:          runID,
 		Repo:        "test/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}, []string{"lint", "unit", "unrelated"})
 
-	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult {
+	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		if jobName == "lint" {
 			return JobResult{ExitCode: 1, Error: errors.New("linter failed")}
 		}
@@ -219,17 +218,17 @@ func TestSchedulerFailureSkipDownstream(t *testing.T) {
 	}
 
 	r, _ := db.GetRun(ctx, runID)
-	if r.State != protocol.RunStateFailed {
+	if r.State != store.RunStateFailed {
 		t.Errorf("run state = %s, want Failed", r.State)
 	}
 
 	unitJob, _ := db.GetJob(ctx, runID, "unit")
-	if unitJob.State != protocol.JobStateSkipped {
+	if unitJob.State != store.JobStateSkipped {
 		t.Errorf("downstream unit job state = %s, want skipped", unitJob.State)
 	}
 
 	unrelatedJob, _ := db.GetJob(ctx, runID, "unrelated")
-	if unrelatedJob.State != protocol.JobStateSuccess {
+	if unrelatedJob.State != store.JobStateSuccess {
 		t.Errorf("unrelated job state = %s, want success", unrelatedJob.State)
 	}
 }
@@ -239,7 +238,7 @@ func TestSchedulerInterrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	runID := ids.NewRunID()
-	checks := config.ConfigChecks{
+	checks := config.ChecksJobs{
 		"long1": {Run: "sleep"},
 		"long2": {Run: "sleep"},
 	}
@@ -248,10 +247,10 @@ func TestSchedulerInterrupted(t *testing.T) {
 		ID:          runID,
 		Repo:        "test/repo",
 		Ref:         "main",
-		TrustDomain: protocol.TrustDomainLocal,
+		TrustDomain: store.TrustDomainLocal,
 	}, []string{"long1", "long2"})
 
-	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult {
+	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		cancel() // Cancel context mid-job
 		select {
 		case <-ctx.Done():
@@ -268,7 +267,7 @@ func TestSchedulerInterrupted(t *testing.T) {
 	}
 
 	r, _ := db.GetRun(context.Background(), runID)
-	if r.State != protocol.RunStateInterrupted {
+	if r.State != store.RunStateInterrupted {
 		t.Errorf("run state = %s, want Interrupted", r.State)
 	}
 }

@@ -18,10 +18,10 @@ make check
 
 It runs `scripts/check.sh`, which must end with `check: ok`. The script:
 
-1. Regenerates types with `scripts/gen-schema.sh` and fails if the committed generated files differ (codegen drift).
+1. Regenerates types with `scripts/gen-schema.sh` and fails if anything under `agent/internal/protocol`, `agent/internal/config`, `hub/src/protocol` or `hub/src/config` differs from the index (codegen drift). Stage or commit your changes there before running it.
 2. Checks Go formatting with `gofmt -l`.
 3. Runs `go vet ./...` and `go test ./...` in `agent/`.
-4. Runs `npm ci` and `npm test` in `hub/`.
+4. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`.
 5. Runs `npx wrangler deploy --dry-run --outdir dist` in `hub/`.
 
 The project has no GitHub Actions workflows and never will. It verifies itself with `scripts/check.sh`. Do not add anything under `.github/workflows/`.

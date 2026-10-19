@@ -20,14 +20,7 @@ func TestStartPostgres(t *testing.T) {
 	ctx := context.Background()
 	socketDir := t.TempDir()
 
-	cfg := config.ServiceConfig{
-		Image: "postgres:16-alpine",
-		Env: config.ServiceConfigEnv{
-			"POSTGRES_DB": "testdb",
-		},
-	}
-
-	svc, err := mgr.Start(ctx, "01j7run", "postgres", cfg, socketDir)
+	svc, err := mgr.Start(ctx, "01j7run", config.ChecksServicesPostgres{Image: "postgres:15-alpine", Tmpfs: true}, socketDir)
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -37,9 +30,6 @@ func TestStartPostgres(t *testing.T) {
 	}
 	if svc.Env["PGHOST"] != socketDir {
 		t.Errorf("PGHOST = %q, want %q", svc.Env["PGHOST"], socketDir)
-	}
-	if svc.Env["PGDATABASE"] != "testdb" {
-		t.Errorf("PGDATABASE = %q, want 'testdb'", svc.Env["PGDATABASE"])
 	}
 
 	if len(fake.Calls) != 1 {
@@ -57,15 +47,30 @@ func TestStartPostgres(t *testing.T) {
 		"--network none",
 		"--tmpfs /var/lib/postgresql/data",
 		"-v " + socketDir + ":/var/run/postgresql",
-		"-e POSTGRES_DB=testdb",
 		"-e POSTGRES_HOST_AUTH_METHOD=trust",
-		"postgres:16-alpine",
+		"postgres:15-alpine",
 	}
 
 	for _, token := range expectedTokens {
 		if !strings.Contains(args, token) {
 			t.Errorf("missing token %q in args: %s", token, args)
 		}
+	}
+}
+
+func TestStartPostgresWithoutTmpfs(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"run"}, execx.FakeResponse{Code: 0})
+
+	if _, err := NewManager(fake).Start(context.Background(), "01j7run", config.ChecksServicesPostgres{}, t.TempDir()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	args := strings.Join(fake.Calls[0].Args, " ")
+	if strings.Contains(args, "--tmpfs") {
+		t.Errorf("tmpfs false still mounts tmpfs: %s", args)
+	}
+	if !strings.HasSuffix(args, " postgres:16-alpine") {
+		t.Errorf("empty image does not fall back to postgres:16-alpine: %s", args)
 	}
 }
 
@@ -184,11 +189,7 @@ func TestPostgresIntegration(t *testing.T) {
 	ctx := context.Background()
 	socketDir := t.TempDir()
 
-	cfg := config.ServiceConfig{
-		Image: "postgres:16-alpine",
-	}
-
-	svc, err := mgr.Start(ctx, "integtest", "postgres", cfg, socketDir)
+	svc, err := mgr.Start(ctx, "integtest", config.ChecksServicesPostgres{Image: "postgres:16-alpine", Tmpfs: true}, socketDir)
 	if err != nil {
 		t.Fatalf("Start integration failed: %v", err)
 	}

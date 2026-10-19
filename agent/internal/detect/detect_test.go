@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
@@ -29,12 +30,12 @@ go 1.24
 	if res.Config.Version != 1 {
 		t.Errorf("expected version 1, got %d", res.Config.Version)
 	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "go mod download" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
+	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "go mod download" {
+		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := []string{"fmt", "vet", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
+		if _, ok := res.Config.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
 	}
@@ -63,7 +64,7 @@ edition = "2021"
 	}
 	expectedJobs := []string{"fmt", "check", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
+		if _, ok := res.Config.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
 	}
@@ -107,13 +108,13 @@ func TestDetectPnpmTurbo(t *testing.T) {
 	if res.Ecosystem != EcosystemNodePnpm {
 		t.Errorf("expected %s, got %s", EcosystemNodePnpm, res.Ecosystem)
 	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "pnpm install --frozen-lockfile" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
+	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "pnpm install --frozen-lockfile" {
+		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := []string{"lint", "typecheck", "unit"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
-			t.Errorf("expected check job %q not found in checks: %v", job, res.Config.Checks)
+		if _, ok := res.Config.Checks.Jobs[job]; !ok {
+			t.Errorf("expected check job %q not found in checks: %v", job, res.Config.Checks.Jobs)
 		}
 	}
 	if err := config.ValidateSemantics(res.Config); err != nil {
@@ -145,8 +146,8 @@ func TestDetectNpm(t *testing.T) {
 	if res.Ecosystem != EcosystemNodeNpm {
 		t.Errorf("expected %s, got %s", EcosystemNodeNpm, res.Ecosystem)
 	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "npm ci" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
+	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "npm ci" {
+		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := map[string]string{
 		"lint":      "npm run lint",
@@ -154,7 +155,7 @@ func TestDetectNpm(t *testing.T) {
 		"unit":      "npm test",
 	}
 	for name, wantRun := range expectedJobs {
-		job, ok := res.Config.Checks[name]
+		job, ok := res.Config.Checks.Jobs[name]
 		if !ok {
 			t.Errorf("expected job %q not found", name)
 		} else if job.Run != wantRun {
@@ -198,7 +199,7 @@ strict = true
 	}
 	expectedJobs := []string{"lint", "typecheck", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
+		if _, ok := res.Config.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
 	}
@@ -216,13 +217,13 @@ func TestDetectEmptyDir(t *testing.T) {
 }
 
 func TestFormatYAML(t *testing.T) {
-	cfg := &config.Config{
+	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
 		Version: 1,
-		Setup:   []string{"npm ci"},
-		Checks: config.ConfigChecks{
-			"lint": config.CheckJob{Run: "npm run lint"},
+		Checks: &config.Checks{
+			Setup: []config.SetupStep{{Run: "npm ci", Cache: &config.SetupStepCache{Key: []string{"package-lock.json"}, Paths: []string{"node_modules"}}}},
+			Jobs:  config.ChecksJobs{"lint": {Run: "npm run lint"}},
 		},
-	}
+	}}
 	data, err := FormatYAML(cfg)
 	if err != nil {
 		t.Fatalf("FormatYAML failed: %v", err)
@@ -231,7 +232,7 @@ func TestFormatYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Parse failed on formatted YAML: %v", err)
 	}
-	if parsed.Version != 1 || len(parsed.Checks) != 1 {
-		t.Errorf("parsed config mismatch: %+v", parsed)
+	if !reflect.DeepEqual(parsed.Checks.Setup, cfg.Checks.Setup) || !reflect.DeepEqual(parsed.Checks.Jobs, cfg.Checks.Jobs) {
+		t.Errorf("parsed config mismatch: %+v", parsed.Checks)
 	}
 }

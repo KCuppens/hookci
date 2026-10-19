@@ -1,4 +1,4 @@
-package protocol
+package store
 
 // RunState represents the lifecycle state of a run owned by the agent.
 type RunState string

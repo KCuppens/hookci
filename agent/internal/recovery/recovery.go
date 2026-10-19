@@ -8,7 +8,6 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
@@ -71,10 +70,10 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 		jobs, err := m.store.ListJobs(ctx, run.ID)
 		if err == nil {
 			for _, j := range jobs {
-				if j.State == protocol.JobStateQueued || j.State == protocol.JobStateRunning {
-					targetState := protocol.JobStateCancelled
-					if j.State == protocol.JobStateRunning {
-						targetState = protocol.JobStateFailed
+				if j.State == store.JobStateQueued || j.State == store.JobStateRunning {
+					targetState := store.JobStateCancelled
+					if j.State == store.JobStateRunning {
+						targetState = store.JobStateFailed
 					}
 					exitCode := 137 // SIGKILL indicator
 					_ = m.store.TransitionJob(ctx, run.ID, j.Name, j.State, targetState, &exitCode, InterruptedReason)
@@ -83,7 +82,7 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 		}
 
 		// 3. Transition run to Interrupted
-		if err := m.store.TransitionRun(ctx, run.ID, run.State, protocol.RunStateInterrupted, InterruptedReason); err != nil {
+		if err := m.store.TransitionRun(ctx, run.ID, run.State, store.RunStateInterrupted, InterruptedReason); err != nil {
 			transitionErr := fmt.Errorf("transition run %s to interrupted: %w", run.ID, err)
 			return recovered, errors.Join(append(cleanupErrs, transitionErr)...)
 		}

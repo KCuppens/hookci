@@ -8,7 +8,7 @@ check:
 	sh scripts/check.sh
 
 schema:
-	sh scripts/gen-schema.sh
+	scripts/gen-schema.sh
 
 agent:
 	mkdir -p dist

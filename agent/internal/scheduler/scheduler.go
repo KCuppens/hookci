@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
@@ -29,13 +28,13 @@ type JobResult struct {
 
 // JobRunner executes an individual check job.
 type JobRunner interface {
-	RunJob(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult
+	RunJob(ctx context.Context, runID string, jobName string, job config.Job) JobResult
 }
 
 // RunnerFunc allows a plain function to satisfy JobRunner.
-type RunnerFunc func(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult
+type RunnerFunc func(ctx context.Context, runID string, jobName string, job config.Job) JobResult
 
-func (f RunnerFunc) RunJob(ctx context.Context, runID string, jobName string, job config.CheckJob) JobResult {
+func (f RunnerFunc) RunJob(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 	return f(ctx, runID, jobName, job)
 }
 
@@ -65,7 +64,7 @@ func New(db *store.DB, runner JobRunner, opts Options) *Scheduler {
 }
 
 // Run executes all checks in the DAG for runID, managing concurrency slots and recording state in db.
-func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigChecks) error {
+func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJobs) error {
 	if len(checks) == 0 {
 		return nil
 	}
@@ -77,7 +76,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 
 	// Transition run Queued -> Running
 	if s.store != nil {
-		if err := s.store.TransitionRun(ctx, runID, protocol.RunStateQueued, protocol.RunStateRunning, ""); err != nil {
+		if err := s.store.TransitionRun(ctx, runID, store.RunStateQueued, store.RunStateRunning, ""); err != nil {
 			return fmt.Errorf("transition run to running: %w", err)
 		}
 	}
@@ -88,7 +87,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 	// State tracking
 	var (
 		mu          sync.Mutex
-		states      = make(map[string]protocol.JobState, len(checks))
+		states      = make(map[string]store.JobState, len(checks))
 		failed      = false
 		remaining   = len(checks)
 		cond        = sync.NewCond(&mu)
@@ -97,14 +96,14 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 	)
 
 	for name := range checks {
-		states[name] = protocol.JobStateQueued
+		states[name] = store.JobStateQueued
 	}
 
 	// Helper to check if a job's dependencies are all satisfied
 	canRun := func(name string) bool {
 		node := dag.Nodes[name]
 		for _, dep := range node.Needs {
-			if states[dep] != protocol.JobStateSuccess {
+			if states[dep] != store.JobStateSuccess {
 				return false
 			}
 		}
@@ -117,8 +116,8 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 		var findDeps func(string)
 		findDeps = func(curr string) {
 			for _, dep := range dag.Dependents(curr) {
-				if states[dep] == protocol.JobStateQueued {
-					states[dep] = protocol.JobStateSkipped
+				if states[dep] == store.JobStateQueued {
+					states[dep] = store.JobStateSkipped
 					toSkip = append(toSkip, dep)
 					findDeps(dep)
 				}
@@ -129,7 +128,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 		for _, skipped := range toSkip {
 			remaining--
 			if s.store != nil {
-				_ = s.store.TransitionJob(ctx, runID, skipped, protocol.JobStateQueued, protocol.JobStateSkipped, nil, "dependency failed")
+				_ = s.store.TransitionJob(ctx, runID, skipped, store.JobStateQueued, store.JobStateSkipped, nil, "dependency failed")
 			}
 		}
 	}
@@ -146,11 +145,11 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 			anyFailed = true
 			// Cancel all remaining queued jobs
 			for name, st := range states {
-				if st == protocol.JobStateQueued {
-					states[name] = protocol.JobStateCancelled
+				if st == store.JobStateQueued {
+					states[name] = store.JobStateCancelled
 					remaining--
 					if s.store != nil {
-						_ = s.store.TransitionJob(context.Background(), runID, name, protocol.JobStateQueued, protocol.JobStateCancelled, nil, "interrupted")
+						_ = s.store.TransitionJob(context.Background(), runID, name, store.JobStateQueued, store.JobStateCancelled, nil, "interrupted")
 					}
 				}
 			}
@@ -164,7 +163,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 		// Find any ready job
 		var nextJob string
 		for name, st := range states {
-			if st == protocol.JobStateQueued && canRun(name) {
+			if st == store.JobStateQueued && canRun(name) {
 				nextJob = name
 				break
 			}
@@ -174,7 +173,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 			// No job ready right now. If no jobs are running, deadlock or all done/skipped.
 			hasRunning := false
 			for _, st := range states {
-				if st == protocol.JobStateRunning {
+				if st == store.JobStateRunning {
 					hasRunning = true
 					break
 				}
@@ -192,7 +191,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 		}
 
 		// Mark job as running
-		states[nextJob] = protocol.JobStateRunning
+		states[nextJob] = store.JobStateRunning
 		mu.Unlock()
 
 		// Acquire a slot (respecting context)
@@ -200,11 +199,11 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 		case slotSem <- struct{}{}:
 		case <-ctx.Done():
 			mu.Lock()
-			states[nextJob] = protocol.JobStateCancelled
+			states[nextJob] = store.JobStateCancelled
 			remaining--
 			mu.Unlock()
 			if s.store != nil {
-				_ = s.store.TransitionJob(context.Background(), runID, nextJob, protocol.JobStateQueued, protocol.JobStateCancelled, nil, "interrupted")
+				_ = s.store.TransitionJob(context.Background(), runID, nextJob, store.JobStateQueued, store.JobStateCancelled, nil, "interrupted")
 			}
 			continue
 		}
@@ -224,7 +223,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 
 			// Record job transition to running in store
 			if s.store != nil {
-				_ = s.store.TransitionJob(ctx, runID, jobName, protocol.JobStateQueued, protocol.JobStateRunning, nil, "")
+				_ = s.store.TransitionJob(ctx, runID, jobName, store.JobStateQueued, store.JobStateRunning, nil, "")
 			}
 
 			// Execute job via runner
@@ -239,19 +238,19 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 			if res.Error != nil || res.ExitCode != 0 {
 				anyFailed = true
 				failed = true
-				states[jobName] = protocol.JobStateFailed
+				states[jobName] = store.JobStateFailed
 				errMsg := ""
 				if res.Error != nil {
 					errMsg = res.Error.Error()
 				}
 				if s.store != nil {
-					_ = s.store.TransitionJob(context.Background(), runID, jobName, protocol.JobStateRunning, protocol.JobStateFailed, &exitCode, errMsg)
+					_ = s.store.TransitionJob(context.Background(), runID, jobName, store.JobStateRunning, store.JobStateFailed, &exitCode, errMsg)
 				}
 				skipDownstream(jobName)
 			} else {
-				states[jobName] = protocol.JobStateSuccess
+				states[jobName] = store.JobStateSuccess
 				if s.store != nil {
-					_ = s.store.TransitionJob(context.Background(), runID, jobName, protocol.JobStateRunning, protocol.JobStateSuccess, &exitCode, "")
+					_ = s.store.TransitionJob(context.Background(), runID, jobName, store.JobStateRunning, store.JobStateSuccess, &exitCode, "")
 				}
 			}
 		}()
@@ -263,14 +262,14 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ConfigC
 	if s.store != nil {
 		bgCtx := context.Background()
 		if interrupted || errors.Is(ctx.Err(), context.Canceled) {
-			_ = s.store.TransitionRun(bgCtx, runID, protocol.RunStateRunning, protocol.RunStateInterrupted, "run interrupted")
+			_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateInterrupted, "run interrupted")
 			return ctx.Err()
 		}
 		if anyFailed || failed {
-			_ = s.store.TransitionRun(bgCtx, runID, protocol.RunStateRunning, protocol.RunStateFailed, "one or more jobs failed")
+			_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateFailed, "one or more jobs failed")
 			return errors.New("one or more jobs failed")
 		}
-		_ = s.store.TransitionRun(bgCtx, runID, protocol.RunStateRunning, protocol.RunStateSuccess, "")
+		_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateSuccess, "")
 	}
 
 	if anyFailed {

@@ -46,6 +46,6 @@ func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int
 		return ExitUsage
 	}
 
-	fmt.Fprintf(stdout, "%s: valid configuration (%d check jobs)\n", target, len(cfg.Checks))
+	fmt.Fprintf(stdout, "%s: valid configuration (%d check jobs)\n", target, len(cfg.Checks.Jobs))
 	return ExitOK
 }

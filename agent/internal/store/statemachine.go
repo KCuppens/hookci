@@ -2,8 +2,6 @@ package store
 
 import (
 	"fmt"
-
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
 // ErrInvalidTransition is returned when an illegal state change is attempted.
@@ -18,12 +16,12 @@ func (e *ErrInvalidTransition) Error() string {
 }
 
 // IsRunTerminal returns true if the run state is a terminal state.
-func IsRunTerminal(s protocol.RunState) bool {
+func IsRunTerminal(s RunState) bool {
 	switch s {
-	case protocol.RunStateSuccess,
-		protocol.RunStateFailed,
-		protocol.RunStateInterrupted,
-		protocol.RunStateSuperseded:
+	case RunStateSuccess,
+		RunStateFailed,
+		RunStateInterrupted,
+		RunStateSuperseded:
 		return true
 	default:
 		return false
@@ -31,12 +29,12 @@ func IsRunTerminal(s protocol.RunState) bool {
 }
 
 // IsJobTerminal returns true if the job state is a terminal state.
-func IsJobTerminal(s protocol.JobState) bool {
+func IsJobTerminal(s JobState) bool {
 	switch s {
-	case protocol.JobStateSuccess,
-		protocol.JobStateFailed,
-		protocol.JobStateCancelled,
-		protocol.JobStateSkipped:
+	case JobStateSuccess,
+		JobStateFailed,
+		JobStateCancelled,
+		JobStateSkipped:
 		return true
 	default:
 		return false
@@ -63,31 +61,31 @@ func IsJobTerminal(s protocol.JobState) bool {
 //
 // RollingBack -> Failed
 // RollingBack -> Interrupted
-func IsValidRunTransition(from, to protocol.RunState) bool {
+func IsValidRunTransition(from, to RunState) bool {
 	if from == to {
 		return true
 	}
 	switch from {
-	case protocol.RunStateQueued:
-		return to == protocol.RunStateRunning ||
-			to == protocol.RunStateSuperseded ||
-			to == protocol.RunStateInterrupted
+	case RunStateQueued:
+		return to == RunStateRunning ||
+			to == RunStateSuperseded ||
+			to == RunStateInterrupted
 
-	case protocol.RunStateRunning:
-		return to == protocol.RunStateSuccess ||
-			to == protocol.RunStateFailed ||
-			to == protocol.RunStateVerifying ||
-			to == protocol.RunStateInterrupted
+	case RunStateRunning:
+		return to == RunStateSuccess ||
+			to == RunStateFailed ||
+			to == RunStateVerifying ||
+			to == RunStateInterrupted
 
-	case protocol.RunStateVerifying:
-		return to == protocol.RunStateSuccess ||
-			to == protocol.RunStateRollingBack ||
-			to == protocol.RunStateFailed ||
-			to == protocol.RunStateInterrupted
+	case RunStateVerifying:
+		return to == RunStateSuccess ||
+			to == RunStateRollingBack ||
+			to == RunStateFailed ||
+			to == RunStateInterrupted
 
-	case protocol.RunStateRollingBack:
-		return to == protocol.RunStateFailed ||
-			to == protocol.RunStateInterrupted
+	case RunStateRollingBack:
+		return to == RunStateFailed ||
+			to == RunStateInterrupted
 
 	default:
 		// Terminal states cannot transition further
@@ -106,20 +104,20 @@ func IsValidRunTransition(from, to protocol.RunState) bool {
 // running -> success
 // running -> failed
 // running -> cancelled
-func IsValidJobTransition(from, to protocol.JobState) bool {
+func IsValidJobTransition(from, to JobState) bool {
 	if from == to {
 		return true
 	}
 	switch from {
-	case protocol.JobStateQueued:
-		return to == protocol.JobStateRunning ||
-			to == protocol.JobStateCancelled ||
-			to == protocol.JobStateSkipped
+	case JobStateQueued:
+		return to == JobStateRunning ||
+			to == JobStateCancelled ||
+			to == JobStateSkipped
 
-	case protocol.JobStateRunning:
-		return to == protocol.JobStateSuccess ||
-			to == protocol.JobStateFailed ||
-			to == protocol.JobStateCancelled
+	case JobStateRunning:
+		return to == JobStateSuccess ||
+			to == JobStateFailed ||
+			to == JobStateCancelled
 
 	default:
 		// Terminal states cannot transition further

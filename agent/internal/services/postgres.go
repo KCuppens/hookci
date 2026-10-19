@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
@@ -40,9 +39,11 @@ func ContainerName(runID, serviceName string) string {
 	return fmt.Sprintf("zeroci-service-%s-%s", runID, serviceName)
 }
 
-// Start launches a service container with --network none, data on tmpfs,
-// and unix socket bind-mounted into socketDir.
-func (m *Manager) Start(ctx context.Context, runID, name string, cfg config.ServiceConfig, socketDir string) (*Service, error) {
+// Start launches the postgres service container with --network none, its data
+// directory on tmpfs when cfg.Tmpfs is set, and its unix socket bind-mounted
+// into socketDir.
+func (m *Manager) Start(ctx context.Context, runID string, cfg config.ChecksServicesPostgres, socketDir string) (*Service, error) {
+	const name = "postgres"
 	containerName := ContainerName(runID, name)
 
 	if err := os.MkdirAll(socketDir, 0777); err != nil {
@@ -56,70 +57,32 @@ func (m *Manager) Start(ctx context.Context, runID, name string, cfg config.Serv
 		"--name", containerName,
 		"--network", "none",
 	}
-
-	if name == "postgres" {
-		args = append(args,
-			"--tmpfs", "/var/lib/postgresql/data",
-			"-v", fmt.Sprintf("%s:/var/run/postgresql", socketDir),
-		)
-	} else {
-		// Generic service support
-		args = append(args, "-v", fmt.Sprintf("%s:/tmp/run", socketDir))
+	if cfg.Tmpfs {
+		args = append(args, "--tmpfs", "/var/lib/postgresql/data")
 	}
-
-	// Environment variables
-	envKeys := make([]string, 0, len(cfg.Env))
-	for k := range cfg.Env {
-		envKeys = append(envKeys, k)
-	}
-	sort.Strings(envKeys)
-
-	hasAuthMethod := false
-	for _, k := range envKeys {
-		if k == "POSTGRES_HOST_AUTH_METHOD" {
-			hasAuthMethod = true
-		}
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, cfg.Env[k]))
-	}
-
-	if name == "postgres" && !hasAuthMethod {
-		args = append(args, "-e", "POSTGRES_HOST_AUTH_METHOD=trust")
-	}
-
 	image := cfg.Image
 	if image == "" {
 		image = "postgres:16-alpine"
 	}
-	args = append(args, image)
+	args = append(args,
+		"-v", fmt.Sprintf("%s:/var/run/postgresql", socketDir),
+		"-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+		image,
+	)
 
-	cmd := execx.Cmd{
-		Name: "docker",
-		Args: args,
-	}
-
-	if err := m.Runner.Run(ctx, cmd); err != nil {
+	if err := m.Runner.Run(ctx, execx.Cmd{Name: "docker", Args: args}); err != nil {
 		return nil, fmt.Errorf("start docker service %s: %w", containerName, err)
-	}
-
-	// Environment variables provided to connecting jobs
-	jobEnv := make(map[string]string)
-	if name == "postgres" {
-		jobEnv["PGHOST"] = socketDir
-		jobEnv["PGPORT"] = "5432"
-		jobEnv["PGUSER"] = "postgres"
-		if user, ok := cfg.Env["POSTGRES_USER"]; ok {
-			jobEnv["PGUSER"] = user
-		}
-		if db, ok := cfg.Env["POSTGRES_DB"]; ok {
-			jobEnv["PGDATABASE"] = db
-		}
 	}
 
 	return &Service{
 		Name:          name,
 		ContainerName: containerName,
 		SocketDir:     socketDir,
-		Env:           jobEnv,
+		Env: map[string]string{
+			"PGHOST": socketDir,
+			"PGPORT": "5432",
+			"PGUSER": "postgres",
+		},
 	}, nil
 }
 

@@ -13,14 +13,15 @@ func TestValidateCommand(t *testing.T) {
 
 	validConfig := `
 version: 1
-setup:
-  - echo setup
 checks:
-  lint:
-    run: npm run lint
-  test:
-    run: npm test
-    needs: [lint]
+  setup:
+    - run: echo setup
+  jobs:
+    lint:
+      run: npm run lint
+    test:
+      run: npm test
+      needs: [lint]
 `
 	validPath := filepath.Join(tmpDir, ".zeroci.yml")
 	if err := os.WriteFile(validPath, []byte(validConfig), 0o600); err != nil {
@@ -30,9 +31,10 @@ checks:
 	invalidConfig := `
 version: 1
 checks:
-  lint:
-    run: echo lint
-    needs: [lint]
+  jobs:
+    lint:
+      run: echo lint
+      needs: [lint]
 `
 	invalidPath := filepath.Join(tmpDir, "invalid.yml")
 	if err := os.WriteFile(invalidPath, []byte(invalidConfig), 0o600); err != nil {
