@@ -132,8 +132,8 @@ func TestOpenCreatesWAL(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("schema_migrations rows = %d, want 1", n)
+	if n != 2 {
+		t.Errorf("schema_migrations rows = %d, want 2", n)
 	}
 }
 

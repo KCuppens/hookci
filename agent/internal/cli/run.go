@@ -54,60 +54,12 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	}
 	g := d.Globals
 
-	if err := os.MkdirAll(g.StateDir, 0o700); err != nil {
-		fmt.Fprintf(stderr, "zeroci: create state directory: %v\n", err)
-		return ExitInternal
+	h, code := openHost(ctx, d, g.StateDir, stderr)
+	if code != ExitOK {
+		return code
 	}
-	unlock, err := lockStateDir(g.StateDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %s: %v\n", g.StateDir, err)
-		return ExitInternal
-	}
-	defer unlock()
-
-	db, err := store.Open(filepath.Join(g.StateDir, "agent.db"), store.WithClock(d.Clock))
-	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
-		return ExitInternal
-	}
-	defer db.Close()
-
-	iso, warnings, err := d.Isolation(g.Isolation)
-	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
-		return ExitUsage
-	}
-	for _, w := range warnings {
-		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
-	}
-	runAs, err := isolation.JobCredential(iso)
-	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
-		return ExitInternal
-	}
-	jobUser := executor.JobUser{Cred: runAs}
-
-	// Units left by an earlier systemd run must be found even when this run
-	// uses none, so the sweep uses systemd whenever the host can run it.
-	recIso := iso
-	if sd, _, err := d.Isolation("systemd"); err == nil {
-		recIso = sd
-	}
-	report, err := recovery.Recover(ctx, recovery.Deps{
-		Store:     db,
-		Isolation: recIso,
-		Netns:     recovery.NetnsManager{Manager: d.Netns},
-		Docker:    services.Docker{Runner: d.Host},
-		Runner:    d.Host,
-		Logger:    slog.New(slog.DiscardHandler),
-	})
-	for _, e := range report.Errors {
-		fmt.Fprintf(stderr, "zeroci: warning: recovery: %v\n", e)
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: recovery: %v\n", err)
-		return ExitInternal
-	}
+	defer h.close()
+	db, iso, jobUser, runAs := h.db, h.iso, h.jobUser, h.jobUser.Cred
 
 	wd, err := d.Getwd()
 	if err != nil {
@@ -168,17 +120,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		return ExitInternal
 	}
 
-	hooks := d.Hooks
-	if hooks.Netns == nil {
-		hooks.Netns = d.Netns
-	}
-	if hooks.Cache == nil {
-		if c, err := cache.New(cache.Options{Root: filepath.Join(g.StateDir, "cache")}); err != nil {
-			fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
-		} else {
-			hooks.Cache = c
-		}
-	}
+	hooks := executorHooks(d, g.StateDir, stderr)
 	var mirror io.Writer
 	if g.Verbose {
 		mirror = stdout
@@ -233,6 +175,95 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		fmt.Fprintf(stderr, "zeroci: run %s: %s\n", final.State, final.Reason)
 	}
 	return ExitRunFailed
+}
+
+// host is what a command that runs jobs holds while it runs: the locked
+// state dir, its store and the job isolation.
+type host struct {
+	db      *store.Store
+	iso     isolation.Isolation
+	jobUser executor.JobUser
+	close   func()
+}
+
+// openHost locks stateDir, opens its store, selects the job isolation and
+// recovers what an earlier crashed process left behind. A code other than
+// ExitOK has been reported on stderr.
+func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*host, int) {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		fmt.Fprintf(stderr, "zeroci: create state directory: %v\n", err)
+		return nil, ExitInternal
+	}
+	unlock, err := lockStateDir(stateDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %s: %v\n", stateDir, err)
+		return nil, ExitInternal
+	}
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"), store.WithClock(d.Clock))
+	if err != nil {
+		unlock()
+		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
+		return nil, ExitInternal
+	}
+	h := &host{db: db, close: func() { db.Close(); unlock() }}
+
+	iso, warnings, err := d.Isolation(d.Globals.Isolation)
+	if err != nil {
+		h.close()
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return nil, ExitUsage
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
+	}
+	runAs, err := isolation.JobCredential(iso)
+	if err != nil {
+		h.close()
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return nil, ExitInternal
+	}
+	h.iso, h.jobUser = iso, executor.JobUser{Cred: runAs}
+
+	// Units left by an earlier systemd run must be found even when this run
+	// uses none, so the sweep uses systemd whenever the host can run it.
+	recIso := iso
+	if sd, _, err := d.Isolation("systemd"); err == nil {
+		recIso = sd
+	}
+	report, err := recovery.Recover(ctx, recovery.Deps{
+		Store:     db,
+		Isolation: recIso,
+		Netns:     recovery.NetnsManager{Manager: d.Netns},
+		Docker:    services.Docker{Runner: d.Host},
+		Runner:    d.Host,
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	for _, e := range report.Errors {
+		fmt.Fprintf(stderr, "zeroci: warning: recovery: %v\n", e)
+	}
+	if err != nil {
+		h.close()
+		fmt.Fprintf(stderr, "zeroci: recovery: %v\n", err)
+		return nil, ExitInternal
+	}
+	return h, ExitOK
+}
+
+// executorHooks are d.Hooks with a nil Netns set to d.Netns and a nil Cache
+// set to the cache under stateDir.
+func executorHooks(d Deps, stateDir string, stderr io.Writer) executor.Hooks {
+	hooks := d.Hooks
+	if hooks.Netns == nil {
+		hooks.Netns = d.Netns
+	}
+	if hooks.Cache == nil {
+		if c, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")}); err != nil {
+			fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
+		} else {
+			hooks.Cache = c
+		}
+	}
+	return hooks
 }
 
 // driveRun submits runID to sched and waits for it to end. When ctx ends

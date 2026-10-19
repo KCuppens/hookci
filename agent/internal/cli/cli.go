@@ -33,6 +33,10 @@ func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Write
 
 func commandTable() map[string]command {
 	return map[string]command{
+		"agent": {
+			summary: "connect to the hub and run the checks it sends: agent [--state-dir DIR]",
+			run:     cmdAgent,
+		},
 		"connect": {
 			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force]",
 			run:     noDeps(runConnect),

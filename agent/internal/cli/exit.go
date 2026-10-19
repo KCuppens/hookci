@@ -10,6 +10,9 @@ const (
 	ExitUsage = 2
 	// ExitNoChecks indicates no checks were configured to run.
 	ExitNoChecks = 3
+	// ExitRevoked indicates the hub revoked the agent; it shares its value
+	// with ExitNoChecks.
+	ExitRevoked = 3
 	// ExitInternal indicates an internal error unrelated to user input.
 	ExitInternal = 4
 )

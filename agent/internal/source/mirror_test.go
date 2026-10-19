@@ -160,7 +160,7 @@ func TestFetchArgv(t *testing.T) {
 	g := Git{Runner: f}
 	m := NewMirrors("/state/mirrors", g)
 	refspecs := []string{testSHA, "+refs/pull/12/head:refs/zeroci/pull/12"}
-	if err := m.Fetch(context.Background(), "o/r", refspecs, []string{"ZEROCI_ASKPASS=1"}); err != nil {
+	if err := m.Fetch(context.Background(), "o/r", refspecs, []string{"GIT_ASKPASS=/x"}); err != nil {
 		t.Fatal(err)
 	}
 	want := g.Args("-C", "/state/mirrors/o__r.git", "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/zeroci/"+testSHA, "+refs/pull/12/head:refs/zeroci/pull/12")
@@ -168,7 +168,7 @@ func TestFetchArgv(t *testing.T) {
 	if !slices.Equal(c.Args, want) {
 		t.Fatalf("argv = %q\nwant %q", c.Args, want)
 	}
-	if !slices.Contains(c.Env, "ZEROCI_ASKPASS=1") || !slices.Contains(c.Env, "GIT_CONFIG_GLOBAL=/dev/null") {
+	if !slices.Contains(c.Env, "GIT_ASKPASS=/x") || !slices.Contains(c.Env, "GIT_CONFIG_GLOBAL=/dev/null") {
 		t.Fatalf("env = %q", c.Env)
 	}
 	for _, a := range c.Args {
