@@ -2,11 +2,12 @@
 // installations linked to the workspace, then check the caller's GitHub role
 // on it.
 
+import type { InstallationRow } from "../db/installations";
 import { findRepoForTeam } from "../db/repos";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { getCollaboratorPermission } from "../github/api";
+import { getCollaboratorPermission, isOrgAdmin } from "../github/api";
 import { GitHubClient } from "../github/client";
 import { cachedPermission } from "../github/permission-cache";
 import type { RepoPermission } from "../github/types";
@@ -72,4 +73,29 @@ export async function requireRepoAccess(
 	const gh = commandGitHub(env);
 	await requirePermission(env, gh, repo.installationId, repo.fullName, user.githubLogin, need);
 	return { repo, gh };
+}
+
+/**
+ * Whether githubLogin administers the installation's account: the owner of a
+ * user account, or an admin of an organization. Organization roles are cached
+ * like repo roles, up to 5 minutes; fresh looks the role up again.
+ */
+export async function isInstallationAdmin(
+	env: Env,
+	gh: GitHubClient,
+	installation: Pick<InstallationRow, "id" | "account_login" | "account_type">,
+	githubLogin: string,
+	fresh = false,
+): Promise<boolean> {
+	if (installation.account_type === "User") return installation.account_login.toLowerCase() === githubLogin.toLowerCase();
+	// "@" never appears in a repo name, so the org entry cannot collide with a repo's.
+	const role = await cachedPermission(
+		installation.id,
+		`@org/${installation.account_login}`,
+		githubLogin,
+		(env.__TEST_CLOCK ?? systemClock).now(),
+		async () => ((await isOrgAdmin(await gh.installation(installation.id), installation.account_login, githubLogin)) ? "admin" : "none"),
+		fresh,
+	);
+	return role === "admin";
 }

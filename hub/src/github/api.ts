@@ -9,6 +9,7 @@ import type {
 	CreateCheckRunBody,
 	HookDelivery,
 	Installation,
+	OrgMembership,
 	PullRequest,
 	RepoPermission,
 	Repository,
@@ -53,6 +54,17 @@ export async function getCollaboratorPermission(
 		return ROLES.find((r) => r === role_name) ?? permission;
 	} catch (err) {
 		if (err instanceof GitHubApiError && err.githubStatus === 404) return "none";
+		throw err;
+	}
+}
+
+/** Whether login is an active admin of org; false when GitHub does not know the membership (404). */
+export async function isOrgAdmin(inst: GitHubRequester, org: string, login: string): Promise<boolean> {
+	try {
+		const res = await inst.request<OrgMembership>("GET", `/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`);
+		return res.data.state === "active" && res.data.role === "admin";
+	} catch (err) {
+		if (err instanceof GitHubApiError && err.githubStatus === 404) return false;
 		throw err;
 	}
 }

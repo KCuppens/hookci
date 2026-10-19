@@ -10,12 +10,27 @@ export interface ContextBlock {
 	elements: [{ type: "mrkdwn"; text: string }];
 }
 
+export interface HeaderBlock {
+	type: "header";
+	text: { type: "plain_text"; text: string; emoji: true };
+}
+
+/** The confirm dialog Slack shows before it sends a button's action. */
+export interface SlackConfirm {
+	title: { type: "plain_text"; text: string };
+	text: { type: "plain_text"; text: string };
+	confirm: { type: "plain_text"; text: string };
+	deny: { type: "plain_text"; text: string };
+	style?: "primary" | "danger";
+}
+
 export interface ButtonElement {
 	type: "button";
 	action_id: string;
 	text: { type: "plain_text"; text: string; emoji: true };
 	value: string;
 	style?: "primary" | "danger";
+	confirm?: SlackConfirm;
 }
 
 /** A button that opens url in the browser; Slack needs no handler for it. */
@@ -37,6 +52,10 @@ export function section(text: string): SectionBlock {
 
 export function context(text: string): ContextBlock {
 	return { type: "context", elements: [{ type: "mrkdwn", text }] };
+}
+
+export function header(text: string): HeaderBlock {
+	return { type: "header", text: { type: "plain_text", text, emoji: true } };
 }
 
 export function button(actionId: string, text: string, value: string, style?: "primary" | "danger"): ButtonElement {

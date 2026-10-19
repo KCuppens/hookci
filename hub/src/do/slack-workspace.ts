@@ -8,6 +8,7 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { defaultFetcher } from "../http";
 import { reportError } from "../observability";
+import "../slack/actions";
 import "../slack/commands";
 import { type SlackActionRequest, type SlackCommandRequest, type SlackReply, actionFor, commandFor } from "../slack/registry";
 import { S } from "../strings";

@@ -26,6 +26,12 @@ export interface CollaboratorPermission {
 	role_name: string;
 }
 
+/** GET /orgs/{org}/memberships/{username}. */
+export interface OrgMembership {
+	state: "active" | "pending";
+	role: "admin" | "member" | "billing_manager";
+}
+
 export interface Account {
 	id: number;
 	login: string;
