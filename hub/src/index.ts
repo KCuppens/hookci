@@ -25,6 +25,7 @@ import "./slack/actions";
 import "./slack/commands";
 import "./slack/events";
 import "./webhook/authorization";
+import "./webhook/check-run";
 import "./webhook/installation";
 import "./sinks/checks";
 import "./sinks/slack";

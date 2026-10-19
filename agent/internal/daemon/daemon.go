@@ -44,8 +44,8 @@ const (
 const flushInterval = 100 * time.Millisecond
 
 // ExecutorFunc builds the runner of one checked-out run whose checks are
-// already resolved.
-type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks) (scheduler.JobRunner, error)
+// already resolved, held to policy.
+type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error)
 
 // Options configures a Daemon.
 type Options struct {
@@ -302,7 +302,8 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.reject(bg, w, ReasonNoConfig, errors.New("no checks configured or detected"))
 		return
 	}
-	inner, err := d.exec(co, p.checks)
+	policy := optionsForTrust(t.Trust)
+	inner, err := d.exec(co, p.checks, policy)
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
@@ -335,12 +336,13 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 			d.log.Error("report head config failed", "run", w.runID, "err", err)
 		}
 	}
-	d.drive(ctx, w, runner)
+	d.drive(ctx, w, run, runner, policy)
 	d.client.Flush()
 }
 
-// drive submits w's stored run and waits for it to end.
-func (d *Daemon) drive(ctx context.Context, w *work, runner scheduler.JobRunner) {
+// drive submits w's stored run and waits for it to end. A deploy run that
+// policy forbids is not submitted: its jobs are skipped.
+func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy) {
 	bg := context.WithoutCancel(ctx)
 	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log})
 	defer func() {
@@ -351,6 +353,10 @@ func (d *Daemon) drive(ctx context.Context, w *work, runner scheduler.JobRunner)
 			d.log.Error("record trigger state failed", "trigger", w.trig.TriggerId, "err", err)
 		}
 	}()
+	if run.Kind == kindDeploy && !policy.AllowDeploy {
+		d.skipUntrustedDeploy(bg, run.ID)
+		return
+	}
 	if _, err := sched.Submit(bg, w.runID); err != nil {
 		d.log.Error("submit run failed", "run", w.runID, "err", err)
 		return

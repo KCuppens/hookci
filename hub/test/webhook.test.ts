@@ -16,6 +16,8 @@ import prOpened from "./fixtures/github/pull_request.opened.json";
 import prFork from "./fixtures/github/pull_request.synchronize.fork.json";
 import pushBranch from "./fixtures/github/push.branch.json";
 import pushMain from "./fixtures/github/push.main.json";
+import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "./fakes/github";
+import { generateAppKey } from "./github/helpers";
 
 const INSTALLATION = 42;
 const REPO = 1001;
@@ -215,12 +217,23 @@ describe("POST /github/webhook routing", () => {
     ]);
   });
 
-  it("sends a fork pull request untrusted", async () => {
-    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
-    await deliver("pull_request", prFork);
+  it("gates a fork pull request instead of triggering it, reading the policy at the base SHA", async () => {
+    const gh = createFakeGitHub();
+    serveInstallationTokens(gh, Date.now());
+    const refs = serveRepoFiles(gh, {});
+    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+    env.__TEST_FETCHER = gh.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+    try {
+      await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+      await deliver("pull_request", prFork);
+    } finally {
+      Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
+    }
+    expect(refs).toEqual([prFork.pull_request.base.sha]);
     expect(agents.calls).toHaveLength(1);
-    expect(agents.calls[0]!.url).toBe("https://do/trigger");
-    expect(agents.calls[0]!.body).toMatchObject({ trust: "untrusted", pr: { number: 9, fork: true } });
+    expect(agents.calls[0]!.url).toBe("https://do/gate");
+    expect(agents.calls[0]!.body).toMatchObject({ reason: "fork_gated", pr: { number: 9, fork: true } });
   });
 
   it("records a pending no_agent run for an unbound repo and notifies once", async () => {

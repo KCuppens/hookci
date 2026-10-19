@@ -12,6 +12,22 @@ export function createFakeGitHub(): FakeService {
 }
 
 /**
+ * Serves GET /repos/:owner/:repo/contents/:path?ref= from files keyed by
+ * `owner/repo@ref:path`; others get 404. Returns every ref requested, in order.
+ */
+export function serveRepoFiles(gh: FakeService, files: Record<string, string>): string[] {
+  const refs: string[] = [];
+  gh.respond("GET", "/repos/:owner/:repo/contents/:path", ({ url, params }) => {
+    const ref = new URL(url).searchParams.get("ref") ?? "";
+    refs.push(ref);
+    const body = files[`${params.owner}/${params.repo}@${ref}:${decodeURIComponent(params.path ?? "")}`];
+    if (body === undefined) return Response.json({ message: "Not Found" }, { status: 404 });
+    return new Response(body, { status: 200 });
+  });
+  return refs;
+}
+
+/**
  * Serves deliveries, given newest first, at GET /app/hook/deliveries perPage
  * at a time with GitHub's Link cursor, and answers each redelivery POST with 202.
  */

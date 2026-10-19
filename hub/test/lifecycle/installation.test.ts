@@ -58,6 +58,7 @@ async function acceptedRun(agent: Agent, sock: AgentSocket, runId: string): Prom
     commitTitle: "Add widget sizing",
     defaultBranch: "main",
     target: "checks",
+    trust: "trusted",
   };
   const res = await agent.stub.fetch("https://do/trigger", { method: "POST", headers: { "x-zeroci-agent-id": agent.agentId }, body: JSON.stringify(trigger) });
   const { trigger_id } = await res.json<{ trigger_id: string }>();

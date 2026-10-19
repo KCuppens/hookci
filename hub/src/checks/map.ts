@@ -1,7 +1,7 @@
 // Pure mapping from runs and jobs to GitHub check run states and texts, and
 // from sink annotations to GitHub annotations.
 
-import type { CheckRunAnnotation, CheckRunConclusion, CheckRunOutput, CheckRunStatus } from "../github/types";
+import type { CheckRunAction, CheckRunAnnotation, CheckRunConclusion, CheckRunOutput, CheckRunStatus } from "../github/types";
 import { QUOTAS } from "../quotas";
 import type { Annotation, JobView, PendingReason, RunView } from "../sinks/types";
 import { S } from "../strings";
@@ -12,7 +12,10 @@ export type CheckConclusion = CheckRunConclusion;
 /** A check run's status; a conclusion exactly when it is completed. */
 export type CheckState = { status: "queued" | "in_progress" } | { status: "completed"; conclusion: CheckConclusion };
 
-export type CheckView = CheckState & CheckRunOutput;
+export type CheckView = CheckState & CheckRunOutput & { actions?: CheckRunAction[] };
+
+/** The requested_action identifier of the aggregate check's approve button. */
+export const APPROVE_ACTION = "approve_run";
 
 /** The conclusions a job check can reach. */
 export type JobConclusion = Extract<CheckConclusion, "success" | "failure" | "timed_out" | "cancelled" | "skipped">;
@@ -81,6 +84,10 @@ export function aggregateFor(run: RunView, hubOrigin: string): CheckView {
 		case "gated":
 		case "pending": {
 			const reason = run.reason ?? (run.state === "gated" ? "fork_gated" : undefined);
+			if (reason === "fork_gated") {
+				const actions = [{ label: S.forks.approveButton, description: S.forks.approveDescription, identifier: APPROVE_ACTION }];
+				return { status: "completed", conclusion: "action_required", ...actionRequiredText(reason, { hubOrigin, repo: run.repo }), actions };
+			}
 			if (reason) return { status: "completed", conclusion: "action_required", ...actionRequiredText(reason, { hubOrigin, repo: run.repo }) };
 			return { status: "in_progress", title: S.checks.state.queued, summary };
 		}

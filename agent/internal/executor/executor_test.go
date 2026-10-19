@@ -418,6 +418,94 @@ func TestSetupNetworkFallbacks(t *testing.T) {
 	}
 }
 
+func TestRunPolicyEgressProxyOnly(t *testing.T) {
+	const secret = "s3cr3t-token-value-123"
+	envFile := filepath.Join(t.TempDir(), "prod.env")
+	if err := os.WriteFile(envFile, []byte("API_TOKEN="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.ResolvedChecks{EnvFiles: []string{envFile}, Jobs: []config.ResolvedJob{{Name: "build", Run: "true"}}}
+	untrusted := func(o *Options) { o.Policy = RunPolicy{EgressProxyOnly: true} }
+
+	// Namespace: the proxy is the only way out and every proxy variable is set.
+	h := newHarness(t, "systemd", cfg, untrusted)
+	run := localRun()
+	h.create(t, run, cfg)
+	setUp(t, h, run)
+	if _, err := h.ex.RunJob(context.Background(), run, job("build")); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, h, run, store.RunSuccess)
+	if want := []netnsSetup{{netns.ModeNetns, 4321, filepath.Join(h.runDir(run.ID).Root, "pasta.pid")}}; !slices.Equal(h.netns.setups, want) {
+		t.Errorf("netns setups = %+v, want %+v", h.netns.setups, want)
+	}
+	s := h.iso.spec(t, "build")
+	for _, kv := range []string{"HTTPS_PROXY=http://127.0.0.1:3128", "ALL_PROXY=http://127.0.0.1:3128", "all_proxy=http://127.0.0.1:3128"} {
+		if !hasEnv(s.Env, kv) {
+			t.Errorf("env lacks %s: %q", kv, s.Env)
+		}
+	}
+	if slices.ContainsFunc(s.Env, func(kv string) bool { return strings.Contains(kv, secret) }) {
+		t.Errorf("job env carries a secret: %q", s.Env)
+	}
+
+	// No namespace: refused rather than falling back to deny mode, which
+	// has no proxy.
+	h = newHarness(t, "systemd", cfg, untrusted)
+	h.netns.available = false
+	run = localRun()
+	err := h.ex.RunSetup(context.Background(), run)
+	if !errors.Is(err, ErrSetupFailed) || !errors.Is(err, netns.ErrNetnsRequired) {
+		t.Errorf("proxy only without netns: err = %v, want ErrSetupFailed wrapping ErrNetnsRequired", err)
+	}
+	finish(t, h, run, store.RunFailed)
+	if slices.Contains(h.rec.list(), "proxy start") {
+		t.Error("proxy started for a refused run")
+	}
+
+	// Isolation none: the variables are set and the open host network is
+	// logged.
+	h = newHarness(t, "none", cfg, untrusted)
+	run = localRun()
+	h.create(t, run, cfg)
+	setUp(t, h, run)
+	if _, err := h.ex.RunJob(context.Background(), run, job("build")); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, h, run, store.RunSuccess)
+	if s := h.iso.spec(t, "build"); !hasEnv(s.Env, "ALL_PROXY=http://127.0.0.1:4321") {
+		t.Errorf("env lacks ALL_PROXY: %q", s.Env)
+	}
+	if log := readFile(t, logpipe.LogPath(h.runDir(run.ID).Root, "setup")); !strings.Contains(log, "direct egress is not blocked") {
+		t.Errorf("setup.log lacks the host network warning:\n%s", log)
+	}
+}
+
+func TestRunPolicyDeploy(t *testing.T) {
+	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "deploy", Run: "true"}}}
+	run := localRun()
+	run.Kind = kindDeploy
+
+	for _, p := range []RunPolicy{{EgressProxyOnly: true}, {AllowDeploy: true}, {AllowSecrets: true}} {
+		h := newHarness(t, "none", cfg, func(o *Options) { o.Policy = p })
+		err := h.ex.RunSetup(context.Background(), run)
+		if !errors.Is(err, ErrSetupFailed) || !errors.Is(err, ErrDeployNotAllowed) {
+			t.Errorf("policy %+v: err = %v, want ErrSetupFailed wrapping ErrDeployNotAllowed", p, err)
+		}
+		finish(t, h, run, store.RunFailed)
+		if len(h.src.reqs) != 0 {
+			t.Errorf("policy %+v: refused deploy was checked out", p)
+		}
+	}
+
+	h := newHarness(t, "none", cfg, func(o *Options) { o.Policy = RunPolicy{AllowSecrets: true, AllowDeploy: true} })
+	setUp(t, h, run)
+	finish(t, h, run, store.RunSuccess)
+	if len(h.src.reqs) != 1 {
+		t.Errorf("checkouts = %d, want 1", len(h.src.reqs))
+	}
+}
+
 func TestTeardownOrder(t *testing.T) {
 	ctx := context.Background()
 	sha := strings.Repeat("a", 40)

@@ -34,6 +34,7 @@ const PR_TRIGGER: TriggerRequest = {
   commitTitle: "Add widget sizing",
   defaultBranch: "main",
   target: "checks",
+  trust: "trusted",
 };
 
 const DEPLOY_TRIGGER: TriggerRequest = {

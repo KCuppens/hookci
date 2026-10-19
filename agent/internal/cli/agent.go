@@ -81,7 +81,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	}
 	defer h.close()
 	hooks := executorHooks(d, *stateDir, errw)
-	exec := func(co source.Checkout, checks *config.ResolvedChecks) (scheduler.JobRunner, error) {
+	exec := func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error) {
 		return executor.New(executor.Options{
 			StateDir:  *stateDir,
 			Store:     h.db,
@@ -91,8 +91,9 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			Config: func(store.Run, string) (*config.ResolvedChecks, error) {
 				return checks, nil
 			},
-			Hooks: hooks,
-			Clock: d.Clock,
+			Policy: policy,
+			Hooks:  hooks,
+			Clock:  d.Clock,
 		})
 	}
 

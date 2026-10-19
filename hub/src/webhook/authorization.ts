@@ -4,6 +4,7 @@
 
 import { deleteUserLinksByGithubId } from "../db/workspaces";
 import type { Env } from "../env";
+import { deleteApprovalsByUser } from "../forks/approvals";
 import { registerHandler } from "./handlers";
 
 export type RevokeHook = (env: Env, githubUserId: number) => Promise<unknown>;
@@ -14,6 +15,8 @@ const revokeHooks: RevokeHook[] = [];
 export function registerRevokeHook(fn: RevokeHook): void {
 	revokeHooks.push(fn);
 }
+
+registerRevokeHook(deleteApprovalsByUser);
 
 /** Deletes every user_links row of the GitHub user, in every team, then runs the revoke hooks in registration order. */
 export async function onAuthorizationRevoked(env: Env, githubUserId: number): Promise<void> {

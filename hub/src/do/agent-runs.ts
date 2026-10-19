@@ -11,6 +11,7 @@ import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
 import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, updateRunState, upsertJob } from "../db/runs";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
+import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
 import type { Event as EventFrame, Interrupt } from "../protocol";
 import { QUOTAS } from "../quotas";
@@ -29,7 +30,7 @@ import { registerDoRoute } from "./agent-routes";
 /** A trigger still `sent` this long while the agent is offline leaves its run pending with agent_offline. */
 export const OFFLINE_PENDING_MS = 10 * 60_000;
 
-type TriggerState = "sent" | "accepted" | "rejected" | "superseded" | "done";
+type TriggerState = "sent" | "gated" | "accepted" | "rejected" | "superseded" | "done";
 
 type TriggerRow = {
 	trigger_id: string;
@@ -60,6 +61,28 @@ export function createTriggersTable(sql: SqlStorage): void {
 		outbox_seq INTEGER,
 		created_at INTEGER NOT NULL
 	)`);
+	sql.exec("CREATE INDEX triggers_run_id ON triggers (run_id)");
+	sql.exec("CREATE INDEX triggers_state ON triggers (state, created_at)");
+}
+
+/** DO migration step: triggers may wait as `gated` until someone approves a fork run. */
+export function allowGatedTriggers(sql: SqlStorage): void {
+	sql.exec(`CREATE TABLE triggers_new (
+		trigger_id TEXT PRIMARY KEY,
+		idem_key TEXT NOT NULL UNIQUE,
+		repo_id INTEGER NOT NULL,
+		pr_number INTEGER,
+		ref TEXT NOT NULL,
+		target TEXT NOT NULL,
+		sha TEXT NOT NULL,
+		run_id TEXT,
+		state TEXT NOT NULL CHECK (state IN ('sent', 'gated', 'accepted', 'rejected', 'superseded', 'done')),
+		outbox_seq INTEGER,
+		created_at INTEGER NOT NULL
+	)`);
+	sql.exec("INSERT INTO triggers_new SELECT * FROM triggers");
+	sql.exec("DROP TABLE triggers");
+	sql.exec("ALTER TABLE triggers_new RENAME TO triggers");
 	sql.exec("CREATE INDEX triggers_run_id ON triggers (run_id)");
 	sql.exec("CREATE INDEX triggers_state ON triggers (state, created_at)");
 }
@@ -121,7 +144,7 @@ function supersede(dob: AgentDO, own: TriggerRow): { replaced: TriggerRow[]; int
 	const scope = own.pr_number === null ? "pr_number IS NULL AND ref = ?" : "pr_number = ?";
 	const older = dob.sql
 		.exec<TriggerRow>(
-			`SELECT * FROM triggers WHERE trigger_id != ? AND repo_id = ? AND target = ? AND state IN ('sent', 'accepted')
+			`SELECT * FROM triggers WHERE trigger_id != ? AND repo_id = ? AND target = ? AND state IN ('sent', 'gated', 'accepted')
 			${own.target === "checks" ? `AND ${scope}` : ""} ORDER BY created_at`,
 			...[own.trigger_id, own.repo_id, own.target, ...(own.target === "checks" ? [own.pr_number ?? own.ref] : [])],
 		)
@@ -146,18 +169,34 @@ function supersede(dob: AgentDO, own: TriggerRow): { replaced: TriggerRow[]; int
 	return { replaced, interrupts };
 }
 
-async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
-	const agentId = req.headers.get("x-zeroci-agent-id");
-	const trig = await req.json<TriggerRequest>();
-	if (!agentId) return Response.json({ error: "bad_request" }, { status: 400 });
-	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
+function newRun(dob: AgentDO, trig: HubTrigger & { attempt?: number }, triggerId: string, state: string, reason: string | null) {
+	return {
+		run_id: triggerId,
+		repo_id: trig.repoId,
+		sha: trig.sha,
+		ref: trig.ref,
+		event: trig.event,
+		pr_number: trig.pr?.number ?? null,
+		env: deployEnv(trig.target),
+		attempt: trig.attempt ?? 1,
+		trigger_id: triggerId,
+		agent_id: dob.agentId,
+		state,
+		reason,
+		author_login: trig.authorLogin,
+		commit_title: trig.commitTitle,
+		started_at: null,
+		finished_at: null,
+		duration_ms: null,
+		log_key: null,
+	};
+}
 
-	const now = dob.clock.now();
-	const attempt = trig.attempt ?? 1;
-	const own = dob.sql
+function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number }, state: TriggerState, now: number): TriggerRow | undefined {
+	return dob.sql
 		.exec<TriggerRow>(
 			`INSERT INTO triggers (trigger_id, idem_key, repo_id, pr_number, ref, target, sha, state, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?) ON CONFLICT (idem_key) DO NOTHING RETURNING *`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (idem_key) DO NOTHING RETURNING *`,
 			ulid(now),
 			idemKey(trig),
 			trig.repoId,
@@ -165,9 +204,65 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			trig.ref,
 			trig.target,
 			trig.sha,
+			state,
 			now,
 		)
 		.toArray()[0];
+}
+
+/** Records a fork run that waits for approval (or never runs) and supersedes older work; the agent hears nothing. */
+async function onGate(dob: AgentDO, req: Request): Promise<Response> {
+	const agentId = req.headers.get("x-zeroci-agent-id");
+	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never" }>();
+	if (!agentId || (trig.reason !== "fork_gated" && trig.reason !== "fork_never")) return Response.json({ error: "bad_request" }, { status: 400 });
+	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
+
+	const now = dob.clock.now();
+	// A fork_never run can never be approved, so its trigger is done at once.
+	const own = insertTrigger(dob, trig, trig.reason === "fork_gated" ? "gated" : "done", now);
+	if (!own) {
+		const existing = dob.sql.exec<{ trigger_id: string }>("SELECT trigger_id FROM triggers WHERE idem_key = ?", idemKey(trig)).toArray()[0];
+		return Response.json({ duplicate: true, trigger_id: existing?.trigger_id });
+	}
+	const triggerId = own.trigger_id;
+	const t = dob.tenant();
+	try {
+		await insertRun(t, newRun(dob, trig, triggerId, "gated", trig.reason));
+	} catch (err) {
+		dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
+		throw err;
+	}
+
+	const { replaced, interrupts } = supersede(dob, own);
+	for (const interrupt of interrupts) await dob.send(interrupt);
+	for (const row of replaced) await updateRunState(t, row.run_id ?? row.trigger_id, "superseded", { finished_at: now });
+	await Promise.all([
+		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail })),
+		...replaced.map((row) => fanOutRun(dob, row.run_id ?? row.trigger_id, runUpdate)),
+	]);
+	return Response.json({ trigger_id: triggerId }, { status: 202 });
+}
+
+async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
+	const agentId = req.headers.get("x-zeroci-agent-id");
+	const trig = await req.json<TriggerRequest>();
+	if (!agentId || (trig.trust !== "trusted" && trig.trust !== "untrusted")) return Response.json({ error: "bad_request" }, { status: 400 });
+	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
+
+	const now = dob.clock.now();
+	const attempt = trig.attempt ?? 1;
+	// An approval releases the gated trigger of runId, once and only for the commit it was gated on.
+	const own =
+		trig.runId === undefined
+			? insertTrigger(dob, trig, "sent", now)
+			: dob.sql
+					.exec<TriggerRow>("UPDATE triggers SET state = 'sent' WHERE trigger_id = ? AND state = 'gated' AND sha = ? RETURNING *", trig.runId, trig.sha)
+					.toArray()[0];
+	if (!own && trig.runId !== undefined) {
+		const row = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ?", trig.runId).toArray()[0];
+		const stale = row !== undefined && (row.sha !== trig.sha || row.state === "superseded");
+		return Response.json({ error: stale ? "fork_approval_stale" : "fork_approval_used" }, { status: 409 });
+	}
 	if (!own) return Response.json({ duplicate: true });
 	const triggerId = own.trigger_id;
 
@@ -181,36 +276,21 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			day,
 		);
 		capped = (counter?.runs ?? 0) > QUOTAS.runsPerDay;
-		await insertRun(t, {
-			run_id: triggerId,
-			repo_id: trig.repoId,
-			sha: trig.sha,
-			ref: trig.ref,
-			event: trig.event,
-			pr_number: trig.pr?.number ?? null,
-			env: deployEnv(trig.target),
-			attempt,
-			trigger_id: triggerId,
-			agent_id: dob.agentId,
-			state: capped ? "pending" : "received",
-			reason: capped ? "daily_cap" : null,
-			author_login: trig.authorLogin,
-			commit_title: trig.commitTitle,
-			started_at: null,
-			finished_at: null,
-			duration_ms: null,
-			log_key: null,
-		});
+		const state = capped ? "pending" : "received";
+		const reason = capped ? "daily_cap" : null;
+		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason));
+		else await updateRunState(t, triggerId, state, { reason });
 	} catch (err) {
-		// Free the idempotency key so a redelivery of the webhook can try again.
-		dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
+		// Free the idempotency key (or the approval) so the webhook or approver can try again.
+		if (trig.runId === undefined) dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
+		else dob.sql.exec("UPDATE triggers SET state = 'gated' WHERE trigger_id = ?", triggerId);
 		throw err;
 	}
 
 	if (capped) {
 		dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", triggerId);
 		// Runs do not store the commit author's email; only the trigger's own fan-out knows it.
-		await fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail }));
+		await fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail, approvedBy: trig.approvedBy }));
 		return Response.json({ trigger_id: triggerId }, { status: 202 });
 	}
 
@@ -234,7 +314,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			},
 			base_sha: trig.baseSha,
 			attempt,
-			trust: trig.trust ?? "trusted",
+			trust: trig.trust,
 		});
 		dob.sql.exec("UPDATE triggers SET outbox_seq = ? WHERE trigger_id = ?", seq, triggerId);
 	}
@@ -243,7 +323,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 	await updateRunState(t, triggerId, stillSent ? "queued" : "superseded", stillSent ? {} : { finished_at: now });
 	for (const row of replaced) await updateRunState(t, row.run_id ?? row.trigger_id, "superseded", { finished_at: now });
 	await Promise.all([
-		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail })),
+		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail, approvedBy: trig.approvedBy })),
 		...replaced.map((row) => fanOutRun(dob, row.run_id ?? row.trigger_id, runUpdate)),
 	]);
 
@@ -321,6 +401,7 @@ async function notifyAgentOffline(dob: AgentDO): Promise<void> {
 export function registerRunLifecycle(): () => void {
 	const undo = [
 		registerDoRoute("trigger", onTrigger),
+		registerDoRoute("gate", onGate),
 		registerDoRoute("interrupt", onInterrupt),
 		registerDoRoute("repair", onRepair),
 		registerDoRoute("revoke", onRevoke),

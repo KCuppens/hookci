@@ -18,6 +18,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
@@ -128,15 +129,16 @@ func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (
 func (r *fakeRunner) FinishRun(context.Context, store.Run, store.RunState) error { return nil }
 
 type harness struct {
-	t      *testing.T
-	ctx    context.Context
-	st     *store.Store
-	d      *Daemon
-	runner *fakeRunner
-	src    *fakeSource
-	mu     sync.Mutex
-	execs  [][]string // job names of every ExecutorFunc call
-	seq    int
+	t        *testing.T
+	ctx      context.Context
+	st       *store.Store
+	d        *Daemon
+	runner   *fakeRunner
+	src      *fakeSource
+	mu       sync.Mutex
+	execs    [][]string           // job names of every ExecutorFunc call
+	policies []executor.RunPolicy // policy of every ExecutorFunc call
+	seq      int
 }
 
 func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
@@ -156,13 +158,14 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 	src.started = make(chan struct{})
 	runner.running = make(chan string, 16)
 	h := &harness{t: t, st: st, src: src, runner: runner}
-	exec := func(_ source.Checkout, checks *config.ResolvedChecks) (scheduler.JobRunner, error) {
+	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error) {
 		var names []string
 		for _, j := range checks.Jobs {
 			names = append(names, j.Name)
 		}
 		h.mu.Lock()
 		h.execs = append(h.execs, names)
+		h.policies = append(h.policies, policy)
 		h.mu.Unlock()
 		return runner, nil
 	}

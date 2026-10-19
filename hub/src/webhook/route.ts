@@ -6,12 +6,14 @@ import { getInstallation } from "../db/installations";
 import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
+import { gateForkRun } from "../forks/gate";
 import type { HubTrigger } from "../github/normalize";
 import type { WaitUntil } from "../sinks";
 import { notifyOutcome } from "./outcome";
 
 export type RouteOutcome =
 	| { kind: "dispatched"; agentId: string }
+	| { kind: "gated"; agentId: string; reason: "fork_gated" | "fork_never" }
 	| { kind: "no_agent" }
 	| { kind: "suspended" }
 	| { kind: "deleted" }
@@ -20,8 +22,12 @@ export type RouteOutcome =
 /** Trust the agent runs a trigger with: fork pull requests are untrusted. */
 export type Trust = "trusted" | "untrusted";
 
-/** Body of the AgentDO `POST https://do/trigger`; the DO defaults attempt to 1 and trust to trusted. */
-export type TriggerRequest = HubTrigger & { attempt?: number; trust?: Trust };
+/**
+ * Body of the AgentDO `POST https://do/trigger`; the DO defaults attempt to 1.
+ * runId releases that gated fork run instead of creating a new one;
+ * approvedBy is the GitHub login that approved it.
+ */
+export type TriggerRequest = HubTrigger & { attempt?: number; trust: Trust; runId?: string; approvedBy?: string };
 
 export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): Promise<RouteOutcome> {
 	const installation = await getInstallation(env.DB, trig.installationId);
@@ -40,7 +46,9 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		return outcome;
 	}
 
-	const body: TriggerRequest = { ...trig, trust: trig.pr?.fork ? "untrusted" : "trusted" };
+	const gate = await gateForkRun(env, trig, binding.agent_id);
+	if (gate.gated) return { kind: "gated", agentId: binding.agent_id, reason: gate.reason };
+	const body: TriggerRequest = { ...trig, trust: "trusted" };
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id));
 	const res = await stub.fetch("https://do/trigger", {
 		method: "POST",

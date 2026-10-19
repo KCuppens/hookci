@@ -37,7 +37,7 @@ import {
 	SEEN_WRITE_INTERVAL_MS,
 	negotiate,
 } from "./agent-protocol";
-import { createTriggersTable, registerRunLifecycle } from "./agent-runs";
+import { allowGatedTriggers, createTriggersTable, registerRunLifecycle } from "./agent-runs";
 import { doRoute } from "./agent-routes";
 import { type Clock, systemClock } from "./clock";
 import { agentVersions } from "../version";
@@ -71,6 +71,7 @@ const MIGRATIONS: ((sql: SqlStorage) => void)[] = [
 	},
 	createTriggersTable,
 	createCheckStateTable,
+	allowGatedTriggers,
 ];
 
 registerRunLifecycle();

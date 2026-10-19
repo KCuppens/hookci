@@ -134,6 +134,8 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		Config: func(store.Run, string) (*config.ResolvedChecks, error) {
 			return checks, nil
 		},
+		// A local run is the operator's own code: trusted.
+		Policy: executor.RunPolicy{AllowSecrets: true, AllowDeploy: true},
 		Hooks:  hooks,
 		Clock:  d.Clock,
 		Mirror: mirror,

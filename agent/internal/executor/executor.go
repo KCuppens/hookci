@@ -110,7 +110,10 @@ type Options struct {
 	Config func(run store.Run, workdir string) (*config.ResolvedChecks, error)
 	// Protected reports whether the run's ref is a protected branch, which
 	// lets a trusted push run save caches. nil: no ref is protected.
-	Protected     func(run store.Run) bool
+	Protected func(run store.Run) bool
+	// Policy is what the runs of this Executor may do; the daemon builds
+	// one Executor per run with the policy of that run's trust.
+	Policy        RunPolicy
 	Hooks         Hooks
 	Clock         func() time.Time // default time.Now; given to services
 	Logger        *slog.Logger     // default slog.Default()
@@ -247,6 +250,9 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 	if err := rs.openSetupLog(nil, e.o.Mirror); err != nil {
 		return err
 	}
+	if rs.run.Kind == kindDeploy && !e.o.Policy.allowsDeploy() {
+		return ErrDeployNotAllowed
+	}
 
 	if err := e.checkout(ctx, rs); err != nil {
 		return fmt.Errorf("checkout: %w", err)
@@ -332,9 +338,18 @@ func cacheDomain(run store.Run) string {
 // startNetwork decides the network mode and starts the egress proxy and,
 // in netns mode, the namespace. Deny mode has no proxy: systemd's
 // IPAddressDeny blocks all egress.
+//
+// An untrusted trust domain or Policy.EgressProxyOnly makes the run proxy
+// only. Decide then requires a private namespace whose sole way out is the
+// proxy (no fallback to deny mode, which has no proxy), the allow list drops
+// the repo's egress additions, and with EgressProxyOnly jobs also get
+// ALL_PROXY next to the HTTP(S) proxy variables. Isolation none shares the
+// host network, so there the executor can only set the variables and warn
+// that direct egress stays open.
 func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
+	proxyOnly := !rs.trusted || e.o.Policy.EgressProxyOnly
 	available, why := e.o.Hooks.Netns.Available()
-	mode, warning, err := netns.Decide(e.o.Isolation.Name(), rs.trusted, available)
+	mode, warning, err := netns.Decide(e.o.Isolation.Name(), !proxyOnly, available)
 	if err != nil {
 		if why != "" {
 			return fmt.Errorf("%w (%s)", err, why)
@@ -348,7 +363,7 @@ func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
 		return nil
 	}
 
-	allow, warnings, err := egress.NewAllowList(rs.trusted, rs.cfg.Egress)
+	allow, warnings, err := egress.NewAllowList(!proxyOnly, rs.cfg.Egress)
 	if err != nil {
 		return fmt.Errorf("egress: %w", err)
 	}
@@ -374,6 +389,10 @@ func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
 	rs.proxy = proxy
 	if mode == netns.ModeHost {
 		rs.proxyEnv = netns.ProxyEnv(proxy.Port())
+		if e.o.Policy.EgressProxyOnly {
+			rs.logf("network: isolation none shares the host network: direct egress is not blocked")
+			rs.proxyEnv = append(rs.proxyEnv, netns.AllProxyEnv(proxy.Port())...)
+		}
 		return nil
 	}
 
@@ -383,6 +402,9 @@ func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
 	}
 	rs.network = network
 	rs.proxyEnv = network.Env()
+	if e.o.Policy.EgressProxyOnly {
+		rs.proxyEnv = append(rs.proxyEnv, netns.AllProxyEnv(netns.InNSProxyPort)...)
+	}
 	return nil
 }
 

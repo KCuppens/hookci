@@ -30,6 +30,8 @@ export interface GitHubRequester {
 		body: unknown,
 		opts: { etag?: string },
 	): Promise<GitHubResponse<T> | GitHubNotModified>;
+	/** The raw content of path in repo (owner/name) at ref; null when either does not exist. */
+	getRepoFileAtRef(repo: string, path: string, ref: string): Promise<string | null>;
 }
 
 async function errorMessage(res: Response): Promise<string> {
@@ -87,6 +89,15 @@ class Requester implements GitHubRequester {
 		}
 		const text = await res.text();
 		return { status: res.status, data: JSON.parse(text || "null"), etag, link: res.headers.get("link") ?? undefined, notModified: false };
+	}
+
+	async getRepoFileAtRef(repo: string, path: string, ref: string): Promise<string | null> {
+		const url = `/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`;
+		const headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "zeroci-hub", Authorization: this.authorization };
+		const res = await withRetry(() => this.fetcher(`${API_ORIGIN}${url}`, { method: "GET", headers }), { now: this.now });
+		if (res.status === 404) return null;
+		if (!res.ok) throw new GitHubApiError(res.status, `GitHub GET ${url}: ${res.status} ${await errorMessage(res)}`);
+		return res.text();
 	}
 }
 

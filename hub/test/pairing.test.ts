@@ -175,6 +175,7 @@ describe("pairing", () => {
         commitTitle: "Add widget sizing",
         defaultBranch: "main",
         target: "checks",
+        trust: "trusted",
       } satisfies TriggerRequest),
     });
     expect(trig.status).toBe(202);

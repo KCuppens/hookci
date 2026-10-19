@@ -49,6 +49,8 @@ export interface RunView {
 	commitTitle: string;
 	authorLogin: string;
 	authorEmail?: string;
+	/** The GitHub login that approved this fork run, on the update that dispatched it. */
+	approvedBy?: string;
 	startedAt?: number;
 	finishedAt?: number;
 	durationMs?: number;

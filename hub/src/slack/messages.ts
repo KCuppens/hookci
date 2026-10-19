@@ -6,7 +6,7 @@
 import type { AgentView, JobView, RunState, RunView } from "../sinks/types";
 import { S } from "../strings";
 import { BADGE_EMOJI, escapeMrkdwn, formatDuration } from "./badge";
-import { type Block, actions, button, context, section } from "./blocks";
+import { actions, type Block, button, context, section } from "./blocks";
 
 export interface SlackMessage {
 	text: string;
@@ -89,6 +89,10 @@ export function renderRunMessage(run: RunView, opts: { notify: "normal" | "quiet
 
 	const pending = run.state === "pending" || run.state === "gated" ? pendingText(run) : undefined;
 	if (pending) blocks.push(section(pending));
+	if (run.state === "gated" && run.reason === "fork_gated") {
+		blocks.push(actions(button("fork:approve", S.forks.approveButton, `${run.runId ?? run.triggerId}:${run.sha}`, "primary")));
+	}
+	if (run.approvedBy) blocks.push(context(S.forks.approvedBy(escapeMrkdwn(run.approvedBy))));
 
 	const meta = [S.slack.author(escapeMrkdwn(run.authorLogin))];
 	if (run.durationMs !== undefined) meta.push(formatDuration(run.durationMs));

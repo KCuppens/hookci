@@ -145,6 +145,7 @@ export class ChecksSink implements Sink {
 			external_id: run.runId ?? run.triggerId,
 			...(run.logUrl ? { details_url: run.logUrl } : {}),
 			output: { title: view.title, summary: view.summary },
+			actions: view.actions ?? [],
 		};
 	}
 

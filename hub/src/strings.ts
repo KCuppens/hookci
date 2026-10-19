@@ -205,6 +205,16 @@ export const S = {
 	agentRateLimited: "More than 200 frames in one second.",
 	agentRevoked: "This agent was revoked; pair it again with a new pair token.",
 	runNotBound: "run not bound to this agent",
+	forks: {
+		approveButton: "Approve run",
+		approveDescription: "Run CI on this fork commit",
+		staleApproval: "This approval is for an older commit; approve the new run instead.",
+		alreadyApproved: "This run was already approved.",
+		notGated: "This run is not waiting for approval.",
+		notAllowed: "You need write access to this repository to approve fork runs.",
+		approved: "Approved; the run is queued.",
+		approvedBy: (login: string) => `Approved by ${login}`,
+	},
 	pages: {
 		startTitle: "Install ZeroCI",
 		startIntro: "ZeroCI runs your CI on your own machine and reports results to GitHub Checks and Slack.",
