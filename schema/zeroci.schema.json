@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ci.webuno.io/schema/zeroci.schema.json",
+  "title": "ZeroCI",
+  "description": "Placeholder protocol schema for the ZeroCI agent/hub wire format. See M0-03.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    }
+  },
+  "required": ["version"],
+  "$defs": {
+    "protocol": {}
+  }
+}
