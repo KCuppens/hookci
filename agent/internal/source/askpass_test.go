@@ -14,7 +14,7 @@ import (
 
 const testToken = "ghs_s3cretInstallationToken"
 
-// privateDir returns a 0700 directory like the run's tmp.
+// privateDir returns a 0700 directory the test user owns.
 func privateDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "tmp")

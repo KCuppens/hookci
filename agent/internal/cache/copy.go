@@ -54,7 +54,7 @@ func copyTree(src, dst string) error {
 			if err := os.Symlink(link, target); err != nil {
 				return err
 			}
-			return chownLike(target, info)
+			return chownLike(target, info, lchownAsRoot)
 		}
 		return nil
 	})
@@ -92,7 +92,7 @@ func copyFile(src, dst string, info fs.FileInfo) (err error) {
 // setAttrs gives path the owner, permission bits and mtime of info. chown
 // runs first because it clears set-id bits.
 func setAttrs(path string, info fs.FileInfo) error {
-	if err := chownLike(path, info); err != nil {
+	if err := chownLike(path, info, lchownAsRoot); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, info.Mode().Perm()); err != nil {
@@ -101,12 +101,20 @@ func setAttrs(path string, info fs.FileInfo) error {
 	return os.Chtimes(path, time.Time{}, info.ModTime())
 }
 
-// chownLike gives path the owner of info when running as root. Other users
-// cannot chown, and their copies are theirs anyway.
-func chownLike(path string, info fs.FileInfo) error {
+// chownLike gives path the owner of info through chown.
+func chownLike(path string, info fs.FileInfo, chown func(path string, uid, gid int) error) error {
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || os.Geteuid() != 0 {
+	if !ok {
 		return nil
 	}
-	return os.Lchown(path, int(st.Uid), int(st.Gid))
+	return chown(path, int(st.Uid), int(st.Gid))
+}
+
+// lchownAsRoot changes path's owner when running as root. Other users cannot
+// chown, and their copies are theirs anyway.
+func lchownAsRoot(path string, uid, gid int) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	return os.Lchown(path, uid, gid)
 }

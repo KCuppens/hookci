@@ -183,32 +183,37 @@ func TestFetchRejectsBadSHA(t *testing.T) {
 }
 
 func TestCloneSharedArgv(t *testing.T) {
-	f := &execx.Fake{}
-	f.On("git", nil, execx.FakeResponse{})
-	g := Git{Runner: f}
-	m := NewMirrors("/state/mirrors", g)
-	dir := filepath.Join(t.TempDir(), "src")
-	cred := &syscall.Credential{Uid: 990, Gid: 990}
+	const mirror = "/state/mirrors/o__r.git"
+	jobUser := &syscall.Credential{Uid: 990, Gid: 990}
+	for _, cred := range []*syscall.Credential{nil, jobUser} {
+		f := &execx.Fake{}
+		f.On("git", nil, execx.FakeResponse{})
+		g := Git{Runner: f}
+		m := NewMirrors("/state/mirrors", g)
+		dir := filepath.Join(t.TempDir(), "src")
 
-	release, err := m.CloneShared(context.Background(), "o/r", testSHA, dir, cred)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-
-	want := [][]string{
-		g.Args("clone", "--shared", "--no-checkout", "/state/mirrors/o__r.git", dir),
-		g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA),
-	}
-	if len(f.Calls) != 2 {
-		t.Fatalf("calls = %+v", f.Calls)
-	}
-	for i, c := range f.Calls {
-		if !slices.Equal(c.Args, want[i]) {
-			t.Errorf("call %d argv = %q\nwant %q", i, c.Args, want[i])
+		release, err := m.CloneShared(context.Background(), "o/r", testSHA, dir, cred)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if c.Credential != cred {
-			t.Errorf("call %d credential = %v, want %v", i, c.Credential, cred)
+		release()
+
+		clone := g.Args("clone", "--shared", "--no-checkout", mirror, dir)
+		if cred != nil {
+			// git refuses a mirror owned by the agent when cloning as the job user.
+			clone = g.Args("-c", "safe.directory="+mirror, "clone", "--shared", "--no-checkout", mirror, dir)
+		}
+		want := [][]string{clone, g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA)}
+		if len(f.Calls) != 2 {
+			t.Fatalf("cred %v: calls = %+v", cred, f.Calls)
+		}
+		for i, c := range f.Calls {
+			if !slices.Equal(c.Args, want[i]) {
+				t.Errorf("cred %v: call %d argv = %q\nwant %q", cred, i, c.Args, want[i])
+			}
+			if c.Credential != cred {
+				t.Errorf("call %d credential = %v, want %v", i, c.Credential, cred)
+			}
 		}
 	}
 }

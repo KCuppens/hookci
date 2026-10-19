@@ -2,8 +2,10 @@ package executor
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // RunDir is one run's directory, <StateDir>/runs/<run_id>.
@@ -12,9 +14,22 @@ type RunDir struct{ Root string }
 // runSubdirs are created by NewRunDir, each with mode 0700.
 var runSubdirs = []string{"src", "home", "logs", "tmp", "pg"}
 
+// jobSubdirs are the subdirs a job writes: its checkout, HOME and TMPDIR.
+var jobSubdirs = []string{"src", "home", "tmp"}
+
+// JobUser is the account a run's jobs run as.
+type JobUser struct {
+	Cred  *syscall.Credential                   // uid and gid; nil: the agent's own user
+	Chown func(path string, uid, gid int) error // nil: os.Lchown
+}
+
 // NewRunDir creates <stateDir>/runs/<runID> and its src, home, logs, tmp and
-// pg subdirectories, all mode 0700.
-func NewRunDir(stateDir, runID string) (RunDir, error) {
+// pg subdirectories, all mode 0700 and owned by the agent. With job.Cred set,
+// src, home and tmp go to the job user, and stateDir, <stateDir>/runs and the
+// run dir become 0711 so the job user can reach them without listing them;
+// logs and pg stay the agent's. Every ancestor of stateDir must already be
+// searchable by the job user.
+func NewRunDir(stateDir, runID string, job JobUser) (RunDir, error) {
 	if runID == "" || runID != filepath.Base(runID) || runID == "." || runID == ".." {
 		return RunDir{}, fmt.Errorf("executor: invalid run id %q", runID)
 	}
@@ -28,7 +43,63 @@ func NewRunDir(stateDir, runID string) (RunDir, error) {
 			return RunDir{}, fmt.Errorf("executor: create run dir: %w", err)
 		}
 	}
+	if job.Cred == nil {
+		return d, nil
+	}
+	if err := job.handOver(stateDir, d); err != nil {
+		return RunDir{}, fmt.Errorf("executor: hand run dir to job user: %w", err)
+	}
 	return d, nil
+}
+
+func (j JobUser) handOver(stateDir string, d RunDir) error {
+	abs, err := filepath.Abs(stateDir)
+	if err != nil {
+		return err
+	}
+	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+		if !searchable(info, j.Cred) {
+			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; use a state dir every user can reach, such as /var/lib/zeroci", dir, info.Mode().Perm(), j.Cred.Uid)
+		}
+		if dir == filepath.Dir(dir) {
+			break
+		}
+	}
+	for _, p := range []string{stateDir, filepath.Join(stateDir, "runs"), d.Root} {
+		if err := os.Chmod(p, 0o711); err != nil {
+			return err
+		}
+	}
+	chown := j.Chown
+	if chown == nil {
+		chown = os.Lchown
+	}
+	for _, s := range jobSubdirs {
+		if err := chown(filepath.Join(d.Root, s), int(j.Cred.Uid), int(j.Cred.Gid)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// searchable reports whether cred may traverse a dir with info by its owner,
+// group and other bits. Supplementary groups and ACLs are not consulted.
+func searchable(info fs.FileInfo, cred *syscall.Credential) bool {
+	perm := info.Mode().Perm()
+	st, ok := info.Sys().(*syscall.Stat_t)
+	switch {
+	case !ok:
+		return true
+	case st.Uid == cred.Uid:
+		return perm&0o100 != 0
+	case st.Gid == cred.Gid:
+		return perm&0o010 != 0
+	}
+	return perm&0o001 != 0
 }
 
 func (d RunDir) subdirs() []string {

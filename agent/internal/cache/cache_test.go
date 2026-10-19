@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
@@ -401,6 +402,76 @@ func TestRestoreKeepsExistingTarget(t *testing.T) {
 	mustRestore(t, c, k, dst)
 	if data, _ := os.ReadFile(filepath.Join(dst, "node_modules", "x.js")); string(data) != "checked in" {
 		t.Errorf("x.js = %q", data)
+	}
+}
+
+type chownCall struct {
+	path     string
+	uid, gid int
+}
+
+func ownerOf(t *testing.T, path string) (uid, gid int) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	return int(st.Uid), int(st.Gid)
+}
+
+// Under systemd the run dir is the agent's but src/ is the job user's, so
+// parents a restore creates under src/ must be the job user's too.
+func TestRestoreParentsTakeNearestExistingOwner(t *testing.T) {
+	var calls []chownCall
+	c, err := New(Options{
+		Root: filepath.Join(t.TempDir(), "cache"), Mode: ModeCopy, Logger: slog.New(slog.DiscardHandler),
+		Chown: func(path string, uid, gid int) error {
+			calls = append(calls, chownCall{path, uid, gid})
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := newWorkdir(t, map[string]string{"src/packages/web/node_modules/x.js": "x"})
+	k := mustKey(t, trustedApp, src, "src/packages/web/node_modules")
+	if err := c.Save(context.Background(), k, pushPolicy, src); err != nil {
+		t.Fatal(err)
+	}
+	dst := newWorkdir(t, nil)
+	if err := os.Mkdir(filepath.Join(dst, "src"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustRestore(t, c, k, dst)
+	uid, gid := ownerOf(t, filepath.Join(dst, "src"))
+	want := []chownCall{
+		{filepath.Join(dst, "src", "packages"), uid, gid},
+		{filepath.Join(dst, "src", "packages", "web"), uid, gid},
+	}
+	if !slices.Equal(calls, want) {
+		t.Errorf("chown calls = %+v, want %+v", calls, want)
+	}
+
+	// The owner is the nearest existing parent's, not the workdir's: here the
+	// workdir is the system temp dir and the nearest parent is this test's.
+	tmp := os.TempDir()
+	if tmpUID, _ := ownerOf(t, tmp); tmpUID == os.Getuid() {
+		t.Skipf("%s is owned by the test user, so owners cannot differ", tmp)
+	}
+	mine := t.TempDir()
+	rel, err := filepath.Rel(tmp, mine)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Skipf("%s is not under %s", mine, tmp)
+	}
+	calls = nil
+	free, err := prepareTarget(tmp, filepath.ToSlash(rel)+"/a/b", c.chown)
+	if err != nil || !free {
+		t.Fatalf("prepareTarget = %v, %v", free, err)
+	}
+	uid, gid = ownerOf(t, mine)
+	if want := []chownCall{{filepath.Join(mine, "a"), uid, gid}}; !slices.Equal(calls, want) {
+		t.Errorf("chown calls = %+v, want %+v", calls, want)
 	}
 }
 

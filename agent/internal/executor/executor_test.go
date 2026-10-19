@@ -537,3 +537,43 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 	}
 	finish(t, h, run, store.RunFailed)
 }
+
+// Under systemd jobs run as the job user, so the job user checks the run out
+// and owns the dirs jobs write.
+func TestSetupHandsRunDirToJobUser(t *testing.T) {
+	git := &execx.Fake{}
+	git.On("git", nil, execx.FakeResponse{})
+	mirrors := source.NewMirrors(filepath.Join(t.TempDir(), "mirrors"), source.Git{Runner: git})
+	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "build", Run: "make"}}}
+	cred := selfCred()
+	var chowns []chownCall
+	h := newHarness(t, "systemd", cfg, func(o *Options) {
+		o.Mirrors = mirrors
+		o.JobUser = JobUser{Cred: cred, Chown: recordChown(&chowns)}
+	})
+
+	mirrored := store.Run{ID: "01run", Repo: "o/r", SHA: strings.Repeat("a", 40), Ref: "refs/heads/main", Event: "push", Kind: "check", TrustDomain: "trusted:o/r"}
+	setUp(t, h, mirrored)
+	finish(t, h, mirrored, store.RunSuccess)
+	if len(git.Calls) != 2 {
+		t.Fatalf("git calls = %+v, want clone and checkout", git.Calls)
+	}
+	for _, c := range git.Calls {
+		if c.Credential != cred {
+			t.Errorf("git %q ran as %v, want the job user", c.Args, c.Credential)
+		}
+	}
+	dir := h.runDir(mirrored.ID)
+	uid, gid := int(cred.Uid), int(cred.Gid)
+	if want := []chownCall{{dir.Src(), uid, gid}, {dir.Home(), uid, gid}, {dir.Tmp(), uid, gid}}; !slices.Equal(chowns, want) {
+		t.Errorf("chown calls = %+v, want %+v", chowns, want)
+	}
+
+	local := localRun()
+	local.ID = "02run"
+	setUp(t, h, local)
+	finish(t, h, local, store.RunSuccess)
+	if len(h.src.reqs) != 1 || h.src.reqs[0].RunAs != cred {
+		t.Errorf("local checkout requests = %+v, want one as the job user", h.src.reqs)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
+	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
@@ -79,6 +80,12 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	for _, w := range warnings {
 		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
 	}
+	runAs, err := isolation.JobCredential(iso)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitInternal
+	}
+	jobUser := executor.JobUser{Cred: runAs}
 
 	// Units left by an earlier systemd run must be found even when this run
 	// uses none, so the sweep uses systemd whenever the host can run it.
@@ -108,14 +115,14 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		return ExitInternal
 	}
 	runID := ids.NewRunID()
-	dir, err := executor.NewRunDir(g.StateDir, runID)
+	dir, err := executor.NewRunDir(g.StateDir, runID, jobUser)
 	if err != nil {
 		fmt.Fprintf(stderr, "zeroci: %v\n", err)
 		return ExitInternal
 	}
 	git := source.Git{Runner: execx.OS{}}
 	local := &source.Local{Git: git, Dir: wd, Mirrors: source.NewMirrors(filepath.Join(g.StateDir, "mirrors"), git), Warn: stderr}
-	co, err := local.Checkout(ctx, source.Request{Ref: "HEAD"}, dir.Src())
+	co, err := local.Checkout(ctx, source.Request{Ref: "HEAD", RunAs: runAs}, dir.Src())
 	if err != nil {
 		os.RemoveAll(dir.Root)
 		fmt.Fprintf(stderr, "zeroci: %v\n", err)
@@ -179,6 +186,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		StateDir:  g.StateDir,
 		Store:     db,
 		Isolation: iso,
+		JobUser:   jobUser,
 		Source:    checkedOut(co),
 		Config: func(store.Run, string) (*config.ResolvedChecks, error) {
 			return checks, nil

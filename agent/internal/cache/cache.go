@@ -57,6 +57,9 @@ type Options struct {
 	Mode   Mode   // "" means DetectMode(Root)
 	Runner execx.Runner
 	Logger *slog.Logger
+	// Chown sets the owner of parent dirs a restore creates; nil: os.Lchown
+	// when running as root, else nothing.
+	Chown func(path string, uid, gid int) error
 }
 
 // Cache stores entries under <Root>/<sanitized trust domain>/<Key.Hash>/.
@@ -65,6 +68,7 @@ type Cache struct {
 	mode   Mode
 	runner execx.Runner
 	log    *slog.Logger
+	chown  func(path string, uid, gid int) error
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex // per entry, keyed by its path under root
@@ -98,12 +102,15 @@ func New(opts Options) (*Cache, error) {
 	if err := os.MkdirAll(filepath.Join(root, ".tmp"), 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create tmp: %w", err)
 	}
-	c := &Cache{root: root, mode: opts.Mode, runner: opts.Runner, log: opts.Logger, locks: map[string]*sync.Mutex{}}
+	c := &Cache{root: root, mode: opts.Mode, runner: opts.Runner, log: opts.Logger, chown: opts.Chown, locks: map[string]*sync.Mutex{}}
 	if c.runner == nil {
 		c.runner = execx.OS{}
 	}
 	if c.log == nil {
 		c.log = slog.Default()
+	}
+	if c.chown == nil {
+		c.chown = lchownAsRoot
 	}
 	switch {
 	case c.mode == "":
@@ -183,7 +190,7 @@ type restore struct {
 // path restores entry dir src to workdir/rel.
 func (r *restore) path(ctx context.Context, src, rel string, i int) error {
 	target := filepath.Join(r.workdir, filepath.FromSlash(rel))
-	free, err := prepareTarget(r.workdir, rel)
+	free, err := prepareTarget(r.workdir, rel, r.c.chown)
 	if err != nil {
 		return err
 	}
@@ -279,12 +286,13 @@ func (r *restore) undo() error {
 }
 
 // prepareTarget makes the parents of workdir/rel and reports whether the
-// target is free for a restore. Missing parents are created with the
-// workdir's owner; symlinked parents or targets are ErrBadPath, so a restore
-// can never write outside the workdir. An empty dir counts as free and is
-// removed; any other existing target is not free.
-func prepareTarget(workdir, rel string) (bool, error) {
-	wd, err := os.Stat(workdir)
+// target is free for a restore. Missing parents are created with chown to the
+// owner of the nearest existing parent, so a dir made inside a checkout the
+// job user owns stays writable by it; symlinked parents or targets are
+// ErrBadPath, so a restore can never write outside the workdir. An empty dir
+// counts as free and is removed; any other existing target is not free.
+func prepareTarget(workdir, rel string, chown func(path string, uid, gid int) error) (bool, error) {
+	owner, err := os.Stat(workdir)
 	if err != nil {
 		return false, err
 	}
@@ -298,7 +306,7 @@ func prepareTarget(workdir, rel string) (bool, error) {
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				return false, err
 			}
-			if err := chownLike(dir, wd); err != nil {
+			if err := chownLike(dir, owner, chown); err != nil {
 				return false, err
 			}
 		case err != nil:
@@ -307,6 +315,8 @@ func prepareTarget(workdir, rel string) (bool, error) {
 			return false, fmt.Errorf("%w: %s crosses symlink %s", ErrBadPath, rel, dir)
 		case !info.IsDir():
 			return false, fmt.Errorf("cache: %s: %s is not a directory", rel, dir)
+		default:
+			owner = info
 		}
 	}
 	target := filepath.Join(dir, parts[len(parts)-1])

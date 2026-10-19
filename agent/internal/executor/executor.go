@@ -85,8 +85,11 @@ type Options struct {
 	StateDir  string
 	Store     *store.Store
 	Isolation isolation.Isolation
-	Source    source.Source   // checkout of local/ repos, and of every repo when Mirrors is nil
-	Mirrors   *source.Mirrors // shared clones of mirrored repos; nil: Source checks out everything
+	// JobUser is who jobs run as: isolation.JobCredential under systemd,
+	// which then owns the checkout, HOME and TMPDIR. Zero: the agent's user.
+	JobUser JobUser
+	Source  source.Source   // checkout of local/ repos, and of every repo when Mirrors is nil
+	Mirrors *source.Mirrors // shared clones of mirrored repos; nil: Source checks out everything
 	// Config loads the run's checks from its checked-out tree.
 	Config func(run store.Run, workdir string) (*config.ResolvedChecks, error)
 	// Protected reports whether the run's ref is a protected branch, which
@@ -218,7 +221,7 @@ func (e *Executor) RunSetup(ctx context.Context, run store.Run) error {
 }
 
 func (e *Executor) setup(ctx context.Context, rs *runState) error {
-	dir, err := NewRunDir(e.o.StateDir, rs.run.ID)
+	dir, err := NewRunDir(e.o.StateDir, rs.run.ID, e.o.JobUser)
 	if err != nil {
 		return err
 	}
@@ -272,13 +275,13 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 	return e.runSetupSteps(ctx, rs)
 }
 
-// checkout materialises the run into Src(). Mirrored repos get a shared
-// clone whose release FinishRun calls; local/ repos, and every repo when
-// Mirrors is nil, go through Source.
+// checkout materialises the run into Src() as the job user. Mirrored repos
+// get a shared clone whose release FinishRun calls; local/ repos, and every
+// repo when Mirrors is nil, go through Source.
 func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 	run := rs.run
 	if e.o.Mirrors != nil && !strings.HasPrefix(run.Repo, "local/") {
-		release, err := e.o.Mirrors.CloneShared(ctx, run.Repo, run.SHA, rs.dir.Src(), nil)
+		release, err := e.o.Mirrors.CloneShared(ctx, run.Repo, run.SHA, rs.dir.Src(), e.o.JobUser.Cred)
 		if err != nil {
 			return err
 		}
@@ -286,7 +289,7 @@ func (e *Executor) checkout(ctx context.Context, rs *runState) error {
 		rs.logf("checkout %s %s", run.Repo, run.SHA)
 		return nil
 	}
-	co, err := e.o.Source.Checkout(ctx, source.Request{Repo: run.Repo, SHA: run.SHA, Ref: run.Ref}, rs.dir.Src())
+	co, err := e.o.Source.Checkout(ctx, source.Request{Repo: run.Repo, SHA: run.SHA, Ref: run.Ref, RunAs: e.o.JobUser.Cred}, rs.dir.Src())
 	if err != nil {
 		return err
 	}

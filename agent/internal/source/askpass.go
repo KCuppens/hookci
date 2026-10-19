@@ -13,8 +13,9 @@ import (
 const askpassMaxToken = 64 << 10
 
 // WriteAskpassFile writes token to a new 0600 file in dir, which must be a
-// private directory (the run's tmp, mode 0700, owned by the current user),
-// never shared /tmp. cleanup removes the file and is safe to call twice.
+// private directory (mode 0700, owned by the current user), never shared
+// /tmp. Under systemd the run's tmp belongs to the job user, so it does not
+// qualify. cleanup removes the file and is safe to call twice.
 func WriteAskpassFile(dir, token string) (string, func(), error) {
 	if token == "" || strings.ContainsAny(token, "\r\n") {
 		return "", nil, errors.New("source: askpass token must be one non-empty line")

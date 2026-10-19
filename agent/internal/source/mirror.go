@@ -115,6 +115,8 @@ func (m *Mirrors) Fetch(ctx context.Context, repo string, refspecs []string, env
 
 // CloneShared runs git clone --shared --no-checkout <mirror> <dir>, then
 // git -C <dir> checkout --detach --quiet <sha>, both as cred when non-nil.
+// A clone as cred marks the agent-owned mirror as a safe.directory, since git
+// refuses repositories owned by another user.
 // dir must not exist or be empty. The repo counts as active until release
 // is called; release is idempotent.
 func (m *Mirrors) CloneShared(ctx context.Context, repo, sha, dir string, cred *syscall.Credential) (func(), error) {
@@ -147,7 +149,11 @@ func (m *Mirrors) CloneShared(ctx context.Context, repo, sha, dir string, cred *
 	}
 
 	env := gitEnv()
-	if _, err := m.Git.Run(ctx, "", env, cred, "clone", "--shared", "--no-checkout", path, dir); err != nil {
+	clone := []string{"clone", "--shared", "--no-checkout", path, dir}
+	if cred != nil {
+		clone = append([]string{"-c", "safe.directory=" + path}, clone...)
+	}
+	if _, err := m.Git.Run(ctx, "", env, cred, clone...); err != nil {
 		release()
 		return nil, err
 	}
