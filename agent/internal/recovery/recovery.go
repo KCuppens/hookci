@@ -95,9 +95,9 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 			}
 		}
 
-		// 5. Destroy network namespace if present
+		// 5. Remove the run's network namespace if present
 		if m.netns != nil {
-			_ = m.netns.Destroy(ctx, run.ID)
+			_ = m.netns.RemoveNamespace(ctx, netns.NSName(run.ID))
 		}
 		recovered = append(recovered, run.ID)
 	}

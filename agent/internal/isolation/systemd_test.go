@@ -60,6 +60,47 @@ func TestBuildSystemdRunArgvNoNetNS(t *testing.T) {
 	}
 }
 
+// networkProps returns the network properties passed with -p, in order.
+func networkProps(argv []string) []string {
+	var props []string
+	for i := 1; i < len(argv); i++ {
+		p := argv[i]
+		if argv[i-1] == "-p" && (strings.HasPrefix(p, "IPAddress") || strings.HasPrefix(p, "NetworkNamespacePath=")) {
+			props = append(props, p)
+		}
+	}
+	return props
+}
+
+// TestBuildSystemdRunArgvNetNS pins the network properties for netns mode
+// (netns.ModeNetns sets NetNSPath to netns.Network.NSPath) and for the deny
+// fallback (netns.ModeDeny leaves NetNSPath empty).
+func TestBuildSystemdRunArgvNetNS(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		netNSPath string
+		want      []string
+	}{
+		{"netns", "/run/netns/zc-01hxrun", []string{
+			"IPAddressDeny=any",
+			"IPAddressAllow=localhost",
+			"NetworkNamespacePath=/run/netns/zc-01hxrun",
+		}},
+		{"deny", "", []string{
+			"IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := fullSpec()
+			spec.NetNSPath = tc.netNSPath
+			got := networkProps(BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec))
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("network properties = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildSystemdRunArgvOmitsZeroLimits(t *testing.T) {
 	spec := Spec{
 		RunID:          "01HXRUN",

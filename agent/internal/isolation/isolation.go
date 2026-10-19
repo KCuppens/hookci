@@ -35,7 +35,7 @@ type Spec struct {
 	Dir            string   // working directory (inside the run dir)
 	Env            []string // full, already-clean environment (KEY=VALUE); backends add nothing
 	Limits         Limits
-	NetNSPath      string   // "/run/netns/zc-<run>" when a netns exists, else ""
+	NetNSPath      string   // netns.Network.NSPath ("/run/netns/zc-<run>") when a netns exists, else ""
 	ReadWritePaths []string // usually exactly [<rundir>]
 	User           string   // default "zeroci-run"; empty means default
 	Stdout         io.Writer
