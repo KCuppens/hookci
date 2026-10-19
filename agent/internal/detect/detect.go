@@ -42,7 +42,7 @@ type partial struct {
 var ecosystems = []func(fs.FS) (*partial, error){detectNode, detectGo, detectRust, detectPython}
 
 // Detect inspects the root of fsys and returns the inferred configuration,
-// or ErrNothingDetected when no ecosystem matches.
+// or ErrNothingDetected when no ecosystem matches or none yields a job.
 func Detect(fsys fs.FS) (*Result, error) {
 	var parts []*partial
 	for _, detect := range ecosystems {
@@ -86,9 +86,10 @@ func Detect(fsys fs.FS) (*Result, error) {
 		notes = append(notes, p.notes...)
 		sources = append(sources, p.sources...)
 	}
-	if len(jobs) > 0 {
-		checks.Jobs = jobs
+	if len(jobs) == 0 {
+		return nil, ErrNothingDetected
 	}
+	checks.Jobs = jobs
 
 	cfg, diags := config.FromRoot(config.ZeroCIConfig{Version: 1, Checks: checks})
 	if diags.HasErrors() {

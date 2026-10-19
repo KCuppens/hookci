@@ -180,7 +180,7 @@ func TestDetectBun(t *testing.T) {
 		t.Errorf("test run = %q", got)
 	}
 
-	text := detectFS(t, fstest.MapFS{"package.json": file(`{}`), "bun.lock": file(""), "yarn.lock": file("")})
+	text := detectFS(t, fstest.MapFS{"package.json": file(`{"scripts": {"test": "bun test"}}`), "bun.lock": file(""), "yarn.lock": file("")})
 	if got := checksOf(t, text).Setup[0].Run; got != "bun install --frozen-lockfile" {
 		t.Errorf("bun.lock beats yarn.lock: setup = %q", got)
 	}

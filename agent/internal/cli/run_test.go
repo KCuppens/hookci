@@ -372,6 +372,51 @@ func TestRunSIGINTCancels(t *testing.T) {
 	}
 }
 
+// blockingRunner holds each unit until its run is cancelled.
+type blockingRunner struct{}
+
+func (blockingRunner) RunSetup(ctx context.Context, _ store.Run) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (blockingRunner) RunJob(ctx context.Context, _ store.Run, _ store.Job) (scheduler.JobOutcome, error) {
+	<-ctx.Done()
+	return scheduler.JobOutcome{State: store.JobCancelled}, nil
+}
+
+func (blockingRunner) FinishRun(context.Context, store.Run, store.RunState) error { return nil }
+
+// A signal between CreateRun and Submit still ends the run as cancelled,
+// which cmdRun reports as exit 1, not as an internal error.
+func TestDriveRunCancelledBeforeSubmit(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const runID = "01JNDQ9000DDDDDDDDDDDDDDDD"
+	if err := db.CreateRun(context.Background(), store.Run{
+		ID: runID, Repo: "local/app", SHA: "0123456789abcdef0123456789abcdef01234567", Ref: "HEAD",
+		Event: "local", Kind: "check", TrustDomain: "trusted:local/app",
+	}, []store.Job{{Name: "test"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := driveRun(ctx, scheduler.New(db, blockingRunner{}, scheduler.Options{Slots: 1}), runID); err != nil {
+		t.Fatalf("driveRun = %v, want nil", err)
+	}
+	run, err := db.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != store.RunCancelled {
+		t.Errorf("run state = %s, want cancelled", run.State)
+	}
+}
+
 func TestRunStateDirBusy(t *testing.T) {
 	d, _ := testDeps(t, t.TempDir())
 	if err := os.MkdirAll(d.Globals.StateDir, 0o700); err != nil {

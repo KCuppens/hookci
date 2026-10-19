@@ -29,32 +29,13 @@ func integrationRunDir(t *testing.T) string {
 	return dir
 }
 
-// ensureRunnerUser creates the zeroci-run account when the M1 install
-// script has not.
-func ensureRunnerUser(t *testing.T) {
-	t.Helper()
-	ctx := context.Background()
-	if (execx.OS{}).Run(ctx, execx.Cmd{Name: "id", Args: []string{"-u", DefaultUser}}) == nil {
-		return
-	}
-	var stderr bytes.Buffer
-	err := execx.OS{}.Run(ctx, execx.Cmd{
-		Name:   "useradd",
-		Args:   []string{"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", DefaultUser},
-		Stderr: &stderr,
-	})
-	if err != nil {
-		t.Fatalf("useradd %s: %v: %s", DefaultUser, err, stderr.String())
-	}
-}
-
 func integrationSystemd(t *testing.T) (*Systemd, string) {
 	t.Helper()
 	testutil.RequireIntegration(t)
 	if os.Geteuid() != 0 {
 		t.Skip("systemd isolation needs root")
 	}
-	ensureRunnerUser(t)
+	testutil.EnsureUser(t, DefaultUser)
 	return &Systemd{}, integrationRunDir(t)
 }
 

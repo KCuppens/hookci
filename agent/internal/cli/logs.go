@@ -17,16 +17,20 @@ import (
 // logsPoll is how often logs -f reads the logs again.
 const logsPoll = 500 * time.Millisecond
 
-// cmdLogs prints the job logs of a run, each under a "==> <job> <==" header,
-// or the log of one job. With -f it keeps printing until the jobs end.
+// setupLog is the log name of the setup phase and teardown: logs/setup.log.
+const setupLog = "setup"
+
+// cmdLogs prints the setup log and then the job logs of a run, each under a
+// "==> <name> <==" header, or one log. With -f it keeps printing until the
+// run ends or its agent is gone.
 func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	follow := fs.Bool("f", false, "follow the logs until the jobs end")
+	follow := fs.Bool("f", false, "follow the logs until the run ends")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] logs <run> [job] [-f]")
+		fmt.Fprintln(stderr, "usage: zeroci [global flags] logs <run> [job|setup] [-f]")
 		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Print the job logs of a run in plan order, or the log of one job.")
+		fmt.Fprintln(stderr, "Print the setup log and the job logs of a run in plan order, or one log.")
 		fs.PrintDefaults()
 	}
 	pos, err := parseInterleaved(fs, args)
@@ -58,9 +62,12 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "zeroci: list jobs: %v\n", err)
 		return ExitInternal
 	}
-	names := make([]string, 0, len(jobs))
+	names := make([]string, 0, len(jobs)+1)
+	if len(pos) == 1 || pos[1] == setupLog {
+		names = append(names, setupLog)
+	}
 	for _, j := range jobs {
-		if len(pos) == 1 || j.Name == pos[1] {
+		if (len(pos) == 1 || j.Name == pos[1]) && j.Name != setupLog {
 			names = append(names, j.Name)
 		}
 	}
@@ -77,7 +84,8 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	}
 	if !*follow {
 		for _, name := range names {
-			if err := l.print(name, true); err != nil {
+			// A run that never reached setup has no setup log to show.
+			if err := l.print(name, name != setupLog); err != nil {
 				fmt.Fprintf(stderr, "zeroci: %v\n", err)
 				return ExitInternal
 			}
@@ -86,14 +94,23 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	}
 
 	for {
-		// A job seen terminal before its log is read has nothing left to
-		// write, so that read drains it.
-		jobs, err := db.Jobs(ctx, runID)
+		// The agent is probed before the reads: once it is gone it has
+		// written all it ever will, so this pass drains every log. Likewise
+		// a log seen finished before it is read has nothing left to write.
+		alive, err := stateDirLocked(d.Globals.StateDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "zeroci: %v\n", err)
+			return ExitInternal
+		}
+		run, err := db.GetRun(ctx, runID)
+		if err == nil {
+			jobs, err = db.Jobs(ctx, runID)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ExitOK
 			}
-			fmt.Fprintf(stderr, "zeroci: list jobs: %v\n", err)
+			fmt.Fprintf(stderr, "zeroci: read run: %v\n", err)
 			return ExitInternal
 		}
 		state := make(map[string]store.JobState, len(jobs))
@@ -106,12 +123,22 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 				fmt.Fprintf(stderr, "zeroci: %v\n", err)
 				return ExitInternal
 			}
-			if !state[name].Terminal() {
+			// The setup log ends with teardown, which precedes the run's
+			// terminal state.
+			done := run.State.Terminal()
+			if name != setupLog {
+				done = state[name].Terminal()
+			}
+			if !done {
 				pending = append(pending, name)
 			}
 		}
 		names = pending
 		if len(names) == 0 {
+			return ExitOK
+		}
+		if !alive {
+			fmt.Fprintf(stderr, "zeroci: no zeroci process is running run %s; stopped following\n", runID)
 			return ExitOK
 		}
 		select {

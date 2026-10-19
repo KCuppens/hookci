@@ -20,22 +20,29 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
 )
 
-// TestKill9RecoveryIntegration runs `zeroci run` on a sleeping job under
-// systemd, kills the agent with SIGKILL while the job runs, then checks that
-// Recover interrupts the run and leaves no unit, namespace or pasta behind.
+// TestKill9RecoveryIntegration runs `zeroci run` on a sleeping job with a
+// postgres service under systemd, kills the agent with SIGKILL while the job
+// runs, then checks that Recover interrupts and requeues the run and leaves
+// no unit, namespace, pasta or service container behind.
 func TestKill9RecoveryIntegration(t *testing.T) {
 	testutil.RequireIntegration(t)
-	if _, err := exec.LookPath("systemd-run"); err != nil {
-		t.Skip("systemd-run not in PATH")
+	for _, bin := range []string{"systemd-run", "docker"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not in PATH", bin)
+		}
 	}
+	testutil.EnsureUser(t, isolation.DefaultUser)
 	ctx := context.Background()
+	docker := services.Docker{}
 
 	bin := filepath.Join(t.TempDir(), "zeroci")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/KCuppens/zerocideploy/agent/cmd/zeroci").CombinedOutput(); err != nil {
 		t.Fatalf("build zeroci: %v\n%s", err, out)
 	}
 	work := commitFixture(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    sleep:\n      run: sleep 300\n",
+		".zeroci.yml": "version: 1\nchecks:\n" +
+			"  services:\n    postgres:\n      image: postgres:16-alpine\n" +
+			"  jobs:\n    sleep:\n      run: sleep 300\n",
 	})
 	// PrivateTmp hides /tmp from job units, so the state dir lives in /run.
 	stateDir, err := os.MkdirTemp("/run", "zeroci-itest-")
@@ -77,12 +84,18 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 		t.Fatalf("running runs after kill = %v, %v; want one\n%s", runs, err, output())
 	}
 	runID := runs[0].ID
+	runLabel := services.LabelRun + "=" + runID
+	t.Cleanup(func() { _ = docker.RemoveByLabel(ctx, runLabel) })
+	// The job starts after setup, so its postgres container is up.
+	if ids, err := docker.ListByLabel(ctx, runLabel); err != nil || len(ids) == 0 {
+		t.Fatalf("service containers of run %s before recovery = %v, %v; want the postgres container", runID, ids, err)
+	}
 
 	rep, err := Recover(ctx, Deps{
 		Store:     db,
 		Isolation: sd,
 		Netns:     NetnsManager{Manager: &netns.Manager{}},
-		Docker:    services.Docker{},
+		Docker:    docker,
 		Runner:    execx.OS{},
 	})
 	if err != nil {
@@ -93,6 +106,16 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	}
 	if !slices.Contains(rep.Interrupted, runID) || !slices.Contains(rep.UnitsStopped, unit) {
 		t.Fatalf("report = %+v, want run %s interrupted and unit %s stopped", rep, runID, unit)
+	}
+	if len(rep.Requeued) != 1 {
+		t.Fatalf("Requeued = %v, want one retry of run %s", rep.Requeued, runID)
+	}
+	retry, err := db.GetRun(ctx, rep.Requeued[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.State != store.RunQueued || retry.SHA != runs[0].SHA || retry.Attempt != runs[0].Attempt+1 {
+		t.Fatalf("retry = %s %s attempt %d, want queued %s attempt %d", retry.State, retry.SHA, retry.Attempt, runs[0].SHA, runs[0].Attempt+1)
 	}
 
 	run, err := db.GetRun(ctx, runID)
@@ -118,6 +141,9 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	}
 	if err := (execx.OS{}).Run(ctx, execx.Cmd{Name: "pgrep", Args: []string{"-f", pastaPattern(netns.NSName(runID))}}); err == nil {
 		t.Fatal("pasta process left after recovery")
+	}
+	if ids, err := docker.ListByLabel(ctx, runLabel); err != nil || len(ids) != 0 {
+		t.Fatalf("service containers labelled %s after recovery = %v, %v; want none", runLabel, ids, err)
 	}
 }
 

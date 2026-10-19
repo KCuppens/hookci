@@ -243,6 +243,12 @@ func TestDetectPython(t *testing.T) {
 	}
 	for _, tc := range gating {
 		t.Run(tc.name, func(t *testing.T) {
+			if !tc.ruff && !tc.test {
+				if _, err := Detect(tc.fsys); !errors.Is(err, ErrNothingDetected) {
+					t.Errorf("error = %v, want ErrNothingDetected (setup but no jobs)", err)
+				}
+				return
+			}
 			r := detectFS(t, tc.fsys)
 			jobs := checksOf(t, r).Jobs
 			if _, ok := jobs["ruff"]; ok != tc.ruff {
@@ -322,6 +328,13 @@ func TestDetectNothing(t *testing.T) {
 	}
 	if _, err := Detect(fstest.MapFS{"README.md": file("# hello\n")}); !errors.Is(err, ErrNothingDetected) {
 		t.Errorf("README.md only: error = %v, want ErrNothingDetected", err)
+	}
+	_, err := Detect(fstest.MapFS{
+		"package.json":      file(`{"scripts": {"build": "tsc", "test": "echo \"Error: no test specified\" && exit 1"}}`),
+		"package-lock.json": file("{}"),
+	})
+	if !errors.Is(err, ErrNothingDetected) {
+		t.Errorf("node without matching scripts: error = %v, want ErrNothingDetected", err)
 	}
 }
 

@@ -219,7 +219,8 @@ func TestEgressOneDiagnosticPerEntry(t *testing.T) {
 // TestEgressMatchesAllowList keeps checks.egress in step with the egress
 // proxy: whatever config accepts, egress.NewAllowList must accept too, and
 // whatever the proxy rejects, config rejects. Config is stricter only where
-// the proxy would normalize or not care (case, a trailing dot, label shape).
+// the proxy would normalize or not care (case, a trailing dot, label shape,
+// a name without a dot, a top-level label that is not 2 to 63 letters).
 func TestEgressMatchesAllowList(t *testing.T) {
 	for _, tc := range []struct {
 		entry    string
@@ -229,7 +230,6 @@ func TestEgressMatchesAllowList(t *testing.T) {
 		{entry: "registry.npmjs.org", ok: true},
 		{entry: "github.com", ok: true},
 		{entry: "api.example.com", ok: true},
-		{entry: "localhost", ok: true},
 		{entry: "1password.com", ok: true},
 		{entry: "xn--bcher-kva.example", ok: true},
 		{entry: "a-b.c0.example", ok: true},
@@ -258,6 +258,9 @@ func TestEgressMatchesAllowList(t *testing.T) {
 		{entry: "a..b.com", stricter: true},
 		{entry: "example.123", stricter: true},
 		{entry: "1.2.3", stricter: true},
+		{entry: "localhost", stricter: true},
+		{entry: "example.c", stricter: true},
+		{entry: "example.c0m", stricter: true},
 	} {
 		t.Run(tc.entry, func(t *testing.T) {
 			_, diags := parseString(t, oneJob+"  egress:\n    - "+strconv.Quote(tc.entry)+"\n", ParseOptions{})

@@ -569,8 +569,12 @@ func egressProblem(entry string) (msg, fix string) {
 		return fmt.Sprintf("%s has %s; host names use only a-z, 0-9, . and -", quote(entry), quote(string(r))),
 			"use a host name such as registry.npmjs.org"
 	}
+	if !strings.Contains(entry, ".") {
+		return fmt.Sprintf("%s is not a fully qualified host name", quote(entry)),
+			"use the full host name including its domain, for example registry.npmjs.org"
+	}
 	return fmt.Sprintf("%s is not a host name", quote(entry)),
-		"use a host name such as registry.npmjs.org; each dot-separated label starts and ends with a letter or digit, and the last starts with a letter"
+		"use a host name such as registry.npmjs.org; each dot-separated label starts and ends with a letter or digit, and the last is 2 to 63 letters"
 }
 
 // egressHostFix suggests the host inside an entry that carries a scheme or

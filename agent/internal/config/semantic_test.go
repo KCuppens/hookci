@@ -2,6 +2,7 @@ package config
 
 import (
 	"io/fs"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -72,6 +73,22 @@ func TestTrustAllRefusedSelfHostedWithDeploy(t *testing.T) {
 	_, diags := parseString(t, trustAllWithDeploy, ParseOptions{SelfHosted: true})
 	if d := findDiag(t, diags, "checks.trust"); d.Severity != SeverityError {
 		t.Errorf("diagnostic = %+v, want an error", d)
+	}
+}
+
+func TestEgressRejectsIP(t *testing.T) {
+	for _, entry := range []string{"10.0.0.1", "192.168.1.10:443", "::1", "[::1]", "2001:db8::1", "[2001:db8::1]:443"} {
+		t.Run(entry, func(t *testing.T) {
+			_, diags := parseString(t, oneJob+"  egress:\n    - "+strconv.Quote(entry)+"\n", ParseOptions{})
+			if len(diags) != 1 {
+				t.Fatalf("got %d diagnostics, want 1:\n%s", len(diags), diags.Format("test.yml"))
+			}
+			d := diags[0]
+			if d.Path != "checks.egress[0]" || d.Line != 7 || d.Severity != SeverityError ||
+				d.Message != "IP literal "+strconv.Quote(entry)+" is not allowed; egress takes host names" {
+				t.Errorf("diagnostic = %+v", d)
+			}
+		})
 	}
 }
 

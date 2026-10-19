@@ -237,17 +237,18 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 
 // driveRun submits runID to sched and waits for it to end. When ctx ends
 // first (SIGINT, SIGTERM) the run is cancelled and waited for, so its
-// teardown completes before sched closes.
+// teardown completes before sched closes. Submit ignores ctx: a signal that
+// lands before it still ends the stored run as cancelled.
 func driveRun(ctx context.Context, sched *scheduler.Scheduler, runID string) error {
 	defer sched.Close()
-	if _, err := sched.Submit(ctx, runID); err != nil {
+	bg := context.WithoutCancel(ctx)
+	if _, err := sched.Submit(bg, runID); err != nil {
 		return err
 	}
 	_, err := sched.Wait(ctx, runID)
 	if err == nil || ctx.Err() == nil {
 		return err
 	}
-	bg := context.WithoutCancel(ctx)
 	if err := sched.Cancel(bg, runID, "interrupted by signal"); err != nil {
 		return err
 	}

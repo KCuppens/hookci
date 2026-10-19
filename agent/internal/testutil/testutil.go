@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"flag"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -27,6 +29,20 @@ func RequireIntegration(t testing.TB) {
 	}
 	if os.Geteuid() != 0 {
 		t.Skip("skipping integration test: requires root")
+	}
+}
+
+// EnsureUser creates the system account name when it does not exist, as
+// the M1 install script does for the job user. Call it after
+// RequireIntegration: useradd needs root.
+func EnsureUser(t testing.TB, name string) {
+	t.Helper()
+	if _, err := user.Lookup(name); err == nil {
+		return
+	}
+	out, err := exec.Command("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", name).CombinedOutput()
+	if err != nil {
+		t.Fatalf("useradd %s: %v: %s", name, err, out)
 	}
 }
 

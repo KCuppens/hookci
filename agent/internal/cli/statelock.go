@@ -29,3 +29,23 @@ func lockStateDir(stateDir string) (unlock func(), err error) {
 	}
 	return func() { _ = f.Close() }, nil
 }
+
+// stateDirLocked reports whether a zeroci run holds the lock on stateDir.
+// The probe holds a shared lock only for the instant of the check.
+func stateDirLocked(stateDir string) (bool, error) {
+	f, err := os.Open(filepath.Join(stateDir, "run.lock"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("open state lock: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, fmt.Errorf("probe state lock: %w", err)
+	}
+	return false, nil
+}

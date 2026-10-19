@@ -152,21 +152,32 @@ func TestCLIInit(t *testing.T) {
 	}
 	assertValidConfig(t, path)
 
-	t.Run("nothing detected writes a skeleton", func(t *testing.T) {
-		dir := t.TempDir()
-		code, _, stderr := runCLI("init", "--force", dir)
-		if code != ExitOK {
-			t.Fatalf("exit = %d, want %d (stderr %q)", code, ExitOK, stderr)
-		}
-		if !strings.Contains(stderr, "no checks detected") {
-			t.Errorf("stderr hint = %q", stderr)
-		}
-		path := filepath.Join(dir, ".zeroci.yml")
-		if got := readFile(t, path); !strings.HasPrefix(got, "#") || !strings.Contains(got, "jobs:") {
-			t.Errorf("skeleton is not a commented jobs example:\n%s", got)
-		}
-		assertValidConfig(t, path)
-	})
+	for name, files := range map[string]map[string]string{
+		"empty dir": nil,
+		"node without matching scripts": {
+			"package.json":      `{"scripts": {"build": "tsc"}}`,
+			"package-lock.json": "{}",
+		},
+	} {
+		t.Run(name+" writes a skeleton", func(t *testing.T) {
+			dir := t.TempDir()
+			for f, content := range files {
+				writeFile(t, filepath.Join(dir, f), content)
+			}
+			code, _, stderr := runCLI("init", dir)
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stderr %q)", code, ExitOK, stderr)
+			}
+			if !strings.Contains(stderr, "no checks detected") {
+				t.Errorf("stderr hint = %q", stderr)
+			}
+			path := filepath.Join(dir, ".zeroci.yml")
+			if got := readFile(t, path); !strings.HasPrefix(got, "#") || !strings.Contains(got, "jobs:") {
+				t.Errorf("skeleton is not a commented jobs example:\n%s", got)
+			}
+			assertValidConfig(t, path)
+		})
+	}
 }
 
 func assertValidConfig(t *testing.T, path string) {

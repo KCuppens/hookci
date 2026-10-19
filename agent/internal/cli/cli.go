@@ -86,9 +86,17 @@ func Main(args []string, stdout, stderr io.Writer) int {
 // globals. End-to-end tests use it to swap the host commands of recovery and
 // the network setup for fakes.
 func MainWithDeps(args []string, stdout, stderr io.Writer, newDeps func(Globals, io.Writer) Deps) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 	return dispatch(ctx, args, stdout, stderr, newDeps)
+}
+
+// signalContext is cancelled by the first SIGINT or SIGTERM, which then gets
+// its default handling back: a second one kills a run stuck in teardown.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, stop)
+	return ctx, stop
 }
 
 // dispatch parses the global flags and runs the named command with ctx and
