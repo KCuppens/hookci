@@ -1,43 +1,41 @@
 package source
 
 import (
-	"regexp"
+	"fmt"
 	"strings"
 )
 
-var slugSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-
-// Slug converts a repository URL, SCP-style path, or slug into a safe directory name.
-// Examples:
-//
-//	"https://github.com/KCuppens/zerocideploy.git" -> "github.com_KCuppens_zerocideploy"
-//	"git@github.com:KCuppens/zerocideploy.git"     -> "github.com_KCuppens_zerocideploy"
-//	"KCuppens/zerocideploy"                         -> "KCuppens_zerocideploy"
-func Slug(repo string) string {
-	s := strings.TrimSpace(repo)
-	s = strings.TrimSuffix(s, ".git")
-
-	// Strip protocol schemes
-	if idx := strings.Index(s, "://"); idx != -1 {
-		s = s[idx+3:]
+// Slug maps "owner/name" to a lowercase file name "owner__name". It rejects
+// empty parts, "." and "..", more than one "/", "__" in the owner (which
+// would make two repos share a slug), and any byte outside [A-Za-z0-9._-].
+func Slug(repo string) (string, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || strings.Contains(name, "/") {
+		return "", fmt.Errorf("source: repo %q must be owner/name", repo)
 	}
-
-	// Strip user@ prefixes
-	if atIdx := strings.Index(s, "@"); atIdx != -1 {
-		s = s[atIdx+1:]
+	for _, part := range []string{owner, name} {
+		if err := validSlugPart(part); err != nil {
+			return "", fmt.Errorf("source: repo %q: %w", repo, err)
+		}
 	}
-
-	// Replace SCP colon separator with slash
-	s = strings.ReplaceAll(s, ":", "/")
-
-	// Clean leading/trailing slashes
-	s = strings.Trim(s, "/")
-
-	// Sanitize any remaining special characters
-	s = slugSanitizer.ReplaceAllString(s, "_")
-
-	if s == "" {
-		return "repo"
+	if strings.Contains(owner, "__") {
+		return "", fmt.Errorf("source: repo %q: owner must not contain \"__\"", repo)
 	}
-	return s
+	return strings.ToLower(owner + "__" + name), nil
+}
+
+func validSlugPart(part string) error {
+	if part == "" || part == "." || part == ".." {
+		return fmt.Errorf("invalid path part %q", part)
+	}
+	for i := range len(part) {
+		if !slugByte(part[i]) {
+			return fmt.Errorf("invalid character %q", part[i])
+		}
+	}
+	return nil
+}
+
+func slugByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-'
 }
