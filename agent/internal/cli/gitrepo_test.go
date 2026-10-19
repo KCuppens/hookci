@@ -10,10 +10,10 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/source"
 )
 
-// CommitWorkDir writes files into a new git repository, commits them and
+// commitWorkDir writes files into a new git repository, commits them and
 // returns its path. `zeroci run` checks out the committed HEAD, so run tests
-// need a repository. It is exported for the cli_test package.
-func CommitWorkDir(t *testing.T, files map[string]string) string {
+// need a repository.
+func commitWorkDir(t *testing.T, files map[string]string) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not in PATH")

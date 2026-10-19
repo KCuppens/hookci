@@ -19,7 +19,7 @@ const logsPoll = 500 * time.Millisecond
 
 // cmdLogs prints the job logs of a run, each under a "==> <job> <==" header,
 // or the log of one job. With -f it keeps printing until the jobs end.
-func cmdLogs(ctx context.Context, d deps, args []string, stdout, stderr io.Writer) int {
+func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	follow := fs.Bool("f", false, "follow the logs until the jobs end")

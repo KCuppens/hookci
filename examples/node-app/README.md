@@ -1,8 +1,4 @@
-# Example Node App
+# zeroci-node-app
 
-A minimal Node.js application without a `.zeroci.yml` configuration file.
-It exercises `zeroci` auto-detection for npm projects:
-- Detects `lint` (`npm run lint`)
-- Detects `typecheck` (`npm run typecheck`)
-- Detects `test` (`npm run test`)
-- Executes detected check jobs in parallel under slot caps.
+Zero-dependency Node fixture without a `.zeroci.yml`: `zeroci run` detects its `lint`, `typecheck` and `test` scripts, each of which sleeps about 300ms and prints `ZEROCI_E2E <job> start|end <unix ms>`.
+`agent/internal/e2e` runs it end to end and reads those lines from the job logs to prove the jobs run in parallel within the slot cap; `.npmrc` keeps npm offline so the test needs no network.

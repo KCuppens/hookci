@@ -22,11 +22,11 @@ const (
 
 // seedStore writes a state dir with a failed run (lint ok, test failed)
 // and a later queued run. Its clock is moved by advance.
-func seedStore(t *testing.T) (deps, *store.Store, func(time.Duration)) {
+func seedStore(t *testing.T) (Deps, *store.Store, func(time.Duration)) {
 	t.Helper()
 	now := statusBase
 	clock := func() time.Time { return now }
-	d := deps{Globals: Globals{StateDir: t.TempDir()}, Clock: clock}
+	d := Deps{Globals: Globals{StateDir: t.TempDir()}, Clock: clock}
 	db, err := store.Open(filepath.Join(d.Globals.StateDir, "agent.db"), store.WithClock(clock))
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func seedStore(t *testing.T) (deps, *store.Store, func(time.Duration)) {
 	return d, db, func(by time.Duration) { now = now.Add(by) }
 }
 
-func statusOf(d deps, args ...string) (int, string, string) {
+func statusOf(d Deps, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := cmdStatus(context.Background(), d, args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
@@ -92,7 +92,7 @@ func TestStatusJSONGolden(t *testing.T) {
 }
 
 func TestStatusEmptyStateDir(t *testing.T) {
-	d := deps{Globals: Globals{StateDir: filepath.Join(t.TempDir(), "none")}, Clock: time.Now}
+	d := Deps{Globals: Globals{StateDir: filepath.Join(t.TempDir(), "none")}, Clock: time.Now}
 	if code, stdout, _ := statusOf(d); code != ExitOK || stdout != "ID  REPO  REF  SHA  STATE  AGE  DURATION\n" {
 		t.Errorf("status = %d, %q", code, stdout)
 	}

@@ -29,13 +29,13 @@ func (fakeProxy) Close() error { return nil }
 
 // testDeps run jobs as plain process groups of the test, with no egress
 // proxy, no network namespaces and faked recovery host commands.
-func testDeps(t *testing.T, wd string) (deps, *isolation.None) {
+func testDeps(t *testing.T, wd string) (Deps, *isolation.None) {
 	t.Helper()
 	iso := &isolation.None{Grace: time.Second, Warn: func(string) {}}
 	host := &execx.Fake{}
 	host.On("pkill", nil, execx.FakeResponse{Code: 1})
 	host.On("docker", nil, execx.FakeResponse{})
-	return deps{
+	return Deps{
 		Globals: Globals{StateDir: filepath.Join(t.TempDir(), "state"), Slots: 2, Isolation: "none"},
 		Isolation: func(name string) (isolation.Isolation, []string, error) {
 			if name == "systemd" {
@@ -54,14 +54,14 @@ func testDeps(t *testing.T, wd string) (deps, *isolation.None) {
 	}, iso
 }
 
-func runCmd(ctx context.Context, d deps, args ...string) (int, string, string) {
+func runCmd(ctx context.Context, d Deps, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := cmdRun(ctx, d, args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
 // openState opens the store a command left in d's state dir.
-func openState(t *testing.T, d deps) *store.Store {
+func openState(t *testing.T, d Deps) *store.Store {
 	t.Helper()
 	db, err := store.Open(filepath.Join(d.Globals.StateDir, "agent.db"))
 	if err != nil {
@@ -175,7 +175,7 @@ func TestRunNoConfigDetects(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		"package.json":      `{"scripts": {"lint": "eslint .", "test": "vitest"}}`,
 		"package-lock.json": `{}`,
 	})
@@ -207,7 +207,7 @@ func TestRunNothingDetected(t *testing.T) {
 	}
 	for name, files := range cases {
 		t.Run(name, func(t *testing.T) {
-			d, _ := testDeps(t, CommitWorkDir(t, files))
+			d, _ := testDeps(t, commitWorkDir(t, files))
 			code, _, stderr := runCmd(context.Background(), d)
 			if code != ExitNoChecks {
 				t.Fatalf("exit = %d, want %d\nstderr:\n%s", code, ExitNoChecks, stderr)
@@ -220,7 +220,7 @@ func TestRunNothingDetected(t *testing.T) {
 }
 
 func TestRunFailedJobExit1(t *testing.T) {
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo boom; exit 3\n",
 	})
 	d, _ := testDeps(t, wd)
@@ -238,7 +238,7 @@ func TestRunFailedJobExit1(t *testing.T) {
 }
 
 func TestRunSingleJobWithNeeds(t *testing.T) {
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n" +
 			"    build:\n      run: echo build\n" +
 			"    lint:\n      run: echo lint\n" +
@@ -258,7 +258,7 @@ func TestRunSingleJobWithNeeds(t *testing.T) {
 }
 
 func TestRunUnknownJob(t *testing.T) {
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo lint\n    test:\n      run: echo test\n",
 	})
 	d, _ := testDeps(t, wd)
@@ -277,7 +277,7 @@ func TestRunUnknownJob(t *testing.T) {
 }
 
 func TestRunRecoversFirst(t *testing.T) {
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo ok\n",
 	})
 	d, _ := testDeps(t, wd)
@@ -324,7 +324,7 @@ func TestRunRecoversFirst(t *testing.T) {
 
 func TestRunSIGINTCancels(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "started")
-	wd := CommitWorkDir(t, map[string]string{
+	wd := commitWorkDir(t, map[string]string{
 		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    slow:\n      run: touch " + marker + " && sleep 60\n",
 	})
 	d, iso := testDeps(t, wd)

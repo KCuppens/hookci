@@ -32,7 +32,7 @@ const runNoChecksMessage = "zeroci: no checks detected. Add a .zeroci.yml or run
 
 // cmdRun runs the checks of the committed HEAD of the repo around the
 // working directory, or one job and its transitive needs.
-func cmdRun(ctx context.Context, d deps, args []string, stdout, stderr io.Writer) int {
+func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {

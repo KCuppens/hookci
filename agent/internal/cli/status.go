@@ -20,7 +20,7 @@ import (
 const statusRuns = 20
 
 // cmdStatus lists the recent runs, or the jobs of one run.
-func cmdStatus(ctx context.Context, d deps, args []string, stdout, stderr io.Writer) int {
+func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print a JSON array")
@@ -106,7 +106,7 @@ func cmdStatus(ctx context.Context, d deps, args []string, stdout, stderr io.Wri
 
 // openStateStore opens <state>/agent.db for status and logs. It returns a
 // nil store when the state dir has none yet, which means no runs.
-func openStateStore(d deps) (*store.Store, error) {
+func openStateStore(d Deps) (*store.Store, error) {
 	path := filepath.Join(d.Globals.StateDir, "agent.db")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return nil, nil

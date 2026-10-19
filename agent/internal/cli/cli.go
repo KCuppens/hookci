@@ -21,12 +21,12 @@ import (
 
 type command struct {
 	summary string
-	run     func(ctx context.Context, d deps, args []string, stdout, stderr io.Writer) int
+	run     func(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int
 }
 
 // noDeps adapts a command that needs no host deps.
-func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Writer) int) func(context.Context, deps, []string, io.Writer, io.Writer) int {
-	return func(ctx context.Context, _ deps, args []string, stdout, stderr io.Writer) int {
+func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Writer) int) func(context.Context, Deps, []string, io.Writer, io.Writer) int {
+	return func(ctx context.Context, _ Deps, args []string, stdout, stderr io.Writer) int {
 		return run(ctx, args, stdout, stderr)
 	}
 }
@@ -39,7 +39,7 @@ func commandTable() map[string]command {
 		},
 		"help": {
 			summary: "show help for zeroci",
-			run: func(_ context.Context, _ deps, _ []string, stdout, _ io.Writer) int {
+			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {
 				printUsage(stdout)
 				return ExitOK
 			},
@@ -66,7 +66,7 @@ func commandTable() map[string]command {
 		},
 		"version": {
 			summary: "print the zeroci version",
-			run: func(_ context.Context, _ deps, _ []string, stdout, _ io.Writer) int {
+			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {
 				fmt.Fprintln(stdout, version.String())
 				return ExitOK
 			},
@@ -79,14 +79,21 @@ func commandTable() map[string]command {
 // callers typically pass os.Stdout and os.Stderr. SIGINT and SIGTERM cancel
 // the context passed to the running command.
 func Main(args []string, stdout, stderr io.Writer) int {
+	return MainWithDeps(args, stdout, stderr, DefaultDeps)
+}
+
+// MainWithDeps is Main with the host deps built by newDeps from the parsed
+// globals. End-to-end tests use it to swap the host commands of recovery and
+// the network setup for fakes.
+func MainWithDeps(args []string, stdout, stderr io.Writer, newDeps func(Globals, io.Writer) Deps) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return dispatch(ctx, args, stdout, stderr)
+	return dispatch(ctx, args, stdout, stderr, newDeps)
 }
 
 // dispatch parses the global flags and runs the named command with ctx and
-// the host deps.
-func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// the host deps from newDeps.
+func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newDeps func(Globals, io.Writer) Deps) int {
 	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }
@@ -112,7 +119,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		printUsage(stderr)
 		return ExitUsage
 	}
-	return cmd.run(ctx, defaultDeps(g, stderr), rest[1:], stdout, stderr)
+	return cmd.run(ctx, newDeps(g, stderr), rest[1:], stdout, stderr)
 }
 
 func printUsage(w io.Writer) {

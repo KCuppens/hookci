@@ -65,9 +65,9 @@ func defaultStateDir(getenv func(string) string) string {
 	return ""
 }
 
-// deps are what run, status and logs need from the host. Tests replace
+// Deps are what run, status and logs need from the host. Tests replace
 // them to stay hermetic.
-type deps struct {
+type Deps struct {
 	Globals Globals
 	// Isolation selects the job isolation by --isolation name and returns
 	// its warnings.
@@ -86,9 +86,9 @@ type deps struct {
 	After func(time.Duration) <-chan time.Time
 }
 
-// defaultDeps are the real host deps. Isolation warnings go to stderr.
-func defaultDeps(g Globals, stderr io.Writer) deps {
-	return deps{
+// DefaultDeps are the real host deps. Isolation warnings go to stderr.
+func DefaultDeps(g Globals, stderr io.Writer) Deps {
+	return Deps{
 		Globals: g,
 		Isolation: func(name string) (isolation.Isolation, []string, error) {
 			env := isolation.HostSelectEnv()

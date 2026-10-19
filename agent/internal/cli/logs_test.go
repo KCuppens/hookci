@@ -14,7 +14,7 @@ import (
 )
 
 // writeLog appends text to job's log of runID.
-func writeLog(t *testing.T, d deps, runID, job, text string) {
+func writeLog(t *testing.T, d Deps, runID, job, text string) {
 	t.Helper()
 	path := logpipe.LogPath(filepath.Join(d.Globals.StateDir, "runs", runID), job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -30,7 +30,7 @@ func writeLog(t *testing.T, d deps, runID, job, text string) {
 	}
 }
 
-func logsOf(ctx context.Context, d deps, stdout *syncBuffer, args ...string) (int, string) {
+func logsOf(ctx context.Context, d Deps, stdout *syncBuffer, args ...string) (int, string) {
 	var stderr bytes.Buffer
 	code := cmdLogs(ctx, d, args, stdout, &stderr)
 	return code, stderr.String()
