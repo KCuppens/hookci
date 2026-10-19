@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,7 +67,29 @@ func Parse(data []byte, opts ParseOptions) (*Config, Diagnostics) {
 		diags.sort()
 		return nil, diags
 	}
-	if diags = validateSchema(raw, lines); diags.HasErrors() {
+	return build(raw, lines, opts)
+}
+
+// FromRoot builds a Config from a generated root value through the same
+// schema, semantic and resolve steps as Parse, so a configuration built in
+// code (auto-detection) is indistinguishable from a parsed file. Diagnostics
+// carry paths but no lines.
+func FromRoot(root ZeroCIConfig) (*Config, Diagnostics) {
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return nil, Diagnostics{{Message: fmt.Sprintf("cannot encode configuration: %v", err), Severity: SeverityError}}
+	}
+	raw, err := jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+	if err != nil {
+		return nil, Diagnostics{{Message: fmt.Sprintf("cannot encode configuration: %v", err), Severity: SeverityError}}
+	}
+	return build(raw, lineIndex{}, ParseOptions{})
+}
+
+// build validates a decoded document and turns it into a Config with its
+// resolved checks.
+func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
+	if diags := validateSchema(raw, lines); diags.HasErrors() {
 		diags.sort()
 		return nil, diags
 	}
@@ -80,7 +103,7 @@ func Parse(data []byte, opts ParseOptions) (*Config, Diagnostics) {
 		return nil, Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
 	}
 
-	diags = checkSemantics(&cfg.ZeroCIConfig, opts, lines)
+	diags := checkSemantics(&cfg.ZeroCIConfig, opts, lines)
 	diags.sort()
 	if diags.HasErrors() {
 		return nil, diags

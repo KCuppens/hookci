@@ -102,6 +102,32 @@ func TestParseMinimal(t *testing.T) {
 	}
 }
 
+func TestFromRoot(t *testing.T) {
+	src := "version: 1\nchecks:\n  jobs:\n    lint:\n      run: npm run lint\n    test:\n      run: go test ./...\n      needs: [lint]\n"
+	parsed, diags := parseString(t, src, ParseOptions{})
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diagnostics:\n%s", diags.Format("test.yml"))
+	}
+	built, diags := FromRoot(ZeroCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{
+		"lint": {Run: "npm run lint"},
+		"test": {Run: "go test ./...", Needs: []string{"lint"}},
+	}}})
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diagnostics:\n%s", diags.Format("root"))
+	}
+	if !reflect.DeepEqual(built.ZeroCIConfig, parsed.ZeroCIConfig) {
+		t.Errorf("FromRoot config = %+v\nParse config = %+v", built.ZeroCIConfig, parsed.ZeroCIConfig)
+	}
+	if !reflect.DeepEqual(built.Checks(), parsed.Checks()) {
+		t.Errorf("FromRoot Checks() = %+v\nParse Checks() = %+v", built.Checks(), parsed.Checks())
+	}
+
+	_, diags = FromRoot(ZeroCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{"Bad Name": {Run: "true"}}}})
+	if !diags.HasErrors() {
+		t.Error("FromRoot accepted an invalid job name")
+	}
+}
+
 func TestParseUnknownKey(t *testing.T) {
 	_, diags := parseString(t, readFixture(t, "invalid_unknown_key.yml"), ParseOptions{})
 	d := findDiag(t, diags, "checks.jbos")

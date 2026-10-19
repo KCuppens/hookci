@@ -1,0 +1,10 @@
+{
+  "name": "yarn-fixture",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  }
+}

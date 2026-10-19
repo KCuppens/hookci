@@ -3,11 +3,14 @@ package cli_test
 import (
 	"bytes"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/cli"
+	"github.com/KCuppens/zerocideploy/agent/internal/detect"
 )
 
 func TestNodeAppEndToEnd(t *testing.T) {
@@ -19,6 +22,19 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 	nodeAppDir := filepath.Join(repoRoot, "examples", "node-app")
 
+	det, err := detect.DetectDir(nodeAppDir)
+	if err != nil {
+		t.Fatalf("DetectDir(examples/node-app): %v", err)
+	}
+	var detected []string
+	for name := range det.Config.ZeroCIConfig.Checks.Jobs {
+		detected = append(detected, name)
+	}
+	slices.Sort(detected)
+	if want := []string{"lint", "test", "typecheck"}; !reflect.DeepEqual(detected, want) {
+		t.Fatalf("detected jobs = %v, want %v", detected, want)
+	}
+
 	stateDir := filepath.Join(t.TempDir(), "zeroci-state")
 
 	var stdout, stderr bytes.Buffer
@@ -29,8 +45,8 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	}
 
 	out := stdout.String()
-	// Must have detected and run all three npm scripts: lint, typecheck, unit
-	for _, expectedJob := range []string{"lint", "typecheck", "unit"} {
+	// Must have detected and run all three npm scripts: lint, typecheck, test
+	for _, expectedJob := range []string{"lint", "typecheck", "test"} {
 		if !strings.Contains(out, expectedJob) {
 			t.Errorf("expected job %q in output, got:\n%s", expectedJob, out)
 		}
@@ -54,14 +70,14 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	}
 	runID := strings.Fields(lines[1])[0]
 
-	// Verify logs for unit job
+	// Verify logs for test job
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Main([]string{"logs", "-s", stateDir, runID, "unit"}, &stdout, &stderr)
+	code = cli.Main([]string{"logs", "-s", stateDir, runID, "test"}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("logs failed: %d (stderr: %s)", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "unit tests passed") {
-		t.Errorf("expected 'unit tests passed' in unit logs, got: %s", stdout.String())
+		t.Errorf("expected 'unit tests passed' in test logs, got: %s", stdout.String())
 	}
 }

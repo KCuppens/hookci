@@ -1,0 +1,18 @@
+# postgres service postgres:16-alpine on tmpfs (from docker-compose.yml service db, image postgres:16)
+
+version: 1
+checks:
+  setup:
+    - run: go mod download
+      cache:
+        key: [go.sum]
+        paths: [~/go/pkg/mod, ~/.cache/go-build]
+  jobs:
+    go-test:
+      run: go test ./...
+    go-vet:
+      run: go vet ./...
+  services:
+    postgres:
+      image: postgres:16-alpine
+      tmpfs: true

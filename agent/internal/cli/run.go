@@ -98,10 +98,14 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 		// Fallback to auto-detect if no config file present
 		if cfg == nil {
-			det, err := detect.Detect(absWorkDir)
-			if err != nil || det == nil || det.Config == nil || det.Config.ZeroCIConfig.Checks == nil || len(det.Config.ZeroCIConfig.Checks.Jobs) == 0 {
-				fmt.Fprintln(stderr, "zeroci: no checks detected")
+			det, err := detect.DetectDir(absWorkDir)
+			if errors.Is(err, detect.ErrNothingDetected) {
+				fmt.Fprintln(stderr, noChecksMessage)
 				return ExitNoChecks
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "zeroci: %v\n", err)
+				return ExitUsage
 			}
 			cfg = det.Config
 		}

@@ -2,53 +2,100 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/detect"
 )
 
+const noChecksMessage = "no checks detected: add .zeroci.yml (run zeroci init)"
+
 func runDetect(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("detect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-
+	asJSON := fs.Bool("json", false, "print the resolved config as JSON instead of YAML")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: zeroci detect [path]")
+		fmt.Fprintln(stdout, "Usage: zeroci detect [dir] [flags]")
 		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Auto-detect project ecosystem and print inferred ZeroCI configuration.")
+		fmt.Fprintln(stdout, "Infer checks from the project files in dir (default .) and print them as .zeroci.yml.")
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "Flags:")
+		fs.SetOutput(stdout)
+		fs.PrintDefaults()
+	}
+	dir, code, ok := parseDirArgs(fs, args, stderr)
+	if !ok {
+		return code
 	}
 
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return ExitOK
-		}
+	res, err := detect.DetectDir(dir)
+	if errors.Is(err, detect.ErrNothingDetected) {
+		fmt.Fprintln(stderr, noChecksMessage)
+		return ExitNoChecks
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
 		return ExitUsage
 	}
-
-	dir := "."
-	if fs.NArg() > 0 {
-		dir = fs.Arg(0)
+	if _, err := os.Stat(filepath.Join(dir, ".zeroci.yml")); err == nil {
+		fmt.Fprintln(stderr, "note: .zeroci.yml exists and takes precedence over detection")
 	}
 
-	res, err := detect.Detect(dir)
-	if err != nil {
-		if errors.Is(err, detect.ErrNoEcosystemDetected) {
-			fmt.Fprintf(stderr, "zeroci: no supported project ecosystem detected in %s\n", dir)
-			return ExitNoChecks
-		}
-		fmt.Fprintf(stderr, "zeroci: detection failed: %v\n", err)
-		return ExitUsage
+	var out []byte
+	if *asJSON {
+		out, err = json.MarshalIndent(res.Config, "", "  ")
+		out = append(out, '\n')
+	} else {
+		out, err = detect.Render(res)
 	}
-
-	yamlBytes, err := detect.FormatYAML(res.Config)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: failed to format yaml: %v\n", err)
+		fmt.Fprintf(stderr, "zeroci: encode detected config: %v\n", err)
 		return ExitInternal
 	}
-
-	fmt.Fprintf(stdout, "# Detected ecosystem: %s\n", res.Ecosystem)
-	_, _ = stdout.Write(yamlBytes)
+	_, _ = stdout.Write(out)
 	return ExitOK
+}
+
+// parseDirArgs parses flags placed before or after the optional dir
+// argument (the flag package alone stops at the first positional argument)
+// and checks that dir is a directory. When ok is false the caller returns
+// code.
+func parseDirArgs(fs *flag.FlagSet, args []string, stderr io.Writer) (dir string, code int, ok bool) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return "", ExitOK, false
+			}
+			return "", ExitUsage, false
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			break
+		}
+		positional = append(positional, args[0])
+		args = args[1:]
+	}
+	switch len(positional) {
+	case 0:
+		dir = "."
+	case 1:
+		dir = positional[0]
+	default:
+		fmt.Fprintf(stderr, "zeroci: %s takes at most one dir\n", fs.Name())
+		return "", ExitUsage, false
+	}
+	if info, err := os.Stat(dir); err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return "", ExitUsage, false
+	} else if !info.IsDir() {
+		fmt.Fprintf(stderr, "zeroci: %s is not a directory\n", dir)
+		return "", ExitUsage, false
+	}
+	return dir, ExitOK, true
 }

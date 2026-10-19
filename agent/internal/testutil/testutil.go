@@ -35,8 +35,13 @@ func RequireIntegration(t testing.TB) {
 // (re)write the golden file from got.
 func Golden(t testing.TB, name string, got []byte) {
 	t.Helper()
+	GoldenFile(t, filepath.Join("testdata", name+".golden"), got)
+}
 
-	path := filepath.Join("testdata", name+".golden")
+// GoldenFile is Golden for a golden file at an explicit path, for goldens
+// that live outside testdata (for example the detection fixtures).
+func GoldenFile(t testing.TB, path string, got []byte) {
+	t.Helper()
 
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
