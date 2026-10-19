@@ -20,6 +20,9 @@ func AgentUnit(installationID int64) string {
 	return "zeroci-agent@" + strconv.FormatInt(installationID, 10) + ".service"
 }
 
+// AllAgentUnits matches every zeroci-agent@ instance.
+const AllAgentUnits = "zeroci-agent@*.service"
+
 // ServiceManager is the part of systemd that connect and doctor use.
 type ServiceManager interface {
 	// UnitExists reports whether systemd knows unit. A host without
@@ -29,6 +32,8 @@ type ServiceManager interface {
 	EnableNow(ctx context.Context, unit string) error
 	// ActiveState is the unit's ActiveState: active, inactive, failed...
 	ActiveState(ctx context.Context, unit string) (string, error)
+	// TryRestart restarts the units matching unit that are running.
+	TryRestart(ctx context.Context, unit string) error
 }
 
 // Systemctl is the ServiceManager of the host, run through Runner.
@@ -65,4 +70,12 @@ func (s Systemctl) ActiveState(ctx context.Context, unit string) (string, error)
 		return "", fmt.Errorf("systemd: state of %s: %w", unit, err)
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+// TryRestart runs `systemctl try-restart`, which leaves stopped units alone.
+func (s Systemctl) TryRestart(ctx context.Context, unit string) error {
+	if err := s.Runner.Run(ctx, execx.Cmd{Name: "systemctl", Args: []string{"try-restart", "--", unit}}); err != nil {
+		return fmt.Errorf("systemd: try-restart %s: %w", unit, err)
+	}
+	return nil
 }

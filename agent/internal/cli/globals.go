@@ -92,6 +92,8 @@ type Deps struct {
 	Services systemd.ServiceManager
 	// Doctor is the host env doctor checks for a state root and hub origin.
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
+	// Releases is where upgrade fetches signed releases.
+	Releases Releases
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -110,6 +112,7 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		After:    time.After,
 		Services: systemd.Systemctl{Runner: execx.OS{}},
 		Doctor:   hostDoctorEnv,
+		Releases: defaultReleases(),
 	}
 }
 

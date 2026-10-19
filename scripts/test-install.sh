@@ -73,7 +73,37 @@ printf '#!/bin/sh\nexit 1\n' >"$bin/cosign"
 chmod +x "$bin/cosign"
 install good
 expect_code 4 "failing cosign"
+
+# cosign succeeds only for the SHA256SUMS bundle signed by the pinned identity.
+cat >"$bin/cosign" <<'EOF'
+#!/bin/sh
+case "$*" in
+"verify-blob --certificate-identity kobecuppens@hotmail.com --certificate-oidc-issuer https://github.com/login/oauth --bundle "*/SHA256SUMS.sigstore.json" "*/SHA256SUMS) exit 0 ;;
+esac
+exit 1
+EOF
+install good
+expect_code 0 "passing cosign"
+expect_out "Signature verified" "passing cosign"
 rm "$bin/cosign"
+
+# gen-install.sh --check fails when the embedded unit drifts from packaging/.
+drift="$work/drift"
+mkdir -p "$drift/scripts" "$drift/hub/static"
+cp "$root/scripts/gen-install.sh" "$drift/scripts/"
+cp -R "$root/packaging" "$drift/packaging"
+cp "$script" "$drift/hub/static/install.sh"
+if ! "$drift/scripts/gen-install.sh" --check >/dev/null 2>&1; then
+	fail "gen-install --check fails on the committed copy"
+fi
+echo "LimitNOFILE=4096" >>"$drift/packaging/zeroci-agent@.service"
+if "$drift/scripts/gen-install.sh" --check >/dev/null 2>&1; then
+	fail "gen-install --check passes with a drifted unit"
+fi
+"$drift/scripts/gen-install.sh" >/dev/null
+if ! grep -q '^LimitNOFILE=4096$' "$drift/hub/static/install.sh"; then
+	fail "gen-install did not embed the changed unit"
+fi
 
 if [ "$failures" -ne 0 ]; then
 	echo "test-install: $failures failure(s)" >&2

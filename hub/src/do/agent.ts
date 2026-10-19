@@ -40,6 +40,7 @@ import {
 import { createTriggersTable, registerRunLifecycle } from "./agent-runs";
 import { doRoute } from "./agent-routes";
 import { type Clock, systemClock } from "./clock";
+import { agentVersions } from "../version";
 
 type Unsequenced<F> = F & { seq?: never };
 /** A hub to agent frame for send(), which assigns seq (and hub_seq on a trigger). */
@@ -404,6 +405,7 @@ export class AgentDO extends DurableObject<Env> {
 				protocol_max: PROTOCOL_MAX,
 				agent_id: this.agentId,
 				installation_id: this.installationId,
+				...agentVersions(this.env),
 			}),
 		);
 		this.sql.exec("DELETE FROM outbox WHERE seq <= ?", inbound);

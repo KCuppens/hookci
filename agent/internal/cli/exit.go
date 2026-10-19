@@ -15,4 +15,7 @@ const (
 	ExitRevoked = 3
 	// ExitInternal indicates an internal error unrelated to user input.
 	ExitInternal = 4
+	// ExitUpgradeAvailable is `zeroci upgrade --check` finding a newer
+	// release.
+	ExitUpgradeAvailable = 10
 )

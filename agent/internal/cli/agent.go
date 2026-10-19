@@ -101,7 +101,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 		// last one accepted but did not start.
 		dm := daemon.New(conf, h.db, exec, daemon.Options{
 			StateDir: *stateDir,
-			Version:  version.String(),
+			Version:  version.Version,
 			Logger:   log,
 			JobUser:  h.jobUser,
 			Slots:    d.Globals.Slots,
@@ -113,6 +113,9 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 		case errors.Is(err, hubclient.ErrRevoked):
 			fmt.Fprintln(errw, agentRevokedMessage)
 			return ExitRevoked
+		case errors.Is(err, hubclient.ErrAgentTooOld):
+			fmt.Fprintf(errw, "zeroci: agent_too_old: %v\n", err)
+			return ExitInternal
 		case errors.Is(err, hubclient.ErrUnsupported):
 			log.Error("hub refused this agent version; retrying in an hour", "err", err)
 			select {

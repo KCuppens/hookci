@@ -46,6 +46,10 @@ func EnsureUser(t testing.TB, name string) {
 	}
 }
 
+// Update reports whether tests run with -update, for tests that
+// regenerate testdata other than plain golden files.
+func Update() bool { return *update }
+
 // Golden compares got against the golden file testdata/<name>.golden,
 // failing with a readable diff on mismatch. Run tests with -update to
 // (re)write the golden file from got.

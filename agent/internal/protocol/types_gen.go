@@ -450,6 +450,13 @@ type Welcome struct {
 	// GitHub App installation the agent belongs to.
 	InstallationId int `json:"installation_id"`
 
+	// Newest released agent version; the agent logs an upgrade hint when it runs an
+	// older one.
+	LatestAgentVersion *string `json:"latest_agent_version,omitempty,omitzero"`
+
+	// Oldest agent version the hub serves; an older agent stops with agent_too_old.
+	MinAgentVersion *string `json:"min_agent_version,omitempty,omitzero"`
+
 	// Newest protocol version the hub accepts.
 	ProtocolMax int `json:"protocol_max"`
 

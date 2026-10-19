@@ -964,6 +964,14 @@
             "installation_id": {
               "description": "GitHub App installation the agent belongs to.",
               "type": "integer"
+            },
+            "latest_agent_version": {
+              "description": "Newest released agent version; the agent logs an upgrade hint when it runs an older one.",
+              "type": "string"
+            },
+            "min_agent_version": {
+              "description": "Oldest agent version the hub serves; an older agent stops with agent_too_old.",
+              "type": "string"
             }
           }
         },

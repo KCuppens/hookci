@@ -369,6 +369,37 @@ func TestProtocolUnsupported(t *testing.T) {
 	}
 }
 
+func TestAgentTooOld(t *testing.T) {
+	x := newHarness(t)
+	x.start(t)
+	c := x.hub.next(t)
+	c.readFrame(t)
+	c.drain()
+	c.send(t, `{"v":1,"type":"welcome","hub_version":"test","protocol_min":1,"protocol_max":1,"agent_id":"agt_1","installation_id":42,"min_agent_version":"v1.3.0"}`)
+
+	err := x.runErr(t)
+	if !errors.Is(err, ErrAgentTooOld) || !strings.Contains(err.Error(), "agent_too_old") {
+		t.Fatalf("Run = %v, want ErrAgentTooOld", err)
+	}
+	if x.client.Connected() {
+		t.Fatal("Connected() after agent_too_old")
+	}
+}
+
+func TestUpgradeAvailableLogged(t *testing.T) {
+	x := newHarness(t)
+	x.start(t)
+	c := x.hub.next(t)
+	c.readFrame(t)
+	c.send(t, `{"v":1,"type":"welcome","hub_version":"test","protocol_min":1,"protocol_max":1,"agent_id":"agt_1","installation_id":42,"latest_agent_version":"v1.4.0","min_agent_version":"v1.2.3"}`)
+
+	const hint = "upgrade available: 1.2.3 -> v1.4.0"
+	waitFor(t, "upgrade hint", func() bool { return strings.Contains(x.logs.String(), hint) })
+	if n := strings.Count(x.logs.String(), hint); n != 1 {
+		t.Fatalf("hint logged %d times, want 1", n)
+	}
+}
+
 func TestRevoked(t *testing.T) {
 	t.Run("http 401", func(t *testing.T) {
 		x := newHarness(t)

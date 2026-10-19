@@ -33,6 +33,8 @@ type fakePairHub struct {
 	req     atomic.Pointer[redeemRequest]
 	auth    atomic.Pointer[string]
 	hello   atomic.Pointer[map[string]any]
+	// welcome replaces the default welcome frame when set.
+	welcome atomic.Pointer[string]
 }
 
 func newFakePairHub(t *testing.T, status int, body string) *fakePairHub {
@@ -67,6 +69,9 @@ func newFakePairHub(t *testing.T, status int, body string) *fakePairHub {
 			h.hello.Store(&hello)
 		}
 		welcome := `{"v":1,"type":"welcome","hub_version":"test","protocol_min":1,"protocol_max":1,"agent_id":"agt_1","installation_id":42}`
+		if w := h.welcome.Load(); w != nil {
+			welcome = *w
+		}
 		if err := c.Write(ctx, websocket.MessageText, []byte(welcome)); err != nil {
 			return
 		}
@@ -85,8 +90,9 @@ const redeemOK = `{"agent_id":"agt_1","credential":"` + testCredential + `","ins
 
 // fakeServices is a ServiceManager where only the units in exist are installed.
 type fakeServices struct {
-	exist   map[string]bool
-	enabled []string
+	exist     map[string]bool
+	enabled   []string
+	restarted []string
 }
 
 func (f *fakeServices) UnitExists(_ context.Context, unit string) (bool, error) {
@@ -95,6 +101,11 @@ func (f *fakeServices) UnitExists(_ context.Context, unit string) (bool, error) 
 
 func (f *fakeServices) EnableNow(_ context.Context, unit string) error {
 	f.enabled = append(f.enabled, unit)
+	return nil
+}
+
+func (f *fakeServices) TryRestart(_ context.Context, unit string) error {
+	f.restarted = append(f.restarted, unit)
 	return nil
 }
 

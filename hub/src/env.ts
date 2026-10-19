@@ -12,6 +12,10 @@ export interface Env {
 	SLACK_DO: DurableObjectNamespace<SlackWorkspaceDO>;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
+	/** Newest released agent version, e.g. v0.2.0; empty until the first release. */
+	LATEST_AGENT_VERSION: string;
+	/** Oldest agent version the hub serves; empty means no minimum. */
+	MIN_AGENT_VERSION: string;
 	/** The public GitHub App's URL slug: https://github.com/apps/<slug>. */
 	GITHUB_APP_SLUG: string;
 	GITHUB_APP_ID: string;

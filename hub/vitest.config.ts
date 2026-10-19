@@ -25,6 +25,9 @@ export default defineConfig({
       miniflare: {
         bindings: {
           ...testSecrets,
+          // wrangler.toml leaves them empty until the first release.
+          LATEST_AGENT_VERSION: "v0.3.0",
+          MIN_AGENT_VERSION: "v0.1.0",
           TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("./migrations", import.meta.url))),
         },
       },

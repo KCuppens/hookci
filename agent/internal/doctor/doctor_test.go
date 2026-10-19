@@ -68,6 +68,7 @@ type fakeSystemd struct {
 
 func (f fakeSystemd) UnitExists(context.Context, string) (bool, error) { return true, nil }
 func (f fakeSystemd) EnableNow(context.Context, string) error          { return nil }
+func (f fakeSystemd) TryRestart(context.Context, string) error         { return nil }
 func (f fakeSystemd) ActiveState(_ context.Context, unit string) (string, error) {
 	return f.state, f.err
 }

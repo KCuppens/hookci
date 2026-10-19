@@ -72,6 +72,10 @@ func commandTable() map[string]command {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",
 			run:     cmdStatus,
 		},
+		"upgrade": {
+			summary: "install a signed release and restart the agents: upgrade [--version vX.Y.Z] [--check] [--allow-downgrade] [--refresh-trust-root]",
+			run:     cmdUpgrade,
+		},
 		"validate": {
 			summary: "validate a zeroci configuration file",
 			run:     noDeps(runValidate),
@@ -114,6 +118,10 @@ func signalContext() (context.Context, context.CancelFunc) {
 // dispatch parses the global flags and runs the named command with ctx and
 // the host deps from newDeps.
 func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newDeps func(Globals, io.Writer) Deps) int {
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Fprintln(stdout, version.String())
+		return ExitOK
+	}
 	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }

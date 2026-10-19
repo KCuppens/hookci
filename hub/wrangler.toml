@@ -10,6 +10,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 HUB_ORIGIN = "https://ci.webuno.io"
 HUB_VERSION = "dev"
+LATEST_AGENT_VERSION = ""
+MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci"
 SLACK_APP_ID = "A0000000000"
 
@@ -52,6 +54,8 @@ name = "zeroci-hub-staging"
 [env.staging.vars]
 HUB_ORIGIN = "https://ci-staging.webuno.io"
 HUB_VERSION = "dev"
+LATEST_AGENT_VERSION = ""
+MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci-staging"
 SLACK_APP_ID = "A0000000001"
 

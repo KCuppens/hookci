@@ -18,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
 
 // Session timings.
@@ -44,6 +45,10 @@ var ErrRevoked = errors.New("hubclient: agent credential revoked")
 
 // ErrUnsupported means the hub does not speak this agent's protocol version.
 var ErrUnsupported = errors.New("hubclient: protocol unsupported by hub")
+
+// ErrAgentTooOld means the agent is older than the welcome's
+// min_agent_version. Reconnecting cannot fix it; upgrading can.
+var ErrAgentTooOld = errors.New("hubclient: agent_too_old")
 
 // errRateLimited makes Run wait at least rateLimitedWait before reconnecting.
 var errRateLimited = errors.New("hubclient: rate limited by hub")
@@ -156,7 +161,7 @@ func sendKind(f protocol.Frame) (string, bool) {
 }
 
 // Run keeps a session open until ctx ends or the hub refuses the agent for
-// good. It returns ErrRevoked, ErrUnsupported or ctx.Err().
+// good. It returns ErrRevoked, ErrUnsupported, ErrAgentTooOld or ctx.Err().
 func (c *Client) Run(ctx context.Context) error {
 	if c.h == nil {
 		return errors.New("hubclient: run: nil handler")
@@ -166,7 +171,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if errors.Is(err, ErrRevoked) || errors.Is(err, ErrUnsupported) {
+		if errors.Is(err, ErrRevoked) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrAgentTooOld) {
 			return err
 		}
 		c.backoff.Disconnected(connectedFor)
@@ -207,6 +212,9 @@ func (c *Client) session(ctx context.Context) (time.Duration, error) {
 	idle := c.clk.After(pingTimeout)
 	c.connected.Store(true)
 	c.log.Info("connected to hub", "hub", c.cfg.HubURL, "agent_id", s.welcome.AgentId, "hub_version", s.welcome.HubVersion)
+	if latest := deref(s.welcome.LatestAgentVersion); latest != "" && version.Compare(c.cfg.Version, latest) < 0 {
+		c.log.Warn(fmt.Sprintf("upgrade available: %s -> %s", c.cfg.Version, latest), "hint", "run zeroci upgrade")
+	}
 
 	err = c.loop(ctx, s, ping, idle)
 	c.connected.Store(false)
@@ -436,6 +444,10 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 			}
 			switch v := f.(type) {
 			case protocol.Welcome:
+				if min := deref(v.MinAgentVersion); min != "" && version.Compare(c.cfg.Version, min) < 0 {
+					s.close(closeNormal, "agent too old")
+					return nil, fmt.Errorf("%w: agent %s is older than the hub minimum %s; run zeroci upgrade", ErrAgentTooOld, c.cfg.Version, min)
+				}
 				s.welcome = v
 				return s, nil
 			case protocol.Error:
@@ -524,4 +536,12 @@ func (s *conn) close(code int, reason string) {
 	close(s.done)
 	_ = s.c.Close(code, reason)
 	s.cancel()
+}
+
+// deref is *p, or "" when p is nil.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

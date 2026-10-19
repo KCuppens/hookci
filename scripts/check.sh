@@ -8,6 +8,7 @@ scripts/schema-check.sh
 
 (cd agent && fmt_out=$(gofmt -l .) && [ -z "$fmt_out" ] || { echo "$fmt_out" >&2; exit 1; })
 (cd agent && go vet ./... && go test ./...)
+scripts/gen-install.sh --check
 scripts/test-install.sh
 
 (

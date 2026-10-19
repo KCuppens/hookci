@@ -11,8 +11,9 @@
 #   ZEROCI_PREFIX           install prefix, the binary goes to $ZEROCI_PREFIX/bin
 set -eu
 
-# Release signatures are made by GitHub Actions keyless signing.
-ZEROCI_COSIGN_IDENTITY="${ZEROCI_COSIGN_IDENTITY:-https://github.com/KCuppens/zerocideploy/.github/workflows/release.yml@refs/heads/main}"
+# Releases are cut locally with goreleaser; SHA256SUMS is signed with the
+# maintainer's cosign keyless identity (agent/internal/selfupdate/verify.go).
+ZEROCI_COSIGN_IDENTITY="${ZEROCI_COSIGN_IDENTITY:-kobecuppens@hotmail.com}"
 ZEROCI_COSIGN_ISSUER="${ZEROCI_COSIGN_ISSUER:-https://github.com/login/oauth}"
 
 ZEROCI_VERSION="${ZEROCI_VERSION:-latest}"
@@ -90,12 +91,12 @@ want=$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1; exit }' "$tmp/SHA25
 [ "$(sha256 "$tmp/$asset")" = "$want" ] || die 3 "checksum mismatch for $asset"
 
 if have cosign; then
-	fetch "$url/$asset.sigstore.json" "$tmp/$asset.sigstore.json" ||
-		die 4 "download failed: $url/$asset.sigstore.json"
+	fetch "$url/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS.sigstore.json" ||
+		die 4 "download failed: $url/SHA256SUMS.sigstore.json"
 	cosign verify-blob --certificate-identity "$ZEROCI_COSIGN_IDENTITY" \
 		--certificate-oidc-issuer "$ZEROCI_COSIGN_ISSUER" \
-		--bundle "$tmp/$asset.sigstore.json" "$tmp/$asset" >/dev/null 2>&1 ||
-		die 4 "signature verification failed for $asset"
+		--bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
+		die 4 "signature verification failed for SHA256SUMS"
 	echo "Signature verified"
 else
 	echo "cosign not found: checksum verified, signature not verified"
@@ -103,12 +104,15 @@ fi
 
 tar -xzf "$tmp/$asset" -C "$tmp" zeroci || die 1 "$asset has no zeroci binary"
 
+# BEGIN packaging/zeroci.slice (scripts/gen-install.sh)
 cat >"$tmp/zeroci.slice" <<'EOF'
 [Unit]
 Description=ZeroCI agents and their jobs
 Before=slices.target
 EOF
+# END packaging/zeroci.slice
 
+# BEGIN packaging/zeroci-agent@.service (scripts/gen-install.sh)
 cat >"$tmp/zeroci-agent@.service" <<'EOF'
 [Unit]
 Description=ZeroCI agent (installation %i)
@@ -126,6 +130,7 @@ NoNewPrivileges=no
 [Install]
 WantedBy=multi-user.target
 EOF
+# END packaging/zeroci-agent@.service
 
 sudo=
 if [ "$(id -u)" != 0 ]; then

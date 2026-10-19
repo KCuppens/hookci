@@ -613,6 +613,14 @@ export interface Welcome {
    * GitHub App installation the agent belongs to.
    */
   installation_id: number;
+  /**
+   * Newest released agent version; the agent logs an upgrade hint when it runs an older one.
+   */
+  latest_agent_version?: string;
+  /**
+   * Oldest agent version the hub serves; an older agent stops with agent_too_old.
+   */
+  min_agent_version?: string;
 }
 /**
  * Hub reports a protocol or connection error.

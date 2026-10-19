@@ -113,6 +113,8 @@ describe("AgentDO connection", () => {
         protocol_max: PROTOCOL_MAX,
         agent_id: agent.agentId,
         installation_id: INSTALLATION,
+        latest_agent_version: env.LATEST_AGENT_VERSION,
+        min_agent_version: env.MIN_AGENT_VERSION,
       });
     }
     const row = await agentRow(agent.agentId);
