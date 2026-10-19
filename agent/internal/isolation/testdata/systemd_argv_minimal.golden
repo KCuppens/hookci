@@ -33,7 +33,17 @@ BindPaths=/var/lib/zeroci/runs/01HXRUN
 -p
 Nice=10
 -p
-IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+IPAddressDeny=localhost
+-p
+IPAddressDeny=link-local
+-p
+IPAddressDeny=multicast
+-p
+IPAddressDeny=10.0.0.0/8
+-p
+IPAddressDeny=172.16.0.0/12
+-p
+IPAddressDeny=192.168.0.0/16
 --
 /bin/sh
 -ec

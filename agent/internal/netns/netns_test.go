@@ -163,7 +163,7 @@ func TestAvailable(t *testing.T) {
 func TestPastaArgv(t *testing.T) {
 	got := PastaArgv("/run/netns/zc-01j9z3", 41234, "/var/lib/zeroci/runs/01j9z3/pasta.pid")
 	want := []string{
-		"pasta", "--foreground", "--quiet", "--splice-only", "--no-map-gw",
+		"pasta", "--foreground", "--quiet", "--runas", "0", "--no-map-gw",
 		"-t", "none", "-u", "none", "-U", "none",
 		"-T", "3128:41234",
 		"--pid", "/var/lib/zeroci/runs/01j9z3/pasta.pid",

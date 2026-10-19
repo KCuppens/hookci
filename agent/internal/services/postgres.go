@@ -93,7 +93,7 @@ func BuildRunArgv(o PostgresOptions) []string {
 		"--network", "none",
 	}
 	if o.Tmpfs {
-		argv = append(argv, "--tmpfs", fmt.Sprintf("%s:rw,size=%db", containerDataDir, o.MemoryBytes/2))
+		argv = append(argv, "--tmpfs", fmt.Sprintf("%s:rw,size=%d", containerDataDir, o.MemoryBytes/2))
 	}
 	return append(argv,
 		"-v", socketDir(o.RunDir)+":"+containerSocketDir,

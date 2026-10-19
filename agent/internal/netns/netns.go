@@ -1,6 +1,6 @@
 // Package netns gives a run a private network namespace whose only exit is
 // the run's egress proxy. The agent creates /run/netns/zc-<run> with ip,
-// brings up loopback and starts pasta in splice-only mode, which forwards
+// brings up loopback and starts pasta without --config-net, which forwards
 // 127.0.0.1:InNSProxyPort inside the namespace to the proxy's host port and
 // gives the namespace no outbound route. Jobs join the namespace through
 // isolation.Spec.NetNSPath and reach the proxy through ProxyEnv.

@@ -17,7 +17,9 @@ import (
 const stopTimeout = 15 * time.Second
 
 // ipDenyHost is the §6 deny list for units that share the host network.
-const ipDenyHost = "localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+// systemd 255's systemd-run rejects a symbolic name (localhost) mixed with
+// prefixes in one value, so each entry is passed as its own property.
+var ipDenyHost = []string{"localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 
 // Systemd runs each job as a transient systemd service (not a scope) with the
 // §6 sandbox properties and cgroup limits.
@@ -102,7 +104,9 @@ func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
 	prop("Nice=10")
 
 	if spec.NetNSPath == "" {
-		prop("IPAddressDeny=" + ipDenyHost)
+		for _, d := range ipDenyHost {
+			prop("IPAddressDeny=" + d)
+		}
 	} else {
 		prop("IPAddressDeny=any")
 		prop("IPAddressAllow=localhost")

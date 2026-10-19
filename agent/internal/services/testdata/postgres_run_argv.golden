@@ -13,7 +13,7 @@ zeroci.run=01HX
 --network
 none
 --tmpfs
-/var/lib/postgresql/data:rw,size=1073741824b
+/var/lib/postgresql/data:rw,size=1073741824
 -v
 /var/lib/zeroci/local/runs/01HX/pg:/var/run/postgresql
 -e

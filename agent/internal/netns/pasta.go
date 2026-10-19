@@ -19,20 +19,19 @@ const (
 	pastaStderrLimit  = 4096
 )
 
-// VERIFY ON VM: the pasta flag set (especially --splice-only with --netns
-// <path> and the -T direction) must be confirmed against the installed
-// pasta version in M0-20; TestNetnsEgressIntegration is the proof.
-//
-// PastaArgv returns the pasta argv for a run. --splice-only creates no tap
-// device, so the namespace has no outbound route; -t/-u/-U none forward
-// nothing into the namespace; -T forwards namespace port InNSProxyPort to
-// the egress proxy on the host loopback.
+// PastaArgv returns the pasta argv for a run. Without --config-net pasta
+// leaves its tap device down with no address or route, so the namespace has
+// no outbound path (--splice-only would do the same but is missing from
+// Ubuntu 24.04's passt 0.0~git20240220). --runas 0 keeps pasta root: as
+// nobody it cannot join a namespace owned by the init user namespace.
+// -t/-u/-U none forward nothing into the namespace; -T forwards namespace
+// port InNSProxyPort to the egress proxy on the host loopback.
 func PastaArgv(nsPath string, hostProxyPort int, pidFile string) []string {
 	return []string{
 		"pasta",
 		"--foreground",
 		"--quiet",
-		"--splice-only",
+		"--runas", "0",
 		"--no-map-gw",
 		"-t", "none",
 		"-u", "none",

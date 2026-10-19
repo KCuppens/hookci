@@ -50,9 +50,10 @@ func TestBuildSystemdRunArgvNoNetNS(t *testing.T) {
 	spec := fullSpec()
 	spec.NetNSPath = ""
 	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
-	const deny = "IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-	if !slices.Contains(argv, deny) {
-		t.Errorf("argv lacks %q:\n%s", deny, goldenArgv(argv))
+	for _, d := range []string{"localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		if want := "IPAddressDeny=" + d; !slices.Contains(argv, want) {
+			t.Errorf("argv lacks %q:\n%s", want, goldenArgv(argv))
+		}
 	}
 	for _, a := range argv {
 		if strings.HasPrefix(a, "NetworkNamespacePath=") || strings.HasPrefix(a, "IPAddressAllow=") {
@@ -116,7 +117,12 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 			"NetworkNamespacePath=/run/netns/zc-01hxrun",
 		}},
 		{"deny", "", []string{
-			"IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16",
+			"IPAddressDeny=localhost",
+			"IPAddressDeny=link-local",
+			"IPAddressDeny=multicast",
+			"IPAddressDeny=10.0.0.0/8",
+			"IPAddressDeny=172.16.0.0/12",
+			"IPAddressDeny=192.168.0.0/16",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
