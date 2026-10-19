@@ -38,6 +38,10 @@ func commandTable() map[string]command {
 				return ExitOK
 			},
 		},
+		"validate": {
+			summary: "validate a zeroci configuration file",
+			run:     runValidate,
+		},
 	}
 }
 
