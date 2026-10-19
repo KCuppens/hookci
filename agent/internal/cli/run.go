@@ -146,14 +146,14 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
 	}
 
-	servicesMgr := services.NewManager(nil)
+	docker := &services.Docker{}
 	cacheStore, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")})
 	if err != nil {
 		fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
 	}
 
 	// 4. Perform crash recovery before starting new run
-	rec := recovery.New(db, iso, servicesMgr, nil)
+	rec := recovery.New(db, iso, docker, nil)
 	if _, err := rec.Recover(ctx); err != nil {
 		fmt.Fprintf(stderr, "zeroci: crash recovery warning: %v\n", err)
 	}
@@ -197,7 +197,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		StateDir:       stateDir,
 		Store:          db,
 		Isolation:      iso,
-		Services:       servicesMgr,
+		Docker:         docker,
 		Cache:          cacheStore,
 		Slots:          slots,
 		DefaultTimeout: executor.ParseTimeout(&timeoutStr, 10*time.Minute),

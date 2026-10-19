@@ -1,128 +1,212 @@
+// Package services runs the run-scoped service containers jobs depend on.
+// In M0 that is PostgreSQL only.
+//
+// The postgres container never joins the job's network namespace: docker
+// cannot join a netns given by path, so it runs with --network none and has
+// no network at all. Jobs reach it only through the unix socket that is
+// bind-mounted into the run dir at <run>/pg. The docker socket itself is
+// never exposed to jobs; only the agent talks to docker.
 package services
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 )
 
-// Service represents a running background service container.
-type Service struct {
-	Name          string
-	ContainerName string
-	SocketDir     string
-	Env           map[string]string
+const (
+	// LabelRun is the container label key whose value is the run id.
+	LabelRun = "zeroci.run"
+	// DefaultPGImage is the postgres image used when the config names none.
+	DefaultPGImage = "postgres:16-alpine"
+	socketDirMode  = 0o777
+)
+
+var (
+	ErrDockerMissing = errors.New("services: docker not found")
+	ErrNotReady      = errors.New("services: postgres not ready before timeout")
+)
+
+const (
+	defaultReadyTimeout = 30 * time.Second
+	defaultPollEvery    = 250 * time.Millisecond
+	// stopTimeout bounds the cleanup rm -f after a failed start, which runs
+	// even when the caller's context is already cancelled.
+	stopTimeout = 30 * time.Second
+
+	containerSocketDir = "/var/run/postgresql"
+	containerDataDir   = "/var/lib/postgresql/data"
+)
+
+var imageRe = regexp.MustCompile(`^[a-z0-9./:@_-]+$`)
+
+// PostgresOptions configures one run's postgres container.
+type PostgresOptions struct {
+	RunID        string
+	RunDir       string        // <state>/runs/<id>; socket dir is RunDir/pg
+	Image        string        // "" -> DefaultPGImage
+	Tmpfs        bool          // default true from config
+	CPUs         float64       // from run limits
+	MemoryBytes  int64         // from run limits
+	ReadyTimeout time.Duration // default 30s
+	PollEvery    time.Duration // default 250ms
+	Docker       Docker
+	Clock        func() time.Time                           // nil -> time.Now
+	Sleep        func(context.Context, time.Duration) error // nil -> ctx-aware sleep; fake in tests
 }
 
-// Manager manages lifecycle for background service containers (e.g. postgres).
-type Manager struct {
-	Runner execx.Runner
+// Postgres is a started postgres container.
+type Postgres struct {
+	Name      string // zeroci-svc-<run>-postgres
+	SocketDir string // <RunDir>/pg
+
+	docker Docker
 }
 
-// NewManager creates a services Manager.
-func NewManager(runner execx.Runner) *Manager {
-	if runner == nil {
-		runner = execx.OS{}
+// ContainerName is the docker container name of runID's postgres. The run
+// id is sanitized like a systemd unit name part.
+func ContainerName(runID string) string {
+	return "zeroci-svc-" + isolation.SanitizeUnitPart(runID) + "-postgres"
+}
+
+// BuildRunArgv returns the arguments to the docker binary that start the
+// postgres container for o.
+func BuildRunArgv(o PostgresOptions) []string {
+	image := o.Image
+	if image == "" {
+		image = DefaultPGImage
 	}
-	return &Manager{Runner: runner}
-}
-
-// ContainerName derives the docker container name for a run service.
-func ContainerName(runID, serviceName string) string {
-	return fmt.Sprintf("zeroci-service-%s-%s", runID, serviceName)
-}
-
-// Start launches the postgres service container with --network none, its data
-// directory on tmpfs when cfg.Tmpfs is set, and its unix socket bind-mounted
-// into socketDir.
-func (m *Manager) Start(ctx context.Context, runID string, cfg config.ChecksServicesPostgres, socketDir string) (*Service, error) {
-	const name = "postgres"
-	containerName := ContainerName(runID, name)
-
-	if err := os.MkdirAll(socketDir, 0777); err != nil {
-		return nil, fmt.Errorf("mkdir socket dir %s: %w", socketDir, err)
-	}
-	// Ensure loose permissions so container postgres user can write socket
-	_ = os.Chmod(socketDir, 0777)
-
-	args := []string{
-		"run", "-d", "--rm",
-		"--name", containerName,
+	argv := []string{
+		"run", "-d", "--rm=false",
+		"--name", ContainerName(o.RunID),
+		"--label", LabelRun + "=" + o.RunID,
+		"--cgroup-parent=zeroci.slice",
+		"--cpus", fmt.Sprintf("%g", o.CPUs),
+		"--memory", fmt.Sprintf("%db", o.MemoryBytes),
 		"--network", "none",
 	}
-	if cfg.Tmpfs {
-		args = append(args, "--tmpfs", "/var/lib/postgresql/data")
+	if o.Tmpfs {
+		argv = append(argv, "--tmpfs", fmt.Sprintf("%s:rw,size=%db", containerDataDir, o.MemoryBytes/2))
 	}
-	image := cfg.Image
-	if image == "" {
-		image = "postgres:16-alpine"
-	}
-	args = append(args,
-		"-v", fmt.Sprintf("%s:/var/run/postgresql", socketDir),
+	return append(argv,
+		"-v", socketDir(o.RunDir)+":"+containerSocketDir,
 		"-e", "POSTGRES_HOST_AUTH_METHOD=trust",
 		image,
 	)
-
-	if err := m.Runner.Run(ctx, execx.Cmd{Name: "docker", Args: args}); err != nil {
-		return nil, fmt.Errorf("start docker service %s: %w", containerName, err)
-	}
-
-	return &Service{
-		Name:          name,
-		ContainerName: containerName,
-		SocketDir:     socketDir,
-		Env: map[string]string{
-			"PGHOST": socketDir,
-			"PGPORT": "5432",
-			"PGUSER": "postgres",
-		},
-	}, nil
 }
 
-// Stop terminates and removes the background service container.
-func (m *Manager) Stop(ctx context.Context, runID, name string) error {
-	containerName := ContainerName(runID, name)
-	cmd := execx.Cmd{
-		Name: "docker",
-		Args: []string{"rm", "-f", containerName},
+// StartPostgres creates the socket dir, starts the container and waits
+// until pg_isready succeeds. A container left over from a crashed run with
+// the same name is removed and the start retried once. If postgres is not
+// ready within ReadyTimeout the error wraps ErrNotReady, carries the tail of
+// the container log, and the container is removed.
+func StartPostgres(ctx context.Context, o PostgresOptions) (*Postgres, error) {
+	if o.Image != "" && (!imageRe.MatchString(o.Image) || strings.HasPrefix(o.Image, "-")) {
+		return nil, fmt.Errorf("services: invalid postgres image %q", o.Image)
 	}
-	if err := m.Runner.Run(ctx, cmd); err != nil {
-		return fmt.Errorf("stop docker service %s: %w", containerName, err)
+	if o.ReadyTimeout <= 0 {
+		o.ReadyTimeout = defaultReadyTimeout
 	}
-	return nil
+	if o.PollEvery <= 0 {
+		o.PollEvery = defaultPollEvery
+	}
+	if o.Clock == nil {
+		o.Clock = time.Now
+	}
+	if o.Sleep == nil {
+		o.Sleep = sleep
+	}
+
+	dir := socketDir(o.RunDir)
+	if err := os.MkdirAll(dir, socketDirMode); err != nil {
+		return nil, fmt.Errorf("services: create postgres socket dir: %w", err)
+	}
+	// MkdirAll is subject to the umask; both the container's postgres user
+	// and the job user must be able to use the socket.
+	if err := os.Chmod(dir, socketDirMode); err != nil {
+		return nil, fmt.Errorf("services: chmod postgres socket dir: %w", err)
+	}
+
+	p := &Postgres{Name: ContainerName(o.RunID), SocketDir: dir, docker: o.Docker}
+	argv := BuildRunArgv(o)
+	_, stderr, err := o.Docker.run(ctx, argv...)
+	if err != nil && strings.Contains(stderr, "is already in use") {
+		if _, _, rmErr := o.Docker.run(ctx, "rm", "-f", p.Name); rmErr != nil {
+			return nil, fmt.Errorf("services: remove stale container %s: %w", p.Name, rmErr)
+		}
+		_, _, err = o.Docker.run(ctx, argv...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: start postgres %s: %w", p.Name, err)
+	}
+
+	if err := p.waitReady(ctx, o); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+		defer cancel()
+		return nil, errors.Join(err, p.Stop(stopCtx))
+	}
+	return p, nil
 }
 
-// Cleanup terminates and removes any service containers associated with the runID.
-// A host without docker has nothing to clean, so a missing docker binary is not an error.
-func (m *Manager) Cleanup(ctx context.Context, runID string) error {
-	var buf bytes.Buffer
-	cmd := execx.Cmd{
-		Name:   "docker",
-		Args:   []string{"ps", "-aq", "--filter", "name=" + ContainerName(runID, "")},
-		Stdout: &buf,
-	}
-	if err := m.Runner.Run(ctx, cmd); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
+// waitReady polls pg_isready over the container's socket until it exits 0
+// or ReadyTimeout passes.
+func (p *Postgres) waitReady(ctx context.Context, o PostgresOptions) error {
+	deadline := o.Clock().Add(o.ReadyTimeout)
+	for {
+		_, _, err := p.docker.run(ctx, "exec", p.Name, "pg_isready", "-h", containerSocketDir, "-U", "postgres")
+		if err == nil {
 			return nil
 		}
-		return fmt.Errorf("list docker services for run %s: %w", runID, err)
+		if !o.Clock().Before(deadline) {
+			logs, logErr, _ := p.docker.run(ctx, "logs", "--tail", "40", p.Name)
+			return fmt.Errorf("%w after %s: %s: %s", ErrNotReady, o.ReadyTimeout, p.Name, strings.TrimSpace(logs+logErr))
+		}
+		if err := o.Sleep(ctx, o.PollEvery); err != nil {
+			return fmt.Errorf("services: wait for postgres %s: %w", p.Name, err)
+		}
 	}
-	ids := strings.Fields(buf.String())
-	if len(ids) > 0 {
-		rmCmd := execx.Cmd{
-			Name: "docker",
-			Args: append([]string{"rm", "-f"}, ids...),
-		}
-		if err := m.Runner.Run(ctx, rmCmd); err != nil {
-			return fmt.Errorf("remove docker services for run %s: %w", runID, err)
-		}
+}
+
+// Env returns DATABASE_URL plus PGHOST, PGUSER, PGDATABASE.
+func (p *Postgres) Env() []string {
+	return []string{
+		"DATABASE_URL=postgresql://postgres@/postgres?host=" + p.SocketDir,
+		"PGHOST=" + p.SocketDir,
+		"PGUSER=postgres",
+		"PGDATABASE=postgres",
+	}
+}
+
+// Stop runs docker rm -f; nil-safe, idempotent, ignores "No such container".
+func (p *Postgres) Stop(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	_, stderr, err := p.docker.run(ctx, "rm", "-f", p.Name)
+	if err != nil && !strings.Contains(stderr, "No such container") {
+		return fmt.Errorf("services: stop postgres %s: %w", p.Name, err)
 	}
 	return nil
+}
+
+func socketDir(runDir string) string {
+	return filepath.Join(runDir, "pg")
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

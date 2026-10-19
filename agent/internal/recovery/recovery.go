@@ -15,20 +15,26 @@ import (
 // InterruptedReason is the error explanation recorded for runs interrupted by crash/reboot.
 const InterruptedReason = "agent crashed or was killed"
 
+// Docker removes service containers by label; *services.Docker satisfies it.
+type Docker interface {
+	RemoveByLabel(ctx context.Context, label string) error
+}
+
 // Manager handles startup crash recovery for active runs and orphan resources.
 type Manager struct {
 	store     *store.Store
 	isolation isolation.Isolation
-	services  *services.Manager
+	docker    Docker
 	netns     *netns.Manager
 }
 
-// New constructs a crash recovery Manager.
-func New(db *store.Store, iso isolation.Isolation, svcs *services.Manager, netnsMgr *netns.Manager) *Manager {
+// New constructs a crash recovery Manager. A nil docker skips service
+// container cleanup.
+func New(db *store.Store, iso isolation.Isolation, docker Docker, netnsMgr *netns.Manager) *Manager {
 	return &Manager{
 		store:     db,
 		isolation: iso,
-		services:  svcs,
+		docker:    docker,
 		netns:     netnsMgr,
 	}
 }
@@ -60,9 +66,11 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 	var recovered []string
 	var cleanupErrs []error
 	for _, run := range runs {
-		// 1. Remove orphan service containers before marking the run, so a failure can be retried
-		if m.services != nil {
-			if err := m.services.Cleanup(cleanupCtx, run.ID); err != nil {
+		// 1. Remove orphan service containers before marking the run, so a failure can be
+		// retried. A host without docker has no containers to remove.
+		if m.docker != nil {
+			err := m.docker.RemoveByLabel(cleanupCtx, services.LabelRun+"="+run.ID)
+			if err != nil && !errors.Is(err, services.ErrDockerMissing) {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("run %s left active for retry: %w", run.ID, err))
 				continue
 			}

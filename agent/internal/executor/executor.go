@@ -30,7 +30,7 @@ type Options struct {
 	StateDir       string
 	Store          *store.Store
 	Isolation      isolation.Isolation
-	Services       *services.Manager
+	Docker         *services.Docker // nil: postgres services are not started
 	Cache          *cache.Cache
 	Secrets        []string
 	Slots          int
@@ -42,7 +42,7 @@ type Executor struct {
 	stateDir       string
 	store          *store.Store
 	isolation      isolation.Isolation
-	services       *services.Manager
+	docker         *services.Docker
 	cache          *cache.Cache
 	secrets        []string
 	slots          int
@@ -59,7 +59,7 @@ func New(opts Options) *Executor {
 		stateDir:       opts.StateDir,
 		store:          opts.Store,
 		isolation:      opts.Isolation,
-		services:       opts.Services,
+		docker:         opts.Docker,
 		cache:          opts.Cache,
 		secrets:        opts.Secrets,
 		slots:          opts.Slots,
@@ -101,6 +101,7 @@ func (e *Executor) ExecuteRun(
 	r := &runRunner{
 		e:           e,
 		checks:      cfg.ZeroCIConfig.Checks,
+		resolved:    cfg.Checks(),
 		workDir:     workDir,
 		isProtected: isProtected,
 		redactor:    redact.New(e.secrets...),
@@ -126,16 +127,17 @@ func (e *Executor) ExecuteRun(
 
 // runRunner is the scheduler.JobRunner for one run. The scheduler calls
 // RunSetup before any RunJob and FinishRun after the last one, so serviceEnv
-// and services need no lock.
+// and postgres need no lock.
 type runRunner struct {
 	e           *Executor
 	checks      *config.Checks
+	resolved    *config.ResolvedChecks // nil for a Config that did not come from Parse
 	workDir     string
 	isProtected bool
 	redactor    *redact.Redactor
 
 	serviceEnv []string
-	services   []*services.Service
+	postgres   *services.Postgres
 
 	cacheKeys     []cache.Key    // computed before setup ran, saved on success
 	cacheCleanups []func() error // undo the restores once the run's units are gone
@@ -144,19 +146,22 @@ type runRunner struct {
 // RunSetup starts services, restores setup step caches and runs the setup steps.
 func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 	e, checks := r.e, r.checks
-	if e.services != nil && checks.Services != nil && checks.Services.Postgres != nil {
-		serviceDir := filepath.Join(e.stateDir, "runs", run.ID, "services")
-		if err := os.MkdirAll(serviceDir, 0o755); err != nil {
-			return fmt.Errorf("create service dir: %w", err)
-		}
-		svc, err := e.services.Start(ctx, run.ID, *checks.Services.Postgres, serviceDir)
+	if e.docker != nil && r.resolved != nil && r.resolved.Services.Postgres != nil {
+		pg := r.resolved.Services.Postgres
+		p, err := services.StartPostgres(ctx, services.PostgresOptions{
+			RunID:       run.ID,
+			RunDir:      filepath.Join(e.stateDir, "runs", run.ID),
+			Image:       pg.Image,
+			Tmpfs:       pg.Tmpfs,
+			CPUs:        r.resolved.Limits.CPUs,
+			MemoryBytes: r.resolved.Limits.MemoryBytes,
+			Docker:      *e.docker,
+		})
 		if err != nil {
 			return fmt.Errorf("start service postgres: %w", err)
 		}
-		r.services = append(r.services, svc)
-		for k, v := range svc.Env {
-			r.serviceEnv = append(r.serviceEnv, fmt.Sprintf("%s=%s", k, v))
-		}
+		r.postgres = p
+		r.serviceEnv = p.Env()
 	}
 
 	if e.cache != nil {
@@ -284,11 +289,7 @@ func (r *runRunner) FinishRun(ctx context.Context, run store.Run, final store.Ru
 			_ = e.cache.Save(ctx, k, policy, r.workDir)
 		}
 	}
-	if e.services != nil {
-		for _, svc := range r.services {
-			_ = e.services.Stop(ctx, run.ID, svc.Name)
-		}
-	}
+	_ = r.postgres.Stop(ctx)
 	var errs []error
 	if e.isolation != nil {
 		units, err := e.isolation.ListUnits(ctx, isolation.UnitPrefix+isolation.SanitizeUnitPart(run.ID)+"-")

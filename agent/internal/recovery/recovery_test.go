@@ -70,7 +70,7 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("docker", []string{"ps"}, execx.FakeResponse{Stdout: "c1\n"})
 	fake.On("docker", []string{"rm", "-f"}, execx.FakeResponse{})
-	mgr := New(db, fakeIso, services.NewManager(fake), nil)
+	mgr := New(db, fakeIso, services.Docker{Runner: fake}, nil)
 
 	recovered, err := mgr.Recover(ctx)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 		dockerCalls = append(dockerCalls, c.Name+" "+strings.Join(c.Args, " "))
 	}
 	want := []string{
-		"docker ps -aq --filter name=" + services.ContainerName("01j7run1", ""),
+		"docker ps -aq --filter label=" + services.LabelRun + "=01j7run1",
 		"docker rm -f c1",
 	}
 	if strings.Join(dockerCalls, "\n") != strings.Join(want, "\n") {
@@ -164,7 +164,7 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 	broken.On("docker", []string{"ps"}, execx.FakeResponse{Code: 1, Stderr: "daemon down"})
 	brokenIso := isolationtest.NewFake()
 	brokenIso.Units = []isolation.Unit{{Name: isolation.UnitName("01j7run3", "job1"), Active: "active"}}
-	recovered, err := New(db, brokenIso, services.NewManager(broken), nil).Recover(ctx)
+	recovered, err := New(db, brokenIso, services.Docker{Runner: broken}, nil).Recover(ctx)
 	if err == nil {
 		t.Fatal("expected joined cleanup error, got nil")
 	}
@@ -183,7 +183,7 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 
 	working := &execx.Fake{}
 	working.On("docker", []string{"ps"}, execx.FakeResponse{})
-	recovered, err = New(db, isolationtest.NewFake(), services.NewManager(working), nil).Recover(ctx)
+	recovered, err = New(db, isolationtest.NewFake(), services.Docker{Runner: working}, nil).Recover(ctx)
 	if err != nil {
 		t.Fatalf("retry Recover: %v", err)
 	}
@@ -211,14 +211,14 @@ func TestRecoverTransitionFailureKeepsCleanupErrors(t *testing.T) {
 			return errors.New("daemon down")
 		}
 		for _, id := range runIDs {
-			if c.Args[len(c.Args)-1] == "name="+services.ContainerName(id, "") {
+			if c.Args[len(c.Args)-1] == "label="+services.LabelRun+"="+id {
 				return db.Transition(ctx, id, []store.RunState{store.RunRunning}, store.RunInterrupted, "")
 			}
 		}
 		return fmt.Errorf("unexpected ps args %v", c.Args)
 	}})
 
-	recovered, err := New(db, isolationtest.NewFake(), services.NewManager(fake), nil).Recover(ctx)
+	recovered, err := New(db, isolationtest.NewFake(), services.Docker{Runner: fake}, nil).Recover(ctx)
 	if err == nil {
 		t.Fatal("expected joined error, got nil")
 	}
