@@ -126,8 +126,10 @@ checks:
 	}
 
 	runOut := stdout.String()
-	if !strings.Contains(runOut, "] running\n") {
-		t.Errorf("expected transition in output, got: %s", runOut)
+	for _, want := range []string{"] lint     running\n", "] unit     success ", " success (2 jobs, "} {
+		if !strings.Contains(runOut, want) {
+			t.Errorf("run output lacks %q, got: %s", want, runOut)
+		}
 	}
 
 	// 2. Check status list

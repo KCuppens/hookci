@@ -1,0 +1,8 @@
+[12:00:03] run 01HXRUN0000000000000000000 running
+[12:00:03] lint     running
+[12:00:03] test     running
+[12:00:04] typecheck running
+[12:00:05] lint      success 2.1s
+[12:00:05] typecheck success 850ms
+[12:00:09] test      success 5.6s
+[12:00:09] run 01HXRUN0000000000000000000 success (3 jobs, 6.0s)

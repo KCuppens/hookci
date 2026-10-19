@@ -183,14 +183,15 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitInternal
 	}
 
-	// 6. Start real-time stdout drain
-	s := sink.NewStdout(stdout)
-	drainCtx, cancelDrain := context.WithCancel(ctx)
-	drainDone := make(chan struct{})
-	go func() {
-		_ = s.DrainLoop(drainCtx, db, 25*time.Millisecond)
-		close(drainDone)
-	}()
+	// 6. Print run progress from the outbox while the run executes.
+	pump := &sink.Pump{
+		Store: db,
+		Sink:  sink.NewStdout(sink.StdoutOptions{Out: stdout, Color: colorEnabled(stdout)}),
+		Poll:  25 * time.Millisecond,
+	}
+	pumpCtx, stopPump := context.WithCancel(ctx)
+	pumpErr := make(chan error, 1)
+	go func() { pumpErr <- pump.Run(pumpCtx) }()
 
 	// 7. Execute the run
 	exec := executor.New(executor.Options{
@@ -205,10 +206,11 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, true)
 
-	// Stop drain loop and do a final drain
-	cancelDrain()
-	<-drainDone
-	_ = s.Drain(context.Background(), db)
+	// Stop the pump; Run drains once more before returning.
+	stopPump()
+	if err := <-pumpErr; err != nil {
+		fmt.Fprintf(stderr, "zeroci: print run progress: %v\n", err)
+	}
 
 	// 8. Determine exit code from recorded run state
 	finalRun, err := db.GetRun(context.Background(), runID)
@@ -236,4 +238,10 @@ func loadRunConfig(path string, stderr io.Writer) (*config.Config, bool) {
 		fmt.Fprint(stderr, diags.Format(path))
 	}
 	return cfg, !diags.HasErrors()
+}
+
+// colorEnabled reports whether run progress written to w may use colors.
+func colorEnabled(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && sink.ColorEnabled(f, os.Getenv)
 }

@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/atombender/go-jsonschema v0.24.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	golang.org/x/term v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.60.1
 )
