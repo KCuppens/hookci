@@ -34,16 +34,20 @@ func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Write
 func commandTable() map[string]command {
 	return map[string]command{
 		"agent": {
-			summary: "connect to the hub and run the checks it sends: agent [--state-dir DIR]",
+			summary: "connect to the hub and run the checks it sends: agent [--state-dir DIR | --installation ID]",
 			run:     cmdAgent,
 		},
 		"connect": {
-			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force]",
-			run:     noDeps(runConnect),
+			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
+			run:     cmdConnect,
 		},
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
 			run:     noDeps(runDetect),
+		},
+		"doctor": {
+			summary: "diagnose this host and its path to the hub: doctor [--hub URL] [--state-root DIR] [--json]",
+			run:     cmdDoctor,
 		},
 		"help": {
 			summary: "show help for zeroci",

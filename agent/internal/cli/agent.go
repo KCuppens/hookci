@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
@@ -34,8 +36,9 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	stateDir := fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect")
+	installation := fs.Int64("installation", 0, "run the agent of this installation from "+defaultStateRoot+"/<ID>, as the zeroci-agent@ unit does")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] agent [--state-dir DIR]")
+		fmt.Fprintln(stderr, "usage: zeroci [global flags] agent [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Connect to the hub and run the checks it sends until stopped.")
 	}
@@ -49,6 +52,13 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	if len(pos) != 0 {
 		fs.Usage()
 		return ExitUsage
+	}
+	if *installation < 0 {
+		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+		return ExitUsage
+	}
+	if *installation > 0 {
+		*stateDir = filepath.Join(defaultStateRoot, strconv.FormatInt(*installation, 10))
 	}
 
 	conf, err := agentconf.Load(*stateDir)

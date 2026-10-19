@@ -5,15 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/clock"
+	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
+	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 )
 
 // Globals are the flags given before the command.
@@ -84,6 +88,10 @@ type Deps struct {
 	Netns *netns.Manager
 	// After paces logs -f polling, like time.After.
 	After func(time.Duration) <-chan time.Time
+	// Services enables the zeroci-agent@ unit after connect.
+	Services systemd.ServiceManager
+	// Doctor is the host env doctor checks for a state root and hub origin.
+	Doctor func(stateRoot, hubOrigin string) doctor.Env
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -95,10 +103,26 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 			env.Warn = func(msg string) { fmt.Fprintf(stderr, "zeroci: warning: %s\n", msg) }
 			return isolation.Select(name, env)
 		},
-		Clock: time.Now,
-		Getwd: os.Getwd,
-		Host:  execx.OS{},
-		Netns: &netns.Manager{},
-		After: time.After,
+		Clock:    time.Now,
+		Getwd:    os.Getwd,
+		Host:     execx.OS{},
+		Netns:    &netns.Manager{},
+		After:    time.After,
+		Services: systemd.Systemctl{Runner: execx.OS{}},
+		Doctor:   hostDoctorEnv,
+	}
+}
+
+// hostDoctorEnv is the real host as doctor sees it.
+func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
+	return doctor.Env{
+		StateRoot: stateRoot,
+		HubOrigin: hubOrigin,
+		HTTP:      &http.Client{},
+		Clock:     clock.Real{},
+		Exec:      execx.OS{},
+		FS:        os.DirFS("/"),
+		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
+		DiskFree:  doctor.HostDiskFree,
 	}
 }

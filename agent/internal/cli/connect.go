@@ -21,6 +21,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
 
@@ -50,13 +51,16 @@ type redeemResponse struct {
 	Name           string `json:"name"`
 }
 
-func runConnect(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// cmdConnect pairs this machine and, unless --no-service, enables and starts
+// the zeroci-agent@<installation_id> unit the installer wrote.
+func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	hub := fs.String("hub", defaultHubURL, "hub base URL")
 	name := fs.String("name", "", "agent name shown in Slack (default the hostname)")
 	stateDir := fs.String("state-dir", "", "agent state directory (default $ZEROCI_STATE_DIR or "+defaultStateRoot+"/<installation_id>)")
 	force := fs.Bool("force", false, "replace an agent already configured in the state directory")
+	noService := fs.Bool("no-service", false, "do not enable and start the zeroci-agent@<installation_id> systemd unit")
 	fs.Usage = func() {
 		fmt.Fprintln(stdout, "Usage: zeroci connect <pair-token> [flags]")
 		fmt.Fprintln(stdout)
@@ -75,7 +79,7 @@ func runConnect(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return ExitUsage
 	}
 	if len(pos) != 1 || pos[0] == "" {
-		fmt.Fprintln(stderr, "usage: zeroci connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force]")
+		fmt.Fprintln(stderr, "usage: zeroci connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]")
 		return ExitUsage
 	}
 	pairToken := pos[0]
@@ -165,7 +169,25 @@ func runConnect(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 
 	fmt.Fprintf(stdout, "Connected to %s as %s (agent %s)\n", cfg.HubURL, cfg.Name, cfg.AgentID)
-	fmt.Fprintln(stdout, "Next: sudo systemctl enable --now zeroci")
+	unit := systemd.AgentUnit(cfg.InstallationID)
+	if *noService {
+		fmt.Fprintf(stdout, "Next: sudo systemctl enable --now %s\n", unit)
+		return ExitOK
+	}
+	exists, err := d.Services.UnitExists(ctx, unit)
+	if err != nil {
+		fmt.Fprintf(errw, "zeroci: %v\n", err)
+		return ExitRunFailed
+	}
+	if !exists {
+		fmt.Fprintf(stdout, "No %s unit: run the installer (curl -fsSL %s/install | sh), then sudo systemctl enable --now %s\n", unit, cfg.HubURL, unit)
+		return ExitOK
+	}
+	if err := d.Services.EnableNow(ctx, unit); err != nil {
+		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		return ExitRunFailed
+	}
+	fmt.Fprintf(stdout, "Started %s\n", unit)
 	return ExitOK
 }
 

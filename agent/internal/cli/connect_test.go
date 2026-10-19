@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 )
 
 const (
@@ -79,11 +83,40 @@ func newFakePairHub(t *testing.T, status int, body string) *fakePairHub {
 
 const redeemOK = `{"agent_id":"agt_1","credential":"` + testCredential + `","installation_id":42,"hub_ws_url":"wss://hub/v1/agent/connect","name":"build-1"}`
 
+// fakeServices is a ServiceManager where only the units in exist are installed.
+type fakeServices struct {
+	exist   map[string]bool
+	enabled []string
+}
+
+func (f *fakeServices) UnitExists(_ context.Context, unit string) (bool, error) {
+	return f.exist[unit], nil
+}
+
+func (f *fakeServices) EnableNow(_ context.Context, unit string) error {
+	f.enabled = append(f.enabled, unit)
+	return nil
+}
+
+func (f *fakeServices) ActiveState(context.Context, string) (string, error) { return "inactive", nil }
+
+// runConnectCLI runs zeroci with svc in place of systemctl.
+func runConnectCLI(svc systemd.ServiceManager, args ...string) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	code := MainWithDeps(args, &stdout, &stderr, func(g Globals, w io.Writer) Deps {
+		d := DefaultDeps(g, w)
+		d.Services = svc
+		return d
+	})
+	return code, stdout.String(), stderr.String()
+}
+
 func TestConnectWritesConfig(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
 	dir := filepath.Join(t.TempDir(), "state")
 
-	code, stdout, stderr := runCLI("connect", testPairToken, "--hub", hub.srv.URL, "--name", "build-1", "--state-dir", dir)
+	svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": true}}
+	code, stdout, stderr := runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--name", "build-1", "--state-dir", dir)
 	if code != ExitOK {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, stderr)
 	}
@@ -114,7 +147,10 @@ func TestConnectWritesConfig(t *testing.T) {
 			t.Errorf("output contains secret %q\nstdout:\n%s\nstderr:\n%s", secret, stdout, stderr)
 		}
 	}
-	wantOut := "Connected to " + hub.srv.URL + " as build-1 (agent agt_1)\nNext: sudo systemctl enable --now zeroci\n"
+	wantOut := "Connected to " + hub.srv.URL + " as build-1 (agent agt_1)\nStarted zeroci-agent@42.service\n"
+	if len(svc.enabled) != 1 || svc.enabled[0] != "zeroci-agent@42.service" {
+		t.Errorf("enabled units = %v, want zeroci-agent@42.service", svc.enabled)
+	}
 	if stdout != wantOut {
 		t.Errorf("stdout = %q, want %q", stdout, wantOut)
 	}
@@ -134,11 +170,40 @@ func TestConnectWritesConfig(t *testing.T) {
 	}
 }
 
+func TestConnectServiceSkipped(t *testing.T) {
+	tests := []struct {
+		name  string
+		exist bool
+		flags []string
+		want  string
+	}{
+		{"no-service flag", true, []string{"--no-service"}, "Next: sudo systemctl enable --now zeroci-agent@42.service\n"},
+		{"unit not installed", false, nil, "No zeroci-agent@42.service unit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hub := newFakePairHub(t, http.StatusOK, redeemOK)
+			svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": tc.exist}}
+			args := append([]string{"connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir()}, tc.flags...)
+			code, stdout, stderr := runConnectCLI(svc, args...)
+			if code != ExitOK {
+				t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
+			}
+			if len(svc.enabled) != 0 {
+				t.Errorf("enabled %v, want nothing", svc.enabled)
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Errorf("stdout = %q, want %q", stdout, tc.want)
+			}
+		})
+	}
+}
+
 func TestConnectInvalidToken(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusBadRequest, `{"error":"invalid_pair_token"}`)
 	dir := filepath.Join(t.TempDir(), "state")
 
-	code, stdout, stderr := runCLI("connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
+	code, stdout, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
 	if code == ExitOK {
 		t.Fatal("exit = 0, want non-zero")
 	}
@@ -164,7 +229,7 @@ func TestConnectRedeemErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		hub := newFakePairHub(t, tc.status, tc.body)
-		code, _, stderr := runCLI("connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir())
+		code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir())
 		if code == ExitOK || !strings.Contains(stderr, tc.want) {
 			t.Errorf("HTTP %d: exit = %d stderr = %q, want non-zero and %q", tc.status, code, stderr, tc.want)
 		}
@@ -178,7 +243,7 @@ func TestConnectRefusesExistingAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, _, stderr := runCLI("connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
+	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
 	if code == ExitOK || !strings.Contains(stderr, "agt_old") || !strings.Contains(stderr, "--force") {
 		t.Fatalf("exit = %d stderr = %q, want a refusal naming agt_old and --force", code, stderr)
 	}
@@ -186,7 +251,7 @@ func TestConnectRefusesExistingAgent(t *testing.T) {
 		t.Fatalf("redeemed the pair token %d times before refusing", n)
 	}
 
-	code, _, stderr = runCLI("connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force")
+	code, _, stderr = runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force")
 	if code != ExitOK {
 		t.Fatalf("with --force exit = %d; stderr:\n%s", code, stderr)
 	}
@@ -198,7 +263,7 @@ func TestConnectRefusesExistingAgent(t *testing.T) {
 
 func TestConnectUsage(t *testing.T) {
 	for _, args := range [][]string{{"connect"}, {"connect", "a", "b"}, {"connect", "--bogus", "x"}} {
-		if code, _, _ := runCLI(args...); code != ExitUsage {
+		if code, _, _ := runConnectCLI(&fakeServices{}, args...); code != ExitUsage {
 			t.Errorf("%v: exit = %d, want %d", args, code, ExitUsage)
 		}
 	}

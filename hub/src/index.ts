@@ -9,6 +9,7 @@ import { reportError } from "./observability";
 import { githubWebhook } from "./routes/github-webhook";
 import { agentConnect } from "./routes/agent-connect";
 import { exportData } from "./routes/export";
+import { install } from "./routes/install";
 import { pairRedeem } from "./routes/pair";
 import { githubLinkCallback, githubLinkStart } from "./routes/github-link";
 import { githubOAuthCallback } from "./routes/github-oauth";
@@ -36,6 +37,7 @@ export function handleError(err: Error, c: Context<AppEnv>): Response {
 const app = new Hono<AppEnv>();
 
 app.get("/healthz", (c) => c.json({ ok: true, version: c.env.HUB_VERSION }));
+app.get("/install", install);
 app.post("/github/webhook", githubWebhook);
 app.get("/v1/agent/connect", agentConnect);
 app.post("/v1/pair/redeem", pairRedeem);
