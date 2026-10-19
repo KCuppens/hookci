@@ -1,7 +1,9 @@
 // Every user-facing message, keyed by id. Messages that need values are
 // functions taking those values.
+const NO_CHECKS = "No checks detected: add `.zeroci.yml`";
+
 export const S = {
-	noChecks: "No checks detected: add `.zeroci.yml`",
+	noChecks: NO_CHECKS,
 	checks: {
 		agent_offline: {
 			title: "Agent offline",
@@ -104,6 +106,44 @@ export const S = {
 		exportSummary: (login: string, authorMappings: number, runs: number, days: number) =>
 			`Your ZeroCI data: GitHub link ${login}, ${authorMappings} author mappings, ${runs} runs you authored in the last ${days} days. The button downloads it as JSON and works for 15 minutes.`,
 		exportButton: "Download my data",
+		/** The plain word every run message starts with; the badge emoji is decoration only. */
+		state: {
+			running: "Running",
+			passed: "Passed",
+			failed: "Failed",
+			cancelled: "Cancelled",
+			skipped: "Skipped",
+			waiting: "Waiting",
+			agentOffline: "Agent offline",
+			superseded: "Superseded",
+		},
+		pending: {
+			no_agent: "No agent is paired for this repo: checks did not run.",
+			agent_offline: "The agent is offline: the run starts when it reconnects.",
+			daily_cap: "Daily run limit reached: checks did not run. The limit resets at 00:00 UTC.",
+			fork_gated: "Fork pull request: waiting for a maintainer to approve the run.",
+			fork_never: "Fork pull request: this repository does not run checks for forks.",
+			suspended: "GitHub installation suspended: checks did not run.",
+			no_config: NO_CHECKS,
+		},
+		runText: (state: string, repo: string, shortSha: string, where: string, title: string) =>
+			`${state}: ${repo} ${shortSha}${where ? ` on ${where}` : ""}${title ? `, ${title}` : ""}`,
+		pullRequest: (n: number) => `PR #${n}`,
+		author: (login: string) => `by ${login}`,
+		currentStep: (job: string, step: string, index?: number, total?: number) =>
+			`${job}: ${step}${index !== undefined && total !== undefined ? ` ${index}/${total}` : ""}`,
+		jobResult: (job: string, state: string, duration?: string) => `${job}: ${state}${duration ? ` (${duration})` : ""}`,
+		jobReplyText: (state: string, job: string, repo: string, shortSha: string) => `${state}: job ${job} of ${repo} ${shortSha}`,
+		jobReason: (reason: string) => `Reason: ${reason}`,
+		alertText: (state: string, repo: string, shortSha: string, job: string) => `${state}: ${repo} ${shortSha}, job ${job} failed`,
+		alertJob: (job: string, step?: string) => `Job ${job} failed${step ? ` at step ${step}` : ""}.`,
+		alertTail: (lines: number) => `Last ${lines} log lines:`,
+		alertNoTail: "The agent sent no log lines with the failure.",
+		offlineDmText: (state: string, agent: string, runs: number) =>
+			`${state}: ${agent}. ${runs === 1 ? "1 run waits" : `${runs} runs wait`} for it to reconnect.`,
+		offlineDmSince: (since: string) => `Last seen ${since}. Check the host with \`zeroci doctor\`.`,
+		watchBroken: (channel: string, reason: string) =>
+			`ZeroCI can no longer post run badges to <#${channel}> (${reason}), so it stopped watching there. Invite @zeroci back and run /zeroci watch again to resume.`,
 	},
 	home: {
 		title: "ZeroCI",

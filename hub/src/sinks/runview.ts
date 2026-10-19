@@ -64,6 +64,7 @@ export async function loadRunView(
 		runId: run.run_id === run.trigger_id ? undefined : run.run_id,
 		sha: run.sha,
 		shortSha: run.sha.slice(0, 7),
+		ref: run.ref,
 		event: run.event,
 		prNumber: run.pr_number ?? undefined,
 		target: run.env === null ? "checks" : `deploy:${run.env}`,

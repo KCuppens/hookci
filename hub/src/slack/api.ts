@@ -43,8 +43,14 @@ async function callQueue(
  * error code as message when the call fails, such as channel_not_found,
  * workspace_inactive or queue_timeout.
  */
-export async function slackApi(env: Env, teamId: string, method: string, args: Record<string, unknown>): Promise<SlackApiResult> {
-	const res = await callQueue(env, teamId, method, args, {}, true);
+export async function slackApi(
+	env: Env,
+	teamId: string,
+	method: string,
+	args: Record<string, unknown>,
+	opts: Pick<SlackFireAndForgetOptions, "priority"> = {},
+): Promise<SlackApiResult> {
+	const res = await callQueue(env, teamId, method, args, opts, true);
 	if (!res.ok) throw new HubError("slack_api", 502, res.error ?? "unknown_error");
 	return res.data as SlackApiResult;
 }

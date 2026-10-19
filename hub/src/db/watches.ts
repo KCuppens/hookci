@@ -48,13 +48,16 @@ export async function listWatchesForRepo(t: TenantDb, repoId: number): Promise<W
 }
 
 /**
- * Marks every watch of a channel broken, across installations, when Slack
- * reports the channel unusable; returns how many watches changed.
+ * Marks every active watch of a channel broken, across installations, when
+ * Slack reports the channel unusable; returns the Slack users who created the
+ * watches it broke, each once, so they hear about it once.
  */
-export async function markWatchBroken(db: D1Database, teamId: string, channelId: string, reason: string): Promise<number> {
-	const res = await db
-		.prepare("UPDATE watches SET status = 'broken', broken_reason = ?3 WHERE team_id = ?1 AND channel_id = ?2")
+export async function markWatchBroken(db: D1Database, teamId: string, channelId: string, reason: string): Promise<string[]> {
+	const { results } = await db
+		.prepare(
+			"UPDATE watches SET status = 'broken', broken_reason = ?3 WHERE team_id = ?1 AND channel_id = ?2 AND status = 'active' RETURNING created_by",
+		)
 		.bind(teamId, channelId, reason)
-		.run();
-	return res.meta.changes;
+		.all<{ created_by: string }>();
+	return [...new Set(results.map((row) => row.created_by))];
 }

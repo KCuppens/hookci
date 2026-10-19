@@ -53,11 +53,14 @@ describe("purgeExpired", () => {
         "INSERT INTO slack_messages (run_id, team_id, channel_id, ts) VALUES ('run-in', 'T1', 'C1', 'in'), ('run-out', 'T1', 'C1', 'out')",
       ),
       env.DB.prepare(
+        "INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES ('run-in', 'T1', 'C1', 'build', 'in'), ('run-out', 'T1', 'C1', 'build', 'out')",
+      ),
+      env.DB.prepare(
         "INSERT INTO check_runs (installation_id, repo_id, head_sha, name, check_run_id) VALUES (1, 10, 'sha-in', 'in', 1), (1, 10, 'sha-out', 'out', 2)",
       ),
     ]);
 
-    expect(await purgeExpired(env.DB, NOW)).toBe(11);
+    expect(await purgeExpired(env.DB, NOW)).toBe(12);
 
     expect(await column("SELECT delivery_id AS v FROM deliveries")).toEqual(["in"]);
     expect(await column("SELECT event_id AS v FROM slack_events")).toEqual(["in"]);
@@ -69,6 +72,7 @@ describe("purgeExpired", () => {
     expect(await column("SELECT run_id AS v FROM runs")).toEqual(["run-in"]);
     expect(await column("SELECT name AS v FROM jobs")).toEqual(["in"]);
     expect(await column("SELECT ts AS v FROM slack_messages")).toEqual(["in"]);
+    expect(await column("SELECT ts AS v FROM slack_job_replies")).toEqual(["in"]);
     expect(await column("SELECT name AS v FROM check_runs")).toEqual(["in"]);
   });
 

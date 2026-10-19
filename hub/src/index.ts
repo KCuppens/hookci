@@ -24,6 +24,7 @@ import "./slack/events";
 import "./webhook/authorization";
 import "./webhook/installation";
 import "./sinks/checks";
+import "./sinks/slack";
 
 export { AgentDO } from "./do/agent";
 export { SlackWorkspaceDO } from "./do/slack-workspace";

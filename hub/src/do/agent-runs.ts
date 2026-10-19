@@ -209,7 +209,8 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 
 	if (capped) {
 		dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", triggerId);
-		await fanOutRun(dob, triggerId, runUpdate);
+		// Runs do not store the commit author's email; only the trigger's own fan-out knows it.
+		await fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail }));
 		return Response.json({ trigger_id: triggerId }, { status: 202 });
 	}
 
@@ -241,7 +242,10 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 
 	await updateRunState(t, triggerId, stillSent ? "queued" : "superseded", stillSent ? {} : { finished_at: now });
 	for (const row of replaced) await updateRunState(t, row.run_id ?? row.trigger_id, "superseded", { finished_at: now });
-	await Promise.all([triggerId, ...replaced.map((row) => row.run_id ?? row.trigger_id)].map((id) => fanOutRun(dob, id, runUpdate)));
+	await Promise.all([
+		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail })),
+		...replaced.map((row) => fanOutRun(dob, row.run_id ?? row.trigger_id, runUpdate)),
+	]);
 
 	if (stillSent && !dob.isOnline() && (await dob.state.storage.getAlarm()) === null) {
 		await dob.state.storage.setAlarm(now + ALARM_INTERVAL_MS);
@@ -368,7 +372,7 @@ export function registerRunLifecycle(): () => void {
 				});
 				await fanOutRun(dob, frame.run_id, async (sink, run) => {
 					const job = run.jobs.find((j) => j.name === name);
-					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason });
+					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail });
 				});
 				return;
 			}

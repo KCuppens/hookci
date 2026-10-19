@@ -228,7 +228,8 @@ describe("watches", () => {
     await addWatch(two, { ...watch, repo_id: 20 });
     await addWatch(one, { ...watch, channel_id: "C2" });
 
-    expect(await markWatchBroken(env.DB, "T1", "C1", "channel_not_found")).toBe(2);
+    expect(await markWatchBroken(env.DB, "T1", "C1", "channel_not_found")).toEqual(["U1"]);
+    expect(await markWatchBroken(env.DB, "T1", "C1", "is_archived")).toEqual([]);
     expect(await listWatchesForRepo(two, 20)).toMatchObject([{ status: "broken", broken_reason: "channel_not_found" }]);
     expect(await listWatchesForRepo(one, 10)).toMatchObject([
       { channel_id: "C1", status: "broken" },

@@ -46,6 +46,8 @@ export interface ActionsBlock {
 	elements: (ButtonElement | LinkButtonElement)[];
 }
 
+export type Block = SectionBlock | ContextBlock | HeaderBlock | ActionsBlock;
+
 export function section(text: string): SectionBlock {
 	return { type: "section", text: { type: "mrkdwn", text } };
 }

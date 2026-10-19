@@ -87,6 +87,7 @@ async function seed(id: number): Promise<void> {
       "INSERT INTO fork_approvals (installation_id, repo_id, pr_number, head_sha, approved_by_github_id, approved_at) VALUES (?1, ?2, 5, ?3, 7, 1)",
     ).bind(id, repoId, "b".repeat(40)),
     env.DB.prepare("INSERT INTO slack_messages (run_id, team_id, channel_id, ts, alert_ts) VALUES (?1, 'T1', 'C1', '1.0', NULL)").bind(runId),
+    env.DB.prepare("INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES (?1, 'T1', 'C1', 'build', '1.1')").bind(runId),
   ]);
 }
 

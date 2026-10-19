@@ -12,7 +12,25 @@ export interface Badge {
 }
 
 const SEP = " · ";
-const TERMINAL: ReadonlySet<RunState> = new Set(["success", "failed", "cancelled", "skipped", "interrupted", "superseded"]);
+/** Run states that do not change again. */
+export const TERMINAL: ReadonlySet<RunState> = new Set(["success", "failed", "cancelled", "skipped", "interrupted", "superseded"]);
+
+/** The badge shortcode of each state; decoration only, every message also says the state in words. */
+export const BADGE_EMOJI: Record<RunState, string> = {
+	received: ":large_yellow_circle:",
+	queued: ":large_yellow_circle:",
+	running: ":large_yellow_circle:",
+	verifying: ":large_yellow_circle:",
+	rolling_back: ":large_yellow_circle:",
+	success: ":large_green_circle:",
+	failed: ":red_circle:",
+	cancelled: ":white_circle:",
+	superseded: ":white_circle:",
+	skipped: ":white_circle:",
+	interrupted: ":white_circle:",
+	pending: ":black_circle:",
+	gated: ":black_circle:",
+};
 
 /** 41.2s under a minute, 2m04s under an hour, 1h02m03s from there. */
 export function formatDuration(ms: number): string {
@@ -26,7 +44,7 @@ export function formatDuration(ms: number): string {
 }
 
 /** Slack mrkdwn treats &, < and > as control characters. */
-function escapeMrkdwn(s: string): string {
+export function escapeMrkdwn(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
@@ -74,11 +92,11 @@ function badgeText(run: RunView, test: boolean): string {
 						? "queued"
 						: run.state
 					: `${done}/${run.jobs.length}${run.currentJob ? ` ${escapeMrkdwn(run.currentJob)}` : ""}`;
-			return `:large_yellow_circle: ${escapeMrkdwn(run.repo)}${SEP}${head} "${escapeMrkdwn(run.commitTitle)}"${SEP}${progress}`;
+			return `${BADGE_EMOJI[run.state]} ${escapeMrkdwn(run.repo)}${SEP}${head} "${escapeMrkdwn(run.commitTitle)}"${SEP}${progress}`;
 		}
 		case "success":
 		case "failed": {
-			const parts = [`${run.state === "success" ? ":large_green_circle:" : ":red_circle:"} ${head}`];
+			const parts = [`${BADGE_EMOJI[run.state]} ${head}`];
 			if (run.durationMs !== undefined) parts.push(formatDuration(run.durationMs));
 			const summary = outcomeSummary(run);
 			if (summary) parts.push(summary);
@@ -90,13 +108,13 @@ function badgeText(run: RunView, test: boolean): string {
 		case "superseded":
 		case "skipped":
 		case "interrupted": {
-			const parts = [`:white_circle: ${head}`, run.state];
+			const parts = [`${BADGE_EMOJI[run.state]} ${head}`, run.state];
 			if (run.durationMs !== undefined) parts.push(formatDuration(run.durationMs));
 			return parts.join(SEP);
 		}
 		case "pending":
 		case "gated":
-			return `:black_circle: ${blockedText(run)}`;
+			return `${BADGE_EMOJI[run.state]} ${blockedText(run)}`;
 	}
 }
 

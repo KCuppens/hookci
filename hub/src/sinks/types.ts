@@ -25,6 +25,8 @@ export interface JobView {
 	stepsTotal?: number;
 	/** Why the state last changed, as the agent reported it (for example "timeout"). */
 	reason?: string;
+	/** The last log lines of the job, as the agent sent them with its final state. */
+	tail?: string[];
 }
 export interface RunView {
 	installationId: number;
@@ -34,6 +36,8 @@ export interface RunView {
 	runId?: string;
 	sha: string;
 	shortSha: string;
+	/** The git ref the run built, as refs/heads/main. */
+	ref?: string;
 	event: "pull_request" | "push";
 	prNumber?: number;
 	fork?: boolean;

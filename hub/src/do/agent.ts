@@ -22,7 +22,7 @@ import {
 } from "../protocol";
 import { S } from "../strings";
 import { frameHandler, isAgentFrame } from "./agent-frames";
-import { registeredAlarmTasks, registeredOfflineHooks } from "./agent-hooks";
+import { clearOfflineDm, registeredAlarmTasks, registeredOfflineHooks } from "./agent-hooks";
 import {
 	ALARM_INTERVAL_MS,
 	CLOSE,
@@ -393,6 +393,7 @@ export class AgentDO extends DurableObject<Env> {
 		this.setMeta("protocol", String(negotiated.protocol));
 		this.setMeta("agent_version", frame.agent_version);
 		this.setMeta("last_seen_at", String(now));
+		clearOfflineDm(this.ctx.storage);
 		state.hello = true;
 		ws.serializeAttachment(state);
 

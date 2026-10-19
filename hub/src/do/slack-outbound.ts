@@ -4,6 +4,7 @@
 // channel, latest-wins chat.update coalescing, a priority lane for alerts and
 // terminal updates, and a pause for as long as Slack's Retry-After says.
 
+import { markWatchBroken } from "../db/watches";
 import { setWorkspaceStatus } from "../db/workspaces";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -11,6 +12,8 @@ import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
 import { QUOTAS } from "../quotas";
 import { getBotToken } from "../slack/tokens";
+import { S } from "../strings";
+import { ulid } from "../ulid";
 import { type Clock, systemClock } from "./clock";
 import {
 	type Buckets,
@@ -57,6 +60,10 @@ const REVOKED_ERRORS: Record<string, true> = { invalid_auth: true, account_inact
 
 /** getBotToken refusals: the workspace cannot send anything. */
 const INACTIVE_CODES: Record<string, true> = { workspace_inactive: true, workspace_not_found: true };
+
+/** Errors of a post or update that mean the bot can no longer use the channel. */
+const CHANNEL_GONE: Record<string, true> = { channel_not_found: true, not_in_channel: true, is_archived: true };
+const CHANNEL_POSTS: Record<string, true> = { "chat.postMessage": true, "chat.update": true };
 
 type Outcome = SlackSendOutcome | { kind: "inactive"; error: string };
 
@@ -375,9 +382,35 @@ export class SlackOutbound {
 					await setWorkspaceStatus(this.env.DB, teamId, "revoked");
 					return;
 				}
+				if (Object.hasOwn(CHANNEL_GONE, outcome.error) && Object.hasOwn(CHANNEL_POSTS, call.method) && typeof call.body.channel === "string") {
+					await this.channelGone(teamId, call.body.channel, outcome.error);
+				}
 				if (!this.waiters.has(call.id)) logEvent("slack_call_failed", { teamId, method: call.method, error: outcome.error });
 				this.settle(call.id, { ok: false, error: outcome.error });
 				return;
+		}
+	}
+
+	/**
+	 * A post or update found its channel unusable: breaks the channel's watches
+	 * so sinks stop posting there, and queues one DM to each creator of a
+	 * watch it broke. The drain sending this call sends the DMs too.
+	 */
+	private async channelGone(teamId: string, channel: string, error: string): Promise<void> {
+		const creators = await markWatchBroken(this.env.DB, teamId, channel, error);
+		if (creators.length === 0) return;
+		logEvent("slack_watch_broken", { teamId, channel, error });
+		const now = this.clock.now();
+		for (const user of creators) {
+			this.enqueue({
+				id: ulid(now),
+				method: "chat.postMessage",
+				body: { channel: user, text: S.slack.watchBroken(channel, error) },
+				priority: "normal",
+				enqueuedAt: now,
+				attempts: 0,
+				channel: user,
+			});
 		}
 	}
 
