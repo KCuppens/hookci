@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+const LOAD_TEST = "test/load/run-budget.test.ts";
 
 // Fixed values for the secrets typed in src/env.ts, so tests never need real ones.
 const testKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -35,5 +37,11 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
+    // The run-budget load test races Slack's 10 s real-time wait against a
+    // simulated clock, so it runs alone, after every other file.
+    projects: [
+      { extends: true, test: { name: "unit", exclude: [...configDefaults.exclude, LOAD_TEST] } },
+      { extends: true, test: { name: "load", include: [LOAD_TEST], sequence: { groupOrder: 1 } } },
+    ],
   },
 });

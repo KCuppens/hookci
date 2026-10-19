@@ -13,6 +13,7 @@ import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
+import { logEvent } from "../observability";
 import type { Event as EventFrame, Interrupt } from "../protocol";
 import { QUOTAS } from "../quotas";
 import { fanOut, sinksFor } from "../sinks";
@@ -108,7 +109,10 @@ const TERMINAL: Record<EventFrame["state"], boolean> = {
 
 function triggerById(dob: AgentDO, triggerId: string): TriggerRow {
 	const row = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ?", triggerId).toArray()[0];
-	if (!row) throw new HubError("unknown_trigger", 404, `no trigger ${triggerId} on this agent`);
+	if (!row) {
+		logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, trigger_id: triggerId, reason: "unknown_trigger" });
+		throw new HubError("unknown_trigger", 404, `no trigger ${triggerId} on this agent`);
+	}
 	return row;
 }
 
@@ -119,7 +123,10 @@ function triggerByRun(dob: AgentDO, runId: string): TriggerRow | null {
 
 function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 	const row = triggerByRun(dob, runId);
-	if (!row) throw new HubError("unknown_run", 404, `no run ${runId} on this agent`);
+	if (!row) {
+		logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: runId, reason: "unknown_run" });
+		throw new HubError("unknown_run", 404, `no run ${runId} on this agent`);
+	}
 	return row;
 }
 
@@ -487,6 +494,7 @@ export function registerRunLifecycle(): () => void {
 			const row = triggerByRun(dob, frame.run_id);
 			const binding = row && (await getBinding(dob.tenant(), row.repo_id, row.target));
 			if (!row || binding?.agent_id !== dob.agentId) {
+				logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, reason: "run_not_bound" });
 				await dob.send({ v: 1, type: "error", code: "auth_failed", message: S.runNotBound });
 				return;
 			}

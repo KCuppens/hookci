@@ -7,6 +7,7 @@ import { AGENT_CREDENTIAL_PREFIX, agentCredentialHash, countActiveAgents, getAge
 import { bindAllRepos } from "../db/bindings";
 import { getInstallation } from "../db/installations";
 import { hitIpRate } from "../db/ip-rate";
+import { consumePairToken } from "../db/pair-tokens";
 import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
@@ -23,15 +24,6 @@ export const REDEEMS_PER_HOUR_PER_IP = 20;
 
 export type RedeemInput = { pair_token: string; name: string; hostname: string; agent_version: string; os: string; arch: string };
 export type RedeemResult = { agent_id: string; credential: string; installation_id: number; hub_ws_url: string; name: string };
-
-interface PairTokenRow {
-	token_hash: string;
-	installation_id: number;
-	created_by_github_id: number;
-	replaces_agent_id: string | null;
-	expires_at: number;
-	used_at: number | null;
-}
 
 /**
  * Issues a pair token for the installation, valid for 15 minutes. With
@@ -83,11 +75,7 @@ export async function redeemPairToken(env: Env, input: RedeemInput, ip: string):
 
 	// Unknown, used and expired tokens all fail here with the same answer.
 	const token = input.pair_token.startsWith(PAIR_TOKEN_PREFIX)
-		? await env.DB.prepare(
-				"UPDATE pair_tokens SET used_at = ?1 WHERE token_hash = ?2 AND used_at IS NULL AND expires_at > ?1 RETURNING *",
-			)
-				.bind(now, await sha256Hex(input.pair_token))
-				.first<PairTokenRow>()
+		? await consumePairToken(env.DB, await sha256Hex(input.pair_token), now)
 		: null;
 	if (!token) throw new HubError("invalid_pair_token", 400);
 

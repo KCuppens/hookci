@@ -8,6 +8,7 @@ import { listLinkedInstallationIds } from "../../db/workspaces";
 import { HubError } from "../../errors";
 import { approveForkRun } from "../../forks/gate";
 import { requireLinkedUser } from "../../identity/link";
+import { logEvent } from "../../observability";
 import { S } from "../../strings";
 import { ephemeral } from "../commands/common";
 import { registerAction } from "../registry";
@@ -32,5 +33,6 @@ registerAction("fork:approve", async ({ env, teamId, userId, value }) => {
 		const outcome = await approveForkRun(env, { installationId, runId, headSha, approverGithubId: user.githubUserId, approverLogin: user.githubLogin, via: "slack" });
 		return ephemeral(REPLY[outcome]);
 	}
+	logEvent("tenant_denied", { team_id: teamId, slack_user_id: userId, run_id: runId, reason: "run_not_linked" });
 	return ephemeral(S.forks.notGated);
 });

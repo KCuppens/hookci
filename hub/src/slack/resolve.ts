@@ -13,6 +13,7 @@ import { cachedPermission } from "../github/permission-cache";
 import type { RepoPermission } from "../github/types";
 import { defaultFetcher } from "../http";
 import type { LinkedUser } from "../identity/link";
+import { logEvent } from "../observability";
 
 export type PermissionLevel = "read" | "write" | "admin";
 
@@ -35,7 +36,10 @@ export function commandGitHub(env: Env): GitHubClient {
 /** The repo named fullName (`owner/repo`, any case) in an installation linked to the team; throws repo_not_found (404). */
 export async function resolveRepo(env: Env, teamId: string, fullName: string): Promise<ResolvedRepo> {
 	const repo = /^[\w.-]+\/[\w.-]+$/.test(fullName) ? await findRepoForTeam(env.DB, teamId, fullName) : null;
-	if (!repo) throw new HubError("repo_not_found", 404, `no repo ${fullName} in installations linked to ${teamId}`);
+	if (!repo) {
+		logEvent("tenant_denied", { team_id: teamId, repo: fullName, reason: "repo_not_found" });
+		throw new HubError("repo_not_found", 404, `no repo ${fullName} in installations linked to ${teamId}`);
+	}
 	return { installationId: repo.installation_id, repoId: repo.repo_id, fullName: repo.full_name, defaultBranch: repo.default_branch };
 }
 

@@ -50,6 +50,7 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	const key = logKey(agent.installation_id, runId, job);
 	const owner = await getRunOwner(env.DB, runId);
 	if (!owner || owner.installation_id !== agent.installation_id || owner.agent_id !== agent.agent_id) {
+		logEvent("tenant_denied", { installation_id: agent.installation_id, agent_id: agent.agent_id, run_id: runId, job, reason: "run_not_owned" });
 		throw new HubError("forbidden", 403, `agent ${agent.agent_id} does not own run ${runId}`);
 	}
 

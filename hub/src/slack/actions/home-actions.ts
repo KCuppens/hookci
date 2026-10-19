@@ -8,6 +8,7 @@ import { listLinkedInstallationIds } from "../../db/workspaces";
 import type { Env } from "../../env";
 import { HubError } from "../../errors";
 import { getLinkedUser, type LinkedUser } from "../../identity/link";
+import { logEvent } from "../../observability";
 import { revokeAgent } from "../../pairing/agents";
 import { createPairToken } from "../../pairing/tokens";
 import { S } from "../../strings";
@@ -23,9 +24,11 @@ async function adminInstallation(env: Env, teamId: string, user: LinkedUser, val
 	const id = Number(value);
 	const linked = Number.isSafeInteger(id) && (await listLinkedInstallationIds(env.DB, teamId)).includes(id);
 	const installation = linked ? await getInstallation(env.DB, id) : null;
-	if (!installation || !(await isInstallationAdmin(env, commandGitHub(env), installation, user.githubLogin, true))) {
+	if (!installation) {
+		logEvent("tenant_denied", { team_id: teamId, github_login: user.githubLogin, installation_id: id, reason: "installation_not_linked" });
 		return ephemeral(S.slack.forbidden);
 	}
+	if (!(await isInstallationAdmin(env, commandGitHub(env), installation, user.githubLogin, true))) return ephemeral(S.slack.forbidden);
 	return installation;
 }
 
@@ -50,8 +53,12 @@ registerAction("home:revoke_agent", async ({ env, teamId, userId, actionId, valu
 	if (!user) return ephemeral(S.slack.notLinked);
 	const installation = await adminInstallation(env, teamId, user, value);
 	if (!("id" in installation)) return installation;
-	const agent = await getAgent(tenantDb(env.DB, installation.id), actionId.slice("home:revoke_agent:".length));
-	if (!agent) return ephemeral(S.slack.forbidden);
+	const agentId = actionId.slice("home:revoke_agent:".length);
+	const agent = await getAgent(tenantDb(env.DB, installation.id), agentId);
+	if (!agent) {
+		logEvent("tenant_denied", { team_id: teamId, installation_id: installation.id, agent_id: agentId, reason: "agent_not_found" });
+		return ephemeral(S.slack.forbidden);
+	}
 	await revokeAgent(env, agent.agent_id, "revoked");
 	await publishHome(env, teamId, userId);
 	return null;

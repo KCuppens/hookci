@@ -9,6 +9,7 @@ import { listLinkedInstallationIds } from "../../db/workspaces";
 import { HubError } from "../../errors";
 import { requireLinkedUser } from "../../identity/link";
 import { signLogUrl } from "../../logs/sign";
+import { logEvent } from "../../observability";
 import { S } from "../../strings";
 import { ephemeral } from "../commands/common";
 import { registerAction } from "../registry";
@@ -22,7 +23,10 @@ registerAction("log:view", async ({ env, teamId, userId, value }) => {
 	const owner = sep > 0 ? await getRunOwner(env.DB, runId) : null;
 	const linked = owner !== null && (await listLinkedInstallationIds(env.DB, teamId)).includes(owner.installation_id);
 	const repo = owner && linked ? await getRepo(tenantDb(env.DB, owner.installation_id), owner.repo_id) : null;
-	if (!owner || !repo) throw new HubError("forbidden", 403, `run ${runId} is not in an installation linked to ${teamId}`);
+	if (!owner || !repo) {
+		logEvent("tenant_denied", { team_id: teamId, slack_user_id: userId, run_id: runId, reason: owner ? "run_not_linked" : "unknown_run" });
+		throw new HubError("forbidden", 403, `run ${runId} is not in an installation linked to ${teamId}`);
+	}
 	await requirePermission(env, commandGitHub(env), owner.installation_id, repo.full_name, user.githubLogin, "read");
 	return ephemeral(S.slack.logLink(await signLogUrl(env, runId, job)));
 });

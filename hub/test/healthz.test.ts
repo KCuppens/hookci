@@ -1,9 +1,9 @@
 import { env, exports } from "cloudflare:workers";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { handleError } from "../src/app";
 import type { Env } from "../src/env";
 import { HubError } from "../src/errors";
-import { handleError } from "../src/index";
 
 // An app with the Worker's error handler and routes that throw.
 function throwingApp(err: Error) {
