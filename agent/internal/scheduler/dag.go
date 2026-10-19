@@ -32,9 +32,17 @@ func BuildDAG(checks config.ConfigChecks) (*DAG, error) {
 	}
 
 	for name, job := range checks {
+		seen := make(map[string]bool, len(job.Needs))
+		var uniqueNeeds []string
+		for _, dep := range job.Needs {
+			if !seen[dep] {
+				seen[dep] = true
+				uniqueNeeds = append(uniqueNeeds, dep)
+			}
+		}
 		dag.Nodes[name] = &Node{
 			Name:  name,
-			Needs: job.Needs,
+			Needs: uniqueNeeds,
 		}
 	}
 

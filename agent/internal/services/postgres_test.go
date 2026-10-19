@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -84,6 +86,94 @@ func TestStopPostgres(t *testing.T) {
 	args := strings.Join(fake.Calls[0].Args, " ")
 	if args != "rm -f zeroci-service-01j7run-postgres" {
 		t.Errorf("unexpected args: %s", args)
+	}
+}
+
+func TestCleanupServices(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps", "-aq"}, execx.FakeResponse{
+		Stdout: "c1\nc2\n",
+		Code:   0,
+	})
+	fake.On("docker", []string{"rm", "-f"}, execx.FakeResponse{Code: 0})
+
+	mgr := NewManager(fake)
+	ctx := context.Background()
+
+	if err := mgr.Cleanup(ctx, "01j7run"); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	if len(fake.Calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(fake.Calls))
+	}
+	args := fake.Calls[0].Args
+	if len(args) != 4 || strings.Join(args[:3], " ") != "ps -aq --filter" || !strings.HasPrefix(args[3], "name=") {
+		t.Fatalf("unexpected ps args: %v", args)
+	}
+	prefix := strings.TrimPrefix(args[3], "name=")
+	if !strings.HasPrefix(ContainerName("01j7run", "postgres"), prefix) {
+		t.Errorf("filter %q does not match this run's container %q", prefix, ContainerName("01j7run", "postgres"))
+	}
+	if strings.HasPrefix(ContainerName("01j7run2", "postgres"), prefix) {
+		t.Errorf("filter %q also matches run 01j7run2", prefix)
+	}
+	rmArgs := strings.Join(fake.Calls[1].Args, " ")
+	if rmArgs != "rm -f c1 c2" {
+		t.Errorf("unexpected rm args: %s", rmArgs)
+	}
+}
+
+func TestCleanupServicesEmpty(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps", "-aq"}, execx.FakeResponse{
+		Stdout: "",
+		Code:   0,
+	})
+
+	mgr := NewManager(fake)
+	ctx := context.Background()
+
+	if err := mgr.Cleanup(ctx, "01j7run"); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	if len(fake.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(fake.Calls))
+	}
+}
+
+func TestCleanupServicesListFailure(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps"}, execx.FakeResponse{Code: 1, Stderr: "daemon down"})
+
+	err := NewManager(fake).Cleanup(context.Background(), "01j7run")
+	if err == nil || !strings.Contains(err.Error(), "01j7run") {
+		t.Fatalf("expected list error naming run, got %v", err)
+	}
+	if fake.Called("docker", "rm") {
+		t.Error("rm must not run after ps fails")
+	}
+}
+
+func TestCleanupServicesRemoveFailure(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps"}, execx.FakeResponse{Stdout: "c1\n"})
+	fake.On("docker", []string{"rm"}, execx.FakeResponse{Code: 1, Stderr: "in use"})
+
+	err := NewManager(fake).Cleanup(context.Background(), "01j7run")
+	var exitErr *execx.ExitError
+	if !errors.As(err, &exitErr) || !strings.Contains(err.Error(), "remove docker services for run 01j7run") {
+		t.Fatalf("expected wrapped rm exit error, got %v", err)
+	}
+}
+
+func TestCleanupServicesNoDocker(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps"}, execx.FakeResponse{Err: &exec.Error{Name: "docker", Err: exec.ErrNotFound}})
+
+	if err := NewManager(fake).Cleanup(context.Background(), "01j7run"); err != nil {
+		t.Fatalf("missing docker should mean nothing to clean, got %v", err)
 	}
 }
 

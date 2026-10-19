@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -117,5 +118,36 @@ func TestReflinkCmdExecution(t *testing.T) {
 	call := fake.Calls[0]
 	if call.Name != "cp" || !strings.Contains(strings.Join(call.Args, " "), "--reflink=auto") {
 		t.Errorf("unexpected call: %v", call)
+	}
+}
+
+func TestKeyDirSanitization(t *testing.T) {
+	baseDir := filepath.Join(string(filepath.Separator), "cache")
+	mgr := NewManager(baseDir, nil)
+	domainDir := filepath.Join(baseDir, string(egress.TrustDomainUntrusted))
+	hashed := regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+	t.Run("safe key kept as is", func(t *testing.T) {
+		for _, key := range []string{"npm-abc123", "go/mod-v1", "v1..2"} {
+			got := mgr.KeyDir(egress.TrustDomainUntrusted, key)
+			if want := filepath.Join(domainDir, key); got != want {
+				t.Errorf("KeyDir(%q) = %q, want %q", key, got, want)
+			}
+		}
+	})
+
+	for _, key := range []string{"../../etc/cron.d", "/etc/x", ".", "", "a/../../b"} {
+		t.Run("unsafe "+key, func(t *testing.T) {
+			got := mgr.KeyDir(egress.TrustDomainUntrusted, key)
+			if filepath.Dir(got) != domainDir || !hashed.MatchString(filepath.Base(got)) {
+				t.Fatalf("KeyDir(%q) = %q, want one hex name directly under %q", key, got, domainDir)
+			}
+		})
+	}
+
+	a := mgr.KeyDir(egress.TrustDomainUntrusted, "/etc/x")
+	b := mgr.KeyDir(egress.TrustDomainUntrusted, "../../etc/cron.d")
+	if a == b {
+		t.Errorf("distinct unsafe keys collided: %q", a)
 	}
 }

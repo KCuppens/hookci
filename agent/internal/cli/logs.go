@@ -59,9 +59,9 @@ func runLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 		if follow {
 			ch, err := logpipe.TailFile(ctx, logFile)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintf(stderr, "zeroci: tail log: %v\n", err)
-				return ExitInternal
+			if err != nil {
+				fmt.Fprintf(stderr, "zeroci: log not found for job %q: %v\n", jobName, err)
+				return ExitUsage
 			}
 			for line := range ch {
 				fmt.Fprintln(stdout, line)

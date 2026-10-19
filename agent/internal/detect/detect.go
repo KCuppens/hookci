@@ -22,7 +22,6 @@ const (
 	EcosystemNodeNpm  Ecosystem = "Node (npm)"
 	EcosystemNodeYarn Ecosystem = "Node (yarn)"
 	EcosystemPython   Ecosystem = "Python"
-	EcosystemUnknown  Ecosystem = "Unknown"
 )
 
 // ErrNoEcosystemDetected is returned when no supported project files are found.

@@ -72,6 +72,24 @@ func TestDAGBuild(t *testing.T) {
 			t.Fatalf("expected ErrCycleDetected, got %v", err)
 		}
 	})
+
+	t.Run("duplicate dependency deduplicated", func(t *testing.T) {
+		checks := config.ConfigChecks{
+			"lint": {Run: "npm run lint"},
+			"unit": {Run: "npm test", Needs: []string{"lint", "lint"}},
+		}
+		dag, err := BuildDAG(checks)
+		if err != nil {
+			t.Fatalf("BuildDAG failed: %v", err)
+		}
+		deps := dag.Dependents("lint")
+		if len(deps) != 1 || deps[0] != "unit" {
+			t.Fatalf("expected single dependent 'unit', got %v", deps)
+		}
+		if len(dag.Nodes["unit"].Needs) != 1 {
+			t.Fatalf("expected 1 need for unit, got %d", len(dag.Nodes["unit"].Needs))
+		}
+	})
 }
 
 func TestSchedulerSlotLimiter(t *testing.T) {

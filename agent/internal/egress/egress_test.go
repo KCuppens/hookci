@@ -3,13 +3,18 @@ package egress
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPolicyBlockedHosts(t *testing.T) {
@@ -293,5 +298,165 @@ func TestProxyAllowedTunnelWithMockDialer(t *testing.T) {
 	}
 	if string(body) != "mock npm registry payload" {
 		t.Errorf("body = %q, want 'mock npm registry payload'", string(body))
+	}
+}
+
+type fakeResolver map[string][]net.IPAddr
+
+func (f fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr, error) {
+	if ips, ok := f[host]; ok {
+		return ips, nil
+	}
+	return nil, fmt.Errorf("no such host: %s", host)
+}
+
+func TestProxyPlainHTTPDialsVerifiedIPs(t *testing.T) {
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Egress-Test", "plain-ok")
+		_, _ = w.Write([]byte("plain payload"))
+	}))
+	defer mockUpstream.Close()
+
+	failFast := func(ctx context.Context) error { return fmt.Errorf("unreachable") }
+	hang := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+
+	tests := []struct {
+		name      string
+		url       string
+		firstFail func(ctx context.Context) error
+		want      []string
+	}{
+		{"default port falls back past refused IP", "http://registry.npmjs.org/left-pad", failFast,
+			[]string{"93.184.216.34:80", "93.184.216.35:80"}},
+		{"explicit port is kept", "http://registry.npmjs.org:8080/left-pad", failFast,
+			[]string{"93.184.216.34:8080", "93.184.216.35:8080"}},
+		{"hanging IP leaves time for the next", "http://registry.npmjs.org/left-pad", hang,
+			[]string{"93.184.216.34:80", "93.184.216.35:80"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver := fakeResolver{
+				"registry.npmjs.org": {
+					{IP: net.ParseIP("93.184.216.34")},
+					{IP: net.ParseIP("93.184.216.35")},
+				},
+			}
+			server := NewServer(NewPolicy(TrustDomainUntrusted, nil), resolver)
+			server.upstreamTimeout = 2 * time.Second
+
+			var mu sync.Mutex
+			var dialed []string
+			server.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				mu.Lock()
+				dialed = append(dialed, addr)
+				first := len(dialed) == 1
+				mu.Unlock()
+				if first {
+					return nil, tt.firstFail(ctx)
+				}
+				return net.Dial("tcp", mockUpstream.Listener.Addr().String())
+			}
+
+			if err := server.Start("127.0.0.1:0"); err != nil {
+				t.Fatalf("start proxy: %v", err)
+			}
+			defer server.Close()
+
+			proxyURL, err := url.Parse("http://" + server.Addr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+			resp, err := client.Get(tt.url)
+			if err != nil {
+				t.Fatalf("GET through proxy: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			if string(body) != "plain payload" || resp.Header.Get("X-Egress-Test") != "plain-ok" {
+				t.Errorf("unexpected upstream response: header=%q body=%q", resp.Header.Get("X-Egress-Test"), body)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Join(dialed, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("dialed = %v, want %v", dialed, tt.want)
+			}
+		})
+	}
+}
+
+func TestProxyAbsoluteHTTPSDefaultsToPort443(t *testing.T) {
+	resolver := fakeResolver{
+		"registry.npmjs.org": {
+			{IP: net.ParseIP("93.184.216.34")},
+			{IP: net.ParseIP("93.184.216.35")},
+		},
+	}
+	server := NewServer(NewPolicy(TrustDomainUntrusted, nil), resolver)
+	var mu sync.Mutex
+	var dialed []string
+	server.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		mu.Lock()
+		dialed = append(dialed, addr)
+		mu.Unlock()
+		return nil, fmt.Errorf("unreachable")
+	}
+	if err := server.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("start proxy: %v", err)
+	}
+	defer server.Close()
+
+	conn, err := net.Dial("tcp", server.Addr())
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	req := "GET https://registry.npmjs.org/left-pad HTTP/1.1\r\nHost: registry.npmjs.org\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 when every IP is unreachable", resp.StatusCode)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"93.184.216.34:443", "93.184.216.35:443"}
+	if strings.Join(dialed, ",") != strings.Join(want, ",") {
+		t.Errorf("dialed = %v, want %v", dialed, want)
+	}
+}
+
+func TestProxyTransportRejectsMissingVerifiedAddr(t *testing.T) {
+	server := NewServer(NewPolicy(TrustDomainUntrusted, nil), fakeResolver{})
+	var dialed atomic.Bool
+	server.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialed.Store(true)
+		return nil, fmt.Errorf("unexpected dial to %s", addr)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://registry.npmjs.org/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.transport.RoundTrip(req); !errors.Is(err, errNoVerifiedAddr) {
+		t.Fatalf("RoundTrip err = %v, want errNoVerifiedAddr", err)
+	}
+	if dialed.Load() {
+		t.Error("dial ran without verified addrs")
 	}
 }

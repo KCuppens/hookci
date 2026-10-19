@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,32 +11,93 @@ import (
 	"time"
 )
 
+type contextKey string
+
+const dialTargetKey contextKey = "dialTarget"
+
+const defaultUpstreamTimeout = 10 * time.Second
+
+// dialTarget carries the verified upstream addresses and the request deadline to the transport dialer.
+type dialTarget struct {
+	addrs    []string
+	deadline time.Time
+}
+
+var errNoVerifiedAddr = errors.New("egress: no verified upstream address in request context")
+
+// IPResolver resolves a hostname to IP addresses. *net.Resolver satisfies it.
+type IPResolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 // Server is a per-run HTTP CONNECT proxy enforcing strict egress domain allowlists
 // and anti-SSRF IP blocking.
 type Server struct {
 	Policy      *Policy
-	Resolver    *net.Resolver
+	Resolver    IPResolver
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
-	listener net.Listener
-	server   *http.Server
-	mu       sync.Mutex
+	listener        net.Listener
+	server          *http.Server
+	transport       *http.Transport
+	upstreamTimeout time.Duration
+	mu              sync.Mutex
 }
 
 // NewServer constructs an egress proxy Server.
-func NewServer(policy *Policy, resolver *net.Resolver) *Server {
+func NewServer(policy *Policy, resolver IPResolver) *Server {
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
 	s := &Server{
-		Policy:   policy,
-		Resolver: resolver,
+		Policy:          policy,
+		Resolver:        resolver,
+		upstreamTimeout: defaultUpstreamTimeout,
 	}
 	s.server = &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	s.transport = &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			target, ok := ctx.Value(dialTargetKey).(dialTarget)
+			if !ok || len(target.addrs) == 0 {
+				return nil, errNoVerifiedAddr
+			}
+			return s.dialFirstReachable(ctx, network, target)
+		},
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 	return s
+}
+
+func (s *Server) dialFunc() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if s.DialContext != nil {
+		return s.DialContext
+	}
+	return (&net.Dialer{Timeout: s.upstreamTimeout}).DialContext
+}
+
+// dialFirstReachable tries each address in order. Each try gets an equal share of the
+// time left before target.deadline, so one unresponsive IP cannot starve the rest.
+func (s *Server) dialFirstReachable(ctx context.Context, network string, target dialTarget) (net.Conn, error) {
+	dial := s.dialFunc()
+	lastErr := error(context.DeadlineExceeded)
+	for i, addr := range target.addrs {
+		remaining := time.Until(target.deadline)
+		if remaining <= 0 {
+			break
+		}
+		tryCtx, cancel := context.WithTimeout(ctx, remaining/time.Duration(len(target.addrs)-i))
+		conn, err := dial(tryCtx, network, addr)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // Start begins listening on the specified host:port (e.g. "127.0.0.1:0" or "127.0.0.1:3128").
@@ -122,7 +184,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Resolve DNS directly and verify all resolved IPs
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), s.upstreamTimeout)
 	defer cancel()
 
 	ips, err := s.Resolver.LookupIPAddr(ctx, host)
@@ -143,13 +205,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Connect upstream
-	dialFn := s.DialContext
-	if dialFn == nil {
-		dialer := &net.Dialer{Timeout: 10 * time.Second}
-		dialFn = dialer.DialContext
-	}
 	targetAddr := net.JoinHostPort(allowedIP.String(), port)
-	upstreamConn, err := dialFn(ctx, "tcp", targetAddr)
+	upstreamConn, err := s.dialFunc()(ctx, "tcp", targetAddr)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("bad gateway: dial upstream failed: %v", err), http.StatusBadGateway)
 		return
@@ -210,7 +267,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), s.upstreamTimeout)
 	defer cancel()
 
 	ips, err := s.Resolver.LookupIPAddr(ctx, host)
@@ -225,25 +282,35 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Forward plain HTTP only to the verified IPs, in resolver order.
+	port := r.URL.Port()
+	if port == "" {
+		port = "80"
+		if r.URL.Scheme == "https" {
+			port = "443"
+		}
+	}
+	target := dialTarget{addrs: make([]string, len(ips))}
+	for i, ipAddr := range ips {
+		target.addrs[i] = net.JoinHostPort(ipAddr.IP.String(), port)
+	}
+	// The transport detaches dials from the request deadline, so carry it explicitly.
+	target.deadline, _ = ctx.Deadline()
 
-	// Forward plain HTTP request
-	outReq, err := http.NewRequestWithContext(ctx, r.Method, r.URL.String(), r.Body)
+	fwdCtx := context.WithValue(ctx, dialTargetKey, target)
+	outReq, err := http.NewRequestWithContext(fwdCtx, r.Method, r.URL.String(), r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	outReq.Header = r.Header.Clone()
 
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-	}
-	resp, err := transport.RoundTrip(outReq)
+	resp, err := s.transport.RoundTrip(outReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)

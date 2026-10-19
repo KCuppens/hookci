@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -42,8 +44,13 @@ func CanWrite(domain egress.TrustDomain, isProtectedRef bool) bool {
 
 // KeyDir returns the filesystem directory storing the cache for the given trust domain and key.
 func (m *Manager) KeyDir(domain egress.TrustDomain, key string) string {
+	clean := filepath.Clean(key)
+	if !filepath.IsLocal(key) || clean == "." {
+		h := sha256.Sum256([]byte(key))
+		clean = hex.EncodeToString(h[:16])
+	}
 	// Partition by domain to prevent untrusted pollution
-	return filepath.Join(m.BaseDir, string(domain), key)
+	return filepath.Join(m.BaseDir, string(domain), clean)
 }
 
 // Restore restores cache into targetDir using copy-on-write (cp --reflink=auto -a) or fallback copy.

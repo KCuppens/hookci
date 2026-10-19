@@ -2,7 +2,9 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
@@ -32,9 +34,15 @@ func New(db *store.DB, iso isolation.Isolation, svcs *services.Manager, netnsMgr
 	}
 }
 
+// serviceCleanupBudget bounds all service container cleanup in one Recover call, so a hung
+// docker daemon delays startup by at most this long no matter how many runs need recovery.
+const serviceCleanupBudget = 30 * time.Second
+
 // Recover scans the database for non-terminal active runs (Running, Verifying, RollingBack),
 // marks them as Interrupted, cancels/fails any running jobs, and tears down orphan units/containers.
-// Returns the list of recovered run IDs.
+// Returns the list of recovered run IDs. A run whose service containers cannot be removed is
+// left in its active state so the next Recover retries it; those failures are joined into the
+// returned error and recovery moves on to the next run.
 func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 	if m.store == nil {
 		return nil, nil
@@ -45,9 +53,21 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("fetch incomplete runs: %w", err)
 	}
 
+	cleanupCtx, cancel := context.WithTimeout(ctx, serviceCleanupBudget)
+	defer cancel()
+
 	var recovered []string
+	var cleanupErrs []error
 	for _, run := range runs {
-		// 1. Mark unfinished jobs as failed
+		// 1. Remove orphan service containers before marking the run, so a failure can be retried
+		if m.services != nil {
+			if err := m.services.Cleanup(cleanupCtx, run.ID); err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("run %s left active for retry: %w", run.ID, err))
+				continue
+			}
+		}
+
+		// 2. Mark unfinished jobs as failed
 		jobs, err := m.store.ListJobs(ctx, run.ID)
 		if err == nil {
 			for _, j := range jobs {
@@ -62,23 +82,23 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 			}
 		}
 
-		// 2. Transition run to Interrupted
+		// 3. Transition run to Interrupted
 		if err := m.store.TransitionRun(ctx, run.ID, run.State, protocol.RunStateInterrupted, InterruptedReason); err != nil {
-			return recovered, fmt.Errorf("transition run %s to interrupted: %w", run.ID, err)
+			transitionErr := fmt.Errorf("transition run %s to interrupted: %w", run.ID, err)
+			return recovered, errors.Join(append(cleanupErrs, transitionErr)...)
 		}
 
-		// 3. Stop orphan transient units via isolation backend
+		// 4. Stop orphan transient units via isolation backend
 		if m.isolation != nil {
 			_ = m.isolation.Cleanup(ctx, run.ID)
 		}
 
-		// 4. Destroy network namespace if present
+		// 5. Destroy network namespace if present
 		if m.netns != nil {
 			_ = m.netns.Destroy(ctx, run.ID)
 		}
-
 		recovered = append(recovered, run.ID)
 	}
 
-	return recovered, nil
+	return recovered, errors.Join(cleanupErrs...)
 }

@@ -120,6 +120,12 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "zeroci: create state directory: %v\n", err)
 		return ExitInternal
 	}
+	unlock, err := lockStateDir(stateDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %s: %v\n", stateDir, err)
+		return ExitInternal
+	}
+	defer unlock()
 
 	dbPath := filepath.Join(stateDir, "zeroci.db")
 	db, err := store.Open(ctx, dbPath)

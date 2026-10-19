@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 )
 
 func TestRunNoChecks(t *testing.T) {
@@ -16,6 +19,83 @@ func TestRunNoChecks(t *testing.T) {
 	code := Main(context.Background(), []string{"run", emptyDir}, &stdout, &stderr)
 	if code != ExitNoChecks {
 		t.Fatalf("expected ExitNoChecks (%d), got %d (stderr: %s)", ExitNoChecks, code, stderr.String())
+	}
+}
+
+func runLogsWithDeadline(t *testing.T, ctx context.Context, args []string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- Main(ctx, args, &stdout, &stderr) }()
+	select {
+	case code := <-done:
+		return code, stdout.String(), stderr.String()
+	case <-time.After(5 * time.Second):
+		t.Fatalf("zeroci %v hung", args)
+		return 0, "", ""
+	}
+}
+
+func TestLogsFollowMissingLogExits(t *testing.T) {
+	stateDir := t.TempDir()
+	code, _, stderr := runLogsWithDeadline(t, context.Background(),
+		[]string{"logs", "-f", "-s", stateDir, "01j7run", "lint"})
+	if code != ExitUsage {
+		t.Fatalf("expected ExitUsage (%d), got %d (stderr: %s)", ExitUsage, code, stderr)
+	}
+	if !strings.Contains(stderr, `log not found for job "lint"`) {
+		t.Errorf("unexpected stderr: %s", stderr)
+	}
+}
+
+func TestLogsFollowStopsOnCancel(t *testing.T) {
+	stateDir := t.TempDir()
+	logFile := logpipe.LogPath(stateDir, "01j7run", "lint")
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	code, stdout, stderr := runLogsWithDeadline(t, ctx,
+		[]string{"logs", "-f", "-s", stateDir, "01j7run", "lint"})
+	if code != ExitOK {
+		t.Fatalf("expected ExitOK, got %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "hello") {
+		t.Errorf("stdout = %q, want it to contain hello", stdout)
+	}
+}
+
+func TestRunRefusesLockedStateDir(t *testing.T) {
+	ctx := context.Background()
+	workDir := t.TempDir()
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, ".zeroci.yml"), []byte("version: 1\nchecks:\n  lint:\n    run: echo ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockStateDir(stateDir)
+	if err != nil {
+		t.Fatalf("lockStateDir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	if code != ExitInternal {
+		t.Fatalf("locked run: code = %d, want ExitInternal (%d); stderr: %s", code, ExitInternal, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "another zeroci run is using this state directory") {
+		t.Errorf("unexpected stderr: %s", stderr.String())
+	}
+
+	unlock()
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("run after unlock: code = %d, want ExitOK; stderr: %s", code, stderr.String())
 	}
 }
 

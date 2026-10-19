@@ -49,7 +49,7 @@ func (s *LocalSource) Prepare(ctx context.Context, targetDir string) (*Checkout,
 
 	gitDir := filepath.Join(absSrc, ".git")
 	isGit := false
-	if fi, err := os.Stat(gitDir); err == nil && (fi.IsDir() || !fi.IsDir()) { // git submodules or worktrees have .git as file
+	if _, err := os.Stat(gitDir); err == nil {
 		isGit = true
 	}
 

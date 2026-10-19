@@ -1,10 +1,14 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
@@ -128,6 +132,34 @@ func (m *Manager) Stop(ctx context.Context, runID, name string) error {
 	}
 	if err := m.Runner.Run(ctx, cmd); err != nil {
 		return fmt.Errorf("stop docker service %s: %w", containerName, err)
+	}
+	return nil
+}
+
+// Cleanup terminates and removes any service containers associated with the runID.
+// A host without docker has nothing to clean, so a missing docker binary is not an error.
+func (m *Manager) Cleanup(ctx context.Context, runID string) error {
+	var buf bytes.Buffer
+	cmd := execx.Cmd{
+		Name:   "docker",
+		Args:   []string{"ps", "-aq", "--filter", "name=" + ContainerName(runID, "")},
+		Stdout: &buf,
+	}
+	if err := m.Runner.Run(ctx, cmd); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("list docker services for run %s: %w", runID, err)
+	}
+	ids := strings.Fields(buf.String())
+	if len(ids) > 0 {
+		rmCmd := execx.Cmd{
+			Name: "docker",
+			Args: append([]string{"rm", "-f"}, ids...),
+		}
+		if err := m.Runner.Run(ctx, rmCmd); err != nil {
+			return fmt.Errorf("remove docker services for run %s: %w", runID, err)
+		}
 	}
 	return nil
 }
