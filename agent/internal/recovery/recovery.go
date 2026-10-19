@@ -85,9 +85,14 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 			return recovered, errors.Join(append(cleanupErrs, transitionErr)...)
 		}
 
-		// 4. Stop orphan transient units via isolation backend
+		// 4. Stop the run's orphan job units via the isolation backend
 		if m.isolation != nil {
-			_ = m.isolation.Cleanup(ctx, run.ID)
+			prefix := isolation.UnitPrefix + isolation.SanitizeUnitPart(run.ID) + "-"
+			if units, err := m.isolation.ListUnits(ctx, prefix); err == nil {
+				for _, u := range units {
+					_ = m.isolation.Stop(ctx, u.Name)
+				}
+			}
 		}
 
 		// 5. Destroy network namespace if present

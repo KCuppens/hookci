@@ -32,7 +32,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		configFile string
 		stateDir   string
 		slots      int
-		unisolated bool
+		isoName    string
 		timeoutStr string
 	)
 
@@ -41,7 +41,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&stateDir, "s", defaultStateDir(), "path to state directory")
 	fs.StringVar(&stateDir, "state-dir", defaultStateDir(), "path to state directory")
 	fs.IntVar(&slots, "slots", scheduler.DefaultSlots(), "parallel job slots")
-	fs.BoolVar(&unisolated, "unisolated", false, "run jobs directly on host without systemd isolation")
+	fs.StringVar(&isoName, "isolation", "auto", "job isolation backend: auto, systemd or none")
 	fs.StringVar(&timeoutStr, "timeout", "10m", "default timeout for check jobs")
 
 	fs.Usage = func() {
@@ -134,12 +134,17 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer db.Close()
 
-	// 3. Select isolation engine
-	var iso isolation.Isolation
-	if unisolated || !hasSystemd() {
-		iso = isolation.NewNone(nil)
-	} else {
-		iso = isolation.NewSystemd(nil)
+	// 3. Select isolation engine. Selection is explicit: auto never falls
+	// back to none on Linux.
+	selEnv := isolation.HostSelectEnv()
+	selEnv.Warn = func(msg string) { fmt.Fprintf(stderr, "zeroci: warning: %s\n", msg) }
+	iso, warnings, err := isolation.Select(isoName, selEnv)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitUsage
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
 	}
 
 	servicesMgr := services.NewManager(nil)
@@ -229,12 +234,4 @@ func loadRunConfig(path string, stderr io.Writer) (*config.Config, bool) {
 		fmt.Fprint(stderr, diags.Format(path))
 	}
 	return cfg, !diags.HasErrors()
-}
-
-func hasSystemd() bool {
-	if os.Geteuid() != 0 {
-		return false
-	}
-	_, err := os.Stat("/run/systemd/system")
-	return err == nil
 }

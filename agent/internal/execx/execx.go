@@ -26,7 +26,7 @@ type Cmd struct {
 	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
-	Credential *syscall.Credential
+	Credential *Credential // nil runs as the agent's user
 }
 
 // Runner executes a Cmd.
@@ -59,9 +59,7 @@ func (OS) Run(ctx context.Context, c Cmd) error {
 		cmd.Stderr = tail
 	}
 
-	if c.Credential != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: c.Credential}
-	}
+	setCredential(cmd, c.Credential)
 
 	cmd.Cancel = func() error {
 		return cmd.Process.Signal(syscall.SIGTERM)

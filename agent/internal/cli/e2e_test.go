@@ -38,7 +38,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "zeroci-state")
 
 	var stdout, stderr bytes.Buffer
-	code := cli.Main([]string{"run", "-s", stateDir, "--unisolated", nodeAppDir}, &stdout, &stderr)
+	code := cli.Main([]string{"run", "-s", stateDir, "--isolation", "none", nodeAppDir}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("expected ExitOK (%d), got %d (stderr: %s, stdout: %s)",
 			cli.ExitOK, code, stderr.String(), stdout.String())

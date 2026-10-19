@@ -2,35 +2,43 @@ package isolationtest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 )
 
+var _ isolation.Isolation = (*Fake)(nil)
+
 func TestFakeIsolation(t *testing.T) {
 	fake := NewFake()
 	fake.Responses["failing-job"] = isolation.Result{ExitCode: 1}
-
 	ctx := context.Background()
 
-	// Normal run returns default
-	res, err := fake.Run(ctx, isolation.Spec{JobName: "passing-job"})
+	res, err := fake.Run(ctx, isolation.Spec{Job: "passing-job"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if res.ExitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", res.ExitCode)
 	}
-
-	// Configured run returns custom
-	resFail, _ := fake.Run(ctx, isolation.Spec{JobName: "failing-job"})
-	if resFail.ExitCode != 1 {
+	if resFail, _ := fake.Run(ctx, isolation.Spec{Job: "failing-job"}); resFail.ExitCode != 1 {
 		t.Errorf("expected exit code 1, got %d", resFail.ExitCode)
 	}
 
-	// Verify Cleanup records runID
-	_ = fake.Cleanup(ctx, "run123")
-	if len(fake.Cleanups) != 1 || fake.Cleanups[0] != "run123" {
-		t.Errorf("Cleanups = %v, want ['run123']", fake.Cleanups)
+	fake.Units = []isolation.Unit{
+		{Name: isolation.UnitName("run1", "lint"), Active: "active"},
+		{Name: isolation.UnitName("run2", "lint"), Active: "active"},
+	}
+	units, _ := fake.ListUnits(ctx, "zeroci-run-run1-")
+	if len(units) != 1 || units[0].Name != "zeroci-run-run1-lint" {
+		t.Fatalf("ListUnits = %v, want only run1's unit", units)
+	}
+	_ = fake.Stop(ctx, units[0].Name)
+	if !slices.Equal(fake.Stops, []string{"zeroci-run-run1-lint"}) {
+		t.Errorf("Stops = %v", fake.Stops)
+	}
+	if left, _ := fake.ListUnits(ctx, "zeroci-run-run1-"); len(left) != 0 {
+		t.Errorf("stopped unit still listed: %v", left)
 	}
 }

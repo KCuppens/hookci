@@ -180,14 +180,14 @@ func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 	for _, step := range checks.Setup {
 		res, err := e.isolation.Run(ctx, isolation.Spec{
 			RunID:          run.ID,
-			JobName:        "setup",
-			Command:        []string{"sh", "-c", step.Run},
+			Job:            "setup",
+			Argv:           []string{"sh", "-c", step.Run},
 			Dir:            r.workDir,
-			Env:            r.serviceEnv,
+			Env:            r.jobEnv(),
+			Limits:         isolation.Limits{Timeout: e.defaultTimeout},
+			ReadWritePaths: []string{r.workDir},
 			Stdout:         pipe,
 			Stderr:         pipe,
-			ReadWritePaths: []string{r.workDir},
-			Timeout:        e.defaultTimeout,
 		})
 		if err != nil {
 			return fmt.Errorf("setup execution error: %w", err)
@@ -217,19 +217,19 @@ func (r *runRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 	defer cancel()
 	res, err := e.isolation.Run(execCtx, isolation.Spec{
 		RunID:          run.ID,
-		JobName:        job.Name,
-		Command:        []string{"sh", "-c", cj.Run},
+		Job:            job.Name,
+		Argv:           []string{"sh", "-c", cj.Run},
 		Dir:            r.workDir,
-		Env:            r.serviceEnv,
+		Env:            r.jobEnv(),
+		Limits:         isolation.Limits{Timeout: timeout},
+		ReadWritePaths: []string{r.workDir},
 		Stdout:         pipe,
 		Stderr:         pipe,
-		ReadWritePaths: []string{r.workDir},
-		Timeout:        timeout,
 	})
 	switch {
-	case ctx.Err() != nil:
+	case ctx.Err() != nil || res.Cancelled:
 		return scheduler.JobOutcome{State: store.JobCancelled, ExitCode: res.ExitCode, Reason: "cancelled"}, nil
-	case errors.Is(execCtx.Err(), context.DeadlineExceeded):
+	case res.TimedOut || errors.Is(execCtx.Err(), context.DeadlineExceeded):
 		return scheduler.JobOutcome{State: store.JobFailed, ExitCode: res.ExitCode, Reason: "timeout"}, nil
 	case err != nil:
 		return scheduler.JobOutcome{State: store.JobFailed, ExitCode: res.ExitCode, Reason: err.Error()}, nil
@@ -240,8 +240,27 @@ func (r *runRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 	}
 }
 
+// jobPATH is the PATH jobs get under systemd; the none backend keeps the
+// agent's PATH so local toolchains still resolve.
+const jobPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// jobEnv is the whole job environment. Backends add nothing, so the job sees
+// PATH, HOME and the service variables and never the agent's own env.
+func (r *runRunner) jobEnv() []string {
+	path, home := jobPATH, "/tmp" // /tmp is the unit's private, writable PrivateTmp
+	if r.e.isolation.Name() == "none" {
+		if p := os.Getenv("PATH"); p != "" {
+			path = p
+		}
+		if h := os.Getenv("HOME"); h != "" {
+			home = h
+		}
+	}
+	return append([]string{"PATH=" + path, "HOME=" + home}, r.serviceEnv...)
+}
+
 // FinishRun saves setup step caches when the run succeeded, then stops
-// services and cleans up isolation resources.
+// services and any job units of the run still alive.
 func (r *runRunner) FinishRun(ctx context.Context, run store.Run, final store.RunState) error {
 	e := r.e
 	if final == store.RunSuccess && e.cache != nil {
@@ -259,10 +278,18 @@ func (r *runRunner) FinishRun(ctx context.Context, run store.Run, final store.Ru
 			_ = e.services.Stop(ctx, run.ID, svc.Name)
 		}
 	}
-	if e.isolation != nil {
-		return e.isolation.Cleanup(ctx, run.ID)
+	if e.isolation == nil {
+		return nil
 	}
-	return nil
+	units, err := e.isolation.ListUnits(ctx, isolation.UnitPrefix+isolation.SanitizeUnitPart(run.ID)+"-")
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, u := range units {
+		errs = append(errs, e.isolation.Stop(ctx, u.Name))
+	}
+	return errors.Join(errs...)
 }
 
 // cacheKey names the cache entry for one path of a setup step cache. The key

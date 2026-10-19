@@ -83,7 +83,7 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--isolation", "none", workDir}, &stdout, &stderr)
 	if code != ExitInternal {
 		t.Fatalf("locked run: code = %d, want ExitInternal (%d); stderr: %s", code, ExitInternal, stderr.String())
 	}
@@ -94,7 +94,7 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 	unlock()
 	stdout.Reset()
 	stderr.Reset()
-	if code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr); code != ExitOK {
+	if code := dispatch(ctx, []string{"run", "-s", stateDir, "--isolation", "none", workDir}, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("run after unlock: code = %d, want ExitOK; stderr: %s", code, stderr.String())
 	}
 }
@@ -120,7 +120,7 @@ checks:
 
 	// 1. Execute run
 	var stdout, stderr bytes.Buffer
-	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--isolation", "none", workDir}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("run failed with code %d: stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -202,7 +202,7 @@ checks:
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--isolation", "none", workDir}, &stdout, &stderr)
 	if code != ExitRunFailed {
 		t.Fatalf("expected ExitRunFailed (%d), got %d (stderr: %s)", ExitRunFailed, code, stderr.String())
 	}

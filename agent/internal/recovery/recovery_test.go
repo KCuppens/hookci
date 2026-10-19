@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation/isolationtest"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
@@ -61,6 +62,11 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 	}
 
 	fakeIso := isolationtest.NewFake()
+	orphan := isolation.UnitName("01j7run1", "job1")
+	fakeIso.Units = []isolation.Unit{
+		{Name: orphan, Active: "active"},
+		{Name: isolation.UnitName("01j7run2", "job1"), Active: "active"},
+	}
 	fake := &execx.Fake{}
 	fake.On("docker", []string{"ps"}, execx.FakeResponse{Stdout: "c1\n"})
 	fake.On("docker", []string{"rm", "-f"}, execx.FakeResponse{})
@@ -105,9 +111,9 @@ func TestRecoverIncompleteRuns(t *testing.T) {
 		t.Errorf("expected run2 state success, got %s", r2.State)
 	}
 
-	// Verify isolation cleanup was called for run1
-	if len(fakeIso.Cleanups) != 1 || fakeIso.Cleanups[0] != "01j7run1" {
-		t.Errorf("expected isolation cleanup for [01j7run1], got %v", fakeIso.Cleanups)
+	// Verify only run1's orphan unit was stopped
+	if len(fakeIso.Stops) != 1 || fakeIso.Stops[0] != orphan {
+		t.Errorf("expected isolation stop of [%s], got %v", orphan, fakeIso.Stops)
 	}
 
 	// Verify service containers were listed for run1 only, then removed
@@ -157,6 +163,7 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 	broken := &execx.Fake{}
 	broken.On("docker", []string{"ps"}, execx.FakeResponse{Code: 1, Stderr: "daemon down"})
 	brokenIso := isolationtest.NewFake()
+	brokenIso.Units = []isolation.Unit{{Name: isolation.UnitName("01j7run3", "job1"), Active: "active"}}
 	recovered, err := New(db, brokenIso, services.NewManager(broken), nil).Recover(ctx)
 	if err == nil {
 		t.Fatal("expected joined cleanup error, got nil")
@@ -170,8 +177,8 @@ func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
 		}
 		assertRunState(t, ctx, db, id, store.RunRunning)
 	}
-	if len(brokenIso.Cleanups) != 0 {
-		t.Errorf("isolation cleaned up %v for runs left active", brokenIso.Cleanups)
+	if len(brokenIso.Stops) != 0 {
+		t.Errorf("isolation stopped %v for runs left active", brokenIso.Stops)
 	}
 
 	working := &execx.Fake{}

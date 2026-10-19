@@ -1,0 +1,33 @@
+systemd-run
+--wait
+--pipe
+--collect
+--quiet
+--unit
+zeroci-run-01HXRUN-setup
+--slice
+zeroci.slice
+--working-directory
+/var/lib/zeroci/runs/01HXRUN/src
+-p
+User=zeroci-run
+-p
+NoNewPrivileges=yes
+-p
+ProtectSystem=strict
+-p
+ProtectHome=yes
+-p
+PrivateTmp=yes
+-p
+PrivateDevices=yes
+-p
+ReadWritePaths=/var/lib/zeroci/runs/01HXRUN
+-p
+Nice=10
+-p
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+--
+/bin/sh
+-ec
+npm ci

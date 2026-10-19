@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,12 @@ func TestExecuteRunSuccess(t *testing.T) {
 	}
 
 	fakeIso := isolationtest.NewFake()
+	leftover := isolation.UnitName(runID, "lint")
+	fakeIso.Units = []isolation.Unit{
+		{Name: leftover, Active: "active"},
+		{Name: isolation.UnitName("other-run", "lint"), Active: "active"},
+	}
+	t.Setenv("ZEROCI_AGENT_ONLY", "agent-secret")
 	exec := New(Options{
 		StateDir:  stateDir,
 		Store:     db,
@@ -88,8 +95,17 @@ func TestExecuteRunSuccess(t *testing.T) {
 	if len(fakeIso.Runs) != 3 {
 		t.Fatalf("expected 3 isolation runs, got %d", len(fakeIso.Runs))
 	}
-	if fakeIso.Runs[0].JobName != "setup" {
-		t.Errorf("expected first job to be setup, got %s", fakeIso.Runs[0].JobName)
+	if fakeIso.Runs[0].Job != "setup" {
+		t.Errorf("expected first job to be setup, got %s", fakeIso.Runs[0].Job)
+	}
+	wantEnv := []string{"PATH=" + jobPATH, "HOME=/tmp"}
+	for _, spec := range fakeIso.Runs {
+		if !slices.Equal(spec.Env, wantEnv) {
+			t.Errorf("%s env = %v, want exactly %v", spec.Job, spec.Env, wantEnv)
+		}
+	}
+	if !slices.Equal(fakeIso.Stops, []string{leftover}) {
+		t.Errorf("FinishRun stopped %v, want only this run's unit %s", fakeIso.Stops, leftover)
 	}
 
 	// Check final run state in DB
