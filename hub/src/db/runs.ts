@@ -139,6 +139,23 @@ export async function listRecentRuns(t: TenantDb, limit = 10): Promise<RunRow[]>
 	return t.all<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 ORDER BY rowid DESC LIMIT ?2", limit);
 }
 
+/** The repo's latest run, of the commit whose SHA starts with shaPrefix when given; null when none. */
+export async function findLatestRun(t: TenantDb, repoId: number, shaPrefix?: string): Promise<RunRow | null> {
+	if (shaPrefix === undefined) {
+		return t.first<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 AND repo_id = ?2 ORDER BY rowid DESC LIMIT 1", repoId);
+	}
+	return t.first<RunRow>(
+		"SELECT * FROM runs WHERE installation_id = ?1 AND repo_id = ?2 AND substr(sha, 1, length(?3)) = lower(?3) ORDER BY rowid DESC LIMIT 1",
+		repoId,
+		shaPrefix,
+	);
+}
+
+/** The repo's most recently recorded runs, newest first. */
+export async function listRecentRunsForRepo(t: TenantDb, repoId: number, limit: number): Promise<RunRow[]> {
+	return t.all<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 AND repo_id = ?2 ORDER BY rowid DESC LIMIT ?3", repoId, limit);
+}
+
 /** The latest run recorded for a trigger. */
 export async function findRunByTrigger(t: TenantDb, triggerId: string): Promise<RunRow | null> {
 	return t.first<RunRow>(

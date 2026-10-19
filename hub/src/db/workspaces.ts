@@ -82,6 +82,18 @@ export async function listWorkspacesForInstallation(t: TenantDb): Promise<Worksp
 	return rows.map((row) => ({ ...row, bot_token_ct: new Uint8Array(row.bot_token_ct) }));
 }
 
+/** Ids of the live installations linked to the Slack team, ascending. */
+export async function listLinkedInstallationIds(db: D1Database, teamId: string): Promise<number[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT l.installation_id FROM workspace_links l JOIN installations i ON i.id = l.installation_id
+			WHERE l.team_id = ?1 AND i.deleted_at IS NULL ORDER BY l.installation_id`,
+		)
+		.bind(teamId)
+		.all<{ installation_id: number }>();
+	return results.map((row) => row.installation_id);
+}
+
 /** Links a Slack user to a GitHub identity; relinking replaces the old identity. */
 export async function upsertUserLink(db: D1Database, row: UserLinkRow): Promise<void> {
 	await db

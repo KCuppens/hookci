@@ -12,11 +12,22 @@ import { type SlackActionRequest, type SlackCommandRequest, type SlackReply, act
 import { S } from "../strings";
 
 const FAILED_REPLY: SlackReply = { response_type: "ephemeral", text: S.slack.failed };
-const NOT_LINKED_REPLY: SlackReply = { response_type: "ephemeral", text: S.slack.notLinked };
 
-/** The reply for a handler that threw: the /zeroci me prompt when requireLinkedUser refused the caller, else a reported failure. */
+/** Expected refusals answered with a text instead of a reported failure. */
+const REFUSAL_TEXT: Record<string, string> = {
+	not_linked: S.slack.notLinked,
+	forbidden: S.slack.forbidden,
+	repo_not_found: S.slack.repoNotFound,
+};
+
+/**
+ * The reply for a handler that threw: the /zeroci me prompt when
+ * requireLinkedUser refused the caller, the matching text when the caller
+ * lacks the GitHub role or named an unknown repo, else a reported failure.
+ */
 function errorReply(err: unknown, ctx: Record<string, string>): SlackReply {
-	if (err instanceof HubError && err.code === "not_linked") return NOT_LINKED_REPLY;
+	const refusal = err instanceof HubError && Object.hasOwn(REFUSAL_TEXT, err.code) ? REFUSAL_TEXT[err.code] : undefined;
+	if (refusal !== undefined) return { response_type: "ephemeral", text: refusal };
 	reportError(err, ctx);
 	return FAILED_REPLY;
 }

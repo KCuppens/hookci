@@ -37,3 +37,21 @@ export async function getRepoByFullName(t: TenantDb, fullName: string): Promise<
 export async function listRepos(t: TenantDb): Promise<RepoRow[]> {
 	return t.all<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 ORDER BY full_name");
 }
+
+/**
+ * Looks `owner/name` up, ignoring case, among the repos of the live
+ * installations linked to the Slack team. Keyed by team across
+ * installations, so it takes the raw D1Database.
+ */
+export async function findRepoForTeam(db: D1Database, teamId: string, fullName: string): Promise<RepoRow | null> {
+	return db
+		.prepare(
+			`SELECT r.* FROM repos r
+			JOIN workspace_links l ON l.installation_id = r.installation_id
+			JOIN installations i ON i.id = r.installation_id
+			WHERE l.team_id = ?1 AND r.full_name = ?2 COLLATE NOCASE AND i.deleted_at IS NULL
+			ORDER BY r.installation_id LIMIT 1`,
+		)
+		.bind(teamId, fullName)
+		.first<RepoRow>();
+}

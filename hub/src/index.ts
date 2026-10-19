@@ -8,6 +8,7 @@ import { HubError } from "./errors";
 import { reportError } from "./observability";
 import { githubWebhook } from "./routes/github-webhook";
 import { agentConnect } from "./routes/agent-connect";
+import { exportData } from "./routes/export";
 import { pairRedeem } from "./routes/pair";
 import { githubLinkCallback, githubLinkStart } from "./routes/github-link";
 import { githubOAuthCallback } from "./routes/github-oauth";
@@ -48,6 +49,7 @@ app.get("/slack/oauth/callback", slackOAuthCallback);
 app.post("/slack/events", slackEvents);
 app.post("/slack/commands", slackCommands);
 app.post("/slack/interactive", slackInteractive);
+app.get("/v1/export", exportData);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);
