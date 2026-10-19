@@ -3,10 +3,8 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
-scripts/gen-schema.sh && git diff --exit-code -- agent/internal/protocol agent/internal/config hub/src/protocol hub/src/config || {
-	echo "Error: Generated types are out of sync with schema/zeroci.schema.json. Run 'make schema' and commit the changes." >&2
-	exit 1
-}
+(cd schema && npm ci && npm test)
+scripts/schema-check.sh
 
 (cd agent && fmt_out=$(gofmt -l .) && [ -z "$fmt_out" ] || { echo "$fmt_out" >&2; exit 1; })
 (cd agent && go vet ./... && go test ./...)

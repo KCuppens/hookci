@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Event, Trigger } from "../src/protocol/generated";
+import { encodeFrame, parseFrame, ProtocolError, type Event, type Frame, type Trigger } from "../src/protocol";
 
 describe("generated protocol types", () => {
   it("accepts a pull request trigger", () => {
@@ -49,5 +49,49 @@ describe("generated protocol types", () => {
       trust: "trusted",
     };
     expect(trigger.v).toBe(2);
+  });
+});
+
+function parseError(text: string): ProtocolError {
+  try {
+    parseFrame(text);
+  } catch (err) {
+    if (err instanceof ProtocolError) return err;
+    throw err;
+  }
+  throw new Error(`parseFrame accepted ${text}`);
+}
+
+describe("parseFrame", () => {
+  it("parses a welcome and round-trips it through encodeFrame", () => {
+    const welcome: Frame = {
+      v: 1,
+      type: "welcome",
+      hub_version: "1.4.0",
+      protocol_min: 1,
+      protocol_max: 1,
+      agent_id: "agt_01",
+      installation_id: 4242,
+    };
+    expect(parseFrame(encodeFrame(welcome))).toEqual(welcome);
+  });
+
+  it("parses an interrupt with either id", () => {
+    expect(parseFrame('{"v":1,"type":"interrupt","run_id":"r1","reason":"superseded"}')).toMatchObject({ run_id: "r1" });
+    expect(parseFrame('{"v":1,"type":"interrupt","trigger_id":"t1","reason":"revoked"}')).toMatchObject({ trigger_id: "t1" });
+  });
+
+  it.each([
+    ["not JSON", "{", "not valid JSON"],
+    ["an array", "[]", "not a JSON object"],
+    ["another version", '{"v":2,"type":"ack","upto":1}', "v is not 1"],
+    ["an unknown type", '{"v":1,"type":"nope"}', "missing or unknown"],
+    ["a missing required key", '{"v":1,"type":"error","code":"internal"}', "error frame lacks message"],
+    ["both interrupt ids", '{"v":1,"type":"interrupt","run_id":"r1","trigger_id":"t1","reason":"repair"}', "exactly one"],
+    ["no interrupt id", '{"v":1,"type":"interrupt","reason":"repair"}', "exactly one"],
+  ])("rejects %s with bad_frame", (_name, text, message) => {
+    const err = parseError(text);
+    expect(err.code).toBe("bad_frame");
+    expect(err.message).toContain(message);
   });
 });

@@ -89,6 +89,33 @@ type Envelope struct {
 	V int `json:"v"`
 }
 
+// Hub reports a protocol or connection error.
+type Error struct {
+	// Machine-readable error code.
+	Code ErrorCode `json:"code"`
+
+	// Human-readable explanation.
+	Message string `json:"message"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// How to upgrade the agent, sent with protocol_unsupported.
+	UpgradeHint *string `json:"upgrade_hint,omitempty,omitzero"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type ErrorCode string
+
+const ErrorCodeAuthFailed ErrorCode = "auth_failed"
+const ErrorCodeBadFrame ErrorCode = "bad_frame"
+const ErrorCodeInternal ErrorCode = "internal"
+const ErrorCodeProtocolUnsupported ErrorCode = "protocol_unsupported"
+const ErrorCodeRateLimited ErrorCode = "rate_limited"
+const ErrorCodeRevoked ErrorCode = "revoked"
+
 // Run or job state change.
 type Event struct {
 	// Agent outbox sequence number, acknowledged by the hub.
@@ -141,6 +168,9 @@ const EventStateSuccess EventState = "success"
 const EventStateSuperseded EventState = "superseded"
 const EventStateVerifying EventState = "verifying"
 
+// Any protocol frame, selected by its type.
+type Frame interface{}
+
 // First frame the agent sends after connecting.
 type Hello struct {
 	// Agent identifier, when already registered.
@@ -158,6 +188,32 @@ type Hello struct {
 	// Protocol version.
 	V int `json:"v"`
 }
+
+// Hub tells the agent to stop a run, or a trigger that has no run yet. Carries
+// exactly one of run_id or trigger_id.
+type Interrupt struct {
+	// Why the run or trigger is stopped.
+	Reason InterruptReason `json:"reason"`
+
+	// Agent run identifier.
+	RunId *string `json:"run_id,omitempty,omitzero"`
+
+	// Hub trigger identifier.
+	TriggerId *string `json:"trigger_id,omitempty,omitzero"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type InterruptReason string
+
+const InterruptReasonRepair InterruptReason = "repair"
+const InterruptReasonRevoked InterruptReason = "revoked"
+const InterruptReasonSuperseded InterruptReason = "superseded"
+const InterruptReasonUninstalled InterruptReason = "uninstalled"
 
 // Jobs the agent planned for a run.
 type JobPlanned struct {
@@ -341,3 +397,27 @@ type TriggerTrust string
 
 const TriggerTrustTrusted TriggerTrust = "trusted"
 const TriggerTrustUntrusted TriggerTrust = "untrusted"
+
+// Hub accepts the agent's hello.
+type Welcome struct {
+	// Agent identifier assigned by the hub.
+	AgentId string `json:"agent_id"`
+
+	// Hub release version.
+	HubVersion string `json:"hub_version"`
+
+	// GitHub App installation the agent belongs to.
+	InstallationId int `json:"installation_id"`
+
+	// Newest protocol version the hub accepts.
+	ProtocolMax int `json:"protocol_max"`
+
+	// Oldest protocol version the hub accepts.
+	ProtocolMin int `json:"protocol_min"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}

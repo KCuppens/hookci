@@ -873,6 +873,128 @@
               "type": "integer"
             }
           }
+        },
+        "Welcome": {
+          "description": "Hub accepts the agent's hello.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "welcome"
+            },
+            "hub_version": {
+              "description": "Hub release version.",
+              "type": "string"
+            },
+            "protocol_min": {
+              "description": "Oldest protocol version the hub accepts.",
+              "type": "integer"
+            },
+            "protocol_max": {
+              "description": "Newest protocol version the hub accepts.",
+              "type": "integer"
+            },
+            "agent_id": {
+              "description": "Agent identifier assigned by the hub.",
+              "type": "string"
+            },
+            "installation_id": {
+              "description": "GitHub App installation the agent belongs to.",
+              "type": "integer"
+            }
+          }
+        },
+        "Interrupt": {
+          "description": "Hub tells the agent to stop a run, or a trigger that has no run yet. Carries exactly one of run_id or trigger_id.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "reason"],
+          "oneOf": [{ "required": ["run_id"] }, { "required": ["trigger_id"] }],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "interrupt"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "trigger_id": {
+              "description": "Hub trigger identifier.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why the run or trigger is stopped.",
+              "type": "string",
+              "enum": ["superseded", "revoked", "uninstalled", "repair"]
+            }
+          }
+        },
+        "Error": {
+          "title": "ProtocolErrorFrame",
+          "description": "Hub reports a protocol or connection error.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "code", "message"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "error"
+            },
+            "code": {
+              "description": "Machine-readable error code.",
+              "type": "string",
+              "enum": ["protocol_unsupported", "auth_failed", "revoked", "rate_limited", "bad_frame", "internal"]
+            },
+            "message": {
+              "description": "Human-readable explanation.",
+              "type": "string"
+            },
+            "upgrade_hint": {
+              "description": "How to upgrade the agent, sent with protocol_unsupported.",
+              "type": "string"
+            }
+          }
+        },
+        "Frame": {
+          "description": "Any protocol frame, selected by its type.",
+          "oneOf": [
+            { "$ref": "#/$defs/protocol/$defs/Hello" },
+            { "$ref": "#/$defs/protocol/$defs/Trigger" },
+            { "$ref": "#/$defs/protocol/$defs/Accepted" },
+            { "$ref": "#/$defs/protocol/$defs/Rejected" },
+            { "$ref": "#/$defs/protocol/$defs/JobPlanned" },
+            { "$ref": "#/$defs/protocol/$defs/Event" },
+            { "$ref": "#/$defs/protocol/$defs/Annotations" },
+            { "$ref": "#/$defs/protocol/$defs/TokenRequest" },
+            { "$ref": "#/$defs/protocol/$defs/Token" },
+            { "$ref": "#/$defs/protocol/$defs/LogSubscribe" },
+            { "$ref": "#/$defs/protocol/$defs/Log" },
+            { "$ref": "#/$defs/protocol/$defs/Ack" },
+            { "$ref": "#/$defs/protocol/$defs/Welcome" },
+            { "$ref": "#/$defs/protocol/$defs/Interrupt" },
+            { "$ref": "#/$defs/protocol/$defs/Error" }
+          ]
         }
       }
     }
