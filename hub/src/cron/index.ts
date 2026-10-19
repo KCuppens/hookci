@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { GitHubClient } from "../github/client";
 import { defaultFetcher } from "../http";
 import { reportError } from "../observability";
+import { purgeDeletedInstallations } from "./purge-installations";
 import { reconcileDefaultBranches } from "./reconcile";
 import { redeliverFailed } from "./redeliver";
 import { reencryptTokens } from "./reencrypt";
@@ -23,6 +24,7 @@ const SCHEDULES: Record<string, readonly CronTask[]> = {
 		},
 		{ name: "reconcile", run: (env, now) => reconcileDefaultBranches(env, now) },
 		{ name: "purge", run: (env, now) => purgeExpired(env.DB, now) },
+		{ name: "purge_installations", run: (env, now) => purgeDeletedInstallations(env, now) },
 		{ name: "reencrypt", run: (env) => reencryptTokens(env) },
 	],
 };

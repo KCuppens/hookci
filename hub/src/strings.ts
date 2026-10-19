@@ -85,6 +85,10 @@ export const S = {
 		watching: (repo: string) => `Watching ${repo} here. Test badge posted.`,
 		unwatched: (repo: string) => `Stopped watching ${repo} here.`,
 		notWatching: (repo: string) => `This channel does not watch ${repo}.`,
+		repoRemoved: (repos: readonly string[]) =>
+			repos.length === 1
+				? `${repos[0]} was removed from the ZeroCI GitHub App installation, so this channel no longer watches it.`
+				: `${repos.join(", ")} were removed from the ZeroCI GitHub App installation, so this channel no longer watches them.`,
 		statusAgents: "*Agents*",
 		statusNoAgents: "No agents are paired with the GitHub installations linked to this workspace.",
 		statusAgentOnline: (name: string, version: string | null) => `${name}: online${version ? `, version ${version}` : ""}`,

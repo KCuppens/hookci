@@ -45,11 +45,11 @@ export async function markDeleted(db: D1Database, id: number, at: number, purgeA
 	await db.prepare("UPDATE installations SET deleted_at = ?2, purge_after = ?3 WHERE id = ?1").bind(id, at, purgeAfter).run();
 }
 
-/** Ids of installations whose purge_after has passed, oldest first. */
-export async function listPurgeDue(db: D1Database, now: number): Promise<number[]> {
+/** Ids of up to limit installations whose purge_after has passed, oldest first. */
+export async function listPurgeDue(db: D1Database, now: number, limit: number): Promise<number[]> {
 	const { results } = await db
-		.prepare("SELECT id FROM installations WHERE purge_after <= ?1 ORDER BY purge_after, id")
-		.bind(now)
+		.prepare("SELECT id FROM installations WHERE purge_after <= ?1 ORDER BY purge_after, id LIMIT ?2")
+		.bind(now, limit)
 		.all<{ id: number }>();
 	return results.map((r) => r.id);
 }

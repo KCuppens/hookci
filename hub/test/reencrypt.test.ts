@@ -67,7 +67,7 @@ describe("reencryptTokens", () => {
 
   it("skips a row it cannot decrypt and still moves the rest", async () => {
     const broken = await getWorkspace(env.DB, "T0002");
-    const ct = broken?.bot_token_ct.slice() ?? new Uint8Array();
+    const ct = broken?.bot_token_ct?.slice() ?? new Uint8Array();
     ct[ct.length - 1] = (ct[ct.length - 1] ?? 0) ^ 0x01;
     await env.DB.prepare("UPDATE workspaces SET bot_token_ct = ?1 WHERE team_id = 'T0002'").bind(ct).run();
     const errors = vi.spyOn(console, "error");

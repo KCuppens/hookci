@@ -137,6 +137,11 @@ export async function markRunPending(t: TenantDb, runId: string, reason: string)
 	return res.meta.changes > 0;
 }
 
+/** Cancels every pending run of the installation, finishing them at. */
+export async function cancelPendingRuns(t: TenantDb, at: number): Promise<void> {
+	await t.run("UPDATE runs SET state = 'cancelled', finished_at = ?2 WHERE installation_id = ?1 AND state = 'pending'", at);
+}
+
 /**
  * Inserts or updates a job of one of this installation's runs; false when the
  * run is not this installation's. Progress columns given as null keep their

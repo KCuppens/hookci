@@ -10,13 +10,14 @@ import { ulid } from "../ulid";
 import type { RouteOutcome } from "./route";
 
 /**
- * Records a trigger that reached no agent as a pending run, with the outcome
- * as its reason, and tells the sinks about it.
+ * Records a trigger that reached no agent, or arrived while the installation
+ * is suspended, as a pending run with the outcome as its reason, and tells
+ * the sinks about it.
  */
 export async function notifyOutcome(
 	env: Env,
 	trig: HubTrigger,
-	outcome: Extract<RouteOutcome, { kind: "no_agent" }>,
+	outcome: Extract<RouteOutcome, { kind: "no_agent" | "suspended" }>,
 	ctx: WaitUntil,
 ): Promise<void> {
 	logEvent("webhook_outcome", {

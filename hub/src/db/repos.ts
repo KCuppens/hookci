@@ -21,12 +21,16 @@ export async function upsertRepos(t: TenantDb, repos: readonly NewRepo[]): Promi
 	);
 }
 
+/**
+ * Forgets repos the installation no longer has access to: their rows,
+ * repo_bindings, watches and check_runs. Their runs stay until retention.
+ */
 export async function removeRepos(t: TenantDb, repoIds: readonly number[]): Promise<void> {
 	if (repoIds.length === 0) return;
-	await t.run(
-		"DELETE FROM repos WHERE installation_id = ?1 AND repo_id IN (SELECT value FROM json_each(?2))",
-		JSON.stringify(repoIds),
-	);
+	const ids = JSON.stringify(repoIds);
+	for (const table of ["repo_bindings", "watches", "check_runs", "repos"] as const) {
+		await t.run(`DELETE FROM ${table} WHERE installation_id = ?1 AND repo_id IN (SELECT value FROM json_each(?2))`, ids);
+	}
 }
 
 /** Looks a repo up by `owner/name`, ignoring case as GitHub does. */

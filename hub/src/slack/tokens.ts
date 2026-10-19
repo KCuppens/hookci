@@ -35,6 +35,8 @@ export async function storeWorkspace(env: Env, result: SlackOAuthResult, install
 export async function getBotToken(env: Env, teamId: string): Promise<string> {
 	const row = await getWorkspace(env.DB, teamId);
 	if (!row) throw new HubError("workspace_not_found", 404, `no Slack workspace ${teamId}`);
-	if (row.status !== "active") throw new HubError("workspace_inactive", 410, `Slack workspace ${teamId} is ${row.status}`);
+	if (row.status !== "active" || row.bot_token_ct === null) {
+		throw new HubError("workspace_inactive", 410, `Slack workspace ${teamId} is ${row.status}`);
+	}
 	return decryptToken(parseEncKeys(env.TOKEN_ENC_KEYS), row.bot_token_ct, row.key_version, workspaceAad(teamId));
 }

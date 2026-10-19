@@ -10,8 +10,8 @@ export interface WorkspaceRow {
 	team_id: string;
 	team_name: string;
 	bot_user_id: string;
-	/** IV || AES-GCM ciphertext of the bot token under key_version. */
-	bot_token_ct: Uint8Array;
+	/** IV || AES-GCM ciphertext of the bot token under key_version; NULL once Slack uninstalled the app or revoked the token. */
+	bot_token_ct: Uint8Array | null;
 	key_version: number;
 	installed_by: string;
 	status: WorkspaceStatus;
@@ -34,7 +34,11 @@ export interface UserLinkRow {
 }
 
 // D1 returns BLOB columns as arrays of byte values.
-type StoredWorkspace = Omit<WorkspaceRow, "bot_token_ct"> & { bot_token_ct: number[] };
+type StoredWorkspace = Omit<WorkspaceRow, "bot_token_ct"> & { bot_token_ct: number[] | null };
+
+function fromStored(row: StoredWorkspace): WorkspaceRow {
+	return { ...row, bot_token_ct: row.bot_token_ct && new Uint8Array(row.bot_token_ct) };
+}
 
 /** Inserts a workspace or, on reinstall, replaces everything but created_at. */
 export async function upsertWorkspace(db: D1Database, row: WorkspaceRow): Promise<void> {
@@ -52,11 +56,24 @@ export async function upsertWorkspace(db: D1Database, row: WorkspaceRow): Promis
 
 export async function getWorkspace(db: D1Database, teamId: string): Promise<WorkspaceRow | null> {
 	const row = await db.prepare("SELECT * FROM workspaces WHERE team_id = ?1").bind(teamId).first<StoredWorkspace>();
-	return row && { ...row, bot_token_ct: new Uint8Array(row.bot_token_ct) };
+	return row && fromStored(row);
 }
 
 export async function setWorkspaceStatus(db: D1Database, teamId: string, status: WorkspaceStatus): Promise<void> {
 	await db.prepare("UPDATE workspaces SET status = ?2 WHERE team_id = ?1").bind(teamId, status).run();
+}
+
+/** Sets the workspace's status to revoked or uninstalled and wipes its bot token. */
+export async function deactivateWorkspace(db: D1Database, teamId: string, status: Exclude<WorkspaceStatus, "active">): Promise<void> {
+	await db.prepare("UPDATE workspaces SET status = ?2, bot_token_ct = NULL WHERE team_id = ?1").bind(teamId, status).run();
+}
+
+/** Deletes the team's links to installations and its watches, across installations. */
+export async function forgetWorkspaceLinks(db: D1Database, teamId: string): Promise<void> {
+	await db.batch([
+		db.prepare("DELETE FROM workspace_links WHERE team_id = ?1").bind(teamId),
+		db.prepare("DELETE FROM watches WHERE team_id = ?1").bind(teamId),
+	]);
 }
 
 /** Links a workspace to the installation; linking twice keeps the first link. */
@@ -79,7 +96,7 @@ export async function listWorkspacesForInstallation(t: TenantDb): Promise<Worksp
 		`SELECT w.* FROM workspaces w JOIN workspace_links l ON l.team_id = w.team_id
 		WHERE l.installation_id = ?1 ORDER BY w.team_name, w.team_id`,
 	);
-	return rows.map((row) => ({ ...row, bot_token_ct: new Uint8Array(row.bot_token_ct) }));
+	return rows.map(fromStored);
 }
 
 /** Ids of the live installations linked to the Slack team, ascending. */

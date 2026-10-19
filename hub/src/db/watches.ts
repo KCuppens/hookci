@@ -47,6 +47,14 @@ export async function listWatchesForRepo(t: TenantDb, repoId: number): Promise<W
 	);
 }
 
+export async function listWatchesForRepos(t: TenantDb, repoIds: readonly number[]): Promise<WatchRow[]> {
+	if (repoIds.length === 0) return [];
+	return t.all<WatchRow>(
+		"SELECT * FROM watches WHERE installation_id = ?1 AND repo_id IN (SELECT value FROM json_each(?2)) ORDER BY team_id, channel_id, repo_id",
+		JSON.stringify(repoIds),
+	);
+}
+
 /**
  * Marks every active watch of a channel broken, across installations, when
  * Slack reports the channel unusable; returns the Slack users who created the

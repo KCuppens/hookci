@@ -24,7 +24,9 @@ interface StaleToken {
  */
 export async function reencryptTokens(env: Env, limit = BATCH): Promise<number> {
 	const keys = parseEncKeys(env.TOKEN_ENC_KEYS);
-	const { results } = await env.DB.prepare("SELECT team_id, bot_token_ct, key_version FROM workspaces WHERE key_version != ?1 LIMIT ?2")
+	const { results } = await env.DB.prepare(
+		"SELECT team_id, bot_token_ct, key_version FROM workspaces WHERE key_version != ?1 AND bot_token_ct IS NOT NULL LIMIT ?2",
+	)
 		.bind(keys.current, limit)
 		.all<StaleToken>();
 	let count = 0;

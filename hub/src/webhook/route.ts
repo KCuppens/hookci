@@ -14,6 +14,7 @@ export type RouteOutcome =
 	| { kind: "dispatched"; agentId: string }
 	| { kind: "no_agent" }
 	| { kind: "suspended" }
+	| { kind: "deleted" }
 	| { kind: "unknown_installation" };
 
 /** Trust the agent runs a trigger with: fork pull requests are untrusted. */
@@ -25,7 +26,12 @@ export type TriggerRequest = HubTrigger & { attempt?: number; trust?: Trust };
 export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): Promise<RouteOutcome> {
 	const installation = await getInstallation(env.DB, trig.installationId);
 	if (!installation) return { kind: "unknown_installation" };
-	if (installation.suspended_at !== null || installation.deleted_at !== null) return { kind: "suspended" };
+	if (installation.deleted_at !== null) return { kind: "deleted" };
+	if (installation.suspended_at !== null) {
+		const outcome = { kind: "suspended" } as const;
+		await notifyOutcome(env, trig, outcome, ctx);
+		return outcome;
+	}
 
 	const binding = await getBinding(tenantDb(env.DB, trig.installationId), trig.repoId, trig.target);
 	if (!binding) {

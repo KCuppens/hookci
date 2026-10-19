@@ -46,7 +46,10 @@ function isHomeView(view: unknown): boolean {
 export async function callSlackDo(
 	env: Env,
 	teamId: string,
-	call: { path: "command"; body: SlackCommandRequest } | { path: "action"; body: SlackActionRequest },
+	call:
+		| { path: "command"; body: SlackCommandRequest }
+		| { path: "action"; body: SlackActionRequest }
+		| { path: "purge"; body: Record<string, never> },
 ): Promise<void> {
 	const stub = env.SLACK_DO.get(env.SLACK_DO.idFromName(teamId));
 	const res = await stub.fetch(`https://do/${call.path}`, { method: "POST", body: JSON.stringify(call.body) });
@@ -67,6 +70,10 @@ export class SlackWorkspaceDO extends DurableObject<Env> {
 		if (request.method === "POST" && path === "/command") return this.command(await request.json<SlackCommandRequest>());
 		if (request.method === "POST" && path === "/action") return this.action(await request.json<SlackActionRequest>());
 		if (request.method === "POST" && path === "/call") return Response.json(await this.outbound.call(await request.json<SlackCallRequest>()));
+		if (request.method === "POST" && path === "/purge") {
+			await this.outbound.purge();
+			return Response.json({ ok: true });
+		}
 		if (request.method === "GET" && path === "/queue-stats") return Response.json(this.outbound.stats());
 		return Response.json({ error: "not_found" }, { status: 404 });
 	}

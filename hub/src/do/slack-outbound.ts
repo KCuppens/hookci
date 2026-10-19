@@ -118,6 +118,8 @@ export class SlackOutbound {
 	private draining: Promise<void> | null = null;
 	/** A call arrived while a drain was deciding it had nothing to send. */
 	private again = false;
+	/** Bumped by purge: a drain that sees it change forgets its token and does not retry the call it had in flight. */
+	private generation = 0;
 
 	constructor(
 		private readonly ctx: DurableObjectState,
@@ -159,6 +161,13 @@ export class SlackOutbound {
 	/** The DO alarm: the earliest moment a queued call could be sent has come. */
 	async alarm(): Promise<void> {
 		await this.kick();
+	}
+
+	/** The workspace was uninstalled or its bot token revoked: drops every queued call and any retry of a call in flight. */
+	async purge(): Promise<void> {
+		this.generation++;
+		this.dropAll("workspace_inactive");
+		await this.ctx.storage.deleteAlarm();
 	}
 
 	private migrate(): void {
@@ -281,8 +290,13 @@ export class SlackOutbound {
 	private async drain(): Promise<void> {
 		const teamId = this.meta("team_id") ?? "";
 		let token: string | undefined;
+		let generation = this.generation;
 		for (;;) {
 			this.again = false;
+			if (generation !== this.generation) {
+				generation = this.generation;
+				token = undefined;
+			}
 			const now = this.clock.now();
 			const queue = this.sql.exec<QueueRow>("SELECT * FROM queue").toArray().map(toCall);
 			const buckets = this.buckets();
@@ -314,7 +328,10 @@ export class SlackOutbound {
 			if (channel !== undefined) this.channelBucket(channel, now).take(now);
 			// Off the queue while in flight, so a newer update for the same key queues behind it.
 			this.sql.exec("DELETE FROM queue WHERE id = ?", next.id);
-			await this.handle(teamId, next, await this.send(token, next), true);
+			const outcome = await this.send(token, next);
+			// Purged while in flight: the waiter already failed, and a retry would send the call again.
+			if (generation !== this.generation) continue;
+			await this.handle(teamId, next, outcome, true);
 		}
 	}
 

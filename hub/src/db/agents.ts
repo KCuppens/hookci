@@ -118,3 +118,17 @@ export async function countActiveAgents(t: TenantDb): Promise<number> {
 	const row = await t.first<{ n: number }>("SELECT count(*) AS n FROM agents WHERE installation_id = ?1 AND revoked_at IS NULL");
 	return row?.n ?? 0;
 }
+
+/**
+ * The agent that runs checks for repos added to the installation: the most
+ * recently paired non-revoked agent the sender paired, else the most recently
+ * paired non-revoked agent of the installation, else null.
+ */
+export async function pickAgentForNewRepos(t: TenantDb, senderGithubId: number): Promise<string | null> {
+	const row = await t.first<{ agent_id: string }>(
+		`SELECT agent_id FROM agents WHERE installation_id = ?1 AND revoked_at IS NULL
+		ORDER BY paired_by_github_id = ?2 DESC, paired_at DESC, agent_id DESC LIMIT 1`,
+		senderGithubId,
+	);
+	return row?.agent_id ?? null;
+}

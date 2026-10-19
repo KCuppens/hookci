@@ -84,7 +84,8 @@ describe("installations", () => {
     await markDeleted(env.DB, 1, 10, 300);
     await markDeleted(env.DB, 2, 10, 200);
     await markDeleted(env.DB, 3, 10, 999);
-    expect(await listPurgeDue(env.DB, 300)).toEqual([2, 1]);
+    expect(await listPurgeDue(env.DB, 300, 10)).toEqual([2, 1]);
+    expect(await listPurgeDue(env.DB, 300, 1)).toEqual([2]);
   });
 });
 

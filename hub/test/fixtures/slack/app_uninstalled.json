@@ -1,0 +1,22 @@
+{
+  "token": "verification-token",
+  "team_id": "T0ACME",
+  "api_app_id": "A0ZEROCI",
+  "event": {
+    "type": "app_uninstalled",
+    "event_ts": "1767225600.000100"
+  },
+  "type": "event_callback",
+  "event_id": "Ev0UNINSTALL",
+  "event_time": 1767225600,
+  "authorizations": [
+    {
+      "enterprise_id": null,
+      "team_id": "T0ACME",
+      "user_id": "U0BOT",
+      "is_bot": true,
+      "is_enterprise_install": false
+    }
+  ],
+  "is_ext_shared_channel": false
+}

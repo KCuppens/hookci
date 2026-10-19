@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex, hmacSha256 } from "../src/crypto";
 import { bind } from "../src/db/bindings";
 import { markDelivery } from "../src/db/deliveries";
-import { markSuspended, upsertInstallation } from "../src/db/installations";
+import { markDeleted, markSuspended, upsertInstallation } from "../src/db/installations";
 import { tenantDb } from "../src/db/tenant";
 import type { Env } from "../src/env";
 import worker from "../src/index";
@@ -256,12 +256,22 @@ describe("POST /github/webhook routing", () => {
     expect(await deliveryRow("d-unbound")).toMatchObject({ status: "processed" });
   });
 
-  it("drops triggers of a suspended installation", async () => {
+  it("records a pending suspended run instead of dispatching for a suspended installation", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
     await markSuspended(env.DB, INSTALLATION, NOW);
     await deliver("push", pushMain, { id: "d-suspended" });
     expect(agents.calls).toEqual([]);
-    expect(await deliveryRow("d-suspended")).toMatchObject({ status: "dropped", note: "suspended" });
+    expect(await deliveryRow("d-suspended")).toMatchObject({ status: "processed" });
+    const { results } = await env.DB.prepare("SELECT state, reason FROM runs").all();
+    expect(results).toEqual([{ state: "pending", reason: "suspended" }]);
+  });
+
+  it("drops triggers of a deleted installation", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    await markDeleted(env.DB, INSTALLATION, NOW, NOW + 86_400_000);
+    await deliver("push", pushMain, { id: "d-deleted" });
+    expect(agents.calls).toEqual([]);
+    expect(await deliveryRow("d-deleted")).toMatchObject({ status: "dropped", note: "deleted" });
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
   });
 
