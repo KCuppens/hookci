@@ -9,6 +9,9 @@ import { reportError } from "./observability";
 import { githubWebhook } from "./routes/github-webhook";
 import { agentConnect } from "./routes/agent-connect";
 import { pairRedeem } from "./routes/pair";
+import { githubOAuthCallback } from "./routes/github-oauth";
+import { start, startStatus } from "./routes/start";
+import "./webhook/installation";
 
 export { AgentDO } from "./do/agent";
 export { SlackWorkspaceDO } from "./do/slack-workspace";
@@ -28,6 +31,9 @@ app.get("/healthz", (c) => c.json({ ok: true, version: c.env.HUB_VERSION }));
 app.post("/github/webhook", githubWebhook);
 app.get("/v1/agent/connect", agentConnect);
 app.post("/v1/pair/redeem", pairRedeem);
+app.get("/start", start);
+app.get("/start/status", startStatus);
+app.get("/github/oauth/callback", githubOAuthCallback);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);

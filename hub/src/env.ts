@@ -11,6 +11,8 @@ export interface Env {
 	SLACK_DO: DurableObjectNamespace;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
+	/** The public GitHub App's URL slug: https://github.com/apps/<slug>. */
+	GITHUB_APP_SLUG: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;
@@ -27,8 +29,8 @@ export interface Env {
 	/** JSON `{"<version>":"<base64 key>"}`; the highest version is current. */
 	LOG_SIGNING_KEYS: string;
 	ROTATION_IN_PROGRESS?: string;
-	/** Tests only: replaces the AgentDO's wall clock. Never set in wrangler.toml. */
+	/** Tests only: replaces the wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;
-	/** Tests only: replaces the AgentDO's fetch for GitHub calls. Never set in wrangler.toml. */
+	/** Tests only: replaces fetch for GitHub calls. Never set in wrangler.toml. */
 	__TEST_FETCHER?: Fetcher;
 }

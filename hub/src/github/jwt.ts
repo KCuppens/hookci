@@ -1,12 +1,7 @@
+import { base64url } from "../crypto";
 import { HubError } from "../errors";
 
 const utf8 = new TextEncoder();
-
-function base64url(bytes: Uint8Array): string {
-	let bin = "";
-	for (const b of bytes) bin += String.fromCharCode(b);
-	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 
 function pemToDer(pem: string): Uint8Array {
 	const body = pem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, "").replace(/\s+/g, "");

@@ -33,6 +33,14 @@ export async function sha256Hex(s: string): Promise<string> {
 	return hex(await crypto.subtle.digest("SHA-256", utf8.encode(s)));
 }
 
+/** Unpadded RFC 4648 base64url of bytes. */
+export function base64url(bytes: ArrayBuffer | Uint8Array): string {
+	const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+	let bin = "";
+	for (const b of view) bin += String.fromCharCode(b);
+	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 
 /** prefix followed by `bytes` random bytes in unpadded lowercase RFC 4648 base32. */

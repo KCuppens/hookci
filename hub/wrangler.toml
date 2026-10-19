@@ -10,6 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 HUB_ORIGIN = "https://ci.webuno.io"
 HUB_VERSION = "dev"
+GITHUB_APP_SLUG = "zeroci"
 
 [observability]
 enabled = true
@@ -50,6 +51,7 @@ name = "zeroci-hub-staging"
 [env.staging.vars]
 HUB_ORIGIN = "https://ci-staging.webuno.io"
 HUB_VERSION = "dev"
+GITHUB_APP_SLUG = "zeroci-staging"
 
 [env.staging.observability]
 enabled = true

@@ -5,6 +5,8 @@ export interface InstallationRow {
 	id: number;
 	account_login: string;
 	account_type: "User" | "Organization";
+	/** JSON object of granted app permissions, e.g. `{"checks":"write"}`. */
+	permissions: string;
 	suspended_at: number | null;
 	deleted_at: number | null;
 	purge_after: number | null;
@@ -27,6 +29,11 @@ export async function upsertInstallation(db: D1Database, row: NewInstallation): 
 
 export async function getInstallation(db: D1Database, id: number): Promise<InstallationRow | null> {
 	return db.prepare("SELECT * FROM installations WHERE id = ?1").bind(id).first<InstallationRow>();
+}
+
+/** Stores the app permissions the installation currently grants. */
+export async function setInstallationPermissions(db: D1Database, id: number, permissions: Record<string, string>): Promise<void> {
+	await db.prepare("UPDATE installations SET permissions = ?2 WHERE id = ?1").bind(id, JSON.stringify(permissions)).run();
 }
 
 /** Sets suspended_at to at, or clears it with null (unsuspend). */

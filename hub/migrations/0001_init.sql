@@ -7,6 +7,8 @@ CREATE TABLE installations (
 	id INTEGER PRIMARY KEY,
 	account_login TEXT NOT NULL,
 	account_type TEXT NOT NULL CHECK (account_type IN ('User', 'Organization')),
+	-- JSON object of the app permissions the installation granted, e.g. {"checks":"write"}.
+	permissions TEXT NOT NULL DEFAULT '{}',
 	suspended_at INTEGER,
 	deleted_at INTEGER,
 	purge_after INTEGER,
