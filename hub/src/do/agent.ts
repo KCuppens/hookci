@@ -4,6 +4,7 @@
 // offline with the single alarm.
 
 import { DurableObject } from "cloudflare:workers";
+import { createCheckStateTable } from "../checks/coalesce";
 import { markAgentOffline, touchAgent } from "../db/agents";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import type { Env } from "../env";
@@ -68,6 +69,7 @@ const MIGRATIONS: ((sql: SqlStorage) => void)[] = [
 		sql.exec("CREATE TABLE hwm (direction TEXT PRIMARY KEY CHECK (direction IN ('in', 'out')), seq INTEGER NOT NULL)");
 	},
 	createTriggersTable,
+	createCheckStateTable,
 ];
 
 registerRunLifecycle();
@@ -499,7 +501,10 @@ export class AgentDO extends DurableObject<Env> {
 			}
 		}
 		if (pending || this.ctx.getWebSockets().some((ws) => ws.readyState === WebSocket.OPEN)) {
-			await this.ctx.storage.setAlarm(now + ALARM_INTERVAL_MS);
+			// A task may have asked for an earlier alarm than the regular tick; keep it.
+			const next = now + ALARM_INTERVAL_MS;
+			const set = await this.ctx.storage.getAlarm();
+			if (set === null || set <= now || set > next) await this.ctx.storage.setAlarm(next);
 		}
 	}
 }

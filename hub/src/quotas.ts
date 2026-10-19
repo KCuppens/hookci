@@ -12,4 +12,5 @@ export const QUOTAS = {
 	slackChannelPostPerSec: 1,
 	slackQueueMax: 500,
 	slackMaxAttempts: 5,
+	annotationsPerJob: 500,
 } as const;

@@ -268,7 +268,7 @@ describe("AgentDO run lifecycle", () => {
     expect(sink.calls).toContainEqual({
       op: "onJobUpdate",
       run: expect.objectContaining({ runId: "run_a" }),
-      job: { name: "build", state: "success", durationMs: 1200 },
+      job: expect.objectContaining({ name: "build", state: "success", durationMs: 1200 }),
     });
     expect(runUpdates(sink.calls).at(-1)).toEqual({ triggerId, runId: "run_a", state: "success", reason: undefined });
   });

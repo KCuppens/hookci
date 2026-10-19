@@ -20,6 +20,11 @@ export interface JobView {
 	state: RunState;
 	durationMs?: number;
 	summary?: string;
+	step?: string;
+	stepIndex?: number;
+	stepsTotal?: number;
+	/** Why the state last changed, as the agent reported it (for example "timeout"). */
+	reason?: string;
 }
 export interface RunView {
 	installationId: number;

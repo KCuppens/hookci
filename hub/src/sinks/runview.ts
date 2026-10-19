@@ -74,7 +74,14 @@ export async function loadRunView(
 		startedAt: run.started_at ?? undefined,
 		finishedAt: run.finished_at ?? undefined,
 		durationMs: run.duration_ms ?? undefined,
-		jobs: jobs.map((job) => ({ name: job.name, state: runState(job.state), durationMs: job.duration_ms ?? undefined })),
+		jobs: jobs.map((job) => ({
+			name: job.name,
+			state: runState(job.state),
+			durationMs: job.duration_ms ?? undefined,
+			step: job.step ?? undefined,
+			stepIndex: job.step_index ?? undefined,
+			stepsTotal: job.steps_total ?? undefined,
+		})),
 		currentJob: jobs.find((job) => job.state === "running")?.name,
 	};
 }

@@ -102,7 +102,7 @@ function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 
 /** Loads the run and hands it to fn for every sink, unless no sink is configured. */
 async function fanOutRun(dob: AgentDO, runId: string, fn: (sink: Sink, run: RunView) => Promise<void>): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId);
+	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
 	if (sinks.length === 0) return;
 	const run = await loadRunView(dob.bindings.DB, dob.installationId, { runId });
 	if (run) fanOut(dob.state, sinks, (sink) => fn(sink, run));
@@ -296,7 +296,7 @@ async function pendOfflineRuns(dob: AgentDO, now: number): Promise<boolean> {
 }
 
 async function notifyAgentOffline(dob: AgentDO): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId);
+	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
 	if (sinks.length === 0) return;
 	const agent = await getAgent(dob.tenant(), dob.agentId);
 	if (!agent) return;
@@ -368,7 +368,7 @@ export function registerRunLifecycle(): () => void {
 				});
 				await fanOutRun(dob, frame.run_id, async (sink, run) => {
 					const job = run.jobs.find((j) => j.name === name);
-					if (job) await sink.onJobUpdate(run, job);
+					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason });
 				});
 				return;
 			}

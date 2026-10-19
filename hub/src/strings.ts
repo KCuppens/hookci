@@ -2,6 +2,56 @@
 // functions taking those values.
 export const S = {
 	noChecks: "No checks detected: add `.zeroci.yml`",
+	checks: {
+		agent_offline: {
+			title: "Agent offline",
+			summary:
+				"The ZeroCIDeploy agent for this repo has not been seen for 10 minutes. The run starts automatically when it reconnects. Check the host with `zeroci doctor`.",
+		},
+		no_agent: {
+			title: "No agent paired",
+			summary: (hubOrigin: string, repo: string) =>
+				`No ZeroCIDeploy agent is paired for ${repo}. Pair one at ${hubOrigin}/start, then push again.`,
+		},
+		daily_cap: {
+			title: "Daily run limit reached",
+			summary: (cap: number) => `This installation started ${cap} runs today, the limit per UTC day. The limit resets at 00:00 UTC; push again after that.`,
+		},
+		fork_gated: {
+			title: "Waiting for approval",
+			summary: "This pull request comes from a fork. A maintainer with write access approves the run in Slack or with the Approve run button.",
+		},
+		fork_never: {
+			title: "Fork pull requests are disabled",
+			summary: "This repo's `.zeroci.yml` sets `forks: never`, so ZeroCI does not run pull requests from forks.",
+		},
+		suspended: {
+			title: "Installation suspended",
+			summary: "The ZeroCI GitHub App installation for this account is suspended. Runs start again once an owner unsuspends it.",
+		},
+		noConfigSummary: "Add a `.zeroci.yml` to this repo, then push again.",
+		state: {
+			queued: "Queued",
+			in_progress: "Running",
+			success: "Passed",
+			failure: "Failed",
+			timed_out: "Timed out",
+			cancelled: "Cancelled",
+			skipped: "Skipped",
+		},
+		failedJobs: (jobs: readonly string[]) => `Failed: ${jobs.join(", ")}`,
+		superseded: "A newer commit replaced this run.",
+		noJobs: "No jobs planned yet.",
+		jobLine: (name: string, state: string, duration?: string) => `- ${name}: ${state}${duration ? ` (${duration})` : ""}`,
+		stepProgress: (index: number, total: number, step: string) => `Step ${index} of ${total}: ${step}`,
+		currentStep: (step: string) => `Step: ${step}`,
+		tookDuration: (duration: string) => `Took ${duration}.`,
+		waitingToStart: "Waiting to start.",
+		configChecking: "Checking .zeroci.yml",
+		configValid: ".zeroci.yml is valid",
+		configInvalid: ".zeroci.yml has errors",
+		annotationsTruncated: (shown: number) => `Only the first ${shown} annotations are shown.`,
+	},
 	slack: {
 		working: "Working on it...",
 		slowDown: "Slow down: too many /zeroci commands in this workspace, try again in a minute.",

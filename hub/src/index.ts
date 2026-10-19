@@ -21,6 +21,7 @@ import { start, startStatus } from "./routes/start";
 import "./slack/commands";
 import "./webhook/authorization";
 import "./webhook/installation";
+import "./sinks/checks";
 
 export { AgentDO } from "./do/agent";
 export { SlackWorkspaceDO } from "./do/slack-workspace";

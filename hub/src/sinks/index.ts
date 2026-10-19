@@ -8,8 +8,14 @@ import type { Sink } from "./types";
 /** What fanOut needs from a Worker's ExecutionContext (Hono's included) or a DurableObjectState. */
 export type WaitUntil = Pick<ExecutionContext, "waitUntil">;
 
+/** The AgentDO a fan-out runs in, for sinks that keep state between calls; absent in the Worker. */
+export interface SinkHost {
+	storage: DurableObjectStorage;
+	now(): number;
+}
+
 /** Builds the named sink for an installation, or null when the installation does not use it. */
-export type SinkFactory = (env: Env, installationId: number) => Sink | null;
+export type SinkFactory = (env: Env, installationId: number, host?: SinkHost) => Sink | null;
 
 const factories = new Map<string, SinkFactory>();
 
@@ -22,11 +28,11 @@ export function registerSinkFactory(name: string, factory: SinkFactory): () => v
 }
 
 /** The sinks the installation uses; a factory that throws is reported and skipped. */
-export async function sinksFor(env: Env, installationId: number): Promise<Sink[]> {
+export async function sinksFor(env: Env, installationId: number, host?: SinkHost): Promise<Sink[]> {
 	const sinks: Sink[] = [];
 	for (const [name, factory] of factories) {
 		try {
-			const sink = factory(env, installationId);
+			const sink = factory(env, installationId, host);
 			if (sink) sinks.push(sink);
 		} catch (err) {
 			reportError(err, { sink: name, installation_id: installationId, op: "sink_factory" });
