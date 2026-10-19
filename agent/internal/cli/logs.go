@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 )
@@ -55,18 +56,30 @@ func runLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// Specific job log requested
 	if fs.NArg() > 1 {
 		jobName := fs.Arg(1)
-		logFile := logpipe.LogPath(stateDir, runID, jobName)
+		logFile := logpipe.LogPath(filepath.Join(stateDir, "runs", runID), jobName)
 
 		if follow {
-			ch, err := logpipe.TailFile(ctx, logFile)
-			if err != nil {
-				fmt.Fprintf(stderr, "zeroci: log not found for job %q: %v\n", jobName, err)
-				return ExitUsage
+			var off int64
+			for {
+				data, next, err := logpipe.ReadLog(logFile, off)
+				if err != nil {
+					if off == 0 {
+						fmt.Fprintf(stderr, "zeroci: log not found for job %q: %v\n", jobName, err)
+						return ExitUsage
+					}
+					fmt.Fprintf(stderr, "zeroci: read log: %v\n", err)
+					return ExitInternal
+				}
+				if _, err := stdout.Write(data); err != nil {
+					return ExitInternal
+				}
+				off = next
+				select {
+				case <-ctx.Done():
+					return ExitOK
+				case <-time.After(50 * time.Millisecond):
+				}
 			}
-			for line := range ch {
-				fmt.Fprintln(stdout, line)
-			}
-			return ExitOK
 		}
 
 		f, err := os.Open(logFile)

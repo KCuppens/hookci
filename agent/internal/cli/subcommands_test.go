@@ -50,7 +50,7 @@ func TestLogsFollowMissingLogExits(t *testing.T) {
 
 func TestLogsFollowStopsOnCancel(t *testing.T) {
 	stateDir := t.TempDir()
-	logFile := logpipe.LogPath(stateDir, "01j7run", "lint")
+	logFile := logpipe.LogPath(filepath.Join(stateDir, "runs", "01j7run"), "lint")
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		t.Fatal(err)
 	}

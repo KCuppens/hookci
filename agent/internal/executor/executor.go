@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -98,13 +99,19 @@ func (e *Executor) ExecuteRun(
 	if cfg == nil || cfg.ZeroCIConfig.Checks == nil {
 		return fmt.Errorf("config has no checks")
 	}
+	resolved := cfg.Checks()
+	var patterns []*regexp.Regexp
+	if resolved != nil {
+		patterns = resolved.Redact
+	}
+	redactor, _ := redact.New(e.secrets, patterns)
 	r := &runRunner{
 		e:           e,
 		checks:      cfg.ZeroCIConfig.Checks,
-		resolved:    cfg.Checks(),
+		resolved:    resolved,
 		workDir:     workDir,
 		isProtected: isProtected,
-		redactor:    redact.New(e.secrets...),
+		redactor:    redactor,
 	}
 	sched := scheduler.New(e.store, r, scheduler.Options{Slots: e.slots})
 	defer sched.Close()
@@ -150,7 +157,7 @@ func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 		pg := r.resolved.Services.Postgres
 		p, err := services.StartPostgres(ctx, services.PostgresOptions{
 			RunID:       run.ID,
-			RunDir:      filepath.Join(e.stateDir, "runs", run.ID),
+			RunDir:      r.runDir(run.ID),
 			Image:       pg.Image,
 			Tmpfs:       pg.Tmpfs,
 			CPUs:        r.resolved.Limits.CPUs,
@@ -186,7 +193,7 @@ func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 	if len(checks.Setup) == 0 {
 		return nil
 	}
-	pipe, err := logpipe.New(logpipe.LogPath(e.stateDir, run.ID, "setup"), r.redactor)
+	pipe, err := logpipe.New(logpipe.Options{RunDir: r.runDir(run.ID), Job: "setup", Redactor: r.redactor, Workdir: r.workDir})
 	if err != nil {
 		return fmt.Errorf("create setup logpipe: %w", err)
 	}
@@ -200,8 +207,8 @@ func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 			Env:            r.jobEnv(),
 			Limits:         isolation.Limits{Timeout: e.defaultTimeout},
 			ReadWritePaths: []string{r.workDir},
-			Stdout:         pipe,
-			Stderr:         pipe,
+			Stdout:         pipe.Stdout(),
+			Stderr:         pipe.Stderr(),
 		})
 		if err != nil {
 			return fmt.Errorf("setup execution error: %w", err)
@@ -220,7 +227,11 @@ func (r *runRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 	if !ok {
 		return scheduler.JobOutcome{}, fmt.Errorf("job %s is not in the config", job.Name)
 	}
-	pipe, err := logpipe.New(logpipe.LogPath(e.stateDir, run.ID, job.Name), r.redactor)
+	annotate := ""
+	if cj.Annotate != nil {
+		annotate = string(*cj.Annotate)
+	}
+	pipe, err := logpipe.New(logpipe.Options{RunDir: r.runDir(run.ID), Job: job.Name, Redactor: r.redactor, Annotate: annotate, Workdir: r.workDir})
 	if err != nil {
 		return scheduler.JobOutcome{}, fmt.Errorf("create job logpipe: %w", err)
 	}
@@ -237,8 +248,8 @@ func (r *runRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 		Env:            r.jobEnv(),
 		Limits:         isolation.Limits{Timeout: timeout},
 		ReadWritePaths: []string{r.workDir},
-		Stdout:         pipe,
-		Stderr:         pipe,
+		Stdout:         pipe.Stdout(),
+		Stderr:         pipe.Stderr(),
 	})
 	switch {
 	case ctx.Err() != nil || res.Cancelled:
@@ -252,6 +263,10 @@ func (r *runRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 	default:
 		return scheduler.JobOutcome{State: store.JobSuccess}, nil
 	}
+}
+
+func (r *runRunner) runDir(runID string) string {
+	return filepath.Join(r.e.stateDir, "runs", runID)
 }
 
 // jobPATH is the PATH jobs get under systemd; the none backend keeps the
