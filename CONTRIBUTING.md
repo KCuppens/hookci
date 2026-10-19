@@ -1,107 +1,68 @@
-# Contributing to ZeroCIDeploy
+# Contributing to zerocideploy
 
-ZeroCIDeploy runs PR checks and zero-downtime deploys on your own servers. This document describes the monorepo structure, local verification requirements, coding standards, and submission workflow.
-
----
-
-## Monorepo Layout
-
-```
-.
-├── agent/       # Go agent daemon and CLI (`zeroci`)
-├── hub/         # Cloudflare Worker coordination hub (`zeroci-hub`)
-├── schema/      # Canonical JSON Schema (`zeroci.schema.json`)
-├── examples/    # Example target repositories and fixture apps
-├── scripts/     # Verification and codegen automation
-└── Makefile     # Unified build and test targets
-```
-
----
+Thanks for helping. This document covers what you need to build, test and submit a change. By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Prerequisites
 
-- **Go**: 1.24 or newer (`CGO_ENABLED=0`)
-- **Node.js**: 20+ with `npm`
-- **Make**: Standard POSIX `make`
+- Go 1.26 or newer (`agent/go.mod` requires it).
+- Node.js 20 or newer with `npm`.
+- POSIX `make` and `sh`.
 
----
+## Verify before every PR
 
-## Local Verification (No CI)
+Run this from the repository root before opening or updating a pull request:
 
-ZeroCIDeploy does not use GitHub Actions. All pull requests are verified locally by contributors and maintainers prior to merge.
-
-Run the full verification suite before committing:
-
-```bash
+```sh
 make check
 ```
 
-`make check` executes `scripts/check.sh`, which performs:
-1. `agent`: Code formatting verification (`gofmt -l .`).
-2. `agent`: Static analysis (`go vet ./...`).
-3. `agent`: Unit tests (`go test ./...`).
-4. `hub`: Clean dependency install (`npm ci`).
-5. `hub`: Test suite execution (`npm test`).
-6. `hub`: Cloudflare Worker dry-run deployment (`npx wrangler deploy --dry-run --outdir dist`).
+It runs `scripts/check.sh`, which must end with `check: ok`. The script:
 
-### Integration Tests
+1. Regenerates types with `scripts/gen-schema.sh` and fails if the committed generated files differ (codegen drift).
+2. Checks Go formatting with `gofmt -l`.
+3. Runs `go vet ./...` and `go test ./...` in `agent/`.
+4. Runs `npm ci` and `npm test` in `hub/`.
+5. Runs `npx wrangler deploy --dry-run --outdir dist` in `hub/`.
 
-Tests that require elevated Linux permissions (systemd transient units, network namespaces via `pasta`, Docker containers) are tagged with `//go:build integration` and guarded by `testutil.RequireIntegration(t)`.
+The project has no GitHub Actions workflows and never will. It verifies itself with `scripts/check.sh`. Do not add anything under `.github/workflows/`.
 
-Unit tests must never require root. Integration tests are executed on dedicated throwaway VMs via:
+## Regenerating types
 
-```bash
+`schema/zeroci.schema.json` is the source of truth for the config format and the agent/hub protocol. After changing it, run:
+
+```sh
+make schema
+```
+
+and commit the regenerated Go and TypeScript files together with the schema change. Generated files are committed and must not be edited by hand.
+
+## Coding conventions
+
+- Wrap errors with context: `fmt.Errorf("open store: %w", err)`.
+- Use sentinel errors (`var ErrNotFound = errors.New(...)`) for conditions callers check with `errors.Is`.
+- `ctx context.Context` is the first parameter of any function that does I/O or runs processes.
+- Log with `log/slog`.
+- Write table-driven tests.
+- Golden files live in `testdata/` and are compared with `testutil.Golden`. Refresh them with `go test ./internal/<pkg> -update` and review the diff.
+- Every external command goes through `execx.Runner`. Unit tests use `execx.Fake` and never run real commands, touch the network or need root.
+- The Go agent uses the standard library first. Any new dependency needs a justification in the pull request.
+
+## Integration tests
+
+Tests that need root (systemd units, network namespaces, containers) start with `//go:build integration` and call `testutil.RequireIntegration(t)`, which skips unless `ZEROCI_INTEGRATION=1`, the OS is Linux and the user is root. Run them with:
+
+```sh
 make test-integration
 ```
 
----
+Only run them on a disposable VM, never on a workstation.
 
-## Coding Standards
+## Sign-off (DCO)
 
-### Go (`agent/`)
+Every commit must carry a `Signed-off-by:` trailer, added with `git commit -s`. The trailer certifies the [Developer Certificate of Origin](DCO.md), which also explains how to fix a missing sign-off.
 
-- **Dependencies**: Default to the Go standard library. Only approved external dependencies may be introduced (`modernc.org/sqlite`, `gopkg.in/yaml.v3`, `github.com/santhosh-tekuri/jsonschema/v6`, `golang.org/x/sys`). Any other dependency requires justification in the pull request.
-- **Commands & System Calls**: All external commands (`systemd-run`, `git`, `docker`, `pasta`, `ip`) must go through `execx.Runner`. Unit tests use `execx.Fake` rather than executing commands on the host.
-- **Context & Errors**: Pass `context.Context` as the first argument to functions performing I/O or process control. Wrap errors with `fmt.Errorf("operation: %w", err)`. Define sentinel errors (`var Err... = errors.New(...)`) for identifiable failure conditions. Never panic in non-CLI library code.
-- **Logging**: Use `log/slog` directed to `os.Stderr`.
-- **Testing**: Table-driven tests with standard `testing` package. Use `t.TempDir()` for temporary directories. Golden files belong under `testdata/`.
-- **Exit Codes**:
-  - `0`: Success / check passed
-  - `1`: Run failed (one or more checks failed)
-  - `2`: CLI usage or configuration syntax error
-  - `3`: No checks detected in target repository
-  - `4`: Internal or unrecoverable error
+## Pull requests
 
-### TypeScript / Cloudflare Worker (`hub/`)
-
-- Test handlers using Vitest with `@cloudflare/vitest-pool-workers`.
-- Maintain valid TypeScript configurations in `hub/tsconfig.json`.
-- Do not run live wrangler deployments from local development. Only dry-run checks (`--dry-run`) are permitted.
-
----
-
-## Developer Certificate of Origin (DCO)
-
-All commits to ZeroCIDeploy must include a Developer Certificate of Origin sign-off line in the commit message:
-
-```
-Signed-off-by: Random J Developer <random@developer.example.org>
-```
-
-Use the `-s` flag with `git commit`:
-
-```bash
-git commit -s -m "component: concise summary"
-```
-
-By adding this trailer, you certify the statements in [DCO](./DCO).
-
----
-
-## Submitting Pull Requests
-
-1. **Branch**: Create a branch off `main` with a descriptive name (e.g. `feat/feature-name` or `kobe/issue-description`).
-2. **Verify**: Ensure `make check` passes cleanly.
-3. **Commit**: Keep commits focused and atomic, signed off with `-s`.
-4. **No CI Workflows**: Do not commit files under `.github/workflows/`.
-5. **Open PR**: Submit a pull request against `main` using the provided pull request template.
+- One pull request per logical change. Split unrelated fixes into separate pull requests.
+- Fill in the pull request template, including the linked ticket.
+- Keep commits focused and signed off.
