@@ -9,8 +9,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+)
+
+// TrustDomain partitions caches so untrusted runs never write what trusted
+// runs restore.
+type TrustDomain string
+
+const (
+	TrustDomainUntrusted TrustDomain = "untrusted"
+	TrustDomainTrusted   TrustDomain = "trusted"
+	TrustDomainLocal     TrustDomain = "local"
 )
 
 // Manager manages copy-on-write caches for job steps.
@@ -32,18 +41,18 @@ func NewManager(baseDir string, runner execx.Runner) *Manager {
 
 // CanWrite determines if the given trust domain and ref are permitted to write to cache.
 // Rule: only trusted runs pushing to protected refs and local runs write caches.
-func CanWrite(domain egress.TrustDomain, isProtectedRef bool) bool {
-	if domain == egress.TrustDomainLocal {
+func CanWrite(domain TrustDomain, isProtectedRef bool) bool {
+	if domain == TrustDomainLocal {
 		return true
 	}
-	if domain == egress.TrustDomainTrusted && isProtectedRef {
+	if domain == TrustDomainTrusted && isProtectedRef {
 		return true
 	}
 	return false
 }
 
 // KeyDir returns the filesystem directory storing the cache for the given trust domain and key.
-func (m *Manager) KeyDir(domain egress.TrustDomain, key string) string {
+func (m *Manager) KeyDir(domain TrustDomain, key string) string {
 	clean := filepath.Clean(key)
 	if !filepath.IsLocal(key) || clean == "." {
 		h := sha256.Sum256([]byte(key))
@@ -55,12 +64,12 @@ func (m *Manager) KeyDir(domain egress.TrustDomain, key string) string {
 
 // Restore restores cache into targetDir using copy-on-write (cp --reflink=auto -a) or fallback copy.
 // If domain cache doesn't exist, it attempts to fall back to the trusted domain cache.
-func (m *Manager) Restore(ctx context.Context, domain egress.TrustDomain, key, targetDir string) (bool, error) {
+func (m *Manager) Restore(ctx context.Context, domain TrustDomain, key, targetDir string) (bool, error) {
 	src := m.KeyDir(domain, key)
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		// Fallback: untrusted or local runs can restore from trusted cache if present
-		if domain != egress.TrustDomainTrusted {
-			src = m.KeyDir(egress.TrustDomainTrusted, key)
+		if domain != TrustDomainTrusted {
+			src = m.KeyDir(TrustDomainTrusted, key)
 			if _, err := os.Stat(src); os.IsNotExist(err) {
 				return false, nil
 			}
@@ -89,7 +98,7 @@ func (m *Manager) Restore(ctx context.Context, domain egress.TrustDomain, key, t
 }
 
 // Save persists the contents of sourceDir to the cache for domain and key.
-func (m *Manager) Save(ctx context.Context, domain egress.TrustDomain, isProtectedRef bool, key, sourceDir string) error {
+func (m *Manager) Save(ctx context.Context, domain TrustDomain, isProtectedRef bool, key, sourceDir string) error {
 	if !CanWrite(domain, isProtectedRef) {
 		// Gated: silently skip or return nil
 		return nil

@@ -12,7 +12,6 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/cache"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
@@ -92,7 +91,7 @@ func (e *Executor) ExecuteRun(
 	runID string,
 	cfg *config.Config,
 	workDir string,
-	domain egress.TrustDomain,
+	domain cache.TrustDomain,
 	isProtected bool,
 ) error {
 	if cfg == nil || cfg.ZeroCIConfig.Checks == nil {
@@ -132,7 +131,7 @@ type runRunner struct {
 	e           *Executor
 	checks      *config.Checks
 	workDir     string
-	domain      egress.TrustDomain
+	domain      cache.TrustDomain
 	isProtected bool
 	redactor    *redact.Redactor
 

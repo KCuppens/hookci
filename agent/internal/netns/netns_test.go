@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
 )
@@ -27,7 +26,7 @@ func TestNetnsCreateWithTools(t *testing.T) {
 	mgr := NewManager(fake)
 	ctx := context.Background()
 
-	ns, err := mgr.Create(ctx, "01j7test", 41234, egress.TrustDomainUntrusted)
+	ns, err := mgr.Create(ctx, "01j7test", 41234, false)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -76,7 +75,7 @@ func TestNetnsUntrustedMissingToolsRejects(t *testing.T) {
 	mgr := NewManager(fake)
 	ctx := context.Background()
 
-	_, err := mgr.Create(ctx, "01j7test", 41234, egress.TrustDomainUntrusted)
+	_, err := mgr.Create(ctx, "01j7test", 41234, false)
 	if !errors.Is(err, ErrUntrustedRequiresNetns) {
 		t.Errorf("expected ErrUntrustedRequiresNetns, got %v", err)
 	}
@@ -96,7 +95,7 @@ func TestNetnsTrustedMissingToolsFallback(t *testing.T) {
 	mgr := NewManager(fake)
 	ctx := context.Background()
 
-	ns, err := mgr.Create(ctx, "01j7test", 41234, egress.TrustDomainTrusted)
+	ns, err := mgr.Create(ctx, "01j7test", 41234, true)
 	if err != nil {
 		t.Fatalf("unexpected error for trusted fallback: %v", err)
 	}
@@ -135,7 +134,7 @@ func TestNetnsIntegration(t *testing.T) {
 	ctx := context.Background()
 	runID := "integtest"
 
-	ns, err := mgr.Create(ctx, runID, 3128, egress.TrustDomainUntrusted)
+	ns, err := mgr.Create(ctx, runID, 3128, false)
 	if err != nil {
 		t.Fatalf("Create netns failed: %v", err)
 	}

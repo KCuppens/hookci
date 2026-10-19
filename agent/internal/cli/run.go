@@ -13,7 +13,6 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/cache"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/detect"
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
@@ -201,7 +200,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		DefaultTimeout: executor.ParseTimeout(&timeoutStr, 10*time.Minute),
 	})
 
-	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, egress.TrustDomainLocal, true)
+	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, cache.TrustDomainLocal, true)
 
 	// Stop drain loop and do a final drain
 	cancelDrain()

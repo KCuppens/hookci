@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 )
 
@@ -75,12 +74,12 @@ func (m *Manager) HasTools() bool {
 
 // Create provisions a dedicated network namespace for runID with pasta forwarding,
 // or activates fallback restrictions if tools are absent.
-func (m *Manager) Create(ctx context.Context, runID string, proxyPort int, trustDomain egress.TrustDomain) (*Namespace, error) {
+func (m *Manager) Create(ctx context.Context, runID string, proxyPort int, trusted bool) (*Namespace, error) {
 	hasTools := m.HasTools()
 
 	if !hasTools {
 		// Untrusted runs refuse to run without netns
-		if trustDomain == egress.TrustDomainUntrusted {
+		if !trusted {
 			return nil, ErrUntrustedRequiresNetns
 		}
 

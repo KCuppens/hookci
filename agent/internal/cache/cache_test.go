@@ -8,22 +8,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 )
 
 func TestCanWrite(t *testing.T) {
 	tests := []struct {
-		domain    egress.TrustDomain
+		domain    TrustDomain
 		protected bool
 		want      bool
 	}{
-		{egress.TrustDomainLocal, false, true},
-		{egress.TrustDomainLocal, true, true},
-		{egress.TrustDomainTrusted, true, true},
-		{egress.TrustDomainTrusted, false, false},
-		{egress.TrustDomainUntrusted, true, false},
-		{egress.TrustDomainUntrusted, false, false},
+		{TrustDomainLocal, false, true},
+		{TrustDomainLocal, true, true},
+		{TrustDomainTrusted, true, true},
+		{TrustDomainTrusted, false, false},
+		{TrustDomainUntrusted, true, false},
+		{TrustDomainUntrusted, false, false},
 	}
 
 	for _, tt := range tests {
@@ -49,14 +48,14 @@ func TestSaveAndRestoreReal(t *testing.T) {
 	}
 
 	// 1. Save cache for trusted + protected
-	err := mgr.Save(ctx, egress.TrustDomainTrusted, true, "test-key", srcDir)
+	err := mgr.Save(ctx, TrustDomainTrusted, true, "test-key", srcDir)
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	// 2. Restore cache in targetDir
 	targetDir := filepath.Join(t.TempDir(), "target")
-	restored, err := mgr.Restore(ctx, egress.TrustDomainTrusted, "test-key", targetDir)
+	restored, err := mgr.Restore(ctx, TrustDomainTrusted, "test-key", targetDir)
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -74,7 +73,7 @@ func TestSaveAndRestoreReal(t *testing.T) {
 
 	// 3. Untrusted run restores from trusted cache
 	untrustedTarget := filepath.Join(t.TempDir(), "untrusted-target")
-	restoredUntrusted, err := mgr.Restore(ctx, egress.TrustDomainUntrusted, "test-key", untrustedTarget)
+	restoredUntrusted, err := mgr.Restore(ctx, TrustDomainUntrusted, "test-key", untrustedTarget)
 	if err != nil {
 		t.Fatalf("Restore untrusted failed: %v", err)
 	}
@@ -86,11 +85,11 @@ func TestSaveAndRestoreReal(t *testing.T) {
 	untrustedSrc := filepath.Join(t.TempDir(), "untrusted-src")
 	_ = os.MkdirAll(untrustedSrc, 0755)
 	_ = os.WriteFile(filepath.Join(untrustedSrc, "evil.txt"), []byte("evil"), 0644)
-	err = mgr.Save(ctx, egress.TrustDomainUntrusted, true, "evil-key", untrustedSrc)
+	err = mgr.Save(ctx, TrustDomainUntrusted, true, "evil-key", untrustedSrc)
 	if err != nil {
 		t.Fatalf("Save untrusted failed: %v", err)
 	}
-	if _, err := os.Stat(mgr.KeyDir(egress.TrustDomainUntrusted, "evil-key")); !os.IsNotExist(err) {
+	if _, err := os.Stat(mgr.KeyDir(TrustDomainUntrusted, "evil-key")); !os.IsNotExist(err) {
 		t.Errorf("expected untrusted cache to not be written")
 	}
 }
@@ -107,7 +106,7 @@ func TestReflinkCmdExecution(t *testing.T) {
 	_ = os.MkdirAll(srcDir, 0755)
 	_ = os.WriteFile(filepath.Join(srcDir, "data.bin"), []byte("data"), 0644)
 
-	err := mgr.Save(ctx, egress.TrustDomainLocal, false, "cache-1", srcDir)
+	err := mgr.Save(ctx, TrustDomainLocal, false, "cache-1", srcDir)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -124,12 +123,12 @@ func TestReflinkCmdExecution(t *testing.T) {
 func TestKeyDirSanitization(t *testing.T) {
 	baseDir := filepath.Join(string(filepath.Separator), "cache")
 	mgr := NewManager(baseDir, nil)
-	domainDir := filepath.Join(baseDir, string(egress.TrustDomainUntrusted))
+	domainDir := filepath.Join(baseDir, string(TrustDomainUntrusted))
 	hashed := regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 	t.Run("safe key kept as is", func(t *testing.T) {
 		for _, key := range []string{"npm-abc123", "go/mod-v1", "v1..2"} {
-			got := mgr.KeyDir(egress.TrustDomainUntrusted, key)
+			got := mgr.KeyDir(TrustDomainUntrusted, key)
 			if want := filepath.Join(domainDir, key); got != want {
 				t.Errorf("KeyDir(%q) = %q, want %q", key, got, want)
 			}
@@ -138,15 +137,15 @@ func TestKeyDirSanitization(t *testing.T) {
 
 	for _, key := range []string{"../../etc/cron.d", "/etc/x", ".", "", "a/../../b"} {
 		t.Run("unsafe "+key, func(t *testing.T) {
-			got := mgr.KeyDir(egress.TrustDomainUntrusted, key)
+			got := mgr.KeyDir(TrustDomainUntrusted, key)
 			if filepath.Dir(got) != domainDir || !hashed.MatchString(filepath.Base(got)) {
 				t.Fatalf("KeyDir(%q) = %q, want one hex name directly under %q", key, got, domainDir)
 			}
 		})
 	}
 
-	a := mgr.KeyDir(egress.TrustDomainUntrusted, "/etc/x")
-	b := mgr.KeyDir(egress.TrustDomainUntrusted, "../../etc/cron.d")
+	a := mgr.KeyDir(TrustDomainUntrusted, "/etc/x")
+	b := mgr.KeyDir(TrustDomainUntrusted, "../../etc/cron.d")
 	if a == b {
 		t.Errorf("distinct unsafe keys collided: %q", a)
 	}
