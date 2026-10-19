@@ -30,6 +30,18 @@ export async function markDelivery(db: D1Database, deliveryId: string, status: D
 	await db.prepare("UPDATE deliveries SET status = ?2, note = ?3 WHERE delivery_id = ?1").bind(deliveryId, status, note).run();
 }
 
+/**
+ * Claims a delivery recorded as failed for another attempt, as when GitHub
+ * redelivers it under the same delivery id; false unless it had failed.
+ */
+export async function reclaimFailedDelivery(db: D1Database, deliveryId: string): Promise<boolean> {
+	const res = await db
+		.prepare("UPDATE deliveries SET status = 'processed', note = NULL WHERE delivery_id = ?1 AND status = 'failed'")
+		.bind(deliveryId)
+		.run();
+	return res.meta.changes === 1;
+}
+
 // ip_rate rows only matter inside their rate window, the longest of which is
 // 10 minutes; an hour-old window is dead.
 const IP_RATE_TTL_MS = 60 * 60 * 1000;

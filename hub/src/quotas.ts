@@ -5,4 +5,5 @@ export const QUOTAS = {
 	logBytes: 10_485_760,
 	retentionDays: 14,
 	slackCmdsPerMin: 60,
+	webhooksPerInstallationPerMin: 600,
 } as const;
