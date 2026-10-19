@@ -1,5 +1,6 @@
 import type { AgentDO } from "./do/agent";
 import type { Clock } from "./do/clock";
+import type { SlackWorkspaceDO } from "./do/slack-workspace";
 import type { Fetcher } from "./http";
 
 // Worker bindings. DB, LOGS, the Durable Objects and the vars come from
@@ -8,7 +9,7 @@ export interface Env {
 	DB: D1Database;
 	LOGS: R2Bucket;
 	AGENT_DO: DurableObjectNamespace<AgentDO>;
-	SLACK_DO: DurableObjectNamespace;
+	SLACK_DO: DurableObjectNamespace<SlackWorkspaceDO>;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
 	/** The public GitHub App's URL slug: https://github.com/apps/<slug>. */

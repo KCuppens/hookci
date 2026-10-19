@@ -1,6 +1,6 @@
-// Webhook delivery dedupe and expiry of the short-lived global tables. A
-// delivery is recorded before its installation is known to exist, so these
-// helpers take the raw D1Database.
+// Webhook delivery and Slack event dedupe, and expiry of the short-lived
+// global tables. A delivery is recorded before its installation is known to
+// exist, so these helpers take the raw D1Database.
 
 export type DeliveryStatus = "processed" | "dropped" | "failed";
 
@@ -40,6 +40,15 @@ export async function reclaimFailedDelivery(db: D1Database, deliveryId: string):
 		.bind(deliveryId)
 		.run();
 	return res.meta.changes === 1;
+}
+
+/** Records a Slack event id until expiresAt; false when it was already recorded. */
+export async function recordSlackEvent(db: D1Database, eventId: string, expiresAt: number): Promise<boolean> {
+	const row = await db
+		.prepare("INSERT INTO slack_events (event_id, expires_at) VALUES (?1, ?2) ON CONFLICT DO NOTHING RETURNING event_id")
+		.bind(eventId, expiresAt)
+		.first<{ event_id: string }>();
+	return row !== null;
 }
 
 // ip_rate rows only matter inside their rate window, the longest of which is

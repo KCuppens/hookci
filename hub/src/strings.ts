@@ -2,8 +2,13 @@
 // functions taking those values.
 export const S = {
 	noChecks: "No checks detected: add `.zeroci.yml`",
-	slowDown: "Slow down: too many /zeroci commands in this workspace, try again in a minute.",
-	updating: "ZeroCI is updating, retry in a minute",
+	slack: {
+		working: "Working on it...",
+		slowDown: "Slow down: too many /zeroci commands in this workspace, try again in a minute.",
+		updating: "ZeroCI is updating, try again in a minute.",
+		failed: "Something went wrong running that. Try again in a minute.",
+		help: "Usage: /zeroci <command>. Commands are not available yet.",
+	},
 	agentProtocolUnsupported: (version: string, min: number, max: number) =>
 		`Agent protocol ${version} is not supported; this hub accepts ${min} to ${max}.`,
 	agentUpgradeHint: "run: sudo zeroci upgrade",
