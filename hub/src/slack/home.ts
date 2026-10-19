@@ -49,19 +49,32 @@ export interface HomeData {
 	installations: HomeInstallation[];
 }
 
-/** The hint to upgrade an agent behind the hub's protocol or minor version; undefined when current or unknown. */
-export function upgradeHint(protocol: number | null, agentVersion: string | null, hubVersion: string): string | undefined {
-	if (protocol !== null && protocol < PROTOCOL_MAX) return S.home.upgradeAvailable(hubVersion);
-	const agent = majorMinor(agentVersion);
-	const hub = majorMinor(hubVersion);
-	if (!agent || !hub) return undefined;
-	if (agent[0] < hub[0] || (agent[0] === hub[0] && agent[1] < hub[1])) return S.home.upgradeAvailable(hubVersion);
-	return undefined;
+/**
+ * The hint to upgrade an agent on an older protocol, or older than the hub's
+ * recommended agent version (empty when unknown); undefined when current or
+ * the agent's version is unknown.
+ */
+export function upgradeHint(protocol: number | null, agentVersion: string | null, latestAgentVersion: string): string | undefined {
+	if (protocol !== null && protocol < PROTOCOL_MAX) return S.home.upgradeAvailable(latestAgentVersion);
+	const agent = parseVersion(agentVersion);
+	const latest = parseVersion(latestAgentVersion);
+	if (!agent || !latest) return undefined;
+	return isOlder(agent, latest) ? S.home.upgradeAvailable(latestAgentVersion) : undefined;
 }
 
-function majorMinor(version: string | null): [number, number] | null {
-	const m = version?.match(/^v?(\d+)\.(\d+)\./);
-	return m ? [Number(m[1]), Number(m[2])] : null;
+type Version = { core: [number, number, number]; prerelease: boolean };
+
+function parseVersion(version: string | null): Version | null {
+	const m = version?.match(/^v?(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/);
+	return m ? { core: [Number(m[1]), Number(m[2]), Number(m[3])], prerelease: m[4] !== undefined } : null;
+}
+
+/** a < b by major, minor, patch; a prerelease sorts below its release. */
+function isOlder(a: Version, b: Version): boolean {
+	for (let i = 0; i < 3; i++) {
+		if (a.core[i] !== b.core[i]) return (a.core[i] ?? 0) < (b.core[i] ?? 0);
+	}
+	return a.prerelease && !b.prerelease;
 }
 
 /** The AgentDO's live status, or null when it fails or takes longer than a second. */
@@ -82,7 +95,7 @@ async function homeAgents(env: Env, rows: AgentRow[]): Promise<HomeAgent[]> {
 		const revoked = row.status === "revoked" || row.revoked_at !== null;
 		const lastSeen = status?.last_seen_at ?? row.last_seen_at;
 		const agentVersion = status?.agent_version ?? row.agent_version;
-		const hint = revoked ? undefined : upgradeHint(status?.protocol ?? row.protocol_version, agentVersion, env.HUB_VERSION);
+		const hint = revoked ? undefined : upgradeHint(status?.protocol ?? row.protocol_version, agentVersion, env.LATEST_AGENT_VERSION);
 		return {
 			agentId: row.agent_id,
 			installationId: row.installation_id,
@@ -177,9 +190,14 @@ function installationBlocks(inst: HomeInstallation, runs: number, repos: number)
 	return blocks;
 }
 
-/** The Home tab view. Over 100 blocks it drops runs first, then repos, and ends with a truncation note. */
-export function renderHome(data: HomeData): SlackView {
+/**
+ * The Home tab view, led by notice when an action has something to tell the
+ * user. Over 100 blocks it drops runs first, then repos, and ends with a
+ * truncation note.
+ */
+export function renderHome(data: HomeData, notice?: string): SlackView {
 	const lead: unknown[] = [];
+	if (notice !== undefined) lead.push(section(notice));
 	if (!data.linked) lead.push(section(S.home.linkPrompt));
 	if (data.installations.length === 0) lead.push(section(S.home.noInstallations));
 	const footer = actions(button("home:refresh", S.home.refresh, "refresh"));
@@ -205,11 +223,11 @@ export function renderHome(data: HomeData): SlackView {
 }
 
 /**
- * Publishes the Home tab for slackUserId. Calls slackApi directly; once the
- * outbound Slack queue lands this is the one place to route through it.
+ * Publishes the Home tab for slackUserId, led by notice when given: Home tab
+ * actions have no response_url, so this is how their replies reach the user.
  */
-export async function publishHome(env: Env, teamId: string, slackUserId: string): Promise<void> {
-	const view = renderHome(await loadHomeData(env, teamId, slackUserId));
+export async function publishHome(env: Env, teamId: string, slackUserId: string, notice?: string): Promise<void> {
+	const view = renderHome(await loadHomeData(env, teamId, slackUserId), notice);
 	try {
 		await slackApi(env, teamId, "views.publish", { user_id: slackUserId, view });
 	} catch (err) {

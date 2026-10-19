@@ -155,7 +155,7 @@ export const S = {
 		agentOffline: (since: string) => `:black_circle: offline since ${since}`,
 		agentNeverSeen: ":black_circle: offline, never connected",
 		agentRevoked: ":white_circle: revoked",
-		upgradeAvailable: (hubVersion: string) => `upgrade available (hub ${hubVersion}): run sudo zeroci upgrade`,
+		upgradeAvailable: (latestAgentVersion: string) => `upgrade available${latestAgentVersion ? ` (${latestAgentVersion})` : ""}: run sudo zeroci upgrade`,
 		repos: "*Repos*",
 		noRepos: "No watched repos. Run `/zeroci watch <owner/repo>` in a channel.",
 		runs: "*Recent runs*",

@@ -8,7 +8,7 @@ import { tenantDb } from "../../src/db/tenant";
 import { AgentDO } from "../../src/do/agent";
 import { registerFrameHandler } from "../../src/do/agent-frames";
 import { registerOfflineHook } from "../../src/do/agent-hooks";
-import { MAX_FRAME_BYTES, PROTOCOL_MAX, PROTOCOL_MIN } from "../../src/do/agent-protocol";
+import { MAX_FRAME_BYTES, MAX_FRAMES_PER_SECOND, PROTOCOL_MAX, PROTOCOL_MIN } from "../../src/do/agent-protocol";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { AGENT_VERSION, type Agent, connect, connectRequest, seedAgent as seedAgentIn } from "./agent-socket";
@@ -345,16 +345,27 @@ describe("AgentDO connection", () => {
   });
 
   it("frame flood is rate_limited", async () => {
-    // The test runtime delivers frames slower than 200/s, so all of them
-    // arrive at one frozen instant.
+    // Frozen, so every frame lands in the same one-second window.
     vi.spyOn(testClock, "now").mockReturnValue(testClock.now());
     const agent = await seedAgent();
     const sock = await connect(agent);
     await sock.hello();
 
-    // hello is frame 1 of the second; event 200 is frame 201.
-    for (let seq = 1; seq <= 200; seq++) sock.send(event(seq));
-    for (let seq = 1; seq <= 199; seq++) expect(await sock.next()).toEqual({ v: 1, type: "ack", upto: seq });
+    // Stand in for the flood without sending it: the window already holds
+    // MAX_FRAMES_PER_SECOND - 1 frames, hello among them.
+    await runInDurableObject(agent.stub, (_dob, state) => {
+      const sockets = state.getWebSockets();
+      expect(sockets).toHaveLength(1);
+      const ws = sockets[0]!;
+      expect(ws.deserializeAttachment()).toMatchObject({ hello: true, frames: { count: 1 } });
+      // Checked just above: the socket's attachment carries the frame window.
+      const attachment = ws.deserializeAttachment() as { frames: { start: number; count: number } };
+      ws.serializeAttachment({ ...attachment, frames: { ...attachment.frames, count: MAX_FRAMES_PER_SECOND - 1 } });
+    });
+
+    sock.send(event(1));
+    sock.send(event(2));
+    expect(await sock.next()).toEqual({ v: 1, type: "ack", upto: 1 });
     expect(await sock.next()).toMatchObject({ type: "error", code: "rate_limited" });
     expect(await sock.closed).toEqual({ code: 4429, reason: "rate_limited" });
   });

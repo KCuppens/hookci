@@ -36,6 +36,28 @@ function press(actionId: string, value: string) {
   return handler({ env, teamId: TEAM, userId: USER, actionId, value, responseUrl: null, triggerId: "1.2.trig" });
 }
 
+/** Presses actionId on the Home tab through SlackWorkspaceDO and returns the first block of each Home view it published for USER. */
+async function pressOnHome(actionId: string, value: string): Promise<unknown[]> {
+  const before = slackCalls(world, "views.publish").length;
+  const body = { teamId: TEAM, userId: USER, actionId, value, responseUrl: null, triggerId: "1.2.trig", view: { type: "home" } };
+  const res = await env.SLACK_DO.get(env.SLACK_DO.idFromName(TEAM)).fetch("https://do/action", { method: "POST", body: JSON.stringify(body) });
+  expect(res.status).toBe(204);
+  return slackCalls(world, "views.publish")
+    .slice(before)
+    .map((call) => {
+      expect(call.body).toMatchObject({ user_id: USER, view: expect.any(String) });
+      // Checked just above: the fake parsed the form body and the view is a JSON string.
+      const sent = call.body as { view: string };
+      const view: unknown = JSON.parse(sent.view);
+      expect(view).toMatchObject({ type: "home", blocks: expect.any(Array) });
+      // Checked just above: a home view with a blocks array.
+      const home = view as { blocks: unknown[] };
+      return home.blocks[0];
+    });
+}
+
+const notice = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } });
+
 async function pairTokens(): Promise<number> {
   return (await env.DB.prepare("SELECT count(*) AS n FROM pair_tokens").first<{ n: number }>())?.n ?? 0;
 }
@@ -75,6 +97,7 @@ describe("home:add_agent", () => {
 
   it("refuses a non-admin without creating a token", async () => {
     expect(await press("home:add_agent", String(INSTALLATION))).toEqual({ response_type: "ephemeral", text: S.slack.forbidden });
+    expect(await pressOnHome("home:add_agent", String(INSTALLATION))).toEqual([notice(S.slack.forbidden)]);
     expect(slackCalls(world, "views.open").length).toBe(0);
     expect(await pairTokens()).toBe(0);
   });
@@ -83,6 +106,7 @@ describe("home:add_agent", () => {
     admins.add(LOGIN);
     for (let i = 0; i < QUOTAS.pairTokensPerHour; i++) await createPairToken(env, { installationId: INSTALLATION, createdByGithubId: 7001 });
     expect(await press("home:add_agent", String(INSTALLATION))).toEqual({ response_type: "ephemeral", text: S.slack.slowDown });
+    expect(await pressOnHome("home:add_agent", String(INSTALLATION))).toEqual([notice(S.slack.slowDown)]);
     expect(slackCalls(world, "views.open").length).toBe(0);
   });
 });
@@ -93,6 +117,7 @@ describe("home:revoke_agent", () => {
     await seedAgent(OTHER_INSTALLATION, "agt_other");
     for (const value of [String(INSTALLATION), String(OTHER_INSTALLATION)]) {
       expect(await press("home:revoke_agent:agt_other", value)).toEqual({ response_type: "ephemeral", text: S.slack.forbidden });
+      expect(await pressOnHome("home:revoke_agent:agt_other", value)).toEqual([notice(S.slack.forbidden)]);
     }
     expect(await agentStatus("agt_other")).toBe("online");
     expect(agents.revoked).toEqual([]);
@@ -101,6 +126,7 @@ describe("home:revoke_agent", () => {
   it("refuses a non-admin", async () => {
     await seedAgent(INSTALLATION, "agt_own");
     expect(await press("home:revoke_agent:agt_own", String(INSTALLATION))).toEqual({ response_type: "ephemeral", text: S.slack.forbidden });
+    expect(await pressOnHome("home:revoke_agent:agt_own", String(INSTALLATION))).toEqual([notice(S.slack.forbidden)]);
     expect(await agentStatus("agt_own")).toBe("online");
   });
 
@@ -111,5 +137,9 @@ describe("home:revoke_agent", () => {
     expect(await agentStatus("agt_own")).toBe("revoked");
     expect(agents.revoked).toEqual(["agt_own"]);
     expect(slackCalls(world, "views.publish").length).toBe(1);
+  });
+
+  it("republishes without a notice when the action has nothing to say", async () => {
+    expect(await pressOnHome("home:refresh", "refresh")).toEqual([expect.objectContaining({ type: "header" })]);
   });
 });

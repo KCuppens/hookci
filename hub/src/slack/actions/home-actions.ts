@@ -41,7 +41,6 @@ registerAction("home:add_agent", async ({ env, teamId, userId, value, triggerId 
 		if (err instanceof HubError && err.code === "pair_rate_limited") return ephemeral(S.slack.slowDown);
 		throw err;
 	}
-	// Calls slackApi directly; route through the outbound Slack queue once it lands.
 	await slackApi(env, teamId, "views.open", { trigger_id: triggerId, view: pairTokenModal(pair.token, `${env.HUB_ORIGIN}/install`, pair.expiresAt) });
 	return null;
 });

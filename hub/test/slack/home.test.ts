@@ -87,6 +87,17 @@ describe("renderHome", () => {
     expect(text).toContain("/zeroci me");
   });
 
+  it("leads with the notice and still caps at 100 blocks", () => {
+    const notice = { type: "section", text: { type: "mrkdwn", text: S.slack.forbidden } };
+    expect(renderHome({ linked: true, installations: [installation(1)] }, S.slack.forbidden).blocks[0]).toEqual(notice);
+    const many = Array.from({ length: 12 }, (_, i) =>
+      installation(i + 1, { repos: Array.from({ length: 8 }, (_, r) => ({ fullName: `acme/r${r}`, channels: ["C1"] })) }),
+    );
+    const view = renderHome({ linked: true, installations: many }, S.slack.forbidden);
+    expect(view.blocks[0]).toEqual(notice);
+    expect(view.blocks.length).toBeLessThanOrEqual(100);
+  });
+
   it("has no em-dash or emoji code points", () => {
     const text = json({ linked: false, installations: [installation(1, { isAdmin: true, agents: [agent("x", "offline", { upgradeHint: upgradeHint(0, null, "0.2.0") })] })] });
     expect(text).not.toContain("\u2014");
@@ -95,12 +106,20 @@ describe("renderHome", () => {
 });
 
 describe("upgradeHint", () => {
-  it("hints for an old protocol or minor version only", () => {
-    expect(upgradeHint(0, "0.2.0", "0.2.0")).toBe(S.home.upgradeAvailable("0.2.0"));
-    expect(upgradeHint(1, "0.1.0", "0.2.0")).toBe(S.home.upgradeAvailable("0.2.0"));
-    expect(upgradeHint(1, "0.2.0", "0.2.0")).toBeUndefined();
-    expect(upgradeHint(null, null, "0.2.0")).toBeUndefined();
-    expect(upgradeHint(1, "0.1.0", "dev")).toBeUndefined();
+  it("hints for an old protocol or an agent older than the recommended version", () => {
+    expect(upgradeHint(0, "0.3.0", "v0.3.0")).toBe(S.home.upgradeAvailable("v0.3.0"));
+    expect(upgradeHint(1, "0.1.0", "v0.2.0")).toBe(S.home.upgradeAvailable("v0.2.0"));
+    expect(upgradeHint(1, "0.3.0", "v0.3.1")).toBe(S.home.upgradeAvailable("v0.3.1"));
+    expect(upgradeHint(1, "0.3.0-rc.1", "v0.3.0")).toBe(S.home.upgradeAvailable("v0.3.0"));
+    expect(upgradeHint(1, "0.2.0", "v0.2.0")).toBeUndefined();
+    expect(upgradeHint(1, "v0.4.0", "v0.3.0")).toBeUndefined();
+    expect(upgradeHint(null, null, "v0.2.0")).toBeUndefined();
+    expect(upgradeHint(1, "dev", "v0.2.0")).toBeUndefined();
+  });
+
+  it("gives no version hint when the hub names no recommended version", () => {
+    expect(upgradeHint(1, "0.1.0", "")).toBeUndefined();
+    expect(upgradeHint(0, "0.1.0", "")).toBe("upgrade available: run sudo zeroci upgrade");
   });
 });
 
@@ -124,6 +143,18 @@ describe("with the database", () => {
     await env.DB.prepare("UPDATE agents SET status = 'online', last_seen_at = 5 WHERE agent_id = 'agt_1'").run();
     const data = await loadHomeData(env, TEAM, USER);
     expect(data.installations[0]?.agents[0]).toMatchObject({ agentId: "agt_1", status: "online", hostname: "box.local" });
+  });
+
+  it("hints against LATEST_AGENT_VERSION, not HUB_VERSION, and not at all when it is empty", async () => {
+    // The AgentDO stub reports agent_version 0.1.0 on the current protocol.
+    restoreDo = fakeAgentNamespace({}).restore;
+    const t = tenantDb(env.DB, INSTALLATION);
+    await insertAgent(t, { agent_id: "agt_1", name: "box", hostname: "box.local", os: "linux", arch: "amd64", credential_hash: "h", agent_version: "0.1.0", paired_by_github_id: 7001, paired_at: 1 });
+    const hint = async (latest: string) =>
+      (await loadHomeData({ ...env, LATEST_AGENT_VERSION: latest, HUB_VERSION: "9.9.0" }, TEAM, USER)).installations[0]?.agents[0]?.upgradeHint;
+    expect(await hint("v0.3.0")).toBe("upgrade available (v0.3.0): run sudo zeroci upgrade");
+    expect(await hint("v0.1.0")).toBeUndefined();
+    expect(await hint("")).toBeUndefined();
   });
 
   it("app_home_opened publishes only for the home tab", async () => {

@@ -1,7 +1,8 @@
 // One per Slack workspace. The Slack routes ack within Slack's 3 s limit and
 // hand commands and actions here; the DO runs the registered handler and
-// posts its reply to the interaction's response_url. It also owns the
-// workspace's outbound Web API queue (slack-outbound.ts).
+// posts its reply to the interaction's response_url, or, for App Home
+// buttons, which have none, republishes the Home tab led by the reply. It
+// also owns the workspace's outbound Web API queue (slack-outbound.ts).
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
@@ -10,6 +11,7 @@ import { defaultFetcher } from "../http";
 import { reportError } from "../observability";
 import "../slack/actions";
 import "../slack/commands";
+import { publishHome } from "../slack/home";
 import { type SlackActionRequest, type SlackCommandRequest, type SlackReply, actionFor, commandFor } from "../slack/registry";
 import { S } from "../strings";
 import { type SlackCallRequest, SlackOutbound } from "./slack-outbound";
@@ -33,6 +35,11 @@ function errorReply(err: unknown, ctx: Record<string, string>): SlackReply {
 	if (refusal !== undefined) return { response_type: "ephemeral", text: refusal };
 	reportError(err, ctx);
 	return FAILED_REPLY;
+}
+
+/** True for the view of an App Home tab action, which Slack sends without a response_url. */
+function isHomeView(view: unknown): boolean {
+	return typeof view === "object" && view !== null && "type" in view && view.type === "home";
 }
 
 /** Calls `POST https://do/<path>` on the team's SlackWorkspaceDO, which answers once the handler ran. */
@@ -90,7 +97,9 @@ export class SlackWorkspaceDO extends DurableObject<Env> {
 		} catch (err) {
 			reply = errorReply(err, { team_id: req.teamId, action_id: req.actionId });
 		}
-		if (reply !== null && req.responseUrl !== null) await this.postReply(req.teamId, req.responseUrl, reply);
+		if (reply === null) return new Response(null, { status: 204 });
+		if (req.responseUrl !== null) await this.postReply(req.teamId, req.responseUrl, reply);
+		else if (isHomeView(req.view)) await publishHome(this.env, req.teamId, req.userId, reply.text);
 		return new Response(null, { status: 204 });
 	}
 
