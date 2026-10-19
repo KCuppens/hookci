@@ -8,6 +8,7 @@ import { HubError } from "./errors";
 import { reportError } from "./observability";
 import { githubWebhook } from "./routes/github-webhook";
 import { agentConnect } from "./routes/agent-connect";
+import { pairRedeem } from "./routes/pair";
 
 export { AgentDO } from "./do/agent";
 export { SlackWorkspaceDO } from "./do/slack-workspace";
@@ -26,6 +27,7 @@ const app = new Hono<AppEnv>();
 app.get("/healthz", (c) => c.json({ ok: true, version: c.env.HUB_VERSION }));
 app.post("/github/webhook", githubWebhook);
 app.get("/v1/agent/connect", agentConnect);
+app.post("/v1/pair/redeem", pairRedeem);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);

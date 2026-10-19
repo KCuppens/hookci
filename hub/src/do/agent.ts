@@ -237,6 +237,15 @@ export class AgentDO extends DurableObject<Env> {
 		return text.seq;
 	}
 
+	/** Closes every open socket with code, first sending error to each when given. */
+	disconnect(code: number, reason: string, error?: Unsequenced<ProtocolErrorFrame>): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			if (ws.readyState !== WebSocket.OPEN) continue;
+			if (error) ws.send(encodeFrame(error));
+			ws.close(code, reason);
+		}
+	}
+
 	status(): AgentStatus {
 		const live = this.liveSocket();
 		const lastSeen = this.meta("last_seen_at");

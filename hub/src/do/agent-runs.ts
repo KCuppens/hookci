@@ -23,7 +23,7 @@ import type { TriggerRequest } from "../webhook/route";
 import type { AgentDO, OutboundFrame } from "./agent";
 import { registerFrameHandler } from "./agent-frames";
 import { registerAlarmTask, registerOfflineHook } from "./agent-hooks";
-import { ALARM_INTERVAL_MS } from "./agent-protocol";
+import { ALARM_INTERVAL_MS, CLOSE } from "./agent-protocol";
 import { registerDoRoute } from "./agent-routes";
 
 /** A trigger still `sent` this long while the agent is offline leaves its run pending with agent_offline. */
@@ -249,6 +249,28 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 	return Response.json({ trigger_id: triggerId }, { status: 202 });
 }
 
+/** Queues an interrupt with reason for every run the agent accepted and has not finished. */
+async function interruptAccepted(dob: AgentDO, reason: Interrupt["reason"]): Promise<void> {
+	const running = dob.sql.exec<{ run_id: string }>("SELECT run_id FROM triggers WHERE state = 'accepted' AND run_id IS NOT NULL ORDER BY created_at");
+	for (const { run_id } of running.toArray()) await dob.send({ v: 1, type: "interrupt", run_id, reason });
+}
+
+/** The agent's credential was rotated: stop its runs and drop the socket opened with the old credential. */
+async function onRepair(dob: AgentDO): Promise<Response> {
+	await interruptAccepted(dob, "repair");
+	dob.disconnect(CLOSE.replaced, "repair");
+	return Response.json({ ok: true });
+}
+
+/** The agent was revoked or its installation removed: stop its runs, tell it why and close the socket. */
+async function onRevoke(dob: AgentDO, req: Request): Promise<Response> {
+	const { reason } = await req.json<{ reason: "revoked" | "uninstalled" }>();
+	if (reason !== "revoked" && reason !== "uninstalled") return Response.json({ error: "bad_request" }, { status: 400 });
+	await interruptAccepted(dob, reason);
+	dob.disconnect(CLOSE.revoked, "revoked", { v: 1, type: "error", code: "revoked", message: S.agentRevoked });
+	return Response.json({ ok: true });
+}
+
 async function onInterrupt(dob: AgentDO, req: Request): Promise<Response> {
 	const body = await req.json<Pick<Interrupt, "run_id" | "trigger_id" | "reason">>();
 	if (body.run_id === undefined && body.trigger_id === undefined) return Response.json({ error: "bad_request" }, { status: 400 });
@@ -291,11 +313,13 @@ async function notifyAgentOffline(dob: AgentDO): Promise<void> {
 	fanOut(dob.state, sinks, (sink) => sink.onAgentOffline(view, affected));
 }
 
-/** Installs the trigger and interrupt routes, the run frame handlers, the offline alarm task and hook; returns a function that removes them. */
+/** Installs the trigger, interrupt, repair and revoke routes, the run frame handlers, the offline alarm task and hook; returns a function that removes them. */
 export function registerRunLifecycle(): () => void {
 	const undo = [
 		registerDoRoute("trigger", onTrigger),
 		registerDoRoute("interrupt", onInterrupt),
+		registerDoRoute("repair", onRepair),
+		registerDoRoute("revoke", onRevoke),
 
 		registerFrameHandler("accepted", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);

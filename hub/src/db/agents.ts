@@ -23,6 +23,8 @@ export type NewAgent = Pick<
 	"agent_id" | "name" | "hostname" | "os" | "arch" | "credential_hash" | "agent_version" | "paired_by_github_id" | "paired_at"
 >;
 
+export const AGENT_CREDENTIAL_PREFIX = "zc_agent_";
+
 /** The credential_hash of an agent credential: sha256 hex of the whole `zc_agent_` string. */
 export function agentCredentialHash(credential: string): Promise<string> {
 	return sha256Hex(credential);
@@ -51,6 +53,21 @@ export async function insertAgent(t: TenantDb, row: NewAgent): Promise<void> {
  */
 export async function getAgentByCredentialHash(db: D1Database, hash: string): Promise<AgentRow | null> {
 	return db.prepare("SELECT * FROM agents WHERE credential_hash = ?1").bind(hash).first<AgentRow>();
+}
+
+/** Finds an agent by id across all installations; the row's installation_id scopes everything after. */
+export async function getAgentById(db: D1Database, agentId: string): Promise<AgentRow | null> {
+	return db.prepare("SELECT * FROM agents WHERE agent_id = ?1").bind(agentId).first<AgentRow>();
+}
+
+/** Replaces a non-revoked agent's credential hash; false when there is no such agent. */
+export async function setCredentialHash(t: TenantDb, agentId: string, hash: string): Promise<boolean> {
+	const res = await t.run(
+		"UPDATE agents SET credential_hash = ?3 WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL",
+		agentId,
+		hash,
+	);
+	return res.meta.changes > 0;
 }
 
 export async function listAgents(t: TenantDb): Promise<AgentRow[]> {
