@@ -315,7 +315,9 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.stopped(ctx, w)
 		return
 	}
-	if err := d.st.CreateRun(bg, storeRun(t, w.runID, co.SHA), storeJobs(p.checks)); err != nil {
+	run := storeRun(t, w.runID, co.SHA)
+	run.Slack = p.slack
+	if err := d.st.CreateRun(bg, run, storeJobs(p.checks)); err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
 		return

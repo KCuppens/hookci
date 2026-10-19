@@ -1,0 +1,10 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+notify:
+  slack:
+    channel: "#deploys"
+    notify: loud
+    alert: email

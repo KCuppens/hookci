@@ -8,7 +8,7 @@
 
 import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
-import { acceptRun, insertRun, markRunPending, type RunPatch, updateRunState, upsertJob } from "../db/runs";
+import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, updateRunState, upsertJob } from "../db/runs";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import { defaultFetcher } from "../http";
@@ -353,6 +353,7 @@ export function registerRunLifecycle(): () => void {
 			for (const job of frame.jobs) {
 				await upsertJob(t, { run_id: frame.run_id, name: job.name, state: "queued", step: null, step_index: null, steps_total: null, duration_ms: null });
 			}
+			if (frame.slack) await setRunSlackOverride(t, frame.run_id, frame.slack);
 			await fanOutRun(dob, frame.run_id, (sink, run) => sink.onJobPlanned(run));
 		}),
 

@@ -235,6 +235,22 @@ describe("AgentDO run lifecycle", () => {
     });
   });
 
+  it("job_planned keeps the .zeroci.yml slack override for the sinks, verbose as normal", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+
+    await sock.request({ type: "job_planned", run_id: "run_a", jobs: [{ name: "build", needs: [] }], slack: { channel: "#Deploys", notify: "verbose", alert: "dm" } });
+    // The agent's _config job is planned later on its own frame, without the override.
+    await sock.request({ type: "job_planned", run_id: "run_a", jobs: [{ name: "_config", needs: [] }] });
+
+    const planned = sink.calls.flatMap((call) => (call.op === "onJobPlanned" ? [call.run.slack] : []));
+    expect(planned).toEqual([
+      { channel: "deploys", notify: "normal", alert: "dm" },
+      { channel: "deploys", notify: "normal", alert: "dm" },
+    ]);
+  });
+
   it("event updates run and job state", async () => {
     const agent = await seedAgent(INSTALLATION);
     const sock = await online(agent);

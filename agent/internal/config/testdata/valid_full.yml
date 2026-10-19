@@ -67,5 +67,7 @@ notify:
   slack:
     channel: "#deploys"
     on: [failure, deploy]
+    notify: verbose
+    alert: dm
 redact:
   - "sk_live_[0-9a-zA-Z]{24}"

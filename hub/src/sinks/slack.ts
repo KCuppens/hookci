@@ -1,6 +1,7 @@
-// The Slack sink: in every channel watching the repo, one message per run
-// posted once and then updated in place, a thread reply per finished job
-// (normal watches only), one alert when the run fails, and a DM to the
+// The Slack sink: in every channel watching the repo, or the channel the
+// repo's .zeroci.yml notify.slack names in the watch's workspace, one message
+// per run posted once and then updated in place, a thread reply per finished
+// job (normal notify only), one alert when the run fails, and a DM to the
 // agent's admin when it goes offline. It never reads channel history: what
 // it posted is in slack_messages and slack_job_replies.
 
@@ -26,6 +27,7 @@ import { logEvent, reportError } from "../observability";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
 import { resolveAuthor } from "../slack/authors";
 import { TERMINAL } from "../slack/badge";
+import { findChannel } from "../slack/channels";
 import { renderAlert, renderJobReply, renderOfflineDm, renderRunMessage } from "../slack/messages";
 import { registerSinkFactory, type SinkHost } from "./index";
 import type { AgentView, JobView, RunView, Sink } from "./types";
@@ -123,10 +125,10 @@ export class SlackSink implements Sink {
 		}
 		const tail = run.state === "failed" ? await this.alertTail(runKey) : undefined;
 
-		for (const watch of watches) {
+		for (const { watch, followOnly } of await this.targets(run, runKey, watches)) {
 			try {
-				const ts = await this.postOrUpdate(run, runKey, watch);
-				if (ts === null) continue;
+				const ts = await this.postOrUpdate(run, runKey, watch, followOnly);
+				if (ts === null || followOnly) continue;
 				if (job && watch.notify === "normal" && TERMINAL.has(job.state)) await this.reply(run, runKey, watch, ts, job);
 				if (tail) await this.alert(run, runKey, watch, ts, tail);
 			} catch (err) {
@@ -139,15 +141,57 @@ export class SlackSink implements Sink {
 	}
 
 	/**
+	 * Where the run's message goes: each watch's channel, or with a
+	 * .zeroci.yml override the named channel in the watch's workspace, with
+	 * the override's notify and alert over the watch's. A name the bot cannot
+	 * post to leaves the watch as it is. A watch channel that got the run's
+	 * message before the agent read the override keeps it updated
+	 * (followOnly) without replies or alert.
+	 */
+	private async targets(run: RunView, runKey: string, watches: WatchRow[]): Promise<{ watch: WatchRow; followOnly: boolean }[]> {
+		const { slack } = run;
+		if (!slack) return watches.map((watch) => ({ watch, followOnly: false }));
+		const targets = new Map<string, { watch: WatchRow; followOnly: boolean }>();
+		const moved: WatchRow[] = [];
+		for (const watch of watches) {
+			let id = watch.channel_id;
+			try {
+				const found = await findChannel(this.env, watch.team_id, slack.channel, this.now());
+				if (found.kind === "found") {
+					id = found.id;
+				} else if (found.firstReport) {
+					logEvent("slack_override_unresolved", { team_id: watch.team_id, channel: slack.channel, reason: found.reason, run_id: runKey });
+				}
+			} catch (err) {
+				this.failed(err, { team_id: watch.team_id, channel: slack.channel, run_id: runKey, op: "find_channel" });
+			}
+			if (id === watch.channel_id) {
+				targets.set(`${watch.team_id}:${id}`, { watch, followOnly: false });
+				continue;
+			}
+			moved.push(watch);
+			if (!targets.has(`${watch.team_id}:${id}`)) {
+				const overridden = { ...watch, channel_id: id, notify: slack.notify ?? watch.notify, alert: slack.alert ?? watch.alert };
+				targets.set(`${watch.team_id}:${id}`, { watch: overridden, followOnly: false });
+			}
+		}
+		for (const watch of moved) {
+			if (!targets.has(`${watch.team_id}:${watch.channel_id}`)) targets.set(`${watch.team_id}:${watch.channel_id}`, { watch, followOnly: true });
+		}
+		return [...targets.values()];
+	}
+
+	/**
 	 * Posts the run's message in the watch's channel, or updates it once
 	 * posted; returns its ts, or null when another call's first post has not
-	 * answered yet.
+	 * answered yet or followOnly finds no message to update.
 	 */
-	private async postOrUpdate(run: RunView, runKey: string, watch: WatchRow): Promise<string | null> {
+	private async postOrUpdate(run: RunView, runKey: string, watch: WatchRow, followOnly: boolean): Promise<string | null> {
 		const { team_id: team, channel_id: channel } = watch;
 		const msg = renderRunMessage(run, { notify: watch.notify });
 		const priority = TERMINAL.has(run.state) ? "terminal" : "normal";
 		let row = await getSlackMessage(this.t, runKey, team, channel);
+		if (!row && followOnly) return null;
 		if (!row && (await claimSlackMessage(this.t, runKey, team, channel))) {
 			try {
 				const res = await slackApi(this.env, team, "chat.postMessage", { channel, text: msg.text, blocks: msg.blocks }, { priority });

@@ -8,6 +8,7 @@ import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watches";
 import { clearOfflineDm } from "../../src/do/agent-hooks";
 import { slackApi } from "../../src/slack/api";
+import { resetChannelCacheForTests } from "../../src/slack/channels";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
 import type { JobView, RunView } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -318,5 +319,91 @@ describe("SlackSink", () => {
     await expect(slackApi(env, world.team, "conversations.history", { channel: CHANNEL })).rejects.toMatchObject({ message: "missing_scope" });
     // This test made the forbidden call on purpose; the afterEach check is for the sink.
     world.slack.calls.length = 0;
+  });
+
+  describe("with a .zeroci.yml notify.slack override", () => {
+    const DEPLOYS = "C0DEPLOYS";
+    const slack: RunView["slack"] = { channel: "deploys", notify: "quiet", alert: "dm" };
+
+    /** conversations.list answers in two pages: general, then deploys with the bot in it unless told otherwise. */
+    function listChannels(deploys: { name: string; is_member: boolean } = { name: "deploys", is_member: true }): void {
+      world.slack.respond("POST", "/api/conversations.list", ({ body }) =>
+        formField(body, "cursor") === "page2"
+          ? Response.json({ ok: true, channels: [{ id: DEPLOYS, ...deploys }], response_metadata: { next_cursor: "" } })
+          : Response.json({ ok: true, channels: [{ id: "C0GENERAL", name: "general", is_member: true }], response_metadata: { next_cursor: "page2" } }),
+      );
+    }
+
+    beforeEach(resetChannelCacheForTests);
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("posts in the named channel with the override's notify and alert over the watch's", async () => {
+      listChannels();
+      await watch({ notify: "normal", alert: "channel" });
+      await mapAuthor("alice", "U0ALICE");
+      const sink = slackSinkFactory(env, INSTALLATION);
+      const lint: JobView = { name: "lint", state: "success" };
+      await sink.onJobUpdate(runView({ slack, jobs: [lint] }), lint);
+      const failed: JobView = { name: "build", state: "failed" };
+      await sink.onRunUpdate(runView({ slack, state: "failed", jobs: [lint, failed] }));
+      await drain();
+
+      expect(world.slack.calls.filter((call) => formField(call.body, "channel") === CHANNEL)).toEqual([]);
+      const posts = inChannel("chat.postMessage", DEPLOYS);
+      expect(posts).toHaveLength(1);
+      expect(formField(posts[0]?.body, "thread_ts")).toBeUndefined();
+      expect(apiCalls("conversations.open").map((call) => formField(call.body, "users"))).toEqual(["U0ALICE"]);
+      expect(text(inChannel("chat.postMessage", "D0ALICE")[0])).toMatch(/^Failed: /);
+      expect(apiCalls("conversations.list")).toHaveLength(2);
+    });
+
+    it("keeps the watch's notify and alert where the override sets none", async () => {
+      listChannels();
+      await watch({ notify: "normal", alert: "channel" });
+      const sink = slackSinkFactory(env, INSTALLATION);
+      const lint: JobView = { name: "lint", state: "success" };
+      await sink.onJobUpdate(runView({ slack: { channel: "deploys" }, jobs: [lint] }), lint);
+
+      const [parent, reply] = inChannel("chat.postMessage", DEPLOYS);
+      expect(formField(parent?.body, "thread_ts")).toBeUndefined();
+      expect(formField(reply?.body, "thread_ts")).toBe("1700000000.000001");
+    });
+
+    it("keeps updating the message the watch channel got before the agent sent the override", async () => {
+      listChannels();
+      await watch();
+      const sink = slackSinkFactory(env, INSTALLATION);
+      await sink.onRunUpdate(runView({ state: "received" }));
+      await sink.onRunUpdate(runView({ slack, state: "running" }));
+      await sink.onRunUpdate(runView({ slack, state: "success", jobs: [{ name: "lint", state: "success" }] }));
+      await drain();
+
+      expect(inChannel("chat.postMessage", CHANNEL)).toHaveLength(1);
+      expect(text(inChannel("chat.update", CHANNEL).at(-1))).toMatch(/^Passed: /);
+      expect(inChannel("chat.postMessage", DEPLOYS)).toHaveLength(1);
+      expect(text(inChannel("chat.update", DEPLOYS).at(-1))).toMatch(/^Passed: /);
+    });
+
+    it.each([
+      { reason: "not_member", deploys: { name: "deploys", is_member: false } },
+      { reason: "not_found", deploys: { name: "releases", is_member: true } },
+    ])("falls back to the watch when the bot cannot post in the named channel ($reason) and logs it once", async ({ reason, deploys }) => {
+      listChannels(deploys);
+      await watch({ notify: "quiet" });
+      const log = vi.spyOn(console, "log");
+      const sink = slackSinkFactory(env, INSTALLATION);
+      await sink.onRunUpdate(runView({ slack, state: "running" }));
+      await sink.onRunUpdate(runView({ slack, state: "success" }));
+      await drain();
+
+      expect(inChannel("chat.postMessage", CHANNEL)).toHaveLength(1);
+      expect(inChannel("chat.postMessage", DEPLOYS)).toEqual([]);
+      const unresolved = log.mock.calls.filter(([line]) => String(line).includes('"event":"slack_override_unresolved"'));
+      expect(unresolved.map(([line]) => JSON.parse(String(line)))).toEqual([
+        expect.objectContaining({ team_id: world.team, channel: "deploys", reason }),
+      ]);
+    });
   });
 });

@@ -30,13 +30,16 @@ type plan struct {
 	// head holds the diagnostics of a pull request's changed .zeroci.yml;
 	// nil when the pull request leaves the file alone.
 	head *config.Diagnostics
+	// slack is the trusted configuration's notify.slack block for the hub;
+	// nil when it has none.
+	slack *protocol.JobPlannedSlack
 }
 
 // resolvePlan picks the checks of co. A pull request (BaseDir set) runs the
 // base branch's configuration, so a head commit cannot change what runs on
-// the agent; its own .zeroci.yml, when it differs, is only validated. A base
-// without a .zeroci.yml falls back to detection on the head tree, as does a
-// push without one.
+// the agent or where Slack hears of it; its own .zeroci.yml, when it
+// differs, is only validated. A base without a .zeroci.yml falls back to
+// detection on the head tree, as does a push without one.
 func resolvePlan(co source.Checkout) (plan, error) {
 	trusted := co.Dir
 	if co.BaseDir != "" {
@@ -67,6 +70,7 @@ func resolvePlan(co source.Checkout) (plan, error) {
 		if checks := cfg.Checks(); checks != nil && len(checks.Jobs) > 0 {
 			p.checks = checks
 		}
+		p.slack = slackOverride(cfg)
 	}
 
 	if co.BaseDir == "" {
@@ -81,6 +85,25 @@ func resolvePlan(co source.Checkout) (plan, error) {
 		p.head = &diags
 	}
 	return p, nil
+}
+
+// slackOverride is cfg's notify.slack block as the job_planned frame carries
+// it, or nil when cfg has none.
+func slackOverride(cfg *config.Config) *protocol.JobPlannedSlack {
+	if cfg.Notify == nil || cfg.Notify.Slack == nil {
+		return nil
+	}
+	s := cfg.Notify.Slack
+	out := &protocol.JobPlannedSlack{Channel: s.Channel}
+	if s.Notify != nil {
+		n := protocol.JobPlannedSlackNotify(*s.Notify)
+		out.Notify = &n
+	}
+	if s.Alert != nil {
+		a := protocol.JobPlannedSlackAlert(*s.Alert)
+		out.Alert = &a
+	}
+	return out
 }
 
 // readConfig returns dir's .zeroci.yml, or nil when it has none.

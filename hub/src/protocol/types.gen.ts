@@ -288,6 +288,23 @@ export interface JobPlanned {
    * Deployment environment, for deploy runs.
    */
   env?: string;
+  /**
+   * The trusted config's notify.slack block, which takes precedence over the repo's Slack watches.
+   */
+  slack?: {
+    /**
+     * Slack channel name, with or without the leading #.
+     */
+    channel: string;
+    /**
+     * quiet, normal or verbose; verbose means normal.
+     */
+    notify?: "quiet" | "normal" | "verbose";
+    /**
+     * channel or dm.
+     */
+    alert?: "channel" | "dm";
+  };
 }
 /**
  * Run or job state change.

@@ -249,6 +249,10 @@ type JobPlanned struct {
 	// Agent outbox sequence number, acknowledged by the hub with ack.
 	Seq *int `json:"seq,omitempty,omitzero"`
 
+	// The trusted config's notify.slack block, which takes precedence over the repo's
+	// Slack watches.
+	Slack *JobPlannedSlack `json:"slack,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 
@@ -264,6 +268,30 @@ type JobPlannedJobsElem struct {
 	// Jobs this job waits for.
 	Needs []string `json:"needs"`
 }
+
+// The trusted config's notify.slack block, which takes precedence over the repo's
+// Slack watches.
+type JobPlannedSlack struct {
+	// channel or dm.
+	Alert *JobPlannedSlackAlert `json:"alert,omitempty,omitzero"`
+
+	// Slack channel name, with or without the leading #.
+	Channel string `json:"channel"`
+
+	// quiet, normal or verbose; verbose means normal.
+	Notify *JobPlannedSlackNotify `json:"notify,omitempty,omitzero"`
+}
+
+type JobPlannedSlackAlert string
+
+const JobPlannedSlackAlertChannel JobPlannedSlackAlert = "channel"
+const JobPlannedSlackAlertDm JobPlannedSlackAlert = "dm"
+
+type JobPlannedSlackNotify string
+
+const JobPlannedSlackNotifyNormal JobPlannedSlackNotify = "normal"
+const JobPlannedSlackNotifyQuiet JobPlannedSlackNotify = "quiet"
+const JobPlannedSlackNotifyVerbose JobPlannedSlackNotify = "verbose"
 
 // A chunk of job log.
 type Log struct {

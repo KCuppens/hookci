@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -337,6 +338,57 @@ func TestDaemonHeadConfigErrorsAnnotated(t *testing.T) {
 	}
 	if !slices.Equal(h.runner.jobs, []string{"unit"}) {
 		t.Fatalf("jobs run = %v, want the base jobs [unit]", h.runner.jobs)
+	}
+}
+
+// slackPlans returns the slack block of every job_planned frame, nil where a
+// frame has none.
+func (h *harness) slackPlans() []any {
+	var out []any
+	for _, f := range h.frames("job_planned") {
+		out = append(out, f["slack"])
+	}
+	return out
+}
+
+func TestDaemonSlackOverrideFromConfig(t *testing.T) {
+	h := newHarness(t, &fakeSource{Head: map[string]string{
+		ConfigFile: unitOnly + "notify:\n  slack:\n    channel: \"#deploys\"\n    notify: verbose\n    alert: dm\n",
+	}}, &fakeRunner{})
+	h.send(h.trigger("trg_1", false))
+	h.waitTrigger("trg_1", store.TriggerDone)
+
+	want := []any{map[string]any{"channel": "#deploys", "notify": "verbose", "alert": "dm"}}
+	if got := h.slackPlans(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("job_planned slack = %v, want %v", got, want)
+	}
+}
+
+// A pull request's own notify.slack never reaches the hub: the base's does,
+// and the _config pseudo job's frame carries none.
+func TestDaemonSlackOverrideIgnoresPullRequestHead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		base string
+		want []any
+	}{
+		"base without notify": {base: unitOnly, want: []any{nil, nil}},
+		"base with notify": {
+			base: unitOnly + "notify:\n  slack:\n    channel: deploys\n",
+			want: []any{map[string]any{"channel": "deploys"}, nil},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{
+				Head: map[string]string{ConfigFile: unitOnly + "notify:\n  slack:\n    channel: elsewhere\n    notify: quiet\n"},
+				Base: map[string]string{ConfigFile: tc.base},
+			}, &fakeRunner{})
+			h.send(h.trigger("trg_1", true))
+			h.waitTrigger("trg_1", store.TriggerDone)
+
+			if got := h.slackPlans(); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("job_planned slack = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

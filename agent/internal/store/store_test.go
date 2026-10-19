@@ -143,6 +143,8 @@ func TestCreateRunEmitsQueuedAndPlanned(t *testing.T) {
 	pr := 7
 	r := testRun("r1")
 	r.Event, r.PR, r.Env = "pull_request", &pr, "staging"
+	quiet := protocol.JobPlannedSlackNotifyQuiet
+	r.Slack = &protocol.JobPlannedSlack{Channel: "#deploys", Notify: &quiet}
 	mustCreateRun(t, s, r, Job{Name: "lint"}, Job{Name: "test", Needs: []string{"lint"}})
 
 	got, err := s.GetRun(ctx, "r1")
@@ -178,6 +180,9 @@ func TestCreateRunEmitsQueuedAndPlanned(t *testing.T) {
 		plan.Jobs[0].Name != "lint" || len(plan.Jobs[0].Needs) != 0 ||
 		plan.Jobs[1].Name != "test" || len(plan.Jobs[1].Needs) != 1 || plan.Jobs[1].Needs[0] != "lint" {
 		t.Errorf("job_planned = %+v", plan)
+	}
+	if plan.Slack == nil || plan.Slack.Channel != "#deploys" || plan.Slack.Notify == nil || *plan.Slack.Notify != quiet || plan.Slack.Alert != nil {
+		t.Errorf("job_planned slack = %+v, want #deploys quiet without alert", plan.Slack)
 	}
 }
 

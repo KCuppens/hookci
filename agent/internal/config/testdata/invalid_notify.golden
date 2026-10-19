@@ -1,0 +1,2 @@
+invalid_notify.yml:9: error: notify.slack.notify: must be one of "quiet", "normal", "verbose", got "loud"
+invalid_notify.yml:10: error: notify.slack.alert: must be one of "channel", "dm", got "email"

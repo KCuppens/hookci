@@ -1,4 +1,6 @@
+import type { JobPlanned } from "../protocol";
 import type { TenantDb } from "./tenant";
+import type { WatchRow } from "./watches";
 
 export interface RunRow {
 	run_id: string;
@@ -20,6 +22,10 @@ export interface RunRow {
 	finished_at: number | null;
 	duration_ms: number | null;
 	log_key: string | null;
+	/** The .zeroci.yml notify.slack channel name, without the leading #. */
+	slack_channel: string | null;
+	slack_notify: WatchRow["notify"] | null;
+	slack_alert: WatchRow["alert"] | null;
 }
 
 export interface JobRow {
@@ -32,7 +38,10 @@ export interface JobRow {
 	duration_ms: number | null;
 }
 
-export type NewRun = Omit<RunRow, "installation_id">;
+export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert">;
+
+const SLACK_NOTIFY: Record<string, WatchRow["notify"]> = { quiet: "quiet", normal: "normal", verbose: "normal" };
+const SLACK_ALERT: Record<string, WatchRow["alert"]> = { channel: "channel", dm: "dm" };
 
 /** Columns updateRunState may set besides state; a key given as null clears the column. */
 export type RunPatch = Partial<Pick<RunRow, "reason" | "agent_id" | "started_at" | "finished_at" | "duration_ms" | "log_key">>;
@@ -62,6 +71,22 @@ export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
 		row.finished_at,
 		row.duration_ms,
 		row.log_key,
+	);
+}
+
+/**
+ * Stores the run's .zeroci.yml notify.slack override as the agent sent it on
+ * job_planned: the channel without its # and lowercased as Slack names are,
+ * YAML verbose as normal, and a notify or alert value the hub does not know
+ * as unset.
+ */
+export async function setRunSlackOverride(t: TenantDb, runId: string, slack: NonNullable<JobPlanned["slack"]>): Promise<void> {
+	await t.run(
+		"UPDATE runs SET slack_channel = ?3, slack_notify = ?4, slack_alert = ?5 WHERE installation_id = ?1 AND run_id = ?2",
+		runId,
+		slack.channel.replace(/^#/, "").toLowerCase(),
+		slack.notify !== undefined && Object.hasOwn(SLACK_NOTIFY, slack.notify) ? (SLACK_NOTIFY[slack.notify] ?? null) : null,
+		slack.alert !== undefined && Object.hasOwn(SLACK_ALERT, slack.alert) ? (SLACK_ALERT[slack.alert] ?? null) : null,
 	);
 }
 

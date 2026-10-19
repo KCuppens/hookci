@@ -122,7 +122,11 @@ CREATE TABLE runs (
 	started_at INTEGER,
 	finished_at INTEGER,
 	duration_ms INTEGER,
-	log_key TEXT
+	log_key TEXT,
+	-- The trusted .zeroci.yml notify.slack override, from the run's job_planned frame.
+	slack_channel TEXT,
+	slack_notify TEXT CHECK (slack_notify IN ('normal', 'quiet')),
+	slack_alert TEXT CHECK (slack_alert IN ('channel', 'dm'))
 ) STRICT;
 
 CREATE INDEX runs_installation_repo_started ON runs (installation_id, repo_id, started_at DESC);

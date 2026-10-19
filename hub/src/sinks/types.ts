@@ -53,6 +53,8 @@ export interface RunView {
 	logUrl?: string;
 	jobs: JobView[];
 	currentJob?: string;
+	/** The .zeroci.yml notify.slack override: channel is a name without #; notify and alert fall back to the watch's. */
+	slack?: { channel: string; notify?: "normal" | "quiet"; alert?: "channel" | "dm" };
 }
 export interface AgentView {
 	agentId: string;

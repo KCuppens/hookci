@@ -49,6 +49,16 @@
                 "type": "string",
                 "enum": ["failure", "success", "deploy", "all"]
               }
+            },
+            "notify": {
+              "description": "How much the run message says, over the channel's /zeroci watch setting: quiet lists job results in the message, normal also replies in its thread per finished job. verbose means normal.",
+              "type": "string",
+              "enum": ["quiet", "normal", "verbose"]
+            },
+            "alert": {
+              "description": "Where the failure alert goes, over the channel's /zeroci watch setting: the message thread, or a DM to the commit author.",
+              "type": "string",
+              "enum": ["channel", "dm"]
             }
           }
         }
@@ -616,6 +626,28 @@
             "env": {
               "description": "Deployment environment, for deploy runs.",
               "type": "string"
+            },
+            "slack": {
+              "description": "The trusted config's notify.slack block, which takes precedence over the repo's Slack watches.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["channel"],
+              "properties": {
+                "channel": {
+                  "description": "Slack channel name, with or without the leading #.",
+                  "type": "string"
+                },
+                "notify": {
+                  "description": "quiet, normal or verbose; verbose means normal.",
+                  "type": "string",
+                  "enum": ["quiet", "normal", "verbose"]
+                },
+                "alert": {
+                  "description": "channel or dm.",
+                  "type": "string",
+                  "enum": ["channel", "dm"]
+                }
+              }
             }
           }
         },

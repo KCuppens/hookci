@@ -84,5 +84,9 @@ export async function loadRunView(
 			stepsTotal: job.steps_total ?? undefined,
 		})),
 		currentJob: jobs.find((job) => job.state === "running")?.name,
+		slack:
+			run.slack_channel === null
+				? undefined
+				: { channel: run.slack_channel, notify: run.slack_notify ?? undefined, alert: run.slack_alert ?? undefined },
 	};
 }
