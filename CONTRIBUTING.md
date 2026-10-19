@@ -22,8 +22,9 @@ It runs `scripts/check.sh`, which must end with `check: ok`. The script:
 2. Runs `scripts/schema-check.sh` (also `make schema-check`), which regenerates the types into a temp dir and fails if any generated file in the tree differs (codegen drift).
 3. Checks Go formatting with `gofmt -l`.
 4. Runs `go vet ./...` and `go test ./...` in `agent/`.
-5. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`.
-6. Runs `npx wrangler deploy --dry-run --outdir dist` in `hub/`.
+5. Runs `scripts/gen-install.sh --check`, `scripts/test-install.sh` and `node scripts/gen-manifests.mjs --check`; the last fails when the dev and staging App manifests in `hub/manifests/generated/` differ from what `node scripts/gen-manifests.mjs` writes from `hub/manifests/`.
+6. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`.
+7. Runs `npx wrangler deploy --dry-run` in `hub/` for production and staging.
 
 The project has no GitHub Actions workflows and never will. It verifies itself with `scripts/check.sh`. Do not add anything under `.github/workflows/`.
 

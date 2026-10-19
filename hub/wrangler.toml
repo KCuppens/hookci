@@ -10,6 +10,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 HUB_ORIGIN = "https://ci.webuno.io"
 HUB_VERSION = "dev"
+# RFC 9116 Expires for /.well-known/security.txt: one year past the build date; bump on each release.
+SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci"
@@ -54,6 +56,7 @@ name = "zeroci-hub-staging"
 [env.staging.vars]
 HUB_ORIGIN = "https://ci-staging.webuno.io"
 HUB_VERSION = "dev"
+SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci-staging"

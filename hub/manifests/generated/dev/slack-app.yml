@@ -1,0 +1,45 @@
+display_information:
+  name: zeroci-dev
+  description: CI on your own machine, reported to GitHub Checks and Slack.
+  background_color: "#1d1c1d"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: zeroci-dev
+    always_online: false
+  slash_commands:
+    - command: /zeroci-dev
+      url: https://DEV-TUNNEL.example/slack/commands
+      description: Watch repos, check status, retry runs and link your GitHub account.
+      usage_hint: "watch|unwatch|status|retry|bind|me|help"
+      should_escape: false
+oauth_config:
+  redirect_urls:
+    - https://DEV-TUNNEL.example/slack/oauth/callback
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - channels:read
+      - groups:read
+      - im:write
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    request_url: https://DEV-TUNNEL.example/slack/events
+    bot_events:
+      - app_home_opened
+      - app_uninstalled
+      - tokens_revoked
+      - channel_left
+      - group_left
+  interactivity:
+    is_enabled: true
+    request_url: https://DEV-TUNNEL.example/slack/interactive
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

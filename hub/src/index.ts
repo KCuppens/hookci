@@ -13,6 +13,8 @@ import { install } from "./routes/install";
 import { pairRedeem } from "./routes/pair";
 import { githubLinkCallback, githubLinkStart } from "./routes/github-link";
 import { githubOAuthCallback } from "./routes/github-oauth";
+import { publicRoutes } from "./routes/public";
+import { securityTxt } from "./routes/security-txt";
 import { slackCommands } from "./routes/slack-commands";
 import { slackEvents } from "./routes/slack-events";
 import { slackInstall, slackOAuthCallback } from "./routes/slack-install";
@@ -56,6 +58,8 @@ app.post("/slack/events", slackEvents);
 app.post("/slack/commands", slackCommands);
 app.post("/slack/interactive", slackInteractive);
 app.get("/v1/export", exportData);
+app.get("/.well-known/security.txt", securityTxt);
+app.route("/", publicRoutes);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);

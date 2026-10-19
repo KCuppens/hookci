@@ -79,6 +79,11 @@ export function eventHandlerFor(type: string): EventHandler | undefined {
 	return events.get(type);
 }
 
+/** The Events API event types with a registered handler; the Slack App manifest subscribes to exactly these. */
+export function registeredEventTypes(): string[] {
+	return [...events.keys()];
+}
+
 export function resetRegistryForTests(): void {
 	commands.clear();
 	actions.clear();

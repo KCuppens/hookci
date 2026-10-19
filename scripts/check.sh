@@ -10,6 +10,7 @@ scripts/schema-check.sh
 (cd agent && go vet ./... && go test ./...)
 scripts/gen-install.sh --check
 scripts/test-install.sh
+node scripts/gen-manifests.mjs --check
 
 (
 	cd hub

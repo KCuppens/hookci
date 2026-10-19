@@ -6,14 +6,18 @@ import { normalize } from "../github/normalize";
 import type { WaitUntil } from "../sinks";
 import { routeTrigger } from "./route";
 
-export type WebhookEvent =
-	| "pull_request"
-	| "push"
-	| "installation"
-	| "installation_repositories"
-	| "github_app_authorization"
-	| "check_run"
-	| "check_suite";
+/** Every X-GitHub-Event the dispatch table has an entry for; the GitHub App manifest subscribes to exactly these. */
+export const HANDLED_GITHUB_EVENTS = [
+	"pull_request",
+	"push",
+	"installation",
+	"installation_repositories",
+	"github_app_authorization",
+	"check_run",
+	"check_suite",
+] as const;
+
+export type WebhookEvent = (typeof HANDLED_GITHUB_EVENTS)[number];
 
 /** What a handler did with a delivery: handled it, or deliberately dropped it with a note for the deliveries row. */
 export type HandlerResult = { status: "processed" } | { status: "dropped"; note: string };
