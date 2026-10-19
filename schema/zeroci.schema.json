@@ -1,16 +1,178 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ci.webuno.io/schema/zeroci.schema.json",
-  "title": "ZeroCI",
-  "description": "Placeholder protocol schema for the ZeroCI agent/hub wire format. See M0-03.",
+  "title": "Config",
+  "description": "ZeroCI configuration file format (.zeroci.yml) and wire protocol definitions.",
   "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
   "properties": {
     "version": {
-      "const": 1
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version (must be 1)."
+    },
+    "setup": {
+      "type": "array",
+      "description": "Setup commands executed once before running checks.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks": {
+      "type": "object",
+      "description": "Named check jobs forming a DAG.",
+      "additionalProperties": {
+        "$ref": "#/$defs/checkJob"
+      }
+    },
+    "caches": {
+      "type": "object",
+      "description": "Named caches restored using copy-on-write mechanisms.",
+      "additionalProperties": {
+        "$ref": "#/$defs/cacheConfig"
+      }
+    },
+    "services": {
+      "type": "object",
+      "description": "Background service containers (e.g. postgres).",
+      "additionalProperties": {
+        "$ref": "#/$defs/serviceConfig"
+      }
+    },
+    "egress": {
+      "type": "array",
+      "description": "Additional hostnames allowed through the egress proxy for trusted runs.",
+      "items": {
+        "type": "string"
+      }
     }
   },
-  "required": ["version"],
   "$defs": {
-    "protocol": {}
+    "checkJob": {
+      "type": "object",
+      "description": "A single check job within a run.",
+      "additionalProperties": false,
+      "required": ["run"],
+      "properties": {
+        "run": {
+          "type": "string",
+          "description": "Shell command to execute."
+        },
+        "needs": {
+          "type": "array",
+          "description": "Dependencies on other check jobs in this run.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Maximum execution duration (e.g. 10m, 300s)."
+        },
+        "services": {
+          "type": "array",
+          "description": "Service names required by this job.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables injected into this job.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "cacheConfig": {
+      "type": "object",
+      "description": "Cache path and key definition.",
+      "additionalProperties": false,
+      "required": ["path", "key"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Directory or file path relative to repository root."
+        },
+        "key": {
+          "type": "string",
+          "description": "Cache key or file hash expression."
+        }
+      }
+    },
+    "serviceConfig": {
+      "type": "object",
+      "description": "Service configuration definition.",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Docker container image name (e.g. postgres:16-alpine)."
+        },
+        "env": {
+          "type": "object",
+          "description": "Service environment variables.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "description": "WebSocket wire protocol definitions.",
+      "properties": {
+        "runState": {
+          "type": "string",
+          "enum": ["Queued", "Running", "Success", "Failed", "Verifying", "RollingBack", "Interrupted", "Superseded"]
+        },
+        "jobState": {
+          "type": "string",
+          "enum": ["queued", "running", "success", "failed", "cancelled", "skipped"]
+        },
+        "trustDomain": {
+          "type": "string",
+          "enum": ["trusted", "untrusted", "local"]
+        },
+        "event": {
+          "$ref": "#/$defs/protocolEvent"
+        }
+      }
+    },
+    "protocolEvent": {
+      "type": "object",
+      "description": "A state transition or lifecycle event queued in outbox and sent over WebSocket.",
+      "required": ["id", "runId", "seq", "timestamp", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Event unique identifier."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run ULID."
+        },
+        "seq": {
+          "type": "integer",
+          "description": "Monotonically increasing sequence number."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Event timestamp in ISO 8601."
+        },
+        "type": {
+          "type": "string",
+          "description": "Event type descriptor."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Event-specific payload."
+        }
+      }
+    }
   }
 }
