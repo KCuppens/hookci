@@ -1,0 +1,7 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+    test:
+      run: go test -race ./...

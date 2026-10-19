@@ -1,0 +1,2 @@
+invalid_empty.yml: error: the file is empty
+  fix: start the file with version: 1

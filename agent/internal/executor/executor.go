@@ -91,10 +91,10 @@ func (e *Executor) ExecuteRun(
 	domain egress.TrustDomain,
 	isProtected bool,
 ) error {
-	if cfg == nil || cfg.Checks == nil {
+	if cfg == nil || cfg.ZeroCIConfig.Checks == nil {
 		return fmt.Errorf("config has no checks")
 	}
-	checks := cfg.Checks
+	checks := cfg.ZeroCIConfig.Checks
 
 	// 1. Prepare run-level service directories and environment
 	var (

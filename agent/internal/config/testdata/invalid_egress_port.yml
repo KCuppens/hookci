@@ -1,0 +1,9 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+  egress:
+    - api.example.com:443
+    - api.example.com:0
+    - api.example.com:70000

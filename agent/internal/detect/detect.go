@@ -48,8 +48,12 @@ func Detect(dir string) (*Result, error) {
 			return nil, err
 		}
 		if res != nil {
-			if err := config.ValidateSemantics(res.Config); err != nil {
-				return nil, fmt.Errorf("generated config validation failed: %w", err)
+			data, err := FormatYAML(res.Config)
+			if err != nil {
+				return nil, err
+			}
+			if _, diags := config.Parse(data, config.ParseOptions{}); diags.HasErrors() {
+				return nil, fmt.Errorf("generated config is invalid:\n%s", diags.Format("detected config"))
 			}
 			return res, nil
 		}

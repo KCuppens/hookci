@@ -1,0 +1,5 @@
+version: 1
+checks:
+  jbos:
+    test:
+      run: go test ./...

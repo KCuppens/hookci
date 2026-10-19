@@ -1,0 +1,4 @@
+invalid_egress_port.yml:8: error: checks.egress[1]: port "0" is out of range 1 to 65535
+  fix: use a port between 1 and 65535, or leave it out
+invalid_egress_port.yml:9: error: checks.egress[2]: port "70000" is out of range 1 to 65535
+  fix: use a port between 1 and 65535, or leave it out

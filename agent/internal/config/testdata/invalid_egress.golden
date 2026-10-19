@@ -1,0 +1,8 @@
+invalid_egress.yml:7: error: checks.egress[0]: a bare * would allow every host
+  fix: list the hosts the jobs need, or use *.example.com for one domain
+invalid_egress.yml:8: error: checks.egress[1]: IP literal "10.0.0.1" is not allowed; egress takes host names
+  fix: use the host name instead; the egress proxy resolves names itself
+invalid_egress.yml:9: error: checks.egress[2]: IP literal "[2001:db8::1]:443" is not allowed; egress takes host names
+  fix: use the host name instead; the egress proxy resolves names itself
+invalid_egress.yml:10: error: checks.egress[3]: "Registry.NPMjs.org" must be lowercase
+  fix: use "registry.npmjs.org"

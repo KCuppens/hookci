@@ -30,17 +30,14 @@ go 1.24
 	if res.Config.Version != 1 {
 		t.Errorf("expected version 1, got %d", res.Config.Version)
 	}
-	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "go mod download" {
+	if s := res.Config.ZeroCIConfig.Checks.Setup; len(s) != 1 || s[0].Run != "go mod download" {
 		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := []string{"fmt", "vet", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks.Jobs[job]; !ok {
+		if _, ok := res.Config.ZeroCIConfig.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
 	}
 }
 
@@ -64,12 +61,9 @@ edition = "2021"
 	}
 	expectedJobs := []string{"fmt", "check", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks.Jobs[job]; !ok {
+		if _, ok := res.Config.ZeroCIConfig.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
 	}
 }
 
@@ -108,17 +102,14 @@ func TestDetectPnpmTurbo(t *testing.T) {
 	if res.Ecosystem != EcosystemNodePnpm {
 		t.Errorf("expected %s, got %s", EcosystemNodePnpm, res.Ecosystem)
 	}
-	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "pnpm install --frozen-lockfile" {
+	if s := res.Config.ZeroCIConfig.Checks.Setup; len(s) != 1 || s[0].Run != "pnpm install --frozen-lockfile" {
 		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := []string{"lint", "typecheck", "unit"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks.Jobs[job]; !ok {
-			t.Errorf("expected check job %q not found in checks: %v", job, res.Config.Checks.Jobs)
+		if _, ok := res.Config.ZeroCIConfig.Checks.Jobs[job]; !ok {
+			t.Errorf("expected check job %q not found in checks: %v", job, res.Config.ZeroCIConfig.Checks.Jobs)
 		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
 	}
 }
 
@@ -146,7 +137,7 @@ func TestDetectNpm(t *testing.T) {
 	if res.Ecosystem != EcosystemNodeNpm {
 		t.Errorf("expected %s, got %s", EcosystemNodeNpm, res.Ecosystem)
 	}
-	if s := res.Config.Checks.Setup; len(s) != 1 || s[0].Run != "npm ci" {
+	if s := res.Config.ZeroCIConfig.Checks.Setup; len(s) != 1 || s[0].Run != "npm ci" {
 		t.Errorf("unexpected setup: %+v", s)
 	}
 	expectedJobs := map[string]string{
@@ -155,15 +146,12 @@ func TestDetectNpm(t *testing.T) {
 		"unit":      "npm test",
 	}
 	for name, wantRun := range expectedJobs {
-		job, ok := res.Config.Checks.Jobs[name]
+		job, ok := res.Config.ZeroCIConfig.Checks.Jobs[name]
 		if !ok {
 			t.Errorf("expected job %q not found", name)
 		} else if job.Run != wantRun {
 			t.Errorf("job %q run = %q, want %q", name, job.Run, wantRun)
 		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
 	}
 }
 
@@ -199,12 +187,9 @@ strict = true
 	}
 	expectedJobs := []string{"lint", "typecheck", "test"}
 	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks.Jobs[job]; !ok {
+		if _, ok := res.Config.ZeroCIConfig.Checks.Jobs[job]; !ok {
 			t.Errorf("expected check job %q not found", job)
 		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
 	}
 }
 
@@ -228,11 +213,12 @@ func TestFormatYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FormatYAML failed: %v", err)
 	}
-	parsed, err := config.Parse(data)
-	if err != nil {
-		t.Fatalf("config.Parse failed on formatted YAML: %v", err)
+	parsed, diags := config.Parse(data, config.ParseOptions{})
+	if diags.HasErrors() {
+		t.Fatalf("config.Parse failed on formatted YAML:\n%s", diags.Format("formatted"))
 	}
-	if !reflect.DeepEqual(parsed.Checks.Setup, cfg.Checks.Setup) || !reflect.DeepEqual(parsed.Checks.Jobs, cfg.Checks.Jobs) {
-		t.Errorf("parsed config mismatch: %+v", parsed.Checks)
+	got, want := parsed.ZeroCIConfig.Checks, cfg.ZeroCIConfig.Checks
+	if !reflect.DeepEqual(got.Setup, want.Setup) || !reflect.DeepEqual(got.Jobs, want.Jobs) {
+		t.Errorf("parsed config mismatch: %+v", got)
 	}
 }

@@ -1,0 +1,22 @@
+version: 1
+checks:
+  trust: all
+  jobs:
+    lint:
+      run: npm run lint
+      needs: [test]
+    test:
+      run: npm test
+      needs: [lint, biuld]
+  egress:
+    - registry.npmjs.org:99999
+deployments:
+  production:
+    on:
+      push:
+        branch: main
+    strategy: restart
+    health:
+      url: http://example.com:{port}/health
+redact:
+  - "(?i)token=(\\w+"

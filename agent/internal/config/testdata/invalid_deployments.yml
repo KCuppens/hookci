@@ -1,0 +1,25 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+deployments:
+  production:
+    strategy: restart
+    env_file: /etc/zeroci/production.env
+    health:
+      url: https://example.com/health
+  staging:
+    on:
+      push:
+        branch: develop
+    health:
+      url: http://127.0.0.1/health
+  preview:
+    on:
+      push:
+        branch: preview
+    strategy: restart
+    env_file: /etc/zeroci/missing.env
+    health:
+      url: http://127.0.0.1:{port}/health

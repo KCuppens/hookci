@@ -75,9 +75,8 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// 1. Locate and load configuration
 	var cfg *config.Config
 	if configFile != "" {
-		loaded, err := config.Load(configFile)
-		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: load config %s: %v\n", configFile, err)
+		loaded, ok := loadRunConfig(configFile, stderr)
+		if !ok {
 			return ExitUsage
 		}
 		cfg = loaded
@@ -88,9 +87,8 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		for _, p := range defaultPaths {
 			if _, err := os.Stat(p); err == nil {
-				loaded, err := config.Load(p)
-				if err != nil {
-					fmt.Fprintf(stderr, "zeroci: load config %s: %v\n", p, err)
+				loaded, ok := loadRunConfig(p, stderr)
+				if !ok {
 					return ExitUsage
 				}
 				cfg = loaded
@@ -101,7 +99,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// Fallback to auto-detect if no config file present
 		if cfg == nil {
 			det, err := detect.Detect(absWorkDir)
-			if err != nil || det == nil || det.Config == nil || det.Config.Checks == nil || len(det.Config.Checks.Jobs) == 0 {
+			if err != nil || det == nil || det.Config == nil || det.Config.ZeroCIConfig.Checks == nil || len(det.Config.ZeroCIConfig.Checks.Jobs) == 0 {
 				fmt.Fprintln(stderr, "zeroci: no checks detected")
 				return ExitNoChecks
 			}
@@ -109,7 +107,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	if cfg.Checks == nil || len(cfg.Checks.Jobs) == 0 {
+	if cfg.ZeroCIConfig.Checks == nil || len(cfg.ZeroCIConfig.Checks.Jobs) == 0 {
 		fmt.Fprintln(stderr, "zeroci: no checks configured")
 		return ExitNoChecks
 	}
@@ -154,7 +152,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// 5. Create new Run record in store
 	runID := ids.NewRunID()
 	var jobNames []string
-	for name := range cfg.Checks.Jobs {
+	for name := range cfg.ZeroCIConfig.Checks.Jobs {
 		jobNames = append(jobNames, name)
 	}
 	sort.Strings(jobNames)
@@ -208,6 +206,21 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitOK
 	}
 	return ExitRunFailed
+}
+
+// loadRunConfig loads the config at path and prints its diagnostics. It
+// reports false when the file cannot be read or has errors; warnings alone
+// let the run go ahead.
+func loadRunConfig(path string, stderr io.Writer) (*config.Config, bool) {
+	cfg, diags, err := config.Load(path, config.ParseOptions{})
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: load config %s: %v\n", path, err)
+		return nil, false
+	}
+	if len(diags) > 0 {
+		fmt.Fprint(stderr, diags.Format(path))
+	}
+	return cfg, !diags.HasErrors()
 }
 
 func hasSystemd() bool {

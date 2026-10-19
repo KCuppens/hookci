@@ -1,0 +1,2 @@
+invalid_trust_all.yml:3: error: checks.trust: trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network
+  fix: use trust: approve, or self-host the hub without deployments
