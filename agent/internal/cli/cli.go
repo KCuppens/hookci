@@ -24,6 +24,10 @@ type command struct {
 
 func commandTable() map[string]command {
 	return map[string]command{
+		"detect": {
+			summary: "auto-detect project ecosystem and print inferred config",
+			run:     runDetect,
+		},
 		"help": {
 			summary: "show help for zeroci",
 			run: func(_ context.Context, _ []string, stdout, _ io.Writer) int {
@@ -31,16 +35,20 @@ func commandTable() map[string]command {
 				return ExitOK
 			},
 		},
+		"init": {
+			summary: "scaffold a .zeroci.yml config file for the project",
+			run:     runInit,
+		},
+		"validate": {
+			summary: "validate a zeroci configuration file",
+			run:     runValidate,
+		},
 		"version": {
 			summary: "print the zeroci version",
 			run: func(_ context.Context, _ []string, stdout, _ io.Writer) int {
 				fmt.Fprintln(stdout, version.String())
 				return ExitOK
 			},
-		},
-		"validate": {
-			summary: "validate a zeroci configuration file",
-			run:     runValidate,
 		},
 	}
 }
