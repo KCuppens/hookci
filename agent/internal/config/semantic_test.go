@@ -11,6 +11,15 @@ import (
 
 const oneJob = "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n"
 
+func TestReservedJobName(t *testing.T) {
+	src := "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n    setup:\n      run: make\n"
+	_, diags := parseString(t, src, ParseOptions{})
+	d := findDiag(t, diags, "checks.jobs.setup")
+	if d.Severity != SeverityError || d.Line != 6 || d.Message != `job name "setup" is reserved for the setup phase` || !strings.Contains(d.Fix, "rename the job") {
+		t.Errorf("reserved name diagnostic = %+v", d)
+	}
+}
+
 func TestNeedsUnknown(t *testing.T) {
 	_, diags := parseString(t, readFixture(t, "invalid_needs.yml"), ParseOptions{})
 	d := findDiag(t, diags, "checks.jobs.test.needs[0]")

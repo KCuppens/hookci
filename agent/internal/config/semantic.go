@@ -24,6 +24,7 @@ import (
 func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
 	var diags Diagnostics
 	if c := cfg.Checks; c != nil {
+		diags = append(diags, checkReservedJobNames(c.Jobs, li)...)
 		diags = append(diags, checkNeeds(c.Jobs, li)...)
 		diags = append(diags, checkCommands(c, li)...)
 		diags = append(diags, checkCachePaths(c.Setup, li)...)
@@ -32,6 +33,22 @@ func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnost
 	diags = append(diags, checkTrust(cfg, opts, li)...)
 	diags = append(diags, checkRedact(cfg.Redact, li)...)
 	diags = append(diags, checkDeployments(cfg.Deployments, opts, li)...)
+	return diags
+}
+
+// reservedJobNames are taken by the setup phase: its log is logs/setup.log,
+// its unit zeroci-run-<run>-setup, and `zeroci logs <run> setup` shows it.
+var reservedJobNames = []string{"setup"}
+
+// checkReservedJobNames rejects jobs that would clash with the setup phase.
+func checkReservedJobNames(jobs ChecksJobs, li lineIndex) Diagnostics {
+	var diags Diagnostics
+	for _, name := range reservedJobNames {
+		if _, ok := jobs[name]; ok {
+			diags = append(diags, li.errorf(joinKey("checks.jobs", name), "rename the job, for example "+quote(name+"-job"),
+				"job name %s is reserved for the setup phase", quote(name)))
+		}
+	}
 	return diags
 }
 
