@@ -1,6 +1,7 @@
 // One per Slack workspace. The Slack routes ack within Slack's 3 s limit and
 // hand commands and actions here; the DO runs the registered handler and
-// posts its reply to the interaction's response_url.
+// posts its reply to the interaction's response_url. It also owns the
+// workspace's outbound Web API queue (slack-outbound.ts).
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
@@ -10,6 +11,7 @@ import { reportError } from "../observability";
 import "../slack/commands";
 import { type SlackActionRequest, type SlackCommandRequest, type SlackReply, actionFor, commandFor } from "../slack/registry";
 import { S } from "../strings";
+import { type SlackCallRequest, SlackOutbound } from "./slack-outbound";
 
 const FAILED_REPLY: SlackReply = { response_type: "ephemeral", text: S.slack.failed };
 
@@ -45,11 +47,24 @@ export async function callSlackDo(
 
 /** One per Slack workspace (`SLACK_DO.idFromName(teamId)`). */
 export class SlackWorkspaceDO extends DurableObject<Env> {
+	private readonly outbound: SlackOutbound;
+
+	constructor(ctx: DurableObjectState, env: Env) {
+		super(ctx, env);
+		this.outbound = new SlackOutbound(ctx, env);
+	}
+
 	override async fetch(request: Request): Promise<Response> {
 		const path = new URL(request.url).pathname;
 		if (request.method === "POST" && path === "/command") return this.command(await request.json<SlackCommandRequest>());
 		if (request.method === "POST" && path === "/action") return this.action(await request.json<SlackActionRequest>());
+		if (request.method === "POST" && path === "/call") return Response.json(await this.outbound.call(await request.json<SlackCallRequest>()));
+		if (request.method === "GET" && path === "/queue-stats") return Response.json(this.outbound.stats());
 		return Response.json({ error: "not_found" }, { status: 404 });
+	}
+
+	override async alarm(): Promise<void> {
+		await this.outbound.alarm();
 	}
 
 	private async command(req: SlackCommandRequest): Promise<Response> {

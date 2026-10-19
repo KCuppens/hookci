@@ -8,4 +8,8 @@ export const QUOTAS = {
 	webhooksPerInstallationPerMin: 600,
 	agentConnectsPerMinPerIp: 30,
 	oauthCallbacksPer10MinPerIp: 20,
+	slackWorkspacePerMin: 40,
+	slackChannelPostPerSec: 1,
+	slackQueueMax: 500,
+	slackMaxAttempts: 5,
 } as const;
