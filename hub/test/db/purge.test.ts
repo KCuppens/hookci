@@ -13,7 +13,7 @@ import { clearTables, columnsOf, schemaTables } from "./helpers";
 
 // Tables that hold no installation data. Adding a table to the schema that is
 // neither listed here nor keyed by installation_id or run_id fails the test.
-const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states"];
+const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states", "cron_state"];
 
 beforeEach(clearTables);
 

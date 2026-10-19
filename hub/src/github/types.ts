@@ -66,6 +66,7 @@ export interface Commit {
 	commit: {
 		message: string;
 		author: { name: string; email: string; date: string } | null;
+		committer: { name: string; email: string; date: string } | null;
 	};
 	author: { id: number; login: string } | null;
 }
@@ -76,6 +77,33 @@ export interface CommitSummary {
 	authorLogin: string | null;
 	/** First line of the commit message. */
 	title: string;
+}
+
+/** GET /repos/{owner}/{repo}/branches/{branch}. */
+export interface Branch {
+	name: string;
+	commit: Commit;
+}
+
+export interface BranchHead extends CommitSummary {
+	/** Unix ms of the head commit's committer date, or its author date without one. */
+	committedAt: number;
+}
+
+/** An entry of GET /app/hook/deliveries; each redelivery is its own entry under the same guid. */
+export interface HookDelivery {
+	id: number;
+	/** The X-GitHub-Delivery header value, which the hub records as deliveries.delivery_id. */
+	guid: string;
+	delivered_at: string;
+	redelivery: boolean;
+	/** "OK" when the hub answered 2xx. */
+	status: string;
+	status_code: number;
+	event: string;
+	action: string | null;
+	installation_id: number | null;
+	repository_id: number | null;
 }
 
 export interface PullRequest {

@@ -17,7 +17,8 @@ export class GitHubApiError extends HubError {
 	}
 }
 
-export type GitHubResponse<T> = { status: number; data: T; etag?: string; notModified: false };
+/** link is the raw Link header, present on paginated responses. */
+export type GitHubResponse<T> = { status: number; data: T; etag?: string; link?: string; notModified: false };
 export type GitHubNotModified = { status: 304; data: undefined; etag?: string; notModified: true };
 
 export interface GitHubRequester {
@@ -85,7 +86,7 @@ class Requester implements GitHubRequester {
 			throw new GitHubApiError(res.status, `GitHub ${method} ${path}: ${res.status} ${await errorMessage(res)}`);
 		}
 		const text = await res.text();
-		return { status: res.status, data: JSON.parse(text || "null"), etag, notModified: false };
+		return { status: res.status, data: JSON.parse(text || "null"), etag, link: res.headers.get("link") ?? undefined, notModified: false };
 	}
 }
 

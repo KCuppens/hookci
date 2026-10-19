@@ -1,10 +1,13 @@
 import { GitHubApiError, type GitHubRequester } from "./client";
 import type {
+	Branch,
+	BranchHead,
 	CheckRun,
 	CollaboratorPermission,
 	Commit,
 	CommitSummary,
 	CreateCheckRunBody,
+	HookDelivery,
 	Installation,
 	PullRequest,
 	RepoPermission,
@@ -91,6 +94,41 @@ export async function getCommit(
 		authorLogin: data.author?.login ?? null,
 		title: data.commit.message.split("\n", 1)[0] ?? "",
 	};
+}
+
+/** The branch's head commit, with the time it was committed. */
+export async function getBranch(inst: GitHubRequester, owner: string, repo: string, branch: string): Promise<BranchHead> {
+	const { data } = await inst.request<Branch>("GET", `${repoPath(owner, repo)}/branches/${encodeURIComponent(branch)}`);
+	const { commit } = data;
+	const date = commit.commit.committer?.date ?? commit.commit.author?.date;
+	if (date === undefined) throw new GitHubApiError(502, `GitHub branch ${owner}/${repo}@${branch}: head commit has no date`);
+	return {
+		sha: commit.sha,
+		authorEmail: commit.commit.author?.email ?? null,
+		authorLogin: commit.author?.login ?? null,
+		title: commit.commit.message.split("\n", 1)[0] ?? "",
+		committedAt: Date.parse(date),
+	};
+}
+
+/**
+ * One page of the app's webhook deliveries, newest first (app requester).
+ * next is the cursor of the following page, null on the last.
+ */
+export async function listHookDeliveries(
+	app: GitHubRequester,
+	cursor?: string,
+): Promise<{ deliveries: HookDelivery[]; next: string | null }> {
+	const query = new URLSearchParams({ per_page: String(PER_PAGE) });
+	if (cursor !== undefined) query.set("cursor", cursor);
+	const res = await app.request<HookDelivery[]>("GET", `/app/hook/deliveries?${query}`);
+	const nextUrl = /<([^>]+)>;\s*rel="next"/.exec(res.link ?? "")?.[1];
+	return { deliveries: res.data, next: nextUrl === undefined ? null : new URL(nextUrl).searchParams.get("cursor") };
+}
+
+/** Asks GitHub to send a webhook delivery again (app requester); it arrives under the same guid. */
+export async function redeliverHook(app: GitHubRequester, deliveryId: number): Promise<void> {
+	await app.request("POST", `/app/hook/deliveries/${deliveryId}/attempts`);
 }
 
 export async function getPull(inst: GitHubRequester, owner: string, repo: string, n: number): Promise<PullRequest> {

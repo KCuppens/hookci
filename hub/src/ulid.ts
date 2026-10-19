@@ -6,11 +6,20 @@ const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 const TIME_CHARS = 10;
 const MAX_TIME = 2 ** 48 - 1;
 
+/**
+ * The time part every ULID of millisecond ms starts with. A ULID of an earlier
+ * millisecond sorts before it and one of ms or later sorts after it.
+ */
+export function ulidTimePrefix(ms: number): string {
+	if (!Number.isSafeInteger(ms) || ms < 0 || ms > MAX_TIME) throw new RangeError(`ulid time out of range: ${ms}`);
+	let time = "";
+	for (let i = 0, rest = ms; i < TIME_CHARS; i++, rest = Math.floor(rest / 32)) time = ALPHABET.charAt(rest % 32) + time;
+	return time;
+}
+
 /** A new ULID for the millisecond now; ids of a later millisecond sort after those of an earlier one. */
 export function ulid(now: number = Date.now()): string {
-	if (!Number.isSafeInteger(now) || now < 0 || now > MAX_TIME) throw new RangeError(`ulid time out of range: ${now}`);
-	let time = "";
-	for (let i = 0, ms = now; i < TIME_CHARS; i++, ms = Math.floor(ms / 32)) time = ALPHABET.charAt(ms % 32) + time;
+	const time = ulidTimePrefix(now);
 
 	let random = "";
 	let acc = 0;

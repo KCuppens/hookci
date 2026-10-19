@@ -1,6 +1,5 @@
-// Webhook delivery and Slack event dedupe, and expiry of the short-lived
-// global tables. A delivery is recorded before its installation is known to
-// exist, so these helpers take the raw D1Database.
+// Webhook delivery and Slack event dedupe. A delivery is recorded before its
+// installation is known to exist, so these helpers take the raw D1Database.
 
 export type DeliveryStatus = "processed" | "dropped" | "failed";
 
@@ -42,6 +41,16 @@ export async function reclaimFailedDelivery(db: D1Database, deliveryId: string):
 	return res.meta.changes === 1;
 }
 
+/** The ids among deliveryIds recorded as processed or dropped, that is, not failed. */
+export async function handledDeliveryIds(db: D1Database, deliveryIds: readonly string[]): Promise<Set<string>> {
+	if (deliveryIds.length === 0) return new Set();
+	const { results } = await db
+		.prepare("SELECT delivery_id FROM deliveries WHERE delivery_id IN (SELECT value FROM json_each(?1)) AND status <> 'failed'")
+		.bind(JSON.stringify(deliveryIds))
+		.all<{ delivery_id: string }>();
+	return new Set(results.map((r) => r.delivery_id));
+}
+
 /** Records a Slack event id until expiresAt; false when it was already recorded. */
 export async function recordSlackEvent(db: D1Database, eventId: string, expiresAt: number): Promise<boolean> {
 	const row = await db
@@ -49,20 +58,4 @@ export async function recordSlackEvent(db: D1Database, eventId: string, expiresA
 		.bind(eventId, expiresAt)
 		.first<{ event_id: string }>();
 	return row !== null;
-}
-
-// ip_rate rows only matter inside their rate window, the longest of which is
-// 10 minutes; an hour-old window is dead.
-const IP_RATE_TTL_MS = 60 * 60 * 1000;
-
-/** Deletes expired deliveries, Slack event ids, OAuth states, author cache entries and rate windows; returns the row count. */
-export async function purgeExpired(db: D1Database, now: number): Promise<number> {
-	const results = await db.batch([
-		db.prepare("DELETE FROM deliveries WHERE expires_at < ?1").bind(now),
-		db.prepare("DELETE FROM slack_events WHERE expires_at < ?1").bind(now),
-		db.prepare("DELETE FROM oauth_states WHERE expires_at < ?1").bind(now),
-		db.prepare("DELETE FROM author_cache WHERE expires_at < ?1").bind(now),
-		db.prepare("DELETE FROM ip_rate WHERE window_start < ?1").bind(now - IP_RATE_TTL_MS),
-	]);
-	return results.reduce((n, r) => n + r.meta.changes, 0);
 }

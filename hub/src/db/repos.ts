@@ -55,3 +55,23 @@ export async function findRepoForTeam(db: D1Database, teamId: string, fullName: 
 		.bind(teamId, fullName)
 		.first<RepoRow>();
 }
+
+/** Position in the (repo_id, installation_id) order listActiveReposAfter walks. */
+export type RepoCursor = { repoId: number; installationId: number };
+
+/**
+ * Repos of installations that are neither suspended nor deleted, after the
+ * cursor in (repo_id, installation_id) order. It reads across installations
+ * for the reconcile cron, so it takes the raw D1Database.
+ */
+export async function listActiveReposAfter(db: D1Database, after: RepoCursor, limit: number): Promise<RepoRow[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT r.* FROM repos r JOIN installations i ON i.id = r.installation_id
+			WHERE i.suspended_at IS NULL AND i.deleted_at IS NULL AND (r.repo_id, r.installation_id) > (?1, ?2)
+			ORDER BY r.repo_id, r.installation_id LIMIT ?3`,
+		)
+		.bind(after.repoId, after.installationId, limit)
+		.all<RepoRow>();
+	return results;
+}

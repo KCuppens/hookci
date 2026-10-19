@@ -65,6 +65,11 @@ export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
 	);
 }
 
+/** Whether any run, of any event or attempt, exists for the commit in the repo. */
+export async function hasRunForSha(t: TenantDb, repoId: number, sha: string): Promise<boolean> {
+	return (await t.first("SELECT 1 FROM runs WHERE installation_id = ?1 AND repo_id = ?2 AND sha = ?3 LIMIT 1", repoId, sha)) !== null;
+}
+
 /** Sets the run state and the patched columns; false when the run is not this installation's. */
 export async function updateRunState(t: TenantDb, runId: string, state: string, patch: RunPatch = {}): Promise<boolean> {
 	const set = ["state = ?3"];
