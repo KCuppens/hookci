@@ -56,9 +56,9 @@ func TestPumpDeliversInOrderAndAcks(t *testing.T) {
 	if err := st.CreateRun(ctx, run, []store.Job{{Name: "lint"}}); err != nil {
 		t.Fatal(err)
 	}
-	col := 3
+	col, total := 3, 4
 	annSeq := appendFrame(t, st, string(KindAnnotations), protocol.Annotations{
-		RunId: "r1", Job: "lint",
+		RunId: "r1", Job: "lint", Total: &total,
 		Items: []protocol.AnnotationsItemsElem{{Path: "src/a.ts", Line: 7, Column: &col, Level: "failure", Message: "bad"}},
 	})
 	if err := st.Transition(ctx, "r1", []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
@@ -86,8 +86,8 @@ func TestPumpDeliversInOrderAndAcks(t *testing.T) {
 		}
 	}
 	wantAnn := logpipe.Annotation{Path: "src/a.ts", Line: 7, Column: 3, Level: logpipe.LevelFailure, Message: "bad"}
-	if anns := got[1].Annotations; len(anns) != 1 || anns[0] != wantAnn || got[1].Job != "lint" {
-		t.Errorf("annotations event = %+v, want job lint with %+v", got[1], wantAnn)
+	if anns := got[1].Annotations; len(anns) != 1 || anns[0] != wantAnn || got[1].Job != "lint" || got[1].AnnotationsTotal != 4 {
+		t.Errorf("annotations event = %+v, want job lint with %+v of 4", got[1], wantAnn)
 	}
 	if seqs := pendingSeqs(t, st); len(seqs) != 0 {
 		t.Errorf("Pending after Drain = %v, want empty", seqs)

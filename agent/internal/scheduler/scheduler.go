@@ -81,7 +81,7 @@ type runState struct {
 	stopReason string
 	stopJobs   store.JobState
 
-	finishing bool // terminal transition done, FinishRun pending
+	finishing bool // last work settled, FinishRun pending; terminal transition follows it
 	final     store.RunState
 	err       error
 	done      chan struct{}
@@ -235,7 +235,7 @@ func (s *Scheduler) supersede(ctx context.Context, run store.Run, key string, st
 		if old.key != key || old.run.SHA == run.SHA {
 			continue
 		}
-		if err := s.st.Transition(ctx, old.run.ID, []store.RunState{store.RunQueued}, store.RunSuperseded, reason); err != nil {
+		if err := s.st.Supersede(ctx, old.run.ID, reason); err != nil {
 			return out, fmt.Errorf("scheduler: supersede %s: %w", old.run.ID, err)
 		}
 		s.forget(old, store.RunSuperseded, nil)
@@ -259,7 +259,7 @@ func (s *Scheduler) supersede(ctx context.Context, run store.Run, key string, st
 		if _, held := s.runs[old.ID]; held {
 			continue
 		}
-		err := s.st.Transition(ctx, old.ID, []store.RunState{store.RunQueued}, store.RunSuperseded, reason)
+		err := s.st.Supersede(ctx, old.ID, reason)
 		if errors.Is(err, store.ErrStateMismatch) {
 			continue // it left queued since ListRuns
 		}
@@ -540,6 +540,7 @@ func (s *Scheduler) apply(r result) {
 	rs := r.rs
 	switch r.kind {
 	case workFinish:
+		s.settleRun(rs)
 		close(rs.done)
 		delete(s.runs, rs.run.ID)
 		s.notifyIdle()
@@ -619,8 +620,10 @@ func (s *Scheduler) maybeFinish(rs *runState) {
 	s.finish(rs)
 }
 
-// finish moves the run to its terminal state, releases its env lock and
-// calls FinishRun in the background.
+// finish settles the run's abandoned jobs and calls FinishRun in the
+// background. The run stays running in the store until teardown returns, so
+// a crash during teardown leaves it for recovery to sweep; settleRun then
+// moves it to its terminal state.
 func (s *Scheduler) finish(rs *runState) {
 	rs.finishing = true
 	id := rs.run.ID
@@ -637,14 +640,7 @@ func (s *Scheduler) finish(rs *runState) {
 			}
 		}
 	}
-	if err := s.st.Transition(context.Background(), id, []store.RunState{store.RunRunning}, final, reason); err != nil {
-		s.writeFailed(rs, "", err)
-	}
-	rs.final = final
 	rs.run.State, rs.run.Reason = final, reason
-	if rs.lock != "" && s.envLocks[rs.lock] == id {
-		delete(s.envLocks, rs.lock)
-	}
 	s.active = slices.DeleteFunc(s.active, func(r *runState) bool { return r == rs })
 	rs.cancel()
 
@@ -656,6 +652,19 @@ func (s *Scheduler) finish(rs *runState) {
 		}
 		s.results <- result{rs: rs, kind: workFinish}
 	}()
+}
+
+// settleRun moves a torn-down run to the terminal state finish chose and
+// releases its env lock.
+func (s *Scheduler) settleRun(rs *runState) {
+	id := rs.run.ID
+	if err := s.st.Transition(context.Background(), id, []store.RunState{store.RunRunning}, rs.run.State, rs.run.Reason); err != nil {
+		s.writeFailed(rs, "", err)
+	}
+	rs.final = rs.run.State
+	if rs.lock != "" && s.envLocks[rs.lock] == id {
+		delete(s.envLocks, rs.lock)
+	}
 }
 
 // forget drops a run that never started and wakes its waiters.

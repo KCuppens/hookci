@@ -151,6 +151,12 @@ func TestStdoutAnnotationsCap(t *testing.T) {
 	if lines[10] != "  ... and 2 more" {
 		t.Errorf("last line = %q, want %q", lines[10], "  ... and 2 more")
 	}
+
+	// The executor sent 12 of 60 found: the 48 it dropped count too.
+	got = render(t, StdoutOptions{}, []Event{{Kind: KindAnnotations, RunID: runID, Job: "lint", Annotations: anns, AnnotationsTotal: 60}})
+	if !strings.HasSuffix(got, "\n  ... and 50 more\n") {
+		t.Errorf("output with total 60 = %q, want it to end with ... and 50 more", got)
+	}
 }
 
 func TestStdoutStepsOnlyVerbose(t *testing.T) {

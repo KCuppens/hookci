@@ -89,6 +89,16 @@ func TestPipeStepMarkers(t *testing.T) {
 	}
 }
 
+func TestCountStepMarkers(t *testing.T) {
+	script := "echo '::zeroci step install'\nnpm ci\necho \"::zeroci step build\"\nmake\nprintf '::zeroci step test\\n'"
+	if got := CountStepMarkers(script); got != 3 {
+		t.Errorf("CountStepMarkers = %d, want 3", got)
+	}
+	if got := CountStepMarkers("make test"); got != 0 {
+		t.Errorf("CountStepMarkers without markers = %d, want 0", got)
+	}
+}
+
 func TestPipeConcurrentStreams(t *testing.T) {
 	runDir := t.TempDir()
 	p, err := New(Options{RunDir: runDir, Job: "test"})

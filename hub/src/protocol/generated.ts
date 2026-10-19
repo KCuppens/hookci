@@ -339,6 +339,10 @@ export interface Annotations {
      */
     title?: string;
   }[];
+  /**
+   * Number of annotations found, including those not sent in items.
+   */
+  total?: number;
 }
 /**
  * Agent asks the hub for a short-lived GitHub token.

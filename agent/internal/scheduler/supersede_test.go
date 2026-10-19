@@ -28,7 +28,7 @@ func TestNewerQueuedDeployReplacesOlder(t *testing.T) {
 	wantSuperseded(t, h.submit(h.create(deployRun("B", sha2, "production"), job("deploy"))))
 	wantSuperseded(t, h.submit(h.create(deployRun("C", sha3, "production"), job("deploy"))), "B")
 	h.wantRun("B", store.RunSuperseded, "superseded by "+sha3[:7])
-	h.wantJob("B", "deploy", store.JobQueued, "")
+	h.wantJob("B", "deploy", store.JobSkipped, "superseded by "+sha3[:7])
 
 	h.runner.release(t, "A:setup")
 	h.runner.release(t, "A:deploy")
@@ -78,7 +78,9 @@ func TestPRSupersedeQueued(t *testing.T) {
 	wantSuperseded(t, h.submit(h.create(prRun("p2", sha3, 7), job("a"))), "p1")
 
 	h.wantRun("p0", store.RunSuperseded, "superseded by "+sha2[:7])
+	h.wantJob("p0", "a", store.JobSkipped, "superseded by "+sha2[:7])
 	h.wantRun("p1", store.RunSuperseded, "superseded by "+sha3[:7])
+	h.wantJob("p1", "a", store.JobSkipped, "superseded by "+sha3[:7])
 	if st := h.wait("p1"); st != store.RunSuperseded {
 		t.Fatalf("Wait(p1) = %s, want superseded", st)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
@@ -39,6 +40,22 @@ func (d Docker) RemoveByLabel(ctx context.Context, label string) error {
 		return fmt.Errorf("services: remove containers with label %s: %w", label, err)
 	}
 	return nil
+}
+
+// RunIDs returns the distinct LabelRun values of every container, running or
+// not, that carries the label.
+func (d Docker) RunIDs(ctx context.Context) ([]string, error) {
+	stdout, _, err := d.run(ctx, "ps", "-a", "--filter", "label="+LabelRun, "--format", `{{.Label "`+LabelRun+`"}}`)
+	if err != nil {
+		return nil, fmt.Errorf("services: list run ids of containers: %w", err)
+	}
+	var ids []string
+	for _, id := range strings.Fields(stdout) {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 // run executes docker with args and returns its captured output. A docker

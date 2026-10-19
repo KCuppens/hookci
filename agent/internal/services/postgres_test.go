@@ -57,6 +57,11 @@ func isPGReady(c execx.Cmd) bool {
 	return len(c.Args) > 2 && c.Args[0] == "exec" && c.Args[2] == "pg_isready"
 }
 
+// onFinalServer answers the readiness query the way the final server does.
+func onFinalServer(fake *execx.Fake) {
+	fake.On("docker", []string{"exec", "zeroci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Stdout: "*\n"})
+}
+
 func TestContainerName(t *testing.T) {
 	if got := ContainerName("01HX"); got != "zeroci-svc-01HX-postgres" {
 		t.Errorf("ContainerName(01HX) = %q", got)
@@ -102,6 +107,7 @@ func TestBuildRunArgvNetworkNone(t *testing.T) {
 func TestStartPostgresReady(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("docker", []string{"run"}, execx.FakeResponse{Stdout: "c0ffee\n"})
+	onFinalServer(fake)
 	probes := 0
 	fake.On("docker", []string{"exec"}, execx.FakeResponse{Fn: func(execx.Cmd) error {
 		probes++
@@ -131,11 +137,60 @@ func TestStartPostgresReady(t *testing.T) {
 	if n != 2 {
 		t.Errorf("pg_isready calls = %d, want 2", n)
 	}
+	want := []string{"exec", p.Name, "psql", "-h", "/var/run/postgresql", "-U", "postgres", "-d", "postgres", "-tAc", "SHOW listen_addresses"}
+	if n := countCalls(fake, want...); n != 1 {
+		t.Errorf("readiness queries = %d, want 1 with args %v", n, want)
+	}
 	if !slices.Equal(fake.Calls[0].Args, BuildRunArgv(o)) {
 		t.Errorf("first call = %v, want the run argv", fake.Calls[0].Args)
 	}
 	if fake.Called("docker", "rm") {
 		t.Error("a ready postgres was removed")
+	}
+}
+
+// The image entrypoint's temporary init server passes pg_isready on the
+// socket but listens nowhere else; StartPostgres must wait for the restart.
+func TestStartPostgresWaitsForFinalServer(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"run"}, execx.FakeResponse{})
+	queries := 0
+	fake.On("docker", []string{"exec", "zeroci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
+		queries++
+		if queries > 1 {
+			_, _ = c.Stdout.Write([]byte("*\n"))
+		}
+		return nil
+	}})
+	fake.On("docker", []string{"exec"}, execx.FakeResponse{})
+
+	if _, err := StartPostgres(context.Background(), testOptions(t, fake)); err != nil {
+		t.Fatalf("StartPostgres: %v", err)
+	}
+	if queries != 2 {
+		t.Errorf("readiness queries = %d, want 2 (init server, then final server)", queries)
+	}
+	if n := countCalls(fake, "exec", "zeroci-svc-01HX-postgres", "pg_isready"); n != 2 {
+		t.Errorf("pg_isready calls = %d, want 2", n)
+	}
+}
+
+// A docker run that fails after creating the container must not leave it.
+func TestStartPostgresRunFailureRemovesContainer(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"run"}, execx.FakeResponse{Code: 125, Stderr: "docker: Error response from daemon: failed to set up container networking"})
+	fake.On("docker", []string{"rm", "-f", "zeroci-svc-01HX-postgres"}, execx.FakeResponse{})
+
+	p, err := StartPostgres(context.Background(), testOptions(t, fake))
+	if err == nil || p != nil {
+		t.Fatalf("StartPostgres = %+v, %v; want an error", p, err)
+	}
+	var got []string
+	for _, c := range fake.Calls {
+		got = append(got, c.Args[0])
+	}
+	if want := []string{"run", "rm"}; !slices.Equal(got, want) {
+		t.Errorf("docker subcommands = %v, want %v", got, want)
 	}
 }
 
@@ -181,6 +236,7 @@ func TestStartPostgresStaleNameRetry(t *testing.T) {
 		return nil
 	}})
 	fake.On("docker", []string{"rm", "-f", "zeroci-svc-01HX-postgres"}, execx.FakeResponse{})
+	onFinalServer(fake)
 	fake.On("docker", []string{"exec"}, execx.FakeResponse{})
 
 	if _, err := StartPostgres(context.Background(), testOptions(t, fake)); err != nil {
@@ -190,7 +246,7 @@ func TestStartPostgresStaleNameRetry(t *testing.T) {
 	for _, c := range fake.Calls {
 		got = append(got, c.Args[0])
 	}
-	if want := []string{"run", "rm", "run", "exec"}; !slices.Equal(got, want) {
+	if want := []string{"run", "rm", "run", "exec", "exec"}; !slices.Equal(got, want) {
 		t.Errorf("docker subcommands = %v, want %v", got, want)
 	}
 }
@@ -225,6 +281,7 @@ func TestSocketDirMode(t *testing.T) {
 	defer syscall.Umask(old)
 
 	fake := &execx.Fake{}
+	onFinalServer(fake)
 	fake.On("docker", nil, execx.FakeResponse{})
 	o := testOptions(t, fake)
 	if _, err := StartPostgres(context.Background(), o); err != nil {

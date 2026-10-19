@@ -300,10 +300,11 @@ func TestRunRecoversFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	// A failing host command lands in Report.Errors, which run prints.
+	// A failing host command lands in Report.Errors, which run prints. The
+	// sweep only acts on this store's runs, so the failure is the container
+	// listing, which always runs.
 	host := &execx.Fake{}
-	host.On("pkill", nil, execx.FakeResponse{Err: errors.New("pkill exploded")})
-	host.On("docker", nil, execx.FakeResponse{})
+	host.On("docker", nil, execx.FakeResponse{Err: errors.New("docker exploded")})
 	d.Host = host
 
 	code, stdout, stderr := runCmd(ctx, d)
@@ -317,7 +318,7 @@ func TestRunRecoversFirst(t *testing.T) {
 	if got.State != store.RunInterrupted {
 		t.Errorf("crashed run state = %s, want interrupted", got.State)
 	}
-	if !strings.Contains(stderr, "zeroci: warning: recovery: ") || !strings.Contains(stderr, "pkill exploded") {
+	if !strings.Contains(stderr, "zeroci: warning: recovery: ") || !strings.Contains(stderr, "docker exploded") {
 		t.Errorf("stderr lacks the recovery error:\n%s", stderr)
 	}
 }

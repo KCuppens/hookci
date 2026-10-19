@@ -41,6 +41,22 @@ func TestRemoveByLabel(t *testing.T) {
 	}
 }
 
+func TestRunIDs(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"ps"}, execx.FakeResponse{Stdout: "r1\nr2\nr1\n"})
+	ids, err := (Docker{Runner: fake}).RunIDs(context.Background())
+	if err != nil {
+		t.Fatalf("RunIDs: %v", err)
+	}
+	if want := []string{"r1", "r2"}; !slices.Equal(ids, want) {
+		t.Errorf("ids = %q, want %q", ids, want)
+	}
+	want := []string{`docker ps -a --filter label=zeroci.run --format {{.Label "zeroci.run"}}`}
+	if got := dockerCalls(fake); !slices.Equal(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+}
+
 func TestRemoveByLabelDockerMissing(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("docker", nil, execx.FakeResponse{Err: &exec.Error{Name: "docker", Err: exec.ErrNotFound}})

@@ -56,6 +56,7 @@ type fakeRunner struct {
 	max      int
 	finishes map[string][]store.RunState
 	onSetup  func(run store.Run)
+	onFinish func(run store.Run)
 }
 
 func newFakeRunner() *fakeRunner {
@@ -91,6 +92,12 @@ func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (
 }
 
 func (r *fakeRunner) FinishRun(_ context.Context, run store.Run, final store.RunState) error {
+	r.mu.Lock()
+	hook := r.onFinish
+	r.mu.Unlock()
+	if hook != nil {
+		hook(run)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.finishes[run.ID] = append(r.finishes[run.ID], final)

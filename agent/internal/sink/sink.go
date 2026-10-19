@@ -38,7 +38,10 @@ type Event struct {
 	Reason      string
 	Tail        []string             // <=40, already redacted
 	Annotations []logpipe.Annotation // only for KindAnnotations
-	At          time.Time
+	// AnnotationsTotal counts the job's annotations including those left out
+	// of Annotations; 0 means len(Annotations).
+	AnnotationsTotal int
+	At               time.Time
 }
 
 // Sink receives events. Emit may be called from several goroutines.

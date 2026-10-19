@@ -53,6 +53,22 @@ func (s *Store) Jobs(ctx context.Context, runID string) ([]Job, error) {
 // errors as Transition, records u, and appends an outbox "event" row in the
 // same transaction.
 func (s *Store) TransitionJob(ctx context.Context, runID, job string, from []JobState, to JobState, u JobUpdate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: transition job %s/%s: %w", runID, job, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.transitionJob(ctx, tx, runID, job, from, to, u); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: transition job %s/%s: %w", runID, job, err)
+	}
+	return nil
+}
+
+// transitionJob is TransitionJob inside the caller's transaction.
+func (s *Store) transitionJob(ctx context.Context, tx *sql.Tx, runID, job string, from []JobState, to JobState, u JobUpdate) error {
 	what := "job " + runID + "/" + job
 	if len(from) == 0 {
 		return fmt.Errorf("%w: %s: no from state", ErrInvalidTransition, what)
@@ -76,12 +92,6 @@ func (s *Store) TransitionJob(ctx context.Context, runID, job string, from []Job
 		}
 		args = append(args, f)
 	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: transition %s: %w", what, err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx,
 		`UPDATE jobs SET `+set+` WHERE run_id = ? AND name = ? AND state IN (`+placeholders(len(from))+`)`, args...)
 	if err != nil {
@@ -90,13 +100,7 @@ func (s *Store) TransitionJob(ctx context.Context, runID, job string, from []Job
 	if err := checkUpdated(ctx, tx, res, `SELECT state FROM jobs WHERE run_id = ? AND name = ?`, []any{runID, job}, what, from); err != nil {
 		return err
 	}
-	if err := s.appendEvent(ctx, tx, jobEvent(runID, job, to, u)); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: transition %s: %w", what, err)
-	}
-	return nil
+	return s.appendEvent(ctx, tx, jobEvent(runID, job, to, u))
 }
 
 func jobEvent(runID, job string, to JobState, u JobUpdate) protocol.Event {

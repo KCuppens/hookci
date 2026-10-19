@@ -35,9 +35,25 @@ import (
 var (
 	// ErrNoRun is returned by RunJob and FinishRun for a run RunSetup never saw.
 	ErrNoRun = errors.New("executor: unknown run")
-	// ErrSetupFailed wraps every RunSetup error.
+	// ErrSetupFailed is wrapped by every RunSetup error. The error's message
+	// is the redacted cause alone; the scheduler adds "setup failed: ".
 	ErrSetupFailed = errors.New("executor: setup failed")
 )
+
+// builtinRedactor masks the builtin patterns until a run's config names its
+// secrets.
+var builtinRedactor, _ = redact.New(nil, nil)
+
+// redactedError keeps its causes for errors.Is and As but reports msg, the
+// causes' text after redaction, since its Error() ends up in a stored reason
+// or the agent log.
+type redactedError struct {
+	msg    string
+	causes []error
+}
+
+func (e *redactedError) Error() string   { return e.msg }
+func (e *redactedError) Unwrap() []error { return e.causes }
 
 // setupJob is the log name of the setup phase: logs/setup.log.
 const setupJob = "setup"
@@ -197,8 +213,8 @@ func (e *Executor) state(runID string) (*runState, error) {
 
 // RunSetup checks the run out, loads its config, builds the redactor,
 // network and egress proxy, restores caches, starts postgres and runs the
-// setup steps. Every error wraps ErrSetupFailed and is written to
-// logs/setup.log; whatever was started is released by FinishRun.
+// setup steps. Every error wraps ErrSetupFailed, is redacted and is written
+// to logs/setup.log; whatever was started is released by FinishRun.
 func (e *Executor) RunSetup(ctx context.Context, run store.Run) error {
 	rs := &runState{
 		run:     run,
@@ -208,14 +224,15 @@ func (e *Executor) RunSetup(ctx context.Context, run store.Run) error {
 	e.mu.Lock()
 	if _, dup := e.runs[run.ID]; dup {
 		e.mu.Unlock()
-		return fmt.Errorf("%w: run %s is already set up", ErrSetupFailed, run.ID)
+		err := fmt.Errorf("run %s is already set up", run.ID)
+		return &redactedError{msg: err.Error(), causes: []error{ErrSetupFailed, err}}
 	}
 	e.runs[run.ID] = rs
 	e.mu.Unlock()
 
 	if err := e.setup(ctx, rs); err != nil {
 		rs.logf("setup failed: %v", err)
-		return fmt.Errorf("%w: %w", ErrSetupFailed, err)
+		return &redactedError{msg: rs.redact(err.Error()), causes: []error{ErrSetupFailed, err}}
 	}
 	return nil
 }
@@ -503,6 +520,7 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 		return scheduler.JobOutcome{}, fmt.Errorf("executor: job %s is not in the config", job.Name)
 	}
 	cj := rs.cfg.Jobs[i]
+	steps := logpipe.CountStepMarkers(cj.Run)
 
 	pipe, err := logpipe.New(logpipe.Options{
 		RunDir:   rs.dir.Root,
@@ -511,7 +529,7 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 		Annotate: cj.Annotate,
 		Workdir:  rs.dir.Src(),
 		OnStep: func(s logpipe.StepEvent) {
-			if err := e.appendStep(context.WithoutCancel(ctx), run.ID, job.Name, s); err != nil {
+			if err := e.appendStep(context.WithoutCancel(ctx), run.ID, job.Name, s, steps); err != nil {
 				rs.log.Warn("executor: step event", "job", job.Name, "step", s.Name, "err", err)
 			}
 		},
@@ -529,7 +547,7 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 	if truncated > 0 {
 		rs.log.Info("executor: annotations truncated", "job", job.Name, "dropped", truncated)
 	}
-	if err := e.appendAnnotations(context.WithoutCancel(ctx), run.ID, job.Name, items); err != nil {
+	if err := e.appendAnnotations(context.WithoutCancel(ctx), run.ID, job.Name, items, truncated); err != nil {
 		rs.log.Warn("executor: annotations", "job", job.Name, "err", err)
 	}
 	return out, nil
@@ -570,7 +588,7 @@ func (e *Executor) execute(ctx context.Context, rs *runState, job, script string
 		Stderr:         pipe.Stderr(),
 	})
 	failed := func(reason string) scheduler.JobOutcome {
-		return scheduler.JobOutcome{State: store.JobFailed, ExitCode: res.ExitCode, Reason: reason}
+		return scheduler.JobOutcome{State: store.JobFailed, ExitCode: res.ExitCode, Reason: rs.redact(reason)}
 	}
 	switch {
 	case ctx.Err() != nil || res.Cancelled:
@@ -658,7 +676,7 @@ func (e *Executor) FinishRun(ctx context.Context, run store.Run, final store.Run
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("executor: teardown %s: %w", run.ID, err)
+		return &redactedError{msg: rs.redact(fmt.Sprintf("executor: teardown %s: %v", run.ID, err)), causes: []error{err}}
 	}
 	return nil
 }
@@ -685,10 +703,19 @@ func (rs *runState) openSetupLog(r *redact.Redactor, mirror io.Writer) error {
 func (rs *runState) logf(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
 	if rs.setupLog == nil {
-		rs.log.Info("executor: " + line)
+		rs.log.Info("executor: " + rs.redact(line))
 		return
 	}
 	if _, err := io.WriteString(rs.setupLog.Stderr(), line+"\n"); err != nil {
-		rs.log.Warn("executor: setup log", "line", line, "err", err)
+		rs.log.Warn("executor: setup log", "line", rs.redact(line), "err", err)
 	}
+}
+
+// redact masks secrets in s with the run's redactor, or with the builtin
+// patterns before the config is loaded.
+func (rs *runState) redact(s string) string {
+	if rs.redactor == nil {
+		return builtinRedactor.Line(s)
+	}
+	return rs.redactor.Line(s)
 }

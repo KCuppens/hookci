@@ -116,7 +116,7 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	if slices.Contains(names, netns.NSName(runID)) {
 		t.Fatalf("namespace %s left after recovery", netns.NSName(runID))
 	}
-	if err := (execx.OS{}).Run(ctx, execx.Cmd{Name: "pgrep", Args: []string{"-f", pastaPattern}}); err == nil {
+	if err := (execx.OS{}).Run(ctx, execx.Cmd{Name: "pgrep", Args: []string{"-f", pastaPattern(netns.NSName(runID))}}); err == nil {
 		t.Fatal("pasta process left after recovery")
 	}
 }

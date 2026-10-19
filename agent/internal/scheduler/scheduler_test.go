@@ -238,6 +238,27 @@ func TestFinishRunCalledOnce(t *testing.T) {
 	})
 }
 
+// Teardown runs before the terminal transition, so a crash during FinishRun
+// leaves the run active for recovery to sweep.
+func TestFinishRunBeforeTerminal(t *testing.T) {
+	h := newHarness(t, 2)
+	h.runner.setAuto()
+	var seen []store.RunState
+	h.runner.onFinish = func(run store.Run) {
+		stored, err := h.db.GetRun(context.Background(), run.ID)
+		if err != nil {
+			t.Errorf("GetRun in FinishRun: %v", err)
+		}
+		seen = append(seen, stored.State)
+	}
+	h.submit(h.create(pushRun("r", "sha1", "main"), job("a")))
+	h.idle()
+	if !slices.Equal(seen, []store.RunState{store.RunRunning}) {
+		t.Fatalf("stored state during FinishRun = %v, want [running]", seen)
+	}
+	h.wantRun("r", store.RunSuccess, "")
+}
+
 func TestOutboxEventsOrdered(t *testing.T) {
 	h := newHarness(t, 2)
 	h.runner.setAuto()

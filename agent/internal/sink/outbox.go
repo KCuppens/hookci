@@ -116,6 +116,7 @@ func (p *Pump) decode(ctx context.Context, it store.OutboxItem) (e Event, ok boo
 		e.Kind = KindAnnotations
 		e.RunID = a.RunId
 		e.Job = a.Job
+		e.AnnotationsTotal = deref(a.Total)
 		e.Annotations = make([]logpipe.Annotation, len(a.Items))
 		for i, item := range a.Items {
 			ann := logpipe.Annotation{

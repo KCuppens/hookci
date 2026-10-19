@@ -180,12 +180,13 @@ func (s *Stdout) jobLine(b *strings.Builder, e Event, at time.Time) {
 }
 
 // annotationLines prints up to maxAnnotationRows annotations per job, then
-// how many were left out.
+// how many of the job's annotations were left out, counting those the
+// executor dropped before the frame.
 func annotationLines(b *strings.Builder, e Event, r *runTrack) {
 	printed := r.annotated[e.Job]
-	for i, a := range e.Annotations {
+	shown := 0
+	for _, a := range e.Annotations {
 		if printed == maxAnnotationRows {
-			fmt.Fprintf(b, "  ... and %d more\n", len(e.Annotations)-i)
 			break
 		}
 		loc := a.Path + ":" + strconv.Itoa(a.Line)
@@ -194,6 +195,10 @@ func annotationLines(b *strings.Builder, e Event, r *runTrack) {
 		}
 		fmt.Fprintf(b, "  %s %s %s\n", loc, a.Level, a.Message)
 		printed++
+		shown++
+	}
+	if more := max(e.AnnotationsTotal, len(e.Annotations)) - shown; more > 0 {
+		fmt.Fprintf(b, "  ... and %d more\n", more)
 	}
 	r.annotated[e.Job] = printed
 }

@@ -43,6 +43,9 @@ type Annotations struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Number of annotations found, including those not sent in items.
+	Total *int `json:"total,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -233,6 +234,98 @@ func TestCreateRunUniqueAttempt(t *testing.T) {
 		if j.State != JobQueued || j.StartedAt != nil || j.FinishedAt != nil {
 			t.Errorf("retry job %s = %+v, want fresh queued", j.Name, j)
 		}
+	}
+}
+
+// Retrying the same terminal run twice must not collide on
+// UNIQUE (repo, sha, event, env, attempt).
+func TestCreateRetryTwice(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"})
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	var attempts []int
+	for range 2 {
+		retry, err := s.CreateRetry(ctx, "r1")
+		if err != nil {
+			t.Fatalf("CreateRetry: %v", err)
+		}
+		if retry.Event != "push" {
+			t.Errorf("retry event = %q, want the original push", retry.Event)
+		}
+		attempts = append(attempts, retry.Attempt)
+	}
+	if !slices.Equal(attempts, []int{2, 3}) {
+		t.Fatalf("attempts = %v, want [2 3]", attempts)
+	}
+}
+
+func TestInterruptRun(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"}, Job{Name: "test"}, Job{Name: "build"})
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		job      string
+		from, to JobState
+	}{{"lint", JobQueued, JobRunning}, {"lint", JobRunning, JobSuccess}, {"test", JobQueued, JobRunning}} {
+		if err := s.TransitionJob(ctx, "r1", step.job, []JobState{step.from}, step.to, JobUpdate{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	retry, err := s.InterruptRun(ctx, "r1", "agent restarted", true)
+	if err != nil {
+		t.Fatalf("InterruptRun: %v", err)
+	}
+	run, err := s.GetRun(ctx, "r1")
+	if err != nil || run.State != RunInterrupted || run.Reason != "agent restarted" {
+		t.Fatalf("run = %+v, %v; want interrupted with the reason", run, err)
+	}
+	jobs, err := s.Jobs(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]JobState{"lint": JobSuccess, "test": JobInterrupted, "build": JobInterrupted}
+	for _, j := range jobs {
+		if j.State != want[j.Name] {
+			t.Errorf("job %s = %s, want %s", j.Name, j.State, want[j.Name])
+		}
+	}
+	if retry.Attempt != 2 || retry.RetryOf == nil || *retry.RetryOf != "r1" || retry.State != RunQueued {
+		t.Errorf("retry = %+v, want queued attempt 2 of r1", retry)
+	}
+
+	noRetry, err := s.InterruptRun(ctx, "r1", "again", false)
+	if !errors.Is(err, ErrStateMismatch) || noRetry.ID != "" {
+		t.Errorf("InterruptRun of an interrupted run = %+v, %v; want ErrStateMismatch", noRetry, err)
+	}
+}
+
+// A failed run transition rolls back the job transitions made before it.
+func TestInterruptRunAtomic(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"})
+	clearOutbox(t, s)
+
+	if _, err := s.InterruptRun(ctx, "r1", "agent restarted", true); !errors.Is(err, ErrStateMismatch) {
+		t.Fatalf("InterruptRun of a queued run err = %v, want ErrStateMismatch", err)
+	}
+	jobs, err := s.Jobs(ctx, "r1")
+	if err != nil || len(jobs) != 1 || jobs[0].State != JobQueued {
+		t.Fatalf("jobs = %+v, %v; want lint still queued", jobs, err)
+	}
+	if n := outboxCount(t, s); n != 0 {
+		t.Errorf("outbox rows = %d, want 0", n)
+	}
+	runs, err := s.ListRuns(ctx, RunFilter{})
+	if err != nil || len(runs) != 1 {
+		t.Errorf("runs = %d, %v; want only r1", len(runs), err)
 	}
 }
 

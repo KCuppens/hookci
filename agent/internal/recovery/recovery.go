@@ -1,8 +1,10 @@
 // Package recovery cleans up after an agent that was killed mid-run. Recover
-// runs once at agent start, before any new run: it stops every leftover job
-// unit, removes every zc- network namespace, kills stray pasta processes and
-// removes every service container, then moves the runs that were in flight to
-// interrupted and re-queues their checks.
+// runs once at agent start, before any new run: it stops the leftover job
+// units, kills the pasta processes and removes the network namespaces and
+// service containers of runs in this agent's store, then moves the runs that
+// were in flight to interrupted and re-queues their checks. Resources of runs
+// the store does not know, such as another agent's on the same host, are left
+// alone.
 package recovery
 
 import (
@@ -29,9 +31,7 @@ const MaxCheckAttempts = 3
 const InterruptedReason = "agent restarted"
 
 const (
-	kindCheck    = "check"
-	netnsPrefix  = "zc-"
-	pastaPattern = "^pasta .*zc-"
+	kindCheck = "check"
 	// sweepTimeout bounds the cleanup sweep so a hung docker daemon or
 	// systemctl cannot stall agent start.
 	sweepTimeout = 30 * time.Second
@@ -47,6 +47,7 @@ type Deps struct {
 		RemoveNamespace(ctx context.Context, name string) error
 	}
 	Docker interface {
+		RunIDs(ctx context.Context) ([]string, error)
 		RemoveByLabel(ctx context.Context, label string) error
 	}
 	Runner execx.Runner // runs pkill for stray pasta processes
@@ -73,28 +74,43 @@ func (m NetnsManager) ListNamespaces(context.Context) ([]string, error) {
 	return m.Manager.ListNamespaces()
 }
 
-// Recover sweeps every leftover unit, namespace, pasta process and service
-// container, then interrupts the runs that were active. It stops processes
-// before it touches run state, so an interrupted run has nothing left running.
-// Cleanup failures go to Report.Errors and the log; only store errors are
-// returned, along with the report so far.
+// Recover sweeps the leftover units, pasta processes, namespaces and service
+// containers of every run in the store, then interrupts the runs that were
+// active. It stops processes before it touches run state, so an interrupted
+// run has nothing left running. Cleanup failures go to Report.Errors and the
+// log; only store errors are returned, along with the report so far.
 func Recover(ctx context.Context, d Deps) (Report, error) {
 	log := d.Logger
 	if log == nil {
 		log = slog.Default()
 	}
 	var rep Report
-	sweep(ctx, d, &rep, log)
-	err := interrupt(ctx, d, &rep, log)
+	runs, err := d.Store.ListRuns(ctx, store.RunFilter{})
+	if err != nil {
+		return rep, fmt.Errorf("recovery: list runs: %w", err)
+	}
+	sweep(ctx, d, runs, &rep, log)
+	err = interrupt(ctx, d, &rep, log)
 	return rep, err
 }
 
-func sweep(ctx context.Context, d Deps, rep *Report, log *slog.Logger) {
+// sweep removes what the runs left behind. Units, namespaces and containers
+// are matched by the run ID encoded in their name or label, so only resources
+// of the given runs are touched.
+func sweep(ctx context.Context, d Deps, runs []store.Run, rep *Report, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
 	defer cancel()
 	fail := func(err error) {
 		log.Warn("recovery: cleanup failed", "err", err)
 		rep.Errors = append(rep.Errors, err)
+	}
+	unitPrefixes := make([]string, 0, len(runs))
+	namespaces := make(map[string]bool, len(runs))
+	owned := make(map[string]bool, len(runs))
+	for _, r := range runs {
+		unitPrefixes = append(unitPrefixes, isolation.UnitPrefix+isolation.SanitizeUnitPart(r.ID)+"-")
+		namespaces[netns.NSName(r.ID)] = true
+		owned[r.ID] = true
 	}
 
 	units, err := d.Isolation.ListUnits(ctx, isolation.UnitPrefix)
@@ -102,6 +118,9 @@ func sweep(ctx context.Context, d Deps, rep *Report, log *slog.Logger) {
 		fail(fmt.Errorf("recovery: list units: %w", err))
 	}
 	for _, u := range units {
+		if !slices.ContainsFunc(unitPrefixes, func(p string) bool { return strings.HasPrefix(u.Name, p) }) {
+			continue
+		}
 		if err := d.Isolation.Stop(ctx, u.Name); err != nil {
 			fail(fmt.Errorf("recovery: stop unit %s: %w", u.Name, err))
 			continue
@@ -114,8 +133,14 @@ func sweep(ctx context.Context, d Deps, rep *Report, log *slog.Logger) {
 		fail(fmt.Errorf("recovery: list network namespaces: %w", err))
 	}
 	for _, name := range names {
-		if !strings.HasPrefix(name, netnsPrefix) {
+		if !namespaces[name] {
 			continue
+		}
+		// pkill exits 1 when no process matched.
+		err := d.Runner.Run(ctx, execx.Cmd{Name: "pkill", Args: []string{"-f", pastaPattern(name)}})
+		var exitErr *execx.ExitError
+		if err != nil && !(errors.As(err, &exitErr) && exitErr.Code == 1) {
+			fail(fmt.Errorf("recovery: kill pasta of %s: %w", name, err))
 		}
 		if err := d.Netns.RemoveNamespace(ctx, name); err != nil {
 			fail(fmt.Errorf("recovery: remove network namespace %s: %w", name, err))
@@ -124,15 +149,20 @@ func sweep(ctx context.Context, d Deps, rep *Report, log *slog.Logger) {
 		rep.NetnsRemoved = append(rep.NetnsRemoved, name)
 	}
 
-	// pkill exits 1 when no process matched.
-	err = d.Runner.Run(ctx, execx.Cmd{Name: "pkill", Args: []string{"-f", pastaPattern}})
-	var exitErr *execx.ExitError
-	if err != nil && !(errors.As(err, &exitErr) && exitErr.Code == 1) {
-		fail(fmt.Errorf("recovery: kill pasta: %w", err))
+	labelled, err := d.Docker.RunIDs(ctx)
+	if err != nil {
+		if !errors.Is(err, services.ErrDockerMissing) {
+			fail(fmt.Errorf("recovery: list service containers: %w", err))
+		}
+		return
 	}
-
-	if err := d.Docker.RemoveByLabel(ctx, services.LabelRun); err != nil && !errors.Is(err, services.ErrDockerMissing) {
-		fail(fmt.Errorf("recovery: remove service containers: %w", err))
+	for _, id := range labelled {
+		if !owned[id] {
+			continue
+		}
+		if err := d.Docker.RemoveByLabel(ctx, services.LabelRun+"="+id); err != nil {
+			fail(fmt.Errorf("recovery: remove service containers of run %s: %w", id, err))
+		}
 	}
 }
 
@@ -146,35 +176,23 @@ func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error
 	slices.Reverse(runs) // oldest first, so retries queue in the original order
 
 	for _, run := range runs {
-		jobs, err := d.Store.Jobs(ctx, run.ID)
+		retry := run.Kind == kindCheck && run.Attempt < MaxCheckAttempts
+		created, err := d.Store.InterruptRun(ctx, run.ID, InterruptedReason, retry)
 		if err != nil {
-			return fmt.Errorf("recovery: run %s: %w", run.ID, err)
-		}
-		for _, j := range jobs {
-			if j.State != store.JobQueued && j.State != store.JobRunning {
-				continue
-			}
-			err := d.Store.TransitionJob(ctx, run.ID, j.Name, []store.JobState{j.State}, store.JobInterrupted,
-				store.JobUpdate{Reason: InterruptedReason})
-			if err != nil {
-				return fmt.Errorf("recovery: interrupt job %s of run %s: %w", j.Name, run.ID, err)
-			}
-		}
-		if err := d.Store.Transition(ctx, run.ID, []store.RunState{run.State}, store.RunInterrupted, InterruptedReason); err != nil {
 			return fmt.Errorf("recovery: interrupt run %s: %w", run.ID, err)
 		}
 		rep.Interrupted = append(rep.Interrupted, run.ID)
 		log.Info("recovery: run interrupted", "run", run.ID, "kind", run.Kind, "was", run.State)
-
-		if run.Kind != kindCheck || run.Attempt >= MaxCheckAttempts {
-			continue
+		if retry {
+			rep.Requeued = append(rep.Requeued, created.ID)
+			log.Info("recovery: check re-queued", "run", run.ID, "retry", created.ID, "attempt", created.Attempt)
 		}
-		retry, err := d.Store.CreateRetry(ctx, run.ID)
-		if err != nil {
-			return fmt.Errorf("recovery: re-queue run %s: %w", run.ID, err)
-		}
-		rep.Requeued = append(rep.Requeued, retry.ID)
-		log.Info("recovery: check re-queued", "run", run.ID, "retry", retry.ID, "attempt", retry.Attempt)
 	}
 	return nil
+}
+
+// pastaPattern matches the command line of the pasta serving namespace ns:
+// pasta runs with --netns /run/netns/<ns> as its last arguments.
+func pastaPattern(ns string) string {
+	return "^pasta .* --netns [^ ]*/" + ns + "$"
 }

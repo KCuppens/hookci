@@ -39,12 +39,21 @@ func (f *fakeNetns) RemoveNamespace(_ context.Context, name string) error {
 	return nil
 }
 
-// fakeDocker records the labels it was asked to remove and returns Err.
+// fakeDocker lists containers of the run IDs in Runs, records the labels it
+// was asked to remove and fails both with Err.
 type fakeDocker struct {
+	Runs   []string
 	Labels []string
 	Err    error
 	// OnRemove runs before each removal.
 	OnRemove func()
+}
+
+func (f *fakeDocker) RunIDs(context.Context) ([]string, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return slices.Clone(f.Runs), nil
 }
 
 func (f *fakeDocker) RemoveByLabel(_ context.Context, label string) error {
@@ -345,12 +354,15 @@ func TestRecoverLeavesTerminalRuns(t *testing.T) {
 
 func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
 	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	h.seed(store.Run{ID: "r0", SHA: "sha-r0"}, store.RunSuccess, store.JobSuccess)
 	h.iso.Units = []isolation.Unit{
 		{Name: "zeroci-run-r1-build", Active: "active"},
 		{Name: "other-service", Active: "active"},
 		{Name: "zeroci-run-r0-test", Active: "failed"},
 	}
 	h.netns.Names = []string{"zc-r1", "other-ns", "zc-r0"}
+	h.docker.Runs = []string{"r1", "r0"}
 
 	rep := h.mustRecover()
 
@@ -362,11 +374,48 @@ func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
 	if !reflect.DeepEqual(h.netns.Removed, wantNS) || !reflect.DeepEqual(rep.NetnsRemoved, wantNS) {
 		t.Fatalf("removed = %v, report = %v, want %v", h.netns.Removed, rep.NetnsRemoved, wantNS)
 	}
-	if !h.runner.Called("pkill", "-f", "^pasta .*zc-") {
-		t.Fatalf("pkill not called with the pasta pattern: %+v", h.runner.Calls)
+	for _, ns := range wantNS {
+		if !h.runner.Called("pkill", "-f", "^pasta .* --netns [^ ]*/"+ns+"$") {
+			t.Fatalf("pkill not called for the pasta of %s: %+v", ns, h.runner.Calls)
+		}
 	}
-	if !reflect.DeepEqual(h.docker.Labels, []string{services.LabelRun}) {
-		t.Fatalf("docker labels = %v, want [%s]", h.docker.Labels, services.LabelRun)
+	if want := []string{services.LabelRun + "=r1", services.LabelRun + "=r0"}; !reflect.DeepEqual(h.docker.Labels, want) {
+		t.Fatalf("docker labels = %v, want %v", h.docker.Labels, want)
+	}
+}
+
+// Another agent on the same host has its own store; its runs' units,
+// namespaces, pasta processes and containers must survive this recovery.
+func TestRecoverLeavesForeignRuns(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	h.iso.Units = []isolation.Unit{
+		{Name: "zeroci-run-r1-build", Active: "active"},
+		{Name: "zeroci-run-foreign-build", Active: "active"},
+		{Name: "zeroci-run-r10-build", Active: "active"},
+	}
+	h.netns.Names = []string{"zc-r1", "zc-foreign", "zc-r10"}
+	h.docker.Runs = []string{"foreign", "r10", "r1"}
+
+	h.mustRecover()
+
+	if want := []string{"zeroci-run-r1-build"}; !reflect.DeepEqual(h.iso.Stops, want) {
+		t.Fatalf("stops = %v, want %v", h.iso.Stops, want)
+	}
+	if want := []string{"zc-r1"}; !reflect.DeepEqual(h.netns.Removed, want) {
+		t.Fatalf("removed namespaces = %v, want %v", h.netns.Removed, want)
+	}
+	if want := []string{services.LabelRun + "=r1"}; !reflect.DeepEqual(h.docker.Labels, want) {
+		t.Fatalf("docker labels = %v, want %v", h.docker.Labels, want)
+	}
+	var pkills [][]string
+	for _, c := range h.runner.Calls {
+		if c.Name == "pkill" {
+			pkills = append(pkills, c.Args)
+		}
+	}
+	if want := [][]string{{"-f", "^pasta .* --netns [^ ]*/zc-r1$"}}; !reflect.DeepEqual(pkills, want) {
+		t.Fatalf("pkill calls = %v, want %v", pkills, want)
 	}
 }
 
@@ -376,6 +425,7 @@ func TestRecoverCleansBeforeInterrupting(t *testing.T) {
 	h := newHarness(t)
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.netns.Names = []string{"zc-r1"}
+	h.docker.Runs = []string{"r1"}
 	var seen []store.RunState
 	record := func() { seen = append(seen, h.run("r1").State) }
 	h.netns.OnRemove = record
@@ -432,6 +482,8 @@ func TestRecoverPkillNoMatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
+			h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+			h.netns.Names = []string{"zc-r1"}
 			h.runner.On("pkill", nil, tc.resp)
 
 			rep, err := h.recover()
@@ -514,7 +566,8 @@ func TestRecoverOutboxEvents(t *testing.T) {
 	}
 }
 
-// Store errors are returned; the cleanup sweep has already run by then.
+// Store errors are returned. Without the store Recover cannot tell its own
+// resources from another agent's, so it sweeps nothing.
 func TestRecoverReturnsStoreErrors(t *testing.T) {
 	h := newHarness(t)
 	h.iso.Units = []isolation.Unit{{Name: "zeroci-run-r1-job0", Active: "active"}}
@@ -526,8 +579,8 @@ func TestRecoverReturnsStoreErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Recover on a closed store returned no error")
 	}
-	if !reflect.DeepEqual(rep.UnitsStopped, []string{"zeroci-run-r1-job0"}) {
-		t.Fatalf("UnitsStopped = %v, want the unit stopped before the store error", rep.UnitsStopped)
+	if len(rep.UnitsStopped) != 0 || len(h.iso.Stops) != 0 {
+		t.Fatalf("UnitsStopped = %v, want nothing stopped without the store", rep.UnitsStopped)
 	}
 }
 

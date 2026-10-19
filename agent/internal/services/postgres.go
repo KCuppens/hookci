@@ -103,10 +103,11 @@ func BuildRunArgv(o PostgresOptions) []string {
 }
 
 // StartPostgres creates the socket dir, starts the container and waits
-// until pg_isready succeeds. A container left over from a crashed run with
-// the same name is removed and the start retried once. If postgres is not
-// ready within ReadyTimeout the error wraps ErrNotReady, carries the tail of
-// the container log, and the container is removed.
+// until the final postgres server answers queries. A container left over from
+// a crashed run with the same name is removed and the start retried once. A
+// failed docker run removes whatever container it may have created. If
+// postgres is not ready within ReadyTimeout the error wraps ErrNotReady,
+// carries the tail of the container log, and the container is removed.
 func StartPostgres(ctx context.Context, o PostgresOptions) (*Postgres, error) {
 	if o.Image != "" && (!imageRe.MatchString(o.Image) || strings.HasPrefix(o.Image, "-")) {
 		return nil, fmt.Errorf("services: invalid postgres image %q", o.Image)
@@ -144,24 +145,36 @@ func StartPostgres(ctx context.Context, o PostgresOptions) (*Postgres, error) {
 		_, _, err = o.Docker.run(ctx, argv...)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("services: start postgres %s: %w", p.Name, err)
+		err = fmt.Errorf("services: start postgres %s: %w", p.Name, err)
+		if errors.Is(err, ErrDockerMissing) {
+			return nil, err
+		}
+		return nil, errors.Join(err, p.stopDetached(ctx))
 	}
 
 	if err := p.waitReady(ctx, o); err != nil {
-		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
-		defer cancel()
-		return nil, errors.Join(err, p.Stop(stopCtx))
+		return nil, errors.Join(err, p.stopDetached(ctx))
 	}
 	return p, nil
 }
 
-// waitReady polls pg_isready over the container's socket until it exits 0
-// or ReadyTimeout passes.
+// stopDetached removes the container under stopTimeout even when ctx is
+// already cancelled.
+func (p *Postgres) stopDetached(ctx context.Context) error {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
+	return p.Stop(stopCtx)
+}
+
+// waitReady polls until the final server is up or ReadyTimeout passes. Each
+// poll runs pg_isready over the container's socket, then a query. pg_isready
+// alone also passes while the image entrypoint's temporary init server runs;
+// that server is started with listen_addresses=” and restarted afterwards,
+// so only a non-empty listen_addresses proves the final server answers.
 func (p *Postgres) waitReady(ctx context.Context, o PostgresOptions) error {
 	deadline := o.Clock().Add(o.ReadyTimeout)
 	for {
-		_, _, err := p.docker.run(ctx, "exec", p.Name, "pg_isready", "-h", containerSocketDir, "-U", "postgres")
-		if err == nil {
+		if p.ready(ctx) {
 			return nil
 		}
 		if !o.Clock().Before(deadline) {
@@ -172,6 +185,15 @@ func (p *Postgres) waitReady(ctx context.Context, o PostgresOptions) error {
 			return fmt.Errorf("services: wait for postgres %s: %w", p.Name, err)
 		}
 	}
+}
+
+func (p *Postgres) ready(ctx context.Context) bool {
+	if _, _, err := p.docker.run(ctx, "exec", p.Name, "pg_isready", "-h", containerSocketDir, "-U", "postgres"); err != nil {
+		return false
+	}
+	out, _, err := p.docker.run(ctx, "exec", p.Name, "psql", "-h", containerSocketDir, "-U", "postgres", "-d", "postgres",
+		"-tAc", "SHOW listen_addresses")
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 // Env returns DATABASE_URL plus PGHOST, PGUSER, PGDATABASE.

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,7 +20,9 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/zerocideploy/agent/internal/redact"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
+	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/source"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
@@ -122,6 +125,35 @@ func TestRunJobSuccess(t *testing.T) {
 	}
 	if len(steps) != 1 || *steps[0].Step != "compile" || *steps[0].StepIndex != 0 || *steps[0].Job != "build" {
 		t.Errorf("step events = %+v, want one compile step at index 0", steps)
+	}
+}
+
+func TestRunJobStepsTotal(t *testing.T) {
+	script := "echo '::zeroci step deps'\nnpm ci\necho '::zeroci step compile'\nmake\n" +
+		"echo '::zeroci step test'\necho '::zeroci step lint'\necho '::zeroci step pack'\n"
+	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "build", Run: script}}}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.create(t, run, cfg)
+	h.iso.jobs["build"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
+		writeOut(s.Stdout, "::zeroci step deps\n::zeroci step compile\n")
+		return isolation.Result{}, nil
+	}
+
+	setUp(t, h, run)
+	if _, err := h.ex.RunJob(context.Background(), run, job("build")); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, h, run, store.RunSuccess)
+
+	var got []string
+	for _, ev := range frames[protocol.Event](t, h.st, store.KindEvent) {
+		if ev.Step != nil && ev.StepsTotal != nil {
+			got = append(got, fmt.Sprintf("%d/%d %s", *ev.StepIndex+1, *ev.StepsTotal, *ev.Step))
+		}
+	}
+	if want := []string{"1/5 deps", "2/5 compile"}; !slices.Equal(got, want) {
+		t.Errorf("steps = %q, want %q", got, want)
 	}
 }
 
@@ -273,12 +305,42 @@ func TestRunJobAnnotations(t *testing.T) {
 		t.Fatalf("annotations frames = %d, want 1", len(got))
 	}
 	a := got[0]
-	if a.Job != "lint" || a.RunId != run.ID || len(a.Items) != 1 {
+	if a.Job != "lint" || a.RunId != run.ID || len(a.Items) != 1 || a.Total == nil || *a.Total != 1 {
 		t.Fatalf("frame = %+v", a)
 	}
 	it := a.Items[0]
 	if it.Path != "app/index.js" || it.Line != 1 || it.Level != "failure" || it.Title == nil || *it.Title != "no-unused-vars" {
 		t.Errorf("item = %+v", it)
+	}
+}
+
+// Past logpipe.MaxAnnotations the frame carries the cap's worth of items and
+// the true total, so a sink can say how many were left out.
+func TestRunJobAnnotationsTotal(t *testing.T) {
+	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "lint", Run: "npx eslint .", Annotate: "eslint"}}}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.create(t, run, cfg)
+	const found = logpipe.MaxAnnotations + 7
+	h.iso.jobs["lint"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
+		var b strings.Builder
+		b.WriteString("\n" + filepath.Join(s.Dir, "app", "index.js") + "\n")
+		for i := range found {
+			fmt.Fprintf(&b, "  %d:10  error  'foo' is defined but never used  no-unused-vars\n", i+1)
+		}
+		writeOut(s.Stdout, b.String())
+		return isolation.Result{ExitCode: 1}, nil
+	}
+
+	setUp(t, h, run)
+	if _, err := h.ex.RunJob(context.Background(), run, job("lint")); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, h, run, store.RunFailed)
+
+	got := frames[protocol.Annotations](t, h.st, store.KindAnnotations)
+	if len(got) != 1 || len(got[0].Items) != logpipe.MaxAnnotations || got[0].Total == nil || *got[0].Total != found {
+		t.Fatalf("frames = %+v, want one with %d items and total %d", got, logpipe.MaxAnnotations, found)
 	}
 }
 
@@ -562,8 +624,8 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stored.Reason, "setup failed: ") || !strings.Contains(stored.Reason, "setup[0] exit 1") {
-		t.Errorf("run reason = %q", stored.Reason)
+	if stored.Reason != "setup failed: setup[0] exit 1" {
+		t.Errorf("run reason = %q, want %q", stored.Reason, "setup failed: setup[0] exit 1")
 	}
 	h.iso.mu.Lock()
 	for _, s := range h.iso.specs {
@@ -592,6 +654,49 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 		t.Errorf("config error: err = %v, want ErrSetupFailed with the cause", err)
 	}
 	finish(t, h, run, store.RunFailed)
+}
+
+// A setup error that quotes a secret, as docker's stderr can, must reach the
+// stored run and job reasons and the setup log masked.
+func TestSetupErrorRedacted(t *testing.T) {
+	const secret = "s3cr3t-token-value-123"
+	envFile := filepath.Join(t.TempDir(), "prod.env")
+	if err := os.WriteFile(envFile, []byte("API_TOKEN="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.ResolvedChecks{
+		EnvFiles: []string{envFile},
+		Services: config.Services{Postgres: &config.PostgresService{Image: "postgres:16"}},
+		Jobs:     []config.ResolvedJob{{Name: "build", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, func(o *Options) {
+		o.Hooks.StartPostgres = func(context.Context, services.PostgresOptions) (Postgres, error) {
+			return nil, errors.New("docker run: invalid env API_TOKEN=" + secret)
+		}
+	})
+	run := localRun()
+	h.create(t, run, cfg)
+
+	if state := drive(t, h, run.ID); state != store.RunFailed {
+		t.Fatalf("run = %s, want failed", state)
+	}
+	stored, err := h.st.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "setup failed: postgres: docker run: invalid env API_TOKEN=" + redact.Mask; stored.Reason != want {
+		t.Errorf("run reason = %q, want %q", stored.Reason, want)
+	}
+	jobs, err := h.st.Jobs(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].Reason != stored.Reason {
+		t.Errorf("jobs = %+v, want build skipped with the run reason", jobs)
+	}
+	if log := readFile(t, logpipe.LogPath(h.runDir(run.ID).Root, "setup")); strings.Contains(log, secret) {
+		t.Errorf("setup.log holds the secret:\n%s", log)
+	}
 }
 
 // Under systemd jobs run as the job user, so the agent clones the run out

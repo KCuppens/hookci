@@ -722,6 +722,10 @@
                   }
                 }
               }
+            },
+            "total": {
+              "description": "Number of annotations found, including those not sent in items.",
+              "type": "integer"
             }
           }
         },
