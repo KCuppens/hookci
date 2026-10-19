@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/cache"
@@ -154,11 +153,11 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// 5. Create new Run record in store
 	runID := ids.NewRunID()
-	var jobs []store.Job
-	for name, job := range cfg.ZeroCIConfig.Checks.Jobs {
-		jobs = append(jobs, store.Job{Name: name, Needs: job.Needs})
+	resolved := cfg.Checks().Jobs
+	jobs := make([]store.Job, 0, len(resolved))
+	for _, job := range resolved {
+		jobs = append(jobs, store.Job{Name: job.Name, Needs: job.Needs})
 	}
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
 
 	// Each local invocation is its own run, so the run ID stands in for the commit SHA
 	// to keep the (repo, sha, event, env, attempt) key unique.

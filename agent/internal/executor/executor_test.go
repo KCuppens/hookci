@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func TestExecuteRunSuccess(t *testing.T) {
 		ID: runID, Repo: "owner/repo", SHA: "abc", Ref: "main", Event: "push",
 		Kind: "check", TrustDomain: "trusted:owner/repo",
 	}
-	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}, {Name: "unit"}}); err != nil {
+	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}, {Name: "unit", Needs: []string{"lint"}}}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
 
@@ -106,11 +107,27 @@ func TestExecuteRunSetupFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	workDir := filepath.Join(stateDir, "workdir")
 
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"))
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
+	}
+	defer db.Close()
+
+	runID := "01j7failsetup"
+	run := store.Run{
+		ID: runID, Repo: "owner/repo", SHA: "abc", Ref: "main", Event: "push",
+		Kind: "check", TrustDomain: "trusted:owner/repo",
+	}
+	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
 	fakeIso := isolationtest.NewFake()
 	fakeIso.Responses["setup"] = isolation.Result{ExitCode: 2}
 
 	exec := New(Options{
 		StateDir:  stateDir,
+		Store:     db,
 		Isolation: fakeIso,
 	})
 
@@ -122,8 +139,77 @@ func TestExecuteRunSetupFailure(t *testing.T) {
 		},
 	}}
 
-	err := exec.ExecuteRun(ctx, "01j7failsetup", cfg, workDir, "local", false)
-	if err == nil {
+	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, "local", false); err == nil {
 		t.Fatalf("expected setup failure error, got nil")
+	}
+	if len(fakeIso.Runs) != 1 {
+		t.Errorf("expected only the setup isolation run, got %d", len(fakeIso.Runs))
+	}
+	saved, err := db.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if saved.State != store.RunFailed || !strings.HasPrefix(saved.Reason, "setup failed: ") {
+		t.Errorf("run = %s %q, want failed with a setup failed reason", saved.State, saved.Reason)
+	}
+	jobs, err := db.Jobs(ctx, runID)
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].State != store.JobSkipped {
+		t.Errorf("jobs = %+v, want lint skipped", jobs)
+	}
+}
+
+func TestExecuteRunJobFailure(t *testing.T) {
+	ctx := context.Background()
+	stateDir := t.TempDir()
+	workDir := filepath.Join(stateDir, "workdir")
+
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"))
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
+	}
+	defer db.Close()
+
+	runID := "01j7failjob"
+	run := store.Run{
+		ID: runID, Repo: "owner/repo", SHA: "abc", Ref: "main", Event: "push",
+		Kind: "check", TrustDomain: "trusted:owner/repo",
+	}
+	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}, {Name: "unit", Needs: []string{"lint"}}}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	fakeIso := isolationtest.NewFake()
+	fakeIso.Responses["lint"] = isolation.Result{ExitCode: 3}
+	exec := New(Options{StateDir: stateDir, Store: db, Isolation: fakeIso})
+
+	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
+		Version: 1,
+		Checks: &config.Checks{
+			Jobs: config.ChecksJobs{
+				"lint": {Run: "go vet ./..."},
+				"unit": {Run: "go test ./...", Needs: []string{"lint"}},
+			},
+		},
+	}}
+	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, "local", false); err == nil {
+		t.Fatal("expected job failure error, got nil")
+	}
+
+	jobs, err := db.Jobs(ctx, runID)
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	got := map[string]store.Job{}
+	for _, j := range jobs {
+		got[j.Name] = j
+	}
+	if j := got["lint"]; j.State != store.JobFailed || j.Reason != "exit 3" || j.ExitCode == nil || *j.ExitCode != 3 {
+		t.Errorf("lint = %+v, want failed, exit 3", j)
+	}
+	if j := got["unit"]; j.State != store.JobSkipped {
+		t.Errorf("unit = %s, want skipped", j.State)
 	}
 }
