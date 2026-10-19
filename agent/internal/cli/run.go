@@ -147,7 +147,10 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	servicesMgr := services.NewManager(nil)
-	cacheMgr := cache.NewManager(filepath.Join(stateDir, "caches"), nil)
+	cacheStore, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")})
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
+	}
 
 	// 4. Perform crash recovery before starting new run
 	rec := recovery.New(db, iso, servicesMgr, nil)
@@ -195,12 +198,12 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Store:          db,
 		Isolation:      iso,
 		Services:       servicesMgr,
-		Cache:          cacheMgr,
+		Cache:          cacheStore,
 		Slots:          slots,
 		DefaultTimeout: executor.ParseTimeout(&timeoutStr, 10*time.Minute),
 	})
 
-	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, cache.TrustDomainLocal, true)
+	_ = exec.ExecuteRun(ctx, runID, cfg, absWorkDir, true)
 
 	// Stop drain loop and do a final drain
 	cancelDrain()

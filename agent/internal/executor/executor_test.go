@@ -86,7 +86,7 @@ func TestExecuteRunSuccess(t *testing.T) {
 			},
 		},
 	}}
-	err = exec.ExecuteRun(ctx, runID, cfg, workDir, "local", true)
+	err = exec.ExecuteRun(ctx, runID, cfg, workDir, true)
 	if err != nil {
 		t.Fatalf("ExecuteRun failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestExecuteRunSetupFailure(t *testing.T) {
 		},
 	}}
 
-	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, "local", false); err == nil {
+	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, false); err == nil {
 		t.Fatalf("expected setup failure error, got nil")
 	}
 	if len(fakeIso.Runs) != 1 {
@@ -210,7 +210,7 @@ func TestExecuteRunJobFailure(t *testing.T) {
 			},
 		},
 	}}
-	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, "local", false); err == nil {
+	if err := exec.ExecuteRun(ctx, runID, cfg, workDir, false); err == nil {
 		t.Fatal("expected job failure error, got nil")
 	}
 

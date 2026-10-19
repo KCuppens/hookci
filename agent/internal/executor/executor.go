@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +31,7 @@ type Options struct {
 	Store          *store.Store
 	Isolation      isolation.Isolation
 	Services       *services.Manager
-	Cache          *cache.Manager
+	Cache          *cache.Cache
 	Secrets        []string
 	Slots          int
 	DefaultTimeout time.Duration
@@ -41,7 +43,7 @@ type Executor struct {
 	store          *store.Store
 	isolation      isolation.Isolation
 	services       *services.Manager
-	cache          *cache.Manager
+	cache          *cache.Cache
 	secrets        []string
 	slots          int
 	defaultTimeout time.Duration
@@ -91,7 +93,6 @@ func (e *Executor) ExecuteRun(
 	runID string,
 	cfg *config.Config,
 	workDir string,
-	domain cache.TrustDomain,
 	isProtected bool,
 ) error {
 	if cfg == nil || cfg.ZeroCIConfig.Checks == nil {
@@ -101,7 +102,6 @@ func (e *Executor) ExecuteRun(
 		e:           e,
 		checks:      cfg.ZeroCIConfig.Checks,
 		workDir:     workDir,
-		domain:      domain,
 		isProtected: isProtected,
 		redactor:    redact.New(e.secrets...),
 	}
@@ -131,12 +131,14 @@ type runRunner struct {
 	e           *Executor
 	checks      *config.Checks
 	workDir     string
-	domain      cache.TrustDomain
 	isProtected bool
 	redactor    *redact.Redactor
 
 	serviceEnv []string
 	services   []*services.Service
+
+	cacheKeys     []cache.Key    // computed before setup ran, saved on success
+	cacheCleanups []func() error // undo the restores once the run's units are gone
 }
 
 // RunSetup starts services, restores setup step caches and runs the setup steps.
@@ -158,12 +160,20 @@ func (r *runRunner) RunSetup(ctx context.Context, run store.Run) error {
 	}
 
 	if e.cache != nil {
+		platform := runtime.GOOS + "-" + runtime.GOARCH
 		for _, step := range checks.Setup {
 			if step.Cache == nil {
 				continue
 			}
-			for _, p := range step.Cache.Paths {
-				_, _ = e.cache.Restore(ctx, r.domain, cacheKey(step.Cache, p), filepath.Join(r.workDir, p))
+			// The key is fixed before setup runs, so Save stores what this
+			// lockfile produced even if setup rewrites it.
+			k, err := cache.ComputeKey(run.TrustDomain, platform, r.workDir, step.Cache.Key, step.Cache.Paths)
+			if err != nil {
+				continue
+			}
+			r.cacheKeys = append(r.cacheKeys, k)
+			if _, cleanup, err := e.cache.Restore(ctx, k, r.workDir); err == nil {
+				r.cacheCleanups = append(r.cacheCleanups, cleanup)
 			}
 		}
 	}
@@ -258,18 +268,20 @@ func (r *runRunner) jobEnv() []string {
 	return append([]string{"PATH=" + path, "HOME=" + home}, r.serviceEnv...)
 }
 
-// FinishRun saves setup step caches when the run succeeded, then stops
-// services and any job units of the run still alive.
+// FinishRun saves setup step caches when the run succeeded and policy
+// allows, stops services and any job units of the run still alive, then
+// undoes the cache restores (overlay unmounts).
 func (r *runRunner) FinishRun(ctx context.Context, run store.Run, final store.RunState) error {
 	e := r.e
 	if final == store.RunSuccess && e.cache != nil {
-		for _, step := range r.checks.Setup {
-			if step.Cache == nil {
-				continue
-			}
-			for _, p := range step.Cache.Paths {
-				_ = e.cache.Save(ctx, r.domain, r.isProtected, cacheKey(step.Cache, p), filepath.Join(r.workDir, p))
-			}
+		policy := cache.Policy{
+			Kind:      run.Kind,
+			Event:     run.Event,
+			Protected: r.isProtected,
+			Trusted:   strings.HasPrefix(run.TrustDomain, "trusted:"),
+		}
+		for _, k := range r.cacheKeys {
+			_ = e.cache.Save(ctx, k, policy, r.workDir)
 		}
 	}
 	if e.services != nil {
@@ -277,22 +289,16 @@ func (r *runRunner) FinishRun(ctx context.Context, run store.Run, final store.Ru
 			_ = e.services.Stop(ctx, run.ID, svc.Name)
 		}
 	}
-	if e.isolation == nil {
-		return nil
-	}
-	units, err := e.isolation.ListUnits(ctx, isolation.UnitPrefix+isolation.SanitizeUnitPart(run.ID)+"-")
-	if err != nil {
-		return err
-	}
 	var errs []error
-	for _, u := range units {
-		errs = append(errs, e.isolation.Stop(ctx, u.Name))
+	if e.isolation != nil {
+		units, err := e.isolation.ListUnits(ctx, isolation.UnitPrefix+isolation.SanitizeUnitPart(run.ID)+"-")
+		errs = append(errs, err)
+		for _, u := range units {
+			errs = append(errs, e.isolation.Stop(ctx, u.Name))
+		}
+	}
+	for _, cleanup := range slices.Backward(r.cacheCleanups) {
+		errs = append(errs, cleanup())
 	}
 	return errors.Join(errs...)
-}
-
-// cacheKey names the cache entry for one path of a setup step cache. The key
-// files are named, not hashed.
-func cacheKey(c *config.SetupStepCache, path string) string {
-	return strings.Join(c.Key, "+") + "/" + path
 }
