@@ -176,6 +176,48 @@ func (db *DB) ListRuns(ctx context.Context, limit int) ([]*Run, error) {
 	return runs, rows.Err()
 }
 
+// GetIncompleteRuns returns all runs currently in non-terminal active states (Running, Verifying, RollingBack).
+func (db *DB) GetIncompleteRuns(ctx context.Context) ([]*Run, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT id, repo, ref, trust_domain, state, queued_at, started_at, finished_at, error, config_yaml
+		FROM runs
+		WHERE state IN ('Running', 'Verifying', 'RollingBack')
+		ORDER BY queued_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query incomplete runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []*Run
+	for rows.Next() {
+		var (
+			r          Run
+			domainStr  string
+			stateStr   string
+			startedAt  sql.NullTime
+			finishedAt sql.NullTime
+		)
+
+		if err := rows.Scan(&r.ID, &r.Repo, &r.Ref, &domainStr, &stateStr, &r.QueuedAt, &startedAt, &finishedAt, &r.Error, &r.ConfigYAML); err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+
+		r.TrustDomain = protocol.TrustDomain(domainStr)
+		r.State = protocol.RunState(stateStr)
+		if startedAt.Valid {
+			r.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			r.FinishedAt = &finishedAt.Time
+		}
+
+		runs = append(runs, &r)
+	}
+
+	return runs, rows.Err()
+}
+
 // TransitionRun advances the run state, enforces transition rules, updates timestamps,
 // and emits an outbox transition event in the same transaction.
 func (db *DB) TransitionRun(ctx context.Context, id string, from protocol.RunState, to protocol.RunState, errMsg string) error {
