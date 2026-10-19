@@ -1,0 +1,70 @@
+name: Bug Report
+description: Report unexpected behavior or a bug in ZeroCIDeploy
+title: "[Bug]: "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide details to help diagnose and reproduce the problem.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? Provide a concise explanation.
+      placeholder: Describe the issue...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the monorepo is affected?
+      options:
+        - agent (`zeroci` CLI / daemon)
+        - hub (Cloudflare Worker)
+        - schema (config format)
+        - build / Makefile / scripts
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps or commands to trigger the issue.
+      placeholder: |
+        1. Run `zeroci run ...`
+        2. Inspect output
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, architecture, Go / Node version, etc.
+      placeholder: Linux x86_64, systemd 255, Go 1.24
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs or Terminal Output
+      description: Paste any logs, stack traces, or command output.
+      render: shell
+    validations:
+      required: false
