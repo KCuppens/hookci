@@ -39,6 +39,18 @@ func commandTable() map[string]command {
 			summary: "scaffold a .zeroci.yml config file for the project",
 			run:     runInit,
 		},
+		"logs": {
+			summary: "view or tail check job logs",
+			run:     runLogs,
+		},
+		"run": {
+			summary: "execute check jobs locally",
+			run:     runRun,
+		},
+		"status": {
+			summary: "show run and job status",
+			run:     runStatus,
+		},
 		"validate": {
 			summary: "validate a zeroci configuration file",
 			run:     runValidate,
