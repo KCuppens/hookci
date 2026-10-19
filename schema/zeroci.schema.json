@@ -71,6 +71,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "logs": {
+      "description": "Where job logs go: hub uploads each job log to the hub for signed View log links; local keeps logs on the agent only.",
+      "type": "string",
+      "enum": ["hub", "local"],
+      "default": "hub"
     }
   },
   "$defs": {
@@ -716,6 +722,11 @@
             "reason": {
               "description": "Why the state changed.",
               "type": "string"
+            },
+            "logs": {
+              "description": "local when the repo config keeps job logs on the agent; set on finished jobs.",
+              "type": "string",
+              "enum": ["local"]
             }
           }
         },

@@ -377,6 +377,10 @@ export interface Event {
    * Why the state changed.
    */
   reason?: string;
+  /**
+   * local when the repo config keeps job logs on the agent; set on finished jobs.
+   */
+  logs?: "local";
 }
 /**
  * File annotations parsed from a job's output.

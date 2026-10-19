@@ -23,12 +23,14 @@ import { claimOfflineDm, clearOfflineDm } from "../do/agent-hooks";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
+import { signLogUrl } from "../logs/sign";
+import { getLogTail } from "../logs/tail";
 import { logEvent, reportError } from "../observability";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
 import { resolveAuthor } from "../slack/authors";
 import { TERMINAL } from "../slack/badge";
 import { findChannel } from "../slack/channels";
-import { renderAlert, renderJobReply, renderOfflineDm, renderRunMessage } from "../slack/messages";
+import { renderAlert, renderJobReply, renderOfflineDm, renderRunMessage, TAIL_LINES } from "../slack/messages";
 import { registerSinkFactory, type SinkHost } from "./index";
 import type { AgentView, JobView, RunView, Sink } from "./types";
 
@@ -51,10 +53,22 @@ const EXPECTED_ERRORS: Record<string, true> = {
 	invalid_auth: true,
 };
 
-/** The failed job's tail as the agent sent it, kept in the AgentDO until the run ends. */
+/**
+ * What the agent sent with the failed job's final state, kept in the AgentDO
+ * until the run ends: its tail, the alert's fallback when no log was
+ * uploaded, or that the repo keeps its logs on the agent.
+ */
 interface StoredTail {
 	job: string;
 	tail: string[];
+	logs?: "local";
+}
+
+/** The failed job the alert names and what it shows of the log. */
+interface AlertLog {
+	job: JobView;
+	tail: string[];
+	logUrl: string | null;
 }
 
 /** Per AgentDO storage, the tail of the work on each run: calls on one run go one after another. */
@@ -119,18 +133,21 @@ export class SlackSink implements Sink {
 		if (watches.length === 0) return;
 		if (run.runId) await adoptSlackMessages(this.t, run.triggerId, run.runId);
 		const runKey = run.runId ?? run.triggerId;
-		if (job?.state === "failed" && job.tail && job.tail.length > 0 && this.host) {
+		if (job?.state === "failed" && ((job.tail && job.tail.length > 0) || job.logs === "local") && this.host) {
 			const key = tailKey(runKey);
-			if ((await this.host.storage.get(key)) === undefined) await this.host.storage.put(key, { job: job.name, tail: job.tail } satisfies StoredTail);
+			if ((await this.host.storage.get(key)) === undefined) {
+				await this.host.storage.put(key, { job: job.name, tail: job.tail ?? [], ...(job.logs ? { logs: job.logs } : {}) } satisfies StoredTail);
+			}
 		}
-		const tail = run.state === "failed" ? await this.alertTail(runKey) : undefined;
+		let failure: Promise<AlertLog | null> | undefined;
+		const alertLog = () => (failure ??= this.alertLog(run, runKey));
 
 		for (const { watch, followOnly } of await this.targets(run, runKey, watches)) {
 			try {
 				const ts = await this.postOrUpdate(run, runKey, watch, followOnly);
 				if (ts === null || followOnly) continue;
 				if (job && watch.notify === "normal" && TERMINAL.has(job.state)) await this.reply(run, runKey, watch, ts, job);
-				if (tail) await this.alert(run, runKey, watch, ts, tail);
+				if (run.state === "failed") await this.alert(run, runKey, watch, ts, alertLog);
 			} catch (err) {
 				this.failed(err, { team_id: watch.team_id, channel_id: watch.channel_id, run_id: runKey });
 			}
@@ -235,14 +252,16 @@ export class SlackSink implements Sink {
 	}
 
 	/** Posts the run's one failure alert for the watch: a DM to the author when asked and known, else in the thread. */
-	private async alert(run: RunView, runKey: string, watch: WatchRow, parentTs: string, stored: StoredTail): Promise<void> {
-		const job = run.jobs.find((j) => j.name === stored.job) ?? run.jobs.find((j) => j.state === "failed");
-		if (!job) return;
+	private async alert(run: RunView, runKey: string, watch: WatchRow, parentTs: string, alertLog: () => Promise<AlertLog | null>): Promise<void> {
 		const { team_id: team, channel_id: channel } = watch;
 		if (!(await claimAlert(this.t, runKey, team, channel))) return;
-		const tail = stored.job === job.name ? stored.tail : [];
-		const logUrl = run.logUrl ?? null;
 		try {
+			const log = await alertLog();
+			if (!log) {
+				await setAlertTs(this.t, runKey, team, channel, null);
+				return;
+			}
+			const { job, tail, logUrl } = log;
 			const author = await resolveAuthor(this.env, this.t.installationId, team, { login: run.authorLogin, email: run.authorEmail });
 			let target = { channel, thread_ts: parentTs };
 			const msg = renderAlert(run, job, tail, watch.alert === "dm" ? null : author, logUrl);
@@ -268,12 +287,21 @@ export class SlackSink implements Sink {
 	}
 
 	/**
-	 * The failed job's last log lines for the alert: what the agent sent with
-	 * the job's final state, or nothing outside the AgentDO. The one place to
-	 * read the stored log once it is kept.
+	 * The failed job and its log for the alert, read once per update: the
+	 * last TAIL_LINES lines of the uploaded log with a signed link to it, else
+	 * the tail the agent sent (kept in the AgentDO), else nothing.
 	 */
-	private async alertTail(runKey: string): Promise<StoredTail> {
-		return (await this.host?.storage.get<StoredTail>(tailKey(runKey))) ?? { job: "", tail: [] };
+	private async alertLog(run: RunView, runKey: string): Promise<AlertLog | null> {
+		const stored = (await this.host?.storage.get<StoredTail>(tailKey(runKey))) ?? { job: "", tail: [] };
+		const found = run.jobs.find((j) => j.name === stored.job) ?? run.jobs.find((j) => j.state === "failed");
+		if (!found) return null;
+		const own = stored.job === found.name;
+		const job: JobView = own && stored.logs ? { ...found, logs: stored.logs } : found;
+		const fallback = { job, tail: own ? stored.tail : [], logUrl: null };
+		if (job.logs === "local" || !run.runId) return fallback;
+		const tail = await getLogTail(this.env, run.runId, job.name, TAIL_LINES);
+		if (!tail) return fallback;
+		return { job, tail, logUrl: await signLogUrl(this.env, run.runId, job.name, this.now()) };
 	}
 
 	/**

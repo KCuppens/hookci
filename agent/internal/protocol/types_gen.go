@@ -137,6 +137,9 @@ type Event struct {
 	// Job name. Absent for run events.
 	Job *string `json:"job,omitempty,omitzero"`
 
+	// local when the repo config keeps job logs on the agent; set on finished jobs.
+	Logs *EventLogs `json:"logs,omitempty,omitzero"`
+
 	// Why the state changed.
 	Reason *string `json:"reason,omitempty,omitzero"`
 
@@ -167,6 +170,10 @@ type Event struct {
 	// Protocol version.
 	V int `json:"v"`
 }
+
+type EventLogs string
+
+const EventLogsLocal EventLogs = "local"
 
 type EventState string
 

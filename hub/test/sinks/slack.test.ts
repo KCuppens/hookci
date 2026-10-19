@@ -7,6 +7,7 @@ import { getSlackMessage } from "../../src/db/slack-messages";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watches";
 import { clearOfflineDm } from "../../src/do/agent-hooks";
+import { verifyLogSig } from "../../src/logs/sign";
 import { slackApi } from "../../src/slack/api";
 import { resetChannelCacheForTests } from "../../src/slack/channels";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
@@ -17,6 +18,7 @@ import { type Agent, seedAgent } from "../do/agent-socket";
 import { after, formField, queueStats, useQueueWorld } from "../do/slack-queue-world";
 import type { FakeCall } from "../fakes/http";
 import { FORBIDDEN_SLACK_METHODS } from "../fakes/slack";
+import { gzip, numberedLines } from "../logs/helpers";
 
 const INSTALLATION = 77;
 const REPO = 2002;
@@ -230,6 +232,47 @@ describe("SlackSink", () => {
     expect(fenced[0]).toBe("line 20");
     expect(fenced.at(-1)).toBe("line 59");
     expect((await getSlackMessage(t, "run_1", world.team, CHANNEL))?.alert_ts).toBe("1700000000.000003");
+  });
+
+  it("alerts with the uploaded log's last 40 lines, a signed log link and a View log button", async () => {
+    await watch();
+    await env.LOGS.put(`logs/${INSTALLATION}/run_1/build.log.gz`, await gzip(numberedLines(100)));
+    const agent = await seedAgent(INSTALLATION);
+    const failed: JobView = { name: "build", state: "failed", step: "make", tail: ["agent tail"] };
+    await inAgent(agent, async (sink) => {
+      await sink.onJobUpdate(runView({ jobs: [failed] }), failed);
+      await sink.onRunUpdate(runView({ state: "failed", jobs: [failed] }));
+    });
+    await env.LOGS.delete(`logs/${INSTALLATION}/run_1/build.log.gz`);
+
+    const alert = apiCalls("chat.postMessage").find((call) => text(call) === S.slack.alertText("Failed", "acme/widgets", SHORT, "build"));
+    const blocks = String(formField(alert?.body, "blocks"));
+    const fenced = /```\\n(.*?)\\n```/.exec(blocks)?.[1]?.split("\\n") ?? [];
+    expect(fenced).toEqual(Array.from({ length: 40 }, (_, i) => `line ${61 + i}`));
+    expect(blocks).not.toContain("agent tail");
+    const url = new URL(/<(https:[^|>]+\/logs\/[^|>]+)\|/.exec(blocks)?.[1] ?? "");
+    expect(`${url.origin}${url.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/run_1/build`);
+    expect(await verifyLogSig(env, "run_1", "build", Number(url.searchParams.get("exp")), url.searchParams.get("sig") ?? "", world.clock.now())).toBe(true);
+    expect(JSON.parse(blocks)).toContainEqual({
+      type: "actions",
+      elements: [expect.objectContaining({ type: "button", action_id: "log:view", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLog }) })],
+    });
+  });
+
+  it("alerts on a job whose logs stay on the agent with the logs: local note and no tail or button", async () => {
+    await watch();
+    const agent = await seedAgent(INSTALLATION);
+    const failed: JobView = { name: "build", state: "failed", step: "make", logs: "local" };
+    await inAgent(agent, async (sink) => {
+      await sink.onJobUpdate(runView({ jobs: [failed] }), failed);
+      await sink.onRunUpdate(runView({ state: "failed", jobs: [{ name: "build", state: "failed", step: "make" }] }));
+    });
+
+    const alert = apiCalls("chat.postMessage").find((call) => text(call) === S.slack.alertText("Failed", "acme/widgets", SHORT, "build"));
+    const blocks = JSON.parse(String(formField(alert?.body, "blocks")));
+    expect(blocks).toContainEqual({ type: "context", elements: [{ type: "mrkdwn", text: S.slack.logsLocal }] });
+    expect(JSON.stringify(blocks)).not.toContain("log:view");
+    expect(JSON.stringify(blocks)).not.toContain("```");
   });
 
   it("sends a dm alert to the author through conversations.open", async () => {

@@ -38,6 +38,10 @@ export async function getRepoByFullName(t: TenantDb, fullName: string): Promise<
 	return t.first<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 AND full_name = ?2 COLLATE NOCASE", fullName);
 }
 
+export async function getRepo(t: TenantDb, repoId: number): Promise<RepoRow | null> {
+	return t.first<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 AND repo_id = ?2", repoId);
+}
+
 export async function listRepos(t: TenantDb): Promise<RepoRow[]> {
 	return t.all<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 ORDER BY full_name");
 }

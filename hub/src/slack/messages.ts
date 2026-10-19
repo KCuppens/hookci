@@ -6,7 +6,7 @@
 import type { AgentView, JobView, RunState, RunView } from "../sinks/types";
 import { S } from "../strings";
 import { BADGE_EMOJI, escapeMrkdwn, formatDuration } from "./badge";
-import { type Block, context, section } from "./blocks";
+import { type Block, actions, button, context, section } from "./blocks";
 
 export interface SlackMessage {
 	text: string;
@@ -129,16 +129,23 @@ export function tailBlock(tail: readonly string[]): string {
 	return fence(lines.slice(start));
 }
 
-/** The failure alert: one mention at most, the failed job and step, the log tail and link. */
+/**
+ * The failure alert: one mention at most, the failed job and step, the log
+ * tail, link and View log button; for a job whose logs stay on the agent,
+ * only a note saying so.
+ */
 export function renderAlert(run: RunView, job: JobView, tail: string[], mention: string | null, logUrl: string | null): SlackMessage {
 	const head = [`${BADGE_EMOJI.failed} *${S.slack.state.failed}* ${repoLink(run)}`, shaLink(run)];
 	const ref = where(run);
 	if (ref) head.push(escapeMrkdwn(ref));
-	const blocks: Block[] = [
-		section(`${mention ? `<@${mention}> ` : ""}${head.join(SEP)}\n${escapeMrkdwn(S.slack.alertJob(job.name, job.step))}`),
-		tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail),
-	];
-	if (logUrl) blocks.push(context(`<${logUrl}|${S.badge.log}>`));
+	const blocks: Block[] = [section(`${mention ? `<@${mention}> ` : ""}${head.join(SEP)}\n${escapeMrkdwn(S.slack.alertJob(job.name, job.step))}`)];
+	if (job.logs === "local") {
+		blocks.push(context(S.slack.logsLocal));
+	} else {
+		blocks.push(tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail));
+		if (logUrl) blocks.push(context(`<${logUrl}|${S.badge.log}>`));
+		if (logUrl && run.runId) blocks.push(actions(button("log:view", S.slack.viewLog, `${run.runId}:${job.name}`)));
+	}
 	return { text: S.slack.alertText(S.slack.state.failed, escapeMrkdwn(run.repo), run.shortSha, escapeMrkdwn(job.name)), blocks };
 }
 

@@ -30,7 +30,8 @@ type Job struct {
 // JobUpdate carries the columns and event fields TransitionJob records.
 // ExitCode, DurationMS, Unit and Reason are stored when set. Tail is sent
 // only on failure, trimmed to its last 40 lines. Step is sent when set, and
-// StepIndex/StepsTotal when StepsTotal > 0.
+// StepIndex/StepsTotal when StepsTotal > 0. LogsLocal marks a terminal event
+// `logs: local` and drops Tail, since the log stays on the agent.
 type JobUpdate struct {
 	ExitCode   *int
 	DurationMS *int64
@@ -40,6 +41,7 @@ type JobUpdate struct {
 	Step       string
 	StepIndex  int
 	StepsTotal int
+	LogsLocal  bool
 }
 
 const jobColumns = `run_id, name, state, needs, exit_code, started_at, finished_at, duration_ms, unit, reason`
@@ -109,7 +111,11 @@ func jobEvent(runID, job string, to JobState, u JobUpdate) protocol.Event {
 		d := int(*u.DurationMS)
 		ev.DurationMs = &d
 	}
-	if to == JobFailed && len(u.Tail) > 0 {
+	switch {
+	case u.LogsLocal && to.Terminal():
+		local := protocol.EventLogsLocal
+		ev.Logs = &local
+	case to == JobFailed && len(u.Tail) > 0:
 		tail := u.Tail
 		if len(tail) > maxTailLines {
 			tail = tail[len(tail)-maxTailLines:]

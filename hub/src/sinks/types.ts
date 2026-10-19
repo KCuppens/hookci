@@ -27,6 +27,8 @@ export interface JobView {
 	reason?: string;
 	/** The last log lines of the job, as the agent sent them with its final state. */
 	tail?: string[];
+	/** "local" when the repo keeps its logs on the agent: nothing is uploaded and the agent sends no tail. */
+	logs?: "local";
 }
 export interface RunView {
 	installationId: number;

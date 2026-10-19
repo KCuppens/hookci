@@ -373,7 +373,7 @@ export function registerRunLifecycle(): () => void {
 				});
 				await fanOutRun(dob, frame.run_id, async (sink, run) => {
 					const job = run.jobs.find((j) => j.name === name);
-					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail });
+					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
 				});
 				return;
 			}

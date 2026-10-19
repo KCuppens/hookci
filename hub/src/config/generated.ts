@@ -47,6 +47,10 @@ export interface ZeroCIConfig {
    * @maxItems 50
    */
   redact?: string[];
+  /**
+   * Where job logs go: hub uploads each job log to the hub for signed View log links; local keeps logs on the agent only.
+   */
+  logs?: "hub" | "local";
 }
 /**
  * Checks that run on pull requests and pushes.

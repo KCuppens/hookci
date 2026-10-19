@@ -143,6 +143,9 @@ export const S = {
 		alertJob: (job: string, step?: string) => `Job ${job} failed${step ? ` at step ${step}` : ""}.`,
 		alertTail: (lines: number) => `Last ${lines} log lines:`,
 		alertNoTail: "The agent sent no log lines with the failure.",
+		logsLocal: "This repository keeps its logs on the agent (`logs: local`). Read them on the agent host with `zeroci logs`.",
+		viewLog: "View log",
+		logLink: (url: string) => `<${url}|Open the log>. The link works for 15 minutes and only for whoever has it, so do not share it.`,
 		offlineDmText: (state: string, agent: string, runs: number) =>
 			`${state}: ${agent}. ${runs === 1 ? "1 run waits" : `${runs} runs wait`} for it to reconnect.`,
 		offlineDmSince: (since: string) => `Last seen ${since}. Check the host with \`zeroci doctor\`.`,

@@ -1,13 +1,17 @@
 package daemon
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +19,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
+	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
 	"github.com/KCuppens/zerocideploy/agent/internal/source"
@@ -85,9 +90,12 @@ func writeTree(dir string, files map[string]string) error {
 }
 
 // fakeRunner records the jobs it runs. With Block set, RunJob waits for ctx
-// and reports the job cancelled.
+// and reports the job cancelled. With Log set, each job writes it as its log
+// file under stateDir's run dir.
 type fakeRunner struct {
 	Block     bool
+	Log       string
+	stateDir  string
 	mu        sync.Mutex
 	jobs      []string
 	running   chan string
@@ -96,11 +104,17 @@ type fakeRunner struct {
 
 func (r *fakeRunner) RunSetup(context.Context, store.Run) error { return nil }
 
-func (r *fakeRunner) RunJob(ctx context.Context, _ store.Run, job store.Job) (scheduler.JobOutcome, error) {
+func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (scheduler.JobOutcome, error) {
 	r.mu.Lock()
 	r.jobs = append(r.jobs, job.Name)
 	r.mu.Unlock()
 	r.running <- job.Name
+	if r.Log != "" {
+		path := logpipe.LogPath(filepath.Join(r.stateDir, "runs", run.ID), job.Name)
+		if err := writeTree(filepath.Dir(path), map[string]string{filepath.Base(path): r.Log}); err != nil {
+			return scheduler.JobOutcome{}, err
+		}
+	}
 	if !r.Block {
 		return scheduler.JobOutcome{State: store.JobSuccess}, nil
 	}
@@ -126,8 +140,14 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
+	return newHarnessAt(t, src, runner, "https://hub.invalid")
+}
+
+// newHarnessAt is newHarness with the hub at hubURL, where job logs go.
+func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
+	runner.stateDir = stateDir
 	st, err := store.Open(filepath.Join(stateDir, "agent.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +166,7 @@ func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
 		h.mu.Unlock()
 		return runner, nil
 	}
-	conf := &agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}
+	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x"}
 	dialer := &idleDialer{dialed: make(chan struct{})}
 	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2})
 
@@ -463,5 +483,93 @@ func TestDaemonRecoversUnstartedTrigger(t *testing.T) {
 	}
 	if last.Kind != "event" || ev.RunId != "run_1" || ev.State != protocol.EventStateInterrupted {
 		t.Fatalf("last frame = %s %s, want run_1 interrupted", last.Kind, last.Payload)
+	}
+}
+
+// logHub records the job logs PUT to it and the job's state in the agent
+// store at upload time.
+type logHub struct {
+	h     **harness
+	mu    sync.Mutex
+	calls []logPut
+}
+
+type logPut struct {
+	path, auth, body string
+	jobState         store.JobState
+}
+
+func (l *logHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	zr, err := gzip.NewReader(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body, err := io.ReadAll(zr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	h := *l.h
+	runID := strings.Split(r.URL.Path, "/")[3]
+	jobs, err := h.st.Jobs(context.Background(), runID)
+	if err != nil || len(jobs) == 0 {
+		http.Error(w, "no such run", http.StatusNotFound)
+		return
+	}
+	l.mu.Lock()
+	l.calls = append(l.calls, logPut{path: r.URL.Path, auth: r.Header.Get("Authorization"), body: string(body), jobState: jobs[0].State})
+	l.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func TestDaemonJobLogs(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    string
+		wantPuts  int
+		wantLocal bool
+	}{
+		{"uploads before the job settles", unitOnly, 1, false},
+		{"logs local never uploads", unitOnly + "logs: local\n", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var h *harness
+			hub := &logHub{h: &h}
+			srv := httptest.NewServer(hub)
+			defer srv.Close()
+			h = newHarnessAt(t, &fakeSource{Head: map[string]string{ConfigFile: tc.config}}, &fakeRunner{Log: "hello\n"}, srv.URL)
+			h.send(h.trigger("trg_1", false))
+			h.waitTrigger("trg_1", store.TriggerDone)
+
+			runID := h.frames("accepted")[0]["run_id"].(string)
+			hub.mu.Lock()
+			calls := hub.calls
+			hub.mu.Unlock()
+			if len(calls) != tc.wantPuts {
+				t.Fatalf("hub saw %d log PUTs, want %d", len(calls), tc.wantPuts)
+			}
+			for _, c := range calls {
+				if c.path != "/v1/logs/"+runID+"/unit" || c.auth != "Bearer zc_agent_x" || c.body != "hello\n" {
+					t.Errorf("log PUT = %+v", c)
+				}
+				if c.jobState != store.JobRunning {
+					t.Errorf("job state at upload = %s, want running", c.jobState)
+				}
+			}
+			var settled map[string]any
+			for _, ev := range h.frames("event") {
+				if ev["job"] == "unit" && ev["state"] == string(store.JobSuccess) {
+					settled = ev
+				}
+			}
+			if settled == nil {
+				t.Fatal("no success event for unit")
+			}
+			if got := settled["logs"] == "local"; got != tc.wantLocal {
+				t.Errorf("success event logs = %v, want local %v", settled["logs"], tc.wantLocal)
+			}
+		})
 	}
 }

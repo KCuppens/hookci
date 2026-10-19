@@ -22,6 +22,9 @@ type ResolvedChecks struct {
 	// EnvFiles are the deployments' env_file paths, sorted. Their values are
 	// never given to check jobs; the executor masks them in job logs.
 	EnvFiles []string
+	// LogsLocal is true for `logs: local`: job logs stay on the agent and are
+	// not uploaded to the hub.
+	LogsLocal bool
 }
 
 // OnSpec says which GitHub events run the checks.
@@ -77,6 +80,7 @@ func resolveChecks(cfg *ZeroCIConfig, raw any) *ResolvedChecks {
 		Limits: defaultLimits,
 		Jobs:   []ResolvedJob{},
 	}
+	rc.LogsLocal = cfg.Logs == ZeroCIConfigLogsLocal
 	for _, p := range cfg.Redact {
 		rc.Redact = append(rc.Redact, regexp.MustCompile(p)) // checkRedact compiled it already
 	}

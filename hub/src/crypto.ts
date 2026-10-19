@@ -2,7 +2,7 @@ import { HubError } from "./errors";
 
 const utf8 = new TextEncoder();
 
-export async function hmacSha256(key: string | ArrayBuffer, data: string | ArrayBuffer): Promise<ArrayBuffer> {
+export async function hmacSha256(key: string | ArrayBuffer | Uint8Array, data: string | ArrayBuffer): Promise<ArrayBuffer> {
 	const rawKey = typeof key === "string" ? utf8.encode(key) : key;
 	const k = await crypto.subtle.importKey("raw", rawKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 	return crypto.subtle.sign("HMAC", k, typeof data === "string" ? utf8.encode(data) : data);
@@ -85,7 +85,7 @@ function encKeysInvalid(message: string): HubError {
 }
 
 /** The bytes of standard base64 b64, or null when it is not base64. */
-function base64Bytes(b64: string): Uint8Array | null {
+export function base64Bytes(b64: string): Uint8Array | null {
 	try {
 		return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 	} catch {

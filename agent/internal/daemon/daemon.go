@@ -21,6 +21,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
+	"github.com/KCuppens/zerocideploy/agent/internal/logupload"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
@@ -69,6 +70,7 @@ type Daemon struct {
 	client *hubclient.Client
 	tokens *hubtokens.Broker
 	src    source.Source
+	logs   *logupload.Uploader
 
 	wake    chan struct{}
 	mu      sync.Mutex
@@ -99,6 +101,8 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
 	d := &Daemon{st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
+	credential := conf.Credential
+	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
 		HubURL:     conf.HubURL,
 		AgentID:    conf.AgentID,
@@ -298,12 +302,13 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.reject(bg, w, ReasonNoConfig, errors.New("no checks configured or detected"))
 		return
 	}
-	runner, err := d.exec(co, p.checks)
+	inner, err := d.exec(co, p.checks)
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
 		return
 	}
+	runner := &logRunner{JobRunner: inner, up: d.logs, runDir: dir.Root, local: p.checks.LogsLocal, log: d.log}
 
 	d.mu.Lock()
 	if w.ctx.Err() == nil {

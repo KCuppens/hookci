@@ -198,3 +198,24 @@ export async function findRunByTrigger(t: TenantDb, triggerId: string): Promise<
 		triggerId,
 	);
 }
+
+type RunOwner = Pick<RunRow, "installation_id" | "agent_id" | "repo_id">;
+
+/** The installation, agent and repo of a run, unscoped like getAgentByCredentialHash: callers prove access before using it. */
+export async function getRunOwner(db: D1Database, runId: string): Promise<RunOwner | null> {
+	return db.prepare("SELECT installation_id, agent_id, repo_id FROM runs WHERE run_id = ?1").bind(runId).first<RunOwner>();
+}
+
+/** Records where a job's log is stored; false when the job is not one of this installation's. */
+export async function setJobLog(t: TenantDb, runId: string, job: string, log: { key: string; bytes: number; truncated: boolean }): Promise<boolean> {
+	const res = await t.run(
+		`UPDATE jobs SET log_key = ?4, log_bytes = ?5, log_truncated = ?6
+		WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1 AND run_id = ?2) AND name = ?3`,
+		runId,
+		job,
+		log.key,
+		log.bytes,
+		log.truncated ? 1 : 0,
+	);
+	return res.meta.changes > 0;
+}
