@@ -361,7 +361,7 @@
       }
     },
     "protocol": {
-      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type.",
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.",
       "$defs": {
         "Envelope": {
           "description": "Fields shared by every frame.",
@@ -407,6 +407,11 @@
             "agent_id": {
               "description": "Agent identifier, when already registered.",
               "type": "string"
+            },
+            "inbound_hwm": {
+              "description": "Highest hub seq the agent has processed. The hub replays outbox frames above it. Absent means 0.",
+              "type": "integer",
+              "minimum": 0
             }
           }
         },
@@ -425,6 +430,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "trigger"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "hub_seq": {
               "description": "Hub sequence number, acknowledged by the agent.",
@@ -509,6 +519,11 @@
               "type": "string",
               "const": "accepted"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "trigger_id": {
               "description": "Hub trigger identifier.",
               "type": "string"
@@ -535,6 +550,11 @@
               "type": "string",
               "const": "rejected"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "trigger_id": {
               "description": "Hub trigger identifier.",
               "type": "string"
@@ -560,6 +580,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "job_planned"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -609,6 +634,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "event"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "agent_seq": {
               "description": "Agent outbox sequence number, acknowledged by the hub.",
@@ -672,6 +702,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "annotations"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "agent_seq": {
               "description": "Agent outbox sequence number, acknowledged by the hub.",
@@ -745,6 +780,11 @@
               "type": "string",
               "const": "token_request"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -771,6 +811,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "token"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -802,6 +847,11 @@
               "type": "string",
               "const": "log_subscribe"
             },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -832,6 +882,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "log"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -929,6 +984,11 @@
               "type": "string",
               "const": "interrupt"
             },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -960,6 +1020,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "error"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack. Absent on errors sent outside the outbox.",
+              "type": "integer",
+              "minimum": 1
             },
             "code": {
               "description": "Machine-readable error code.",

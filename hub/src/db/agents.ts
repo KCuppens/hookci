@@ -1,3 +1,4 @@
+import { sha256Hex } from "../crypto";
 import type { TenantDb } from "./tenant";
 
 export interface AgentRow {
@@ -21,6 +22,11 @@ export type NewAgent = Pick<
 	AgentRow,
 	"agent_id" | "name" | "hostname" | "os" | "arch" | "credential_hash" | "agent_version" | "paired_by_github_id" | "paired_at"
 >;
+
+/** The credential_hash of an agent credential: sha256 hex of the whole `zc_agent_` string. */
+export function agentCredentialHash(credential: string): Promise<string> {
+	return sha256Hex(credential);
+}
 
 /** Inserts a freshly paired agent; it starts offline. */
 export async function insertAgent(t: TenantDb, row: NewAgent): Promise<void> {
@@ -74,6 +80,15 @@ export async function touchAgent(
 		seen.protocolVersion,
 		seen.agentVersion,
 		seen.lastSeenAt,
+	);
+}
+
+/** Marks a non-revoked agent offline, last seen at lastSeenAt. */
+export async function markAgentOffline(t: TenantDb, agentId: string, lastSeenAt: number): Promise<void> {
+	await t.run(
+		"UPDATE agents SET status = 'offline', last_seen_at = ?3 WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL",
+		agentId,
+		lastSeenAt,
 	);
 }
 

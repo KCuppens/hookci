@@ -7,6 +7,9 @@ type Accepted struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Hub trigger identifier.
 	TriggerId string `json:"trigger_id"`
 
@@ -42,6 +45,9 @@ type Annotations struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Number of annotations found, including those not sent in items.
 	Total *int `json:"total,omitempty,omitzero"`
@@ -97,6 +103,10 @@ type Error struct {
 	// Human-readable explanation.
 	Message string `json:"message"`
 
+	// Hub outbox sequence number, acknowledged by the agent with ack. Absent on
+	// errors sent outside the outbox.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 
@@ -132,6 +142,9 @@ type Event struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// New run or job state.
 	State EventState `json:"state"`
@@ -179,6 +192,10 @@ type Hello struct {
 	// Agent build version.
 	AgentVersion string `json:"agent_version"`
 
+	// Highest hub seq the agent has processed. The hub replays outbox frames above
+	// it. Absent means 0.
+	InboundHwm *int `json:"inbound_hwm,omitempty,omitzero"`
+
 	// Protocol version the agent speaks.
 	ProtocolVersion int `json:"protocol_version"`
 
@@ -197,6 +214,9 @@ type Interrupt struct {
 
 	// Agent run identifier.
 	RunId *string `json:"run_id,omitempty,omitzero"`
+
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Hub trigger identifier.
 	TriggerId *string `json:"trigger_id,omitempty,omitzero"`
@@ -225,6 +245,9 @@ type JobPlanned struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -256,6 +279,9 @@ type Log struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 
@@ -274,6 +300,9 @@ type LogSubscribe struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 
@@ -285,6 +314,9 @@ type LogSubscribe struct {
 type Rejected struct {
 	// Why the trigger was refused.
 	Reason string `json:"reason"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Hub trigger identifier.
 	TriggerId string `json:"trigger_id"`
@@ -304,6 +336,9 @@ type Token struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// GitHub installation token.
 	Token string `json:"token"`
 
@@ -321,6 +356,9 @@ type TokenRequest struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -355,6 +393,9 @@ type Trigger struct {
 
 	// Repository as owner/name.
 	Repo string `json:"repo"`
+
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Commit to check out.
 	Sha string `json:"sha"`

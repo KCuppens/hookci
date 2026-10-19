@@ -1,9 +1,12 @@
+import type { AgentDO } from "./do/agent";
+import type { Clock } from "./do/clock";
+
 // Worker bindings. DB, LOGS, the Durable Objects and the vars come from
 // wrangler.toml; everything else is a secret set with `wrangler secret put`.
 export interface Env {
 	DB: D1Database;
 	LOGS: R2Bucket;
-	AGENT_DO: DurableObjectNamespace;
+	AGENT_DO: DurableObjectNamespace<AgentDO>;
 	SLACK_DO: DurableObjectNamespace;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
@@ -23,4 +26,6 @@ export interface Env {
 	/** JSON `{"<version>":"<base64 key>"}`; the highest version is current. */
 	LOG_SIGNING_KEYS: string;
 	ROTATION_IN_PROGRESS?: string;
+	/** Tests only: replaces the AgentDO's wall clock. Never set in wrangler.toml. */
+	__TEST_CLOCK?: Clock;
 }

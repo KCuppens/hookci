@@ -23,7 +23,7 @@ const NOW = 1_767_225_600_000;
 
 type DoCall = { agentId: string; method: string; url: string; body: TriggerRequest };
 
-type FakeAgentDOs = { namespace: DurableObjectNamespace; calls: DoCall[] };
+type FakeAgentDOs = { namespace: Env["AGENT_DO"]; calls: DoCall[] };
 
 /** AgentDO namespace whose stubs record each request and answer with respond(). */
 function fakeAgentDOs(respond: () => Response = () => new Response(null, { status: 202 })): FakeAgentDOs {
@@ -39,7 +39,7 @@ function fakeAgentDOs(respond: () => Response = () => new Response(null, { statu
         },
       }) as unknown as DurableObjectStub,
   };
-  return { namespace: namespace as DurableObjectNamespace, calls };
+  return { namespace: namespace as unknown as Env["AGENT_DO"], calls };
 }
 
 let agents: FakeAgentDOs;

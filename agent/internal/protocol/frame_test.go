@@ -104,6 +104,21 @@ func TestDecodeError(t *testing.T) {
 	}
 }
 
+func TestDecodeSeqFields(t *testing.T) {
+	hello := decode[protocol.Hello](t, fixture(t, "valid-hello-inbound-hwm.json"))
+	if hello.InboundHwm == nil || *hello.InboundHwm != 7 {
+		t.Errorf("hello inbound_hwm = %v; want 7", hello.InboundHwm)
+	}
+	interrupt := decode[protocol.Interrupt](t, fixture(t, "valid-interrupt-seq.json"))
+	if interrupt.Seq == nil || *interrupt.Seq != 3 {
+		t.Errorf("interrupt seq = %v; want 3", interrupt.Seq)
+	}
+	event := decode[protocol.Event](t, fixture(t, "valid-event-seq.json"))
+	if event.Seq == nil || *event.Seq != 12 {
+		t.Errorf("event seq = %v; want 12", event.Seq)
+	}
+}
+
 func TestDecodeFrameRejectsUnknownTypeAndVersion(t *testing.T) {
 	for _, frame := range []string{
 		`{"v":1,"type":"nope"}`,

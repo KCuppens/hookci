@@ -16,6 +16,10 @@ export type Interrupt = {
    */
   type: "interrupt";
   /**
+   * Hub outbox sequence number, acknowledged by the agent with ack.
+   */
+  seq?: number;
+  /**
    * Agent run identifier.
    */
   run_id?: string;
@@ -55,7 +59,7 @@ export type Frame =
   | ProtocolErrorFrame;
 
 /**
- * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type.
+ * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.
  */
 export interface Protocol {
   [k: string]: unknown;
@@ -104,6 +108,10 @@ export interface Hello {
    * Agent identifier, when already registered.
    */
   agent_id?: string;
+  /**
+   * Highest hub seq the agent has processed. The hub replays outbox frames above it. Absent means 0.
+   */
+  inbound_hwm?: number;
 }
 /**
  * Hub to agent: start a run for a commit.
@@ -120,6 +128,10 @@ export interface Trigger {
    * Message type.
    */
   type: "trigger";
+  /**
+   * Hub outbox sequence number, acknowledged by the agent with ack.
+   */
+  seq?: number;
   /**
    * Hub sequence number, acknowledged by the agent.
    */
@@ -194,6 +206,10 @@ export interface Accepted {
    */
   type: "accepted";
   /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
+  /**
    * Hub trigger identifier.
    */
   trigger_id: string;
@@ -218,6 +234,10 @@ export interface Rejected {
    */
   type: "rejected";
   /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
+  /**
    * Hub trigger identifier.
    */
   trigger_id: string;
@@ -241,6 +261,10 @@ export interface JobPlanned {
    * Message type.
    */
   type: "job_planned";
+  /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
   /**
    * Agent run identifier.
    */
@@ -280,6 +304,10 @@ export interface Event {
    * Message type.
    */
   type: "event";
+  /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
   /**
    * Agent outbox sequence number, acknowledged by the hub.
    */
@@ -349,6 +377,10 @@ export interface Annotations {
    */
   type: "annotations";
   /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
+  /**
    * Agent outbox sequence number, acknowledged by the hub.
    */
   agent_seq: number;
@@ -414,6 +446,10 @@ export interface TokenRequest {
    */
   type: "token_request";
   /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
+  /**
    * Agent run identifier.
    */
   run_id: string;
@@ -437,6 +473,10 @@ export interface Token {
    * Message type.
    */
   type: "token";
+  /**
+   * Hub outbox sequence number, acknowledged by the agent with ack.
+   */
+  seq?: number;
   /**
    * Agent run identifier.
    */
@@ -466,6 +506,10 @@ export interface LogSubscribe {
    */
   type: "log_subscribe";
   /**
+   * Hub outbox sequence number, acknowledged by the agent with ack.
+   */
+  seq?: number;
+  /**
    * Agent run identifier.
    */
   run_id: string;
@@ -493,6 +537,10 @@ export interface Log {
    * Message type.
    */
   type: "log";
+  /**
+   * Agent outbox sequence number, acknowledged by the hub with ack.
+   */
+  seq?: number;
   /**
    * Agent run identifier.
    */
@@ -581,6 +629,10 @@ export interface ProtocolErrorFrame {
    * Message type.
    */
   type: "error";
+  /**
+   * Hub outbox sequence number, acknowledged by the agent with ack. Absent on errors sent outside the outbox.
+   */
+  seq?: number;
   /**
    * Machine-readable error code.
    */
