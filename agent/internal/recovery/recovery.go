@@ -1,114 +1,180 @@
+// Package recovery cleans up after an agent that was killed mid-run. Recover
+// runs once at agent start, before any new run: it stops every leftover job
+// unit, removes every zc- network namespace, kills stray pasta processes and
+// removes every service container, then moves the runs that were in flight to
+// interrupted and re-queues their checks.
 package recovery
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-// InterruptedReason is the error explanation recorded for runs interrupted by crash/reboot.
-const InterruptedReason = "agent crashed or was killed"
+// MaxCheckAttempts caps how often a check run is started. An interrupted check
+// on a lower attempt is re-queued as the next attempt.
+const MaxCheckAttempts = 3
 
-// Docker removes service containers by label; *services.Docker satisfies it.
-type Docker interface {
-	RemoveByLabel(ctx context.Context, label string) error
+// InterruptedReason is recorded on every run and job recovery interrupts.
+const InterruptedReason = "agent restarted"
+
+const (
+	kindCheck    = "check"
+	netnsPrefix  = "zc-"
+	pastaPattern = "^pasta .*zc-"
+	// sweepTimeout bounds the cleanup sweep so a hung docker daemon or
+	// systemctl cannot stall agent start.
+	sweepTimeout = 30 * time.Second
+)
+
+// Deps are the resources Recover cleans up. Logger may be nil, which means
+// slog.Default().
+type Deps struct {
+	Store     *store.Store
+	Isolation isolation.Isolation
+	Netns     interface {
+		ListNamespaces(ctx context.Context) ([]string, error)
+		RemoveNamespace(ctx context.Context, name string) error
+	}
+	Docker interface {
+		RemoveByLabel(ctx context.Context, label string) error
+	}
+	Runner execx.Runner // runs pkill for stray pasta processes
+	Logger *slog.Logger
 }
 
-// Manager handles startup crash recovery for active runs and orphan resources.
-type Manager struct {
-	store     *store.Store
-	isolation isolation.Isolation
-	docker    Docker
-	netns     *netns.Manager
+// Report lists what Recover did. Interrupted holds the IDs of the runs it
+// interrupted and Requeued the IDs of the retries it created. Errors holds the
+// cleanup failures; the next start sweeps again.
+type Report struct {
+	UnitsStopped []string
+	NetnsRemoved []string
+	Interrupted  []string
+	Requeued     []string
+	Errors       []error
 }
 
-// New constructs a crash recovery Manager. A nil docker skips service
-// container cleanup.
-func New(db *store.Store, iso isolation.Isolation, docker Docker, netnsMgr *netns.Manager) *Manager {
-	return &Manager{
-		store:     db,
-		isolation: iso,
-		docker:    docker,
-		netns:     netnsMgr,
+// NetnsManager adapts *netns.Manager, whose ListNamespaces takes no context,
+// to Deps.Netns.
+type NetnsManager struct{ *netns.Manager }
+
+// ListNamespaces returns the zc- namespaces the manager sees.
+func (m NetnsManager) ListNamespaces(context.Context) ([]string, error) {
+	return m.Manager.ListNamespaces()
+}
+
+// Recover sweeps every leftover unit, namespace, pasta process and service
+// container, then interrupts the runs that were active. It stops processes
+// before it touches run state, so an interrupted run has nothing left running.
+// Cleanup failures go to Report.Errors and the log; only store errors are
+// returned, along with the report so far.
+func Recover(ctx context.Context, d Deps) (Report, error) {
+	log := d.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	var rep Report
+	sweep(ctx, d, &rep, log)
+	err := interrupt(ctx, d, &rep, log)
+	return rep, err
+}
+
+func sweep(ctx context.Context, d Deps, rep *Report, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
+	defer cancel()
+	fail := func(err error) {
+		log.Warn("recovery: cleanup failed", "err", err)
+		rep.Errors = append(rep.Errors, err)
+	}
+
+	units, err := d.Isolation.ListUnits(ctx, isolation.UnitPrefix)
+	if err != nil && !errors.Is(err, isolation.ErrUnsupported) {
+		fail(fmt.Errorf("recovery: list units: %w", err))
+	}
+	for _, u := range units {
+		if err := d.Isolation.Stop(ctx, u.Name); err != nil {
+			fail(fmt.Errorf("recovery: stop unit %s: %w", u.Name, err))
+			continue
+		}
+		rep.UnitsStopped = append(rep.UnitsStopped, u.Name)
+	}
+
+	names, err := d.Netns.ListNamespaces(ctx)
+	if err != nil {
+		fail(fmt.Errorf("recovery: list network namespaces: %w", err))
+	}
+	for _, name := range names {
+		if !strings.HasPrefix(name, netnsPrefix) {
+			continue
+		}
+		if err := d.Netns.RemoveNamespace(ctx, name); err != nil {
+			fail(fmt.Errorf("recovery: remove network namespace %s: %w", name, err))
+			continue
+		}
+		rep.NetnsRemoved = append(rep.NetnsRemoved, name)
+	}
+
+	// pkill exits 1 when no process matched.
+	err = d.Runner.Run(ctx, execx.Cmd{Name: "pkill", Args: []string{"-f", pastaPattern}})
+	var exitErr *execx.ExitError
+	if err != nil && !(errors.As(err, &exitErr) && exitErr.Code == 1) {
+		fail(fmt.Errorf("recovery: kill pasta: %w", err))
+	}
+
+	if err := d.Docker.RemoveByLabel(ctx, services.LabelRun); err != nil && !errors.Is(err, services.ErrDockerMissing) {
+		fail(fmt.Errorf("recovery: remove service containers: %w", err))
 	}
 }
 
-// serviceCleanupBudget bounds all service container cleanup in one Recover call, so a hung
-// docker daemon delays startup by at most this long no matter how many runs need recovery.
-const serviceCleanupBudget = 30 * time.Second
-
-// Recover scans the database for non-terminal active runs (running, verifying, rolling_back),
-// marks them and their unfinished jobs interrupted, and tears down orphan units/containers.
-// Returns the list of recovered run IDs. A run whose service containers cannot be removed is
-// left in its active state so the next Recover retries it; those failures are joined into the
-// returned error and recovery moves on to the next run.
-func (m *Manager) Recover(ctx context.Context) ([]string, error) {
-	if m.store == nil {
-		return nil, nil
-	}
-
-	runs, err := m.store.ListRuns(ctx, store.RunFilter{
+func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error {
+	runs, err := d.Store.ListRuns(ctx, store.RunFilter{
 		States: []store.RunState{store.RunRunning, store.RunVerifying, store.RunRollingBack},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("fetch incomplete runs: %w", err)
+		return fmt.Errorf("recovery: list active runs: %w", err)
 	}
+	slices.Reverse(runs) // oldest first, so retries queue in the original order
 
-	cleanupCtx, cancel := context.WithTimeout(ctx, serviceCleanupBudget)
-	defer cancel()
-
-	var recovered []string
-	var cleanupErrs []error
 	for _, run := range runs {
-		// 1. Remove orphan service containers before marking the run, so a failure can be
-		// retried. A host without docker has no containers to remove.
-		if m.docker != nil {
-			err := m.docker.RemoveByLabel(cleanupCtx, services.LabelRun+"="+run.ID)
-			if err != nil && !errors.Is(err, services.ErrDockerMissing) {
-				cleanupErrs = append(cleanupErrs, fmt.Errorf("run %s left active for retry: %w", run.ID, err))
+		jobs, err := d.Store.Jobs(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("recovery: run %s: %w", run.ID, err)
+		}
+		for _, j := range jobs {
+			if j.State != store.JobQueued && j.State != store.JobRunning {
 				continue
 			}
-		}
-
-		// 2. Mark unfinished jobs as interrupted
-		jobs, err := m.store.Jobs(ctx, run.ID)
-		if err == nil {
-			for _, j := range jobs {
-				if j.State == store.JobQueued || j.State == store.JobRunning {
-					_ = m.store.TransitionJob(ctx, run.ID, j.Name, []store.JobState{j.State}, store.JobInterrupted,
-						store.JobUpdate{Reason: InterruptedReason})
-				}
+			err := d.Store.TransitionJob(ctx, run.ID, j.Name, []store.JobState{j.State}, store.JobInterrupted,
+				store.JobUpdate{Reason: InterruptedReason})
+			if err != nil {
+				return fmt.Errorf("recovery: interrupt job %s of run %s: %w", j.Name, run.ID, err)
 			}
 		}
-
-		// 3. Transition run to Interrupted
-		if err := m.store.Transition(ctx, run.ID, []store.RunState{run.State}, store.RunInterrupted, InterruptedReason); err != nil {
-			transitionErr := fmt.Errorf("transition run %s to interrupted: %w", run.ID, err)
-			return recovered, errors.Join(append(cleanupErrs, transitionErr)...)
+		if err := d.Store.Transition(ctx, run.ID, []store.RunState{run.State}, store.RunInterrupted, InterruptedReason); err != nil {
+			return fmt.Errorf("recovery: interrupt run %s: %w", run.ID, err)
 		}
+		rep.Interrupted = append(rep.Interrupted, run.ID)
+		log.Info("recovery: run interrupted", "run", run.ID, "kind", run.Kind, "was", run.State)
 
-		// 4. Stop the run's orphan job units via the isolation backend
-		if m.isolation != nil {
-			prefix := isolation.UnitPrefix + isolation.SanitizeUnitPart(run.ID) + "-"
-			if units, err := m.isolation.ListUnits(ctx, prefix); err == nil {
-				for _, u := range units {
-					_ = m.isolation.Stop(ctx, u.Name)
-				}
-			}
+		if run.Kind != kindCheck || run.Attempt >= MaxCheckAttempts {
+			continue
 		}
-
-		// 5. Remove the run's network namespace if present
-		if m.netns != nil {
-			_ = m.netns.RemoveNamespace(ctx, netns.NSName(run.ID))
+		retry, err := d.Store.CreateRetry(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("recovery: re-queue run %s: %w", run.ID, err)
 		}
-		recovered = append(recovered, run.ID)
+		rep.Requeued = append(rep.Requeued, retry.ID)
+		log.Info("recovery: check re-queued", "run", run.ID, "retry", retry.ID, "attempt", retry.Attempt)
 	}
-
-	return recovered, errors.Join(cleanupErrs...)
+	return nil
 }

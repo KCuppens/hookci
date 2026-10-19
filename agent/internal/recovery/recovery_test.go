@@ -4,233 +4,551 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
-	"sort"
-	"strings"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation/isolationtest"
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-func createRun(t *testing.T, ctx context.Context, db *store.Store, id string, jobs ...string) {
-	t.Helper()
-	run := store.Run{
-		ID: id, Repo: "owner/repo", SHA: id, Ref: "main", Event: "push",
-		Kind: "check", TrustDomain: "trusted:owner/repo",
-	}
-	planned := make([]store.Job, 0, len(jobs))
-	for _, name := range jobs {
-		planned = append(planned, store.Job{Name: name})
-	}
-	if err := db.CreateRun(ctx, run, planned); err != nil {
-		t.Fatalf("CreateRun %s: %v", id, err)
-	}
-	if err := db.Transition(ctx, id, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
-		t.Fatalf("Transition %s: %v", id, err)
-	}
+// fakeNetns lists Names and drops each removed name from it.
+type fakeNetns struct {
+	Names   []string
+	Removed []string
+	// OnRemove runs before each removal.
+	OnRemove func()
 }
 
-func TestRecoverIncompleteRuns(t *testing.T) {
-	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
-	if err != nil {
-		t.Fatalf("Open db: %v", err)
-	}
-	defer db.Close()
-
-	// 1. Run 1: running with job1 running and job2 queued
-	createRun(t, ctx, db, "01j7run1", "job1", "job2")
-	if err := db.TransitionJob(ctx, "01j7run1", "job1", []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{}); err != nil {
-		t.Fatalf("TransitionJob run1/job1: %v", err)
-	}
-
-	// 2. Run 2: finished successfully
-	createRun(t, ctx, db, "01j7run2", "job1")
-	if err := db.TransitionJob(ctx, "01j7run2", "job1", []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{}); err != nil {
-		t.Fatalf("TransitionJob run2/job1 running: %v", err)
-	}
-	code := 0
-	if err := db.TransitionJob(ctx, "01j7run2", "job1", []store.JobState{store.JobRunning}, store.JobSuccess, store.JobUpdate{ExitCode: &code}); err != nil {
-		t.Fatalf("TransitionJob run2/job1 success: %v", err)
-	}
-	if err := db.Transition(ctx, "01j7run2", []store.RunState{store.RunRunning}, store.RunSuccess, ""); err != nil {
-		t.Fatalf("Transition run2 success: %v", err)
-	}
-
-	fakeIso := isolationtest.NewFake()
-	orphan := isolation.UnitName("01j7run1", "job1")
-	fakeIso.Units = []isolation.Unit{
-		{Name: orphan, Active: "active"},
-		{Name: isolation.UnitName("01j7run2", "job1"), Active: "active"},
-	}
-	fake := &execx.Fake{}
-	fake.On("docker", []string{"ps"}, execx.FakeResponse{Stdout: "c1\n"})
-	fake.On("docker", []string{"rm", "-f"}, execx.FakeResponse{})
-	mgr := New(db, fakeIso, services.Docker{Runner: fake}, nil)
-
-	recovered, err := mgr.Recover(ctx)
-	if err != nil {
-		t.Fatalf("Recover failed: %v", err)
-	}
-
-	if len(recovered) != 1 || recovered[0] != "01j7run1" {
-		t.Fatalf("expected [01j7run1] recovered, got %v", recovered)
-	}
-
-	// Verify run1 is Interrupted
-	r1, err := db.GetRun(ctx, "01j7run1")
-	if err != nil {
-		t.Fatalf("GetRun run1: %v", err)
-	}
-	if r1.State != store.RunInterrupted {
-		t.Errorf("expected run1 state interrupted, got %s", r1.State)
-	}
-	if r1.Reason != InterruptedReason {
-		t.Errorf("expected run1 reason %q, got %q", InterruptedReason, r1.Reason)
-	}
-	jobs, err := db.Jobs(ctx, "01j7run1")
-	if err != nil {
-		t.Fatalf("Jobs run1: %v", err)
-	}
-	for _, j := range jobs {
-		if j.State != store.JobInterrupted || j.Reason != InterruptedReason {
-			t.Errorf("run1 job %s = %s (%q), want interrupted with reason", j.Name, j.State, j.Reason)
-		}
-	}
-
-	// Verify run2 stayed Success
-	r2, err := db.GetRun(ctx, "01j7run2")
-	if err != nil {
-		t.Fatalf("GetRun run2: %v", err)
-	}
-	if r2.State != store.RunSuccess {
-		t.Errorf("expected run2 state success, got %s", r2.State)
-	}
-
-	// Verify only run1's orphan unit was stopped
-	if len(fakeIso.Stops) != 1 || fakeIso.Stops[0] != orphan {
-		t.Errorf("expected isolation stop of [%s], got %v", orphan, fakeIso.Stops)
-	}
-
-	// Verify service containers were listed for run1 only, then removed
-	var dockerCalls []string
-	for _, c := range fake.Calls {
-		dockerCalls = append(dockerCalls, c.Name+" "+strings.Join(c.Args, " "))
-	}
-	want := []string{
-		"docker ps -aq --filter label=" + services.LabelRun + "=01j7run1",
-		"docker rm -f c1",
-	}
-	if strings.Join(dockerCalls, "\n") != strings.Join(want, "\n") {
-		t.Errorf("docker calls = %q, want %q", dockerCalls, want)
-	}
+func (f *fakeNetns) ListNamespaces(context.Context) ([]string, error) {
+	return slices.Clone(f.Names), nil
 }
 
-// newRunningRuns opens a fresh store holding one running run per id.
-func newRunningRuns(t *testing.T, ctx context.Context, ids ...string) *store.Store {
+func (f *fakeNetns) RemoveNamespace(_ context.Context, name string) error {
+	if f.OnRemove != nil {
+		f.OnRemove()
+	}
+	f.Removed = append(f.Removed, name)
+	f.Names = slices.DeleteFunc(f.Names, func(n string) bool { return n == name })
+	return nil
+}
+
+// fakeDocker records the labels it was asked to remove and returns Err.
+type fakeDocker struct {
+	Labels []string
+	Err    error
+	// OnRemove runs before each removal.
+	OnRemove func()
+}
+
+func (f *fakeDocker) RemoveByLabel(_ context.Context, label string) error {
+	if f.OnRemove != nil {
+		f.OnRemove()
+	}
+	f.Labels = append(f.Labels, label)
+	return f.Err
+}
+
+type harness struct {
+	t         *testing.T
+	ctx       context.Context
+	db        *store.Store
+	iso       *isolationtest.Fake
+	isolation isolation.Isolation // what Recover gets; iso unless a test swaps it
+	netns     *fakeNetns
+	docker    *fakeDocker
+	runner    *execx.Fake
+}
+
+// newHarness opens a temp store and fakes every cleanup dependency. pkill
+// reports no match unless a test registers another response first.
+func newHarness(t *testing.T) *harness {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	db, err := store.Open(filepath.Join(t.TempDir(), "zeroci.db"))
 	if err != nil {
-		t.Fatalf("Open db: %v", err)
+		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	for _, id := range ids {
-		createRun(t, ctx, db, id, "job1")
+	iso := isolationtest.NewFake()
+	return &harness{
+		t:         t,
+		ctx:       context.Background(),
+		db:        db,
+		iso:       iso,
+		isolation: iso,
+		netns:     &fakeNetns{},
+		docker:    &fakeDocker{},
+		runner:    &execx.Fake{},
 	}
-	return db
 }
 
-func assertRunState(t *testing.T, ctx context.Context, db *store.Store, id string, want store.RunState) {
-	t.Helper()
-	r, err := db.GetRun(ctx, id)
+func (h *harness) recover() (Report, error) {
+	h.t.Helper()
+	h.runner.On("pkill", nil, execx.FakeResponse{Code: 1})
+	return Recover(h.ctx, Deps{
+		Store:     h.db,
+		Isolation: h.isolation,
+		Netns:     h.netns,
+		Docker:    h.docker,
+		Runner:    h.runner,
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+}
+
+// mustRecover runs Recover and fails on a returned error or a cleanup error.
+func (h *harness) mustRecover() Report {
+	h.t.Helper()
+	rep, err := h.recover()
 	if err != nil {
-		t.Fatalf("GetRun %s: %v", id, err)
+		h.t.Fatalf("Recover: %v", err)
 	}
-	if r.State != want {
-		t.Errorf("run %s state = %s, want %s", id, r.State, want)
+	if len(rep.Errors) != 0 {
+		h.t.Fatalf("Recover cleanup errors: %v", rep.Errors)
 	}
+	return rep
 }
 
-func TestRecoverRetriesFailedServiceCleanup(t *testing.T) {
-	ctx := context.Background()
-	runIDs := []string{"01j7run3", "01j7run4"}
-	db := newRunningRuns(t, ctx, runIDs...)
-
-	broken := &execx.Fake{}
-	broken.On("docker", []string{"ps"}, execx.FakeResponse{Code: 1, Stderr: "daemon down"})
-	brokenIso := isolationtest.NewFake()
-	brokenIso.Units = []isolation.Unit{{Name: isolation.UnitName("01j7run3", "job1"), Active: "active"}}
-	recovered, err := New(db, brokenIso, services.Docker{Runner: broken}, nil).Recover(ctx)
-	if err == nil {
-		t.Fatal("expected joined cleanup error, got nil")
-	}
-	if len(recovered) != 0 {
-		t.Fatalf("recovered = %v, want none while docker cleanup fails", recovered)
-	}
-	for _, id := range runIDs {
-		if !strings.Contains(err.Error(), id) {
-			t.Errorf("error %q does not name run %s", err, id)
-		}
-		assertRunState(t, ctx, db, id, store.RunRunning)
-	}
-	if len(brokenIso.Stops) != 0 {
-		t.Errorf("isolation stopped %v for runs left active", brokenIso.Stops)
-	}
-
-	working := &execx.Fake{}
-	working.On("docker", []string{"ps"}, execx.FakeResponse{})
-	recovered, err = New(db, isolationtest.NewFake(), services.Docker{Runner: working}, nil).Recover(ctx)
-	if err != nil {
-		t.Fatalf("retry Recover: %v", err)
-	}
-	sort.Strings(recovered)
-	if strings.Join(recovered, ",") != strings.Join(runIDs, ",") {
-		t.Fatalf("retry recovered = %v, want %v", recovered, runIDs)
-	}
-	for _, id := range runIDs {
-		assertRunState(t, ctx, db, id, store.RunInterrupted)
-	}
+// runPath lists the run transitions that lead from queued to each state.
+var runPath = map[store.RunState][]store.RunState{
+	store.RunQueued:      nil,
+	store.RunRunning:     {store.RunRunning},
+	store.RunVerifying:   {store.RunRunning, store.RunVerifying},
+	store.RunRollingBack: {store.RunRunning, store.RunVerifying, store.RunRollingBack},
+	store.RunSuccess:     {store.RunRunning, store.RunSuccess},
+	store.RunFailed:      {store.RunRunning, store.RunFailed},
 }
 
-func TestRecoverTransitionFailureKeepsCleanupErrors(t *testing.T) {
-	ctx := context.Background()
-	runIDs := []string{"01j7run5", "01j7run6"}
-	db := newRunningRuns(t, ctx, runIDs...)
+// jobPath lists the job transitions that lead from queued to each state.
+var jobPath = map[store.JobState][]store.JobState{
+	store.JobQueued:  nil,
+	store.JobRunning: {store.JobRunning},
+	store.JobSuccess: {store.JobRunning, store.JobSuccess},
+	store.JobFailed:  {store.JobRunning, store.JobFailed},
+}
 
-	// The first run's cleanup fails. During the second run's cleanup, another writer
-	// moves that run on, so Recover's own transition hits a state conflict.
-	var psCalls int
-	fake := &execx.Fake{}
-	fake.On("docker", []string{"ps"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
-		psCalls++
-		if psCalls == 1 {
-			return errors.New("daemon down")
+// seed creates run in state with one job per jobs entry, each moved to its
+// state. Jobs are named in order: job0, job1, ...
+func (h *harness) seed(r store.Run, state store.RunState, jobs ...store.JobState) store.Run {
+	h.t.Helper()
+	if r.Repo == "" {
+		r.Repo = "acme/app"
+	}
+	if r.SHA == "" {
+		r.SHA = "abc123"
+	}
+	if r.Event == "" {
+		r.Event = "push"
+	}
+	if r.Kind == "" {
+		r.Kind = "check"
+	}
+	r.TrustDomain = "trusted:" + r.Repo
+	planned := make([]store.Job, len(jobs))
+	for i := range jobs {
+		planned[i] = store.Job{Name: fmt.Sprintf("job%d", i)}
+	}
+	if err := h.db.CreateRun(h.ctx, r, planned); err != nil {
+		h.t.Fatalf("CreateRun %s: %v", r.ID, err)
+	}
+	from := store.RunQueued
+	for _, to := range runPath[state] {
+		if err := h.db.Transition(h.ctx, r.ID, []store.RunState{from}, to, ""); err != nil {
+			h.t.Fatalf("run %s %s -> %s: %v", r.ID, from, to, err)
 		}
-		for _, id := range runIDs {
-			if c.Args[len(c.Args)-1] == "label="+services.LabelRun+"="+id {
-				return db.Transition(ctx, id, []store.RunState{store.RunRunning}, store.RunInterrupted, "")
+		from = to
+	}
+	for i, js := range jobs {
+		jfrom := store.JobQueued
+		for _, to := range jobPath[js] {
+			if err := h.db.TransitionJob(h.ctx, r.ID, planned[i].Name, []store.JobState{jfrom}, to, store.JobUpdate{}); err != nil {
+				h.t.Fatalf("job %s/%s %s -> %s: %v", r.ID, planned[i].Name, jfrom, to, err)
 			}
+			jfrom = to
 		}
-		return fmt.Errorf("unexpected ps args %v", c.Args)
-	}})
+	}
+	return h.run(r.ID)
+}
 
-	recovered, err := New(db, isolationtest.NewFake(), services.Docker{Runner: fake}, nil).Recover(ctx)
-	if err == nil {
-		t.Fatal("expected joined error, got nil")
+func (h *harness) run(id string) store.Run {
+	h.t.Helper()
+	r, err := h.db.GetRun(h.ctx, id)
+	if err != nil {
+		h.t.Fatalf("GetRun %s: %v", id, err)
 	}
-	if !errors.Is(err, store.ErrStateMismatch) {
-		t.Errorf("error %v does not wrap the transition conflict", err)
+	return r
+}
+
+func (h *harness) jobStates(id string) []store.JobState {
+	h.t.Helper()
+	jobs, err := h.db.Jobs(h.ctx, id)
+	if err != nil {
+		h.t.Fatalf("Jobs %s: %v", id, err)
 	}
-	for _, id := range runIDs {
-		if !strings.Contains(err.Error(), id) {
-			t.Errorf("error %q does not name run %s", err, id)
+	states := make([]store.JobState, len(jobs))
+	for i, j := range jobs {
+		states[i] = j.State
+	}
+	return states
+}
+
+func (h *harness) runCount() int {
+	h.t.Helper()
+	runs, err := h.db.ListRuns(h.ctx, store.RunFilter{})
+	if err != nil {
+		h.t.Fatalf("ListRuns: %v", err)
+	}
+	return len(runs)
+}
+
+func TestRecoverInterruptsRunningRun(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1", Kind: "deploy", Env: "prod"}, store.RunRunning,
+		store.JobSuccess, store.JobRunning, store.JobQueued, store.JobFailed)
+
+	rep := h.mustRecover()
+
+	if !reflect.DeepEqual(rep.Interrupted, []string{"r1"}) {
+		t.Fatalf("Interrupted = %v, want [r1]", rep.Interrupted)
+	}
+	r := h.run("r1")
+	if r.State != store.RunInterrupted || r.Reason != InterruptedReason {
+		t.Fatalf("run = %s %q, want interrupted %q", r.State, r.Reason, InterruptedReason)
+	}
+	if r.FinishedAt == nil {
+		t.Fatal("interrupted run has no finished_at")
+	}
+	want := []store.JobState{store.JobSuccess, store.JobInterrupted, store.JobInterrupted, store.JobFailed}
+	if got := h.jobStates("r1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("job states = %v, want %v", got, want)
+	}
+	jobs, err := h.db.Jobs(h.ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range jobs[1:3] {
+		if j.Reason != InterruptedReason || j.ExitCode != nil {
+			t.Fatalf("job %s reason %q exit %v, want %q and no exit code", j.Name, j.Reason, j.ExitCode, InterruptedReason)
 		}
 	}
-	if len(recovered) != 0 {
-		t.Errorf("recovered = %v, want none", recovered)
+}
+
+func TestRecoverRequeuesCheck(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobSuccess, store.JobRunning, store.JobQueued)
+
+	rep := h.mustRecover()
+
+	if len(rep.Requeued) != 1 {
+		t.Fatalf("Requeued = %v, want one retry", rep.Requeued)
 	}
+	retry := h.run(rep.Requeued[0])
+	if retry.Attempt != 2 {
+		t.Fatalf("retry attempt = %d, want 2", retry.Attempt)
+	}
+	if retry.RetryOf == nil || *retry.RetryOf != "r1" {
+		t.Fatalf("retry RetryOf = %v, want r1", retry.RetryOf)
+	}
+	if retry.State != store.RunQueued {
+		t.Fatalf("retry state = %s, want queued", retry.State)
+	}
+	want := []store.JobState{store.JobQueued, store.JobQueued, store.JobQueued}
+	if got := h.jobStates(retry.ID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("retry job states = %v, want %v", got, want)
+	}
+	if r := h.run("r1"); r.State != store.RunInterrupted {
+		t.Fatalf("original run state = %s, want interrupted", r.State)
+	}
+}
+
+func TestRecoverAttemptCap(t *testing.T) {
+	for _, tc := range []struct {
+		attempt int
+		requeue bool
+	}{
+		{attempt: MaxCheckAttempts - 1, requeue: true},
+		{attempt: MaxCheckAttempts, requeue: false},
+	} {
+		t.Run(fmt.Sprintf("attempt%d", tc.attempt), func(t *testing.T) {
+			h := newHarness(t)
+			h.seed(store.Run{ID: "r1", Attempt: tc.attempt}, store.RunRunning, store.JobRunning)
+
+			rep := h.mustRecover()
+
+			if got := h.run("r1").State; got != store.RunInterrupted {
+				t.Fatalf("run state = %s, want interrupted", got)
+			}
+			if !tc.requeue {
+				if len(rep.Requeued) != 0 || h.runCount() != 1 {
+					t.Fatalf("attempt %d re-queued: %v", tc.attempt, rep.Requeued)
+				}
+				return
+			}
+			if len(rep.Requeued) != 1 || h.run(rep.Requeued[0]).Attempt != tc.attempt+1 {
+				t.Fatalf("attempt %d: Requeued = %v, want one retry on attempt %d", tc.attempt, rep.Requeued, tc.attempt+1)
+			}
+		})
+	}
+}
+
+func TestRecoverDeployNotRequeued(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "verify", Kind: "deploy", Env: "prod"}, store.RunVerifying, store.JobSuccess)
+	h.seed(store.Run{ID: "rollback", Kind: "deploy", Env: "prod", SHA: "def456"}, store.RunRollingBack, store.JobSuccess)
+
+	rep := h.mustRecover()
+
+	slices.Sort(rep.Interrupted)
+	if !reflect.DeepEqual(rep.Interrupted, []string{"rollback", "verify"}) {
+		t.Fatalf("Interrupted = %v, want [rollback verify]", rep.Interrupted)
+	}
+	if len(rep.Requeued) != 0 || h.runCount() != 2 {
+		t.Fatalf("deploy runs re-queued: %v", rep.Requeued)
+	}
+	for _, id := range []string{"verify", "rollback"} {
+		if r := h.run(id); r.State != store.RunInterrupted || r.Reason != InterruptedReason {
+			t.Fatalf("run %s = %s %q, want interrupted %q", id, r.State, r.Reason, InterruptedReason)
+		}
+	}
+}
+
+func TestRecoverLeavesTerminalRuns(t *testing.T) {
+	h := newHarness(t)
+	before := []store.Run{
+		h.seed(store.Run{ID: "ok", SHA: "a"}, store.RunSuccess, store.JobSuccess),
+		h.seed(store.Run{ID: "bad", SHA: "b"}, store.RunFailed, store.JobSuccess, store.JobFailed),
+	}
+	beforeJobs := [][]store.JobState{h.jobStates("ok"), h.jobStates("bad")}
+
+	rep := h.mustRecover()
+
+	if len(rep.Interrupted) != 0 || len(rep.Requeued) != 0 {
+		t.Fatalf("terminal runs touched: interrupted %v, requeued %v", rep.Interrupted, rep.Requeued)
+	}
+	for i, want := range before {
+		if got := h.run(want.ID); !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %s changed:\n got %+v\nwant %+v", want.ID, got, want)
+		}
+		if got := h.jobStates(want.ID); !reflect.DeepEqual(got, beforeJobs[i]) {
+			t.Fatalf("run %s jobs = %v, want %v", want.ID, got, beforeJobs[i])
+		}
+	}
+	if h.runCount() != 2 {
+		t.Fatalf("run count = %d, want 2", h.runCount())
+	}
+}
+
+func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
+	h := newHarness(t)
+	h.iso.Units = []isolation.Unit{
+		{Name: "zeroci-run-r1-build", Active: "active"},
+		{Name: "other-service", Active: "active"},
+		{Name: "zeroci-run-r0-test", Active: "failed"},
+	}
+	h.netns.Names = []string{"zc-r1", "other-ns", "zc-r0"}
+
+	rep := h.mustRecover()
+
+	wantUnits := []string{"zeroci-run-r1-build", "zeroci-run-r0-test"}
+	if !reflect.DeepEqual(h.iso.Stops, wantUnits) || !reflect.DeepEqual(rep.UnitsStopped, wantUnits) {
+		t.Fatalf("stops = %v, report = %v, want %v", h.iso.Stops, rep.UnitsStopped, wantUnits)
+	}
+	wantNS := []string{"zc-r1", "zc-r0"}
+	if !reflect.DeepEqual(h.netns.Removed, wantNS) || !reflect.DeepEqual(rep.NetnsRemoved, wantNS) {
+		t.Fatalf("removed = %v, report = %v, want %v", h.netns.Removed, rep.NetnsRemoved, wantNS)
+	}
+	if !h.runner.Called("pkill", "-f", "^pasta .*zc-") {
+		t.Fatalf("pkill not called with the pasta pattern: %+v", h.runner.Calls)
+	}
+	if !reflect.DeepEqual(h.docker.Labels, []string{services.LabelRun}) {
+		t.Fatalf("docker labels = %v, want [%s]", h.docker.Labels, services.LabelRun)
+	}
+}
+
+// Every process must be stopped before a run is marked interrupted, so the
+// run's state never claims it is over while its job still runs.
+func TestRecoverCleansBeforeInterrupting(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	h.netns.Names = []string{"zc-r1"}
+	var seen []store.RunState
+	record := func() { seen = append(seen, h.run("r1").State) }
+	h.netns.OnRemove = record
+	h.docker.OnRemove = record
+
+	h.mustRecover()
+
+	if want := []store.RunState{store.RunRunning, store.RunRunning}; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("run state during cleanup = %v, want %v", seen, want)
+	}
+}
+
+func TestRecoverIgnoresMissingDocker(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	h.docker.Err = fmt.Errorf("docker ps: %w", services.ErrDockerMissing)
+
+	h.mustRecover()
+
+	if got := h.run("r1").State; got != store.RunInterrupted {
+		t.Fatalf("run state = %s, want interrupted", got)
+	}
+}
+
+// A docker daemon that is down is a cleanup error: it is reported, and the
+// run is still interrupted rather than left running forever.
+func TestRecoverDockerDownStillInterrupts(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	daemonDown := errors.New("cannot connect to the docker daemon")
+	h.docker.Err = daemonDown
+
+	rep, err := h.recover()
+	if err != nil {
+		t.Fatalf("Recover returned %v, want only a reported cleanup error", err)
+	}
+	if len(rep.Errors) != 1 || !errors.Is(rep.Errors[0], daemonDown) {
+		t.Fatalf("Errors = %v, want the docker error", rep.Errors)
+	}
+	if got := h.run("r1").State; got != store.RunInterrupted {
+		t.Fatalf("run state = %s, want interrupted", got)
+	}
+}
+
+func TestRecoverPkillNoMatch(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		resp    execx.FakeResponse
+		wantErr bool
+	}{
+		{name: "no match", resp: execx.FakeResponse{Code: 1}},
+		{name: "killed", resp: execx.FakeResponse{}},
+		{name: "failed", resp: execx.FakeResponse{Code: 3, Stderr: "pkill: fatal"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.runner.On("pkill", nil, tc.resp)
+
+			rep, err := h.recover()
+			if err != nil {
+				t.Fatalf("Recover: %v", err)
+			}
+			var exitErr *execx.ExitError
+			if tc.wantErr != (len(rep.Errors) == 1 && errors.As(rep.Errors[0], &exitErr)) {
+				t.Fatalf("Errors = %v, want pkill error: %v", rep.Errors, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRecoverIdempotent(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	h.seed(store.Run{ID: "r2", Kind: "deploy", Env: "prod"}, store.RunVerifying, store.JobSuccess)
+	h.iso.Units = []isolation.Unit{{Name: "zeroci-run-r1-job0", Active: "active"}}
+	h.netns.Names = []string{"zc-r1"}
+
+	first := h.mustRecover()
+	if len(first.Interrupted) != 2 || len(first.UnitsStopped) != 1 || len(first.NetnsRemoved) != 1 {
+		t.Fatalf("first Recover = %+v, want two runs, one unit, one namespace", first)
+	}
+	count := h.runCount()
+
+	if second := h.mustRecover(); !reflect.DeepEqual(second, Report{}) {
+		t.Fatalf("second Recover = %+v, want an empty report", second)
+	}
+	if h.runCount() != count {
+		t.Fatalf("second Recover created runs: %d, want %d", h.runCount(), count)
+	}
+}
+
+func TestRecoverOutboxEvents(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1", Attempt: MaxCheckAttempts}, store.RunRunning, store.JobSuccess, store.JobRunning)
+	items, err := h.db.Pending(h.ctx, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := items[len(items)-1].Seq
+
+	h.mustRecover()
+
+	items, err = h.db.Pending(h.ctx, after, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range items {
+		if it.Kind != store.KindEvent {
+			continue
+		}
+		var ev protocol.Event
+		if err := protocol.Unmarshal(it.Payload, &ev); err != nil {
+			t.Fatalf("decode event %d: %v", it.Seq, err)
+		}
+		if ev.AgentSeq != int(it.Seq) {
+			t.Fatalf("event agent_seq = %d, want %d", ev.AgentSeq, it.Seq)
+		}
+		reason := ""
+		if ev.Reason != nil {
+			reason = *ev.Reason
+		}
+		target := ev.RunId
+		if ev.Job != nil {
+			target += "/" + *ev.Job
+		}
+		got = append(got, fmt.Sprintf("%s %s %s", target, ev.State, reason))
+	}
+	// Job events carry no reason; the store keeps it on the job row.
+	want := []string{
+		"r1/job1 interrupted ",
+		"r1 interrupted " + InterruptedReason,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %q, want %q", got, want)
+	}
+}
+
+// Store errors are returned; the cleanup sweep has already run by then.
+func TestRecoverReturnsStoreErrors(t *testing.T) {
+	h := newHarness(t)
+	h.iso.Units = []isolation.Unit{{Name: "zeroci-run-r1-job0", Active: "active"}}
+	if err := h.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := h.recover()
+	if err == nil {
+		t.Fatal("Recover on a closed store returned no error")
+	}
+	if !reflect.DeepEqual(rep.UnitsStopped, []string{"zeroci-run-r1-job0"}) {
+		t.Fatalf("UnitsStopped = %v, want the unit stopped before the store error", rep.UnitsStopped)
+	}
+}
+
+func TestRecoverIgnoresUnsupportedIsolation(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+
+	h.isolation = unsupportedIsolation{h.iso}
+	rep, err := h.recover()
+	if err != nil || len(rep.Errors) != 0 {
+		t.Fatalf("Recover = %v, errors %v; want ErrUnsupported ignored", err, rep.Errors)
+	}
+	if got := h.run("r1").State; got != store.RunInterrupted {
+		t.Fatalf("run state = %s, want interrupted", got)
+	}
+}
+
+// unsupportedIsolation fails ListUnits the way a backend that cannot list
+// units does.
+type unsupportedIsolation struct{ *isolationtest.Fake }
+
+func (unsupportedIsolation) ListUnits(context.Context, string) ([]isolation.Unit, error) {
+	return nil, isolation.ErrUnsupported
 }

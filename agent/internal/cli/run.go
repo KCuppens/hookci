@@ -17,6 +17,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
+	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
 	"github.com/KCuppens/zerocideploy/agent/internal/services"
@@ -146,7 +147,6 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
 	}
 
-	docker := &services.Docker{}
 	git := source.Git{Runner: execx.OS{}}
 	mirrors := source.NewMirrors(filepath.Join(stateDir, "mirrors"), git)
 	var hooks executor.Hooks
@@ -156,9 +156,21 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		hooks.Cache = cacheStore
 	}
 
-	// 4. Perform crash recovery before starting new run
-	rec := recovery.New(db, iso, docker, nil)
-	if _, err := rec.Recover(ctx); err != nil {
+	// 4. Perform crash recovery before starting new run. Units left by an
+	// earlier run under systemd must be found even when this run uses none,
+	// so recovery sweeps systemd whenever the host can run it. Cleanup
+	// failures are logged by recovery and retried on the next start.
+	recIso := iso
+	if sd, _, err := isolation.Select("systemd", selEnv); err == nil {
+		recIso = sd
+	}
+	if _, err := recovery.Recover(ctx, recovery.Deps{
+		Store:     db,
+		Isolation: recIso,
+		Netns:     recovery.NetnsManager{Manager: &netns.Manager{}},
+		Docker:    services.Docker{},
+		Runner:    execx.OS{},
+	}); err != nil {
 		fmt.Fprintf(stderr, "zeroci: crash recovery warning: %v\n", err)
 	}
 
