@@ -26,7 +26,7 @@ const DefaultJobTimeout = 10 * time.Minute
 // Options configures the Executor.
 type Options struct {
 	StateDir       string
-	Store          *store.DB
+	Store          *store.Store
 	Isolation      isolation.Isolation
 	Services       *services.Manager
 	Cache          *cache.Manager
@@ -38,7 +38,7 @@ type Options struct {
 // Executor orchestrates run setup, dependencies, isolation, logs, timeouts, and scheduler.
 type Executor struct {
 	stateDir       string
-	store          *store.DB
+	store          *store.Store
 	isolation      isolation.Isolation
 	services       *services.Manager
 	cache          *cache.Manager

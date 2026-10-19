@@ -45,13 +45,13 @@ type Options struct {
 
 // Scheduler executes a run's check jobs DAG respecting slot limits and recording transitions in store.
 type Scheduler struct {
-	store  *store.DB
+	store  *store.Store
 	runner JobRunner
 	slots  int
 }
 
 // New creates a new Scheduler.
-func New(db *store.DB, runner JobRunner, opts Options) *Scheduler {
+func New(db *store.Store, runner JobRunner, opts Options) *Scheduler {
 	slots := opts.Slots
 	if slots <= 0 {
 		slots = DefaultSlots()
@@ -76,7 +76,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 
 	// Transition run Queued -> Running
 	if s.store != nil {
-		if err := s.store.TransitionRun(ctx, runID, store.RunStateQueued, store.RunStateRunning, ""); err != nil {
+		if err := s.store.Transition(ctx, runID, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
 			return fmt.Errorf("transition run to running: %w", err)
 		}
 	}
@@ -96,14 +96,14 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 	)
 
 	for name := range checks {
-		states[name] = store.JobStateQueued
+		states[name] = store.JobQueued
 	}
 
 	// Helper to check if a job's dependencies are all satisfied
 	canRun := func(name string) bool {
 		node := dag.Nodes[name]
 		for _, dep := range node.Needs {
-			if states[dep] != store.JobStateSuccess {
+			if states[dep] != store.JobSuccess {
 				return false
 			}
 		}
@@ -116,8 +116,8 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 		var findDeps func(string)
 		findDeps = func(curr string) {
 			for _, dep := range dag.Dependents(curr) {
-				if states[dep] == store.JobStateQueued {
-					states[dep] = store.JobStateSkipped
+				if states[dep] == store.JobQueued {
+					states[dep] = store.JobSkipped
 					toSkip = append(toSkip, dep)
 					findDeps(dep)
 				}
@@ -128,7 +128,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 		for _, skipped := range toSkip {
 			remaining--
 			if s.store != nil {
-				_ = s.store.TransitionJob(ctx, runID, skipped, store.JobStateQueued, store.JobStateSkipped, nil, "dependency failed")
+				_ = s.store.TransitionJob(ctx, runID, skipped, []store.JobState{store.JobQueued}, store.JobSkipped, store.JobUpdate{Reason: "dependency failed"})
 			}
 		}
 	}
@@ -145,11 +145,11 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 			anyFailed = true
 			// Cancel all remaining queued jobs
 			for name, st := range states {
-				if st == store.JobStateQueued {
-					states[name] = store.JobStateCancelled
+				if st == store.JobQueued {
+					states[name] = store.JobCancelled
 					remaining--
 					if s.store != nil {
-						_ = s.store.TransitionJob(context.Background(), runID, name, store.JobStateQueued, store.JobStateCancelled, nil, "interrupted")
+						_ = s.store.TransitionJob(context.Background(), runID, name, []store.JobState{store.JobQueued}, store.JobCancelled, store.JobUpdate{Reason: "interrupted"})
 					}
 				}
 			}
@@ -163,7 +163,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 		// Find any ready job
 		var nextJob string
 		for name, st := range states {
-			if st == store.JobStateQueued && canRun(name) {
+			if st == store.JobQueued && canRun(name) {
 				nextJob = name
 				break
 			}
@@ -173,7 +173,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 			// No job ready right now. If no jobs are running, deadlock or all done/skipped.
 			hasRunning := false
 			for _, st := range states {
-				if st == store.JobStateRunning {
+				if st == store.JobRunning {
 					hasRunning = true
 					break
 				}
@@ -191,7 +191,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 		}
 
 		// Mark job as running
-		states[nextJob] = store.JobStateRunning
+		states[nextJob] = store.JobRunning
 		mu.Unlock()
 
 		// Acquire a slot (respecting context)
@@ -199,11 +199,11 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 		case slotSem <- struct{}{}:
 		case <-ctx.Done():
 			mu.Lock()
-			states[nextJob] = store.JobStateCancelled
+			states[nextJob] = store.JobCancelled
 			remaining--
 			mu.Unlock()
 			if s.store != nil {
-				_ = s.store.TransitionJob(context.Background(), runID, nextJob, store.JobStateQueued, store.JobStateCancelled, nil, "interrupted")
+				_ = s.store.TransitionJob(context.Background(), runID, nextJob, []store.JobState{store.JobQueued}, store.JobCancelled, store.JobUpdate{Reason: "interrupted"})
 			}
 			continue
 		}
@@ -223,7 +223,7 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 
 			// Record job transition to running in store
 			if s.store != nil {
-				_ = s.store.TransitionJob(ctx, runID, jobName, store.JobStateQueued, store.JobStateRunning, nil, "")
+				_ = s.store.TransitionJob(ctx, runID, jobName, []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{})
 			}
 
 			// Execute job via runner
@@ -238,19 +238,19 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 			if res.Error != nil || res.ExitCode != 0 {
 				anyFailed = true
 				failed = true
-				states[jobName] = store.JobStateFailed
+				states[jobName] = store.JobFailed
 				errMsg := ""
 				if res.Error != nil {
 					errMsg = res.Error.Error()
 				}
 				if s.store != nil {
-					_ = s.store.TransitionJob(context.Background(), runID, jobName, store.JobStateRunning, store.JobStateFailed, &exitCode, errMsg)
+					_ = s.store.TransitionJob(context.Background(), runID, jobName, []store.JobState{store.JobRunning}, store.JobFailed, store.JobUpdate{ExitCode: &exitCode, Reason: errMsg})
 				}
 				skipDownstream(jobName)
 			} else {
-				states[jobName] = store.JobStateSuccess
+				states[jobName] = store.JobSuccess
 				if s.store != nil {
-					_ = s.store.TransitionJob(context.Background(), runID, jobName, store.JobStateRunning, store.JobStateSuccess, &exitCode, "")
+					_ = s.store.TransitionJob(context.Background(), runID, jobName, []store.JobState{store.JobRunning}, store.JobSuccess, store.JobUpdate{ExitCode: &exitCode})
 				}
 			}
 		}()
@@ -262,14 +262,14 @@ func (s *Scheduler) Run(ctx context.Context, runID string, checks config.ChecksJ
 	if s.store != nil {
 		bgCtx := context.Background()
 		if interrupted || errors.Is(ctx.Err(), context.Canceled) {
-			_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateInterrupted, "run interrupted")
+			_ = s.store.Transition(bgCtx, runID, []store.RunState{store.RunRunning}, store.RunInterrupted, "run interrupted")
 			return ctx.Err()
 		}
 		if anyFailed || failed {
-			_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateFailed, "one or more jobs failed")
+			_ = s.store.Transition(bgCtx, runID, []store.RunState{store.RunRunning}, store.RunFailed, "one or more jobs failed")
 			return errors.New("one or more jobs failed")
 		}
-		_ = s.store.TransitionRun(bgCtx, runID, store.RunStateRunning, store.RunStateSuccess, "")
+		_ = s.store.Transition(bgCtx, runID, []store.RunState{store.RunRunning}, store.RunSuccess, "")
 	}
 
 	if anyFailed {

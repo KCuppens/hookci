@@ -42,8 +42,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return ExitUsage
 	}
 
-	dbPath := filepath.Join(stateDir, "zeroci.db")
-	db, err := store.Open(ctx, dbPath)
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"))
 	if err != nil {
 		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
 		return ExitInternal
@@ -63,18 +62,18 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stdout, "Repo:        %s\n", run.Repo)
 		fmt.Fprintf(stdout, "Ref:         %s\n", run.Ref)
 		fmt.Fprintf(stdout, "Domain:      %s\n", run.TrustDomain)
-		fmt.Fprintf(stdout, "Queued:      %s\n", run.QueuedAt.Format("2006-01-02 15:04:05 MST"))
+		fmt.Fprintf(stdout, "Created:     %s\n", run.CreatedAt.Format("2006-01-02 15:04:05 MST"))
 		if run.StartedAt != nil {
 			fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.Format("2006-01-02 15:04:05 MST"))
 		}
 		if run.FinishedAt != nil {
 			fmt.Fprintf(stdout, "Finished:    %s\n", run.FinishedAt.Format("2006-01-02 15:04:05 MST"))
 		}
-		if run.Error != "" {
-			fmt.Fprintf(stdout, "Error:       %s\n", run.Error)
+		if run.Reason != "" {
+			fmt.Fprintf(stdout, "Reason:      %s\n", run.Reason)
 		}
 
-		jobs, err := db.ListJobs(ctx, runID)
+		jobs, err := db.Jobs(ctx, runID)
 		if err != nil {
 			fmt.Fprintf(stderr, "zeroci: list jobs: %v\n", err)
 			return ExitInternal
@@ -82,13 +81,13 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 		fmt.Fprintln(stdout, "\nJobs:")
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "  NAME\tSTATE\tEXIT\tERROR")
+		fmt.Fprintln(tw, "  NAME\tSTATE\tEXIT\tREASON")
 		for _, j := range jobs {
 			exitStr := "-"
 			if j.ExitCode != nil {
 				exitStr = fmt.Sprintf("%d", *j.ExitCode)
 			}
-			errStr := j.Error
+			errStr := j.Reason
 			if errStr == "" {
 				errStr = "-"
 			}
@@ -98,7 +97,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return ExitOK
 	}
 
-	runs, err := db.ListRuns(ctx, limit)
+	runs, err := db.ListRuns(ctx, store.RunFilter{Limit: limit})
 	if err != nil {
 		fmt.Fprintf(stderr, "zeroci: list runs: %v\n", err)
 		return ExitInternal
@@ -110,10 +109,10 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "RUN ID\tSTATE\tREPO\tREF\tQUEUED")
+	fmt.Fprintln(tw, "RUN ID\tSTATE\tREPO\tREF\tCREATED")
 	for _, r := range runs {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			r.ID, r.State, r.Repo, r.Ref, r.QueuedAt.Format("2006-01-02 15:04:05"))
+			r.ID, r.State, r.Repo, r.Ref, r.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 	_ = tw.Flush()
 	return ExitOK

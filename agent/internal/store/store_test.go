@@ -2,349 +2,379 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
-func newTestDB(t *testing.T) *DB {
+var t0 = time.Date(2026, 1, 2, 3, 4, 5, 6_000_000, time.UTC)
+
+func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	db, err := Open(context.Background(), dbPath)
-	if err != nil {
-		t.Fatalf("failed to open test db: %v", err)
+	var (
+		mu  sync.Mutex
+		now = t0
+	)
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(time.Millisecond)
+		return now
 	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-	return db
+	s, err := Open(filepath.Join(t.TempDir(), "state", "agent.db"), WithClock(clock))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }
 
-func TestOpen(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	if err := db.Ping(ctx); err != nil {
-		t.Fatalf("db.Ping failed: %v", err)
+func testRun(id string) Run {
+	return Run{
+		ID: id, Repo: "acme/web", SHA: "sha-" + id, Ref: "refs/heads/main", Event: "push",
+		Kind: "check", TrustDomain: "trusted:acme/web", TriggerID: "trig-" + id,
 	}
+}
 
-	// Verify WAL mode
-	var journalMode string
-	err := db.sql.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
+func mustCreateRun(t *testing.T, s *Store, r Run, jobs ...Job) {
+	t.Helper()
+	if err := s.CreateRun(context.Background(), r, jobs); err != nil {
+		t.Fatalf("CreateRun(%s): %v", r.ID, err)
+	}
+}
+
+func outboxCount(t *testing.T, s *Store) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM outbox`).Scan(&n); err != nil {
+		t.Fatalf("count outbox: %v", err)
+	}
+	return n
+}
+
+func clearOutbox(t *testing.T, s *Store) {
+	t.Helper()
+	if _, err := s.db.Exec(`DELETE FROM outbox`); err != nil {
+		t.Fatalf("clear outbox: %v", err)
+	}
+}
+
+func lastEvent(t *testing.T, s *Store) (int64, protocol.Event) {
+	t.Helper()
+	items, err := s.Pending(context.Background(), 0, 0)
 	if err != nil {
-		t.Fatalf("failed to query journal_mode: %v", err)
+		t.Fatalf("Pending: %v", err)
 	}
-	if journalMode != "wal" {
-		t.Errorf("journal_mode = %s, want wal", journalMode)
+	if len(items) == 0 {
+		t.Fatal("outbox is empty")
 	}
+	it := items[len(items)-1]
+	if it.Kind != KindEvent {
+		t.Fatalf("last outbox kind = %q, want %q", it.Kind, KindEvent)
+	}
+	var ev protocol.Event
+	if err := protocol.Unmarshal(it.Payload, &ev); err != nil {
+		t.Fatalf("Unmarshal outbox payload: %v", err)
+	}
+	return it.Seq, ev
+}
 
-	// Verify foreign keys
+func TestOpenCreatesWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "agent.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var mode string
+	if err := s.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal_mode = %q, want wal", mode)
+	}
 	var fk int
-	err = db.sql.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk)
-	if err != nil {
-		t.Fatalf("failed to query foreign_keys: %v", err)
+	if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
+		t.Errorf("foreign_keys = %d (%v), want 1", fk, err)
 	}
-	if fk != 1 {
-		t.Errorf("foreign_keys = %d, want 1", fk)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat db: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("db mode = %o, want 600", got)
+	}
+	di, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := di.Mode().Perm(); got != 0o700 {
+		t.Errorf("dir mode = %o, want 700", got)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s.Close()
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
+		t.Fatalf("count schema_migrations: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("schema_migrations rows = %d, want 1", n)
 	}
 }
 
-func TestRunLifecycle(t *testing.T) {
+func TestCreateRunEmitsQueuedAndPlanned(t *testing.T) {
+	s := openTestStore(t)
 	ctx := context.Background()
-	db := newTestDB(t)
+	pr := 7
+	r := testRun("r1")
+	r.Event, r.PR, r.Env = "pull_request", &pr, "staging"
+	mustCreateRun(t, s, r, Job{Name: "lint"}, Job{Name: "test", Needs: []string{"lint"}})
 
-	runID := ids.NewRunID()
-	run := &Run{
-		ID:          runID,
-		Repo:        "github.com/example/repo",
-		Ref:         "refs/heads/main",
-		TrustDomain: TrustDomainTrusted,
-		ConfigYAML:  "version: 1\n",
-	}
-
-	initialJobs := []string{"lint", "test"}
-	if err := db.CreateRun(ctx, run, initialJobs); err != nil {
-		t.Fatalf("CreateRun failed: %v", err)
-	}
-
-	// Verify fetched run
-	fetched, err := db.GetRun(ctx, runID)
+	got, err := s.GetRun(ctx, "r1")
 	if err != nil {
-		t.Fatalf("GetRun failed: %v", err)
+		t.Fatalf("GetRun: %v", err)
 	}
-	if fetched.State != RunStateQueued {
-		t.Errorf("run state = %s, want Queued", fetched.State)
+	if got.State != RunQueued || got.Attempt != 1 || got.PR == nil || *got.PR != 7 || got.RetryOf != nil {
+		t.Errorf("GetRun = %+v, want queued attempt 1 pr 7 no retry_of", got)
 	}
-	if fetched.StartedAt != nil {
-		t.Errorf("started_at should be nil initially")
+	if !got.CreatedAt.After(t0) || got.CreatedAt.After(t0.Add(time.Second)) {
+		t.Errorf("CreatedAt = %v, want a tick of the injected clock after %v", got.CreatedAt, t0)
 	}
 
-	// Verify initial jobs
-	jobs, err := db.ListJobs(ctx, runID)
+	items, err := s.Pending(ctx, 0, 0)
 	if err != nil {
-		t.Fatalf("ListJobs failed: %v", err)
+		t.Fatalf("Pending: %v", err)
 	}
-	if len(jobs) != 2 {
-		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	if len(items) != 2 || items[0].Kind != KindEvent || items[1].Kind != KindJobPlanned {
+		t.Fatalf("outbox = %+v, want [event job_planned]", items)
+	}
+	var ev protocol.Event
+	if err := protocol.Unmarshal(items[0].Payload, &ev); err != nil {
+		t.Fatalf("Unmarshal event: %v", err)
+	}
+	if ev.RunId != "r1" || ev.State != protocol.EventState(RunQueued) || int64(ev.AgentSeq) != items[0].Seq {
+		t.Errorf("event = %+v, want queued r1 with agent_seq %d", ev, items[0].Seq)
+	}
+	var plan protocol.JobPlanned
+	if err := protocol.Unmarshal(items[1].Payload, &plan); err != nil {
+		t.Fatalf("Unmarshal job_planned: %v", err)
+	}
+	if plan.RunId != "r1" || plan.Env == nil || *plan.Env != "staging" || len(plan.Jobs) != 2 ||
+		plan.Jobs[0].Name != "lint" || len(plan.Jobs[0].Needs) != 0 ||
+		plan.Jobs[1].Name != "test" || len(plan.Jobs[1].Needs) != 1 || plan.Jobs[1].Needs[0] != "lint" {
+		t.Errorf("job_planned = %+v", plan)
+	}
+}
+
+func TestCreateRunUniqueAttempt(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"}, Job{Name: "test", Needs: []string{"lint"}})
+
+	dup := testRun("r2")
+	dup.SHA = "sha-r1"
+	if err := s.CreateRun(ctx, dup, nil); err == nil {
+		t.Fatal("CreateRun with duplicate (repo, sha, event, env, attempt) succeeded")
+	}
+	if _, err := s.GetRun(ctx, "r2"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetRun(r2) err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := s.CreateRetry(ctx, "r1"); !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("CreateRetry of queued run err = %v, want ErrInvalidTransition", err)
+	}
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionJob(ctx, "r1", "lint", []JobState{JobQueued}, JobRunning, JobUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionJob(ctx, "r1", "lint", []JobState{JobRunning}, JobFailed, JobUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Transition(ctx, "r1", []RunState{RunRunning}, RunFailed, "lint failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	retry, err := s.CreateRetry(ctx, "r1")
+	if err != nil {
+		t.Fatalf("CreateRetry: %v", err)
+	}
+	if retry.ID == "r1" || retry.Attempt != 2 || retry.RetryOf == nil || *retry.RetryOf != "r1" ||
+		retry.State != RunQueued || retry.SHA != "sha-r1" || retry.Reason != "" || retry.StartedAt != nil {
+		t.Errorf("retry = %+v, want new queued attempt 2 of r1", retry)
+	}
+	stored, err := s.GetRun(ctx, retry.ID)
+	if err != nil || stored.Attempt != 2 {
+		t.Errorf("GetRun(retry) = %+v, %v", stored, err)
+	}
+	jobs, err := s.Jobs(ctx, retry.ID)
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	if len(jobs) != 2 || jobs[0].Name != "lint" || jobs[1].Name != "test" || len(jobs[1].Needs) != 1 {
+		t.Fatalf("retry jobs = %+v, want lint, test(needs lint)", jobs)
 	}
 	for _, j := range jobs {
-		if j.State != JobStateQueued {
-			t.Errorf("job %s state = %s, want queued", j.Name, j.State)
+		if j.State != JobQueued || j.StartedAt != nil || j.FinishedAt != nil {
+			t.Errorf("retry job %s = %+v, want fresh queued", j.Name, j)
 		}
 	}
+}
 
-	// Transition Queued -> Running
-	if err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateRunning, ""); err != nil {
-		t.Fatalf("TransitionRun Queued->Running failed: %v", err)
+func TestTransitionWritesOutboxAtomically(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"))
+	clearOutbox(t, s)
+
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunRunning, ""); err != nil {
+		t.Fatalf("Transition: %v", err)
 	}
-	runningRun, err := db.GetRun(ctx, runID)
+	if n := outboxCount(t, s); n != 1 {
+		t.Fatalf("outbox rows = %d, want 1", n)
+	}
+	seq, ev := lastEvent(t, s)
+	if int64(ev.AgentSeq) != seq || ev.State != protocol.EventState(RunRunning) || ev.RunId != "r1" || ev.Reason != nil {
+		t.Errorf("event = %+v, want running r1 with agent_seq %d and no reason", ev, seq)
+	}
+	run, err := s.GetRun(ctx, "r1")
+	if err != nil || run.StartedAt == nil || run.FinishedAt != nil {
+		t.Errorf("after running: %+v, %v; want started_at set, finished_at nil", run, err)
+	}
+
+	t.Run("failed outbox insert rolls back state", func(t *testing.T) {
+		clearOutbox(t, s)
+		if _, err := s.db.Exec(`CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'forced'); END`); err != nil {
+			t.Fatalf("create trigger: %v", err)
+		}
+		err := s.Transition(ctx, "r1", []RunState{RunRunning}, RunFailed, "boom")
+		if _, dropErr := s.db.Exec(`DROP TRIGGER fail_outbox`); dropErr != nil {
+			t.Fatalf("drop trigger: %v", dropErr)
+		}
+		if err == nil || !strings.Contains(err.Error(), "forced") {
+			t.Fatalf("Transition err = %v, want forced failure", err)
+		}
+		run, err := s.GetRun(ctx, "r1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.State != RunRunning || run.Reason != "" || run.FinishedAt != nil {
+			t.Errorf("run after failed transition = %+v, want unchanged running", run)
+		}
+		if n := outboxCount(t, s); n != 0 {
+			t.Errorf("outbox rows = %d, want 0", n)
+		}
+	})
+
+	t.Run("reason is stored and sent", func(t *testing.T) {
+		clearOutbox(t, s)
+		if err := s.Transition(ctx, "r1", []RunState{RunRunning}, RunFailed, "lint failed"); err != nil {
+			t.Fatalf("Transition: %v", err)
+		}
+		_, ev := lastEvent(t, s)
+		if ev.Reason == nil || *ev.Reason != "lint failed" || ev.State != protocol.EventState(RunFailed) {
+			t.Errorf("event = %+v, want failed with reason", ev)
+		}
+		run, err := s.GetRun(ctx, "r1")
+		if err != nil || run.Reason != "lint failed" || run.FinishedAt == nil {
+			t.Errorf("run = %+v, %v; want reason and finished_at", run, err)
+		}
+	})
+}
+
+func TestConcurrentTransitions(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	const n = 50
+	for i := range n {
+		mustCreateRun(t, s, testRun(fmt.Sprintf("r%02d", i)))
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("r%02d", i)
+			if err := s.Transition(ctx, id, []RunState{RunQueued}, RunRunning, ""); err != nil {
+				errs <- err
+				return
+			}
+			if err := s.Transition(ctx, id, []RunState{RunRunning}, RunSuccess, ""); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent transition: %v", err)
+	}
+
+	runs, err := s.ListRuns(ctx, RunFilter{States: []RunState{RunSuccess}})
 	if err != nil {
-		t.Fatalf("GetRun failed: %v", err)
+		t.Fatalf("ListRuns: %v", err)
 	}
-	if runningRun.State != RunStateRunning {
-		t.Errorf("run state = %s, want Running", runningRun.State)
-	}
-	if runningRun.StartedAt == nil {
-		t.Errorf("started_at should not be nil")
-	}
-
-	// Transition Running -> Verifying
-	if err := db.TransitionRun(ctx, runID, RunStateRunning, RunStateVerifying, ""); err != nil {
-		t.Fatalf("TransitionRun Running->Verifying failed: %v", err)
-	}
-
-	// Transition Verifying -> Success
-	if err := db.TransitionRun(ctx, runID, RunStateVerifying, RunStateSuccess, ""); err != nil {
-		t.Fatalf("TransitionRun Verifying->Success failed: %v", err)
-	}
-	finishedRun, err := db.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun failed: %v", err)
-	}
-	if finishedRun.State != RunStateSuccess {
-		t.Errorf("run state = %s, want Success", finishedRun.State)
-	}
-	if finishedRun.FinishedAt == nil {
-		t.Errorf("finished_at should not be nil")
+	if len(runs) != n {
+		t.Errorf("success runs = %d, want %d", len(runs), n)
 	}
 }
 
-func TestRunInvalidTransitions(t *testing.T) {
+func TestListRunsFilter(t *testing.T) {
+	s := openTestStore(t)
 	ctx := context.Background()
-	db := newTestDB(t)
-
-	runID := ids.NewRunID()
-	run := &Run{
-		ID:          runID,
-		Repo:        "github.com/example/repo",
-		Ref:         "refs/heads/main",
-		TrustDomain: TrustDomainUntrusted,
+	mustCreateRun(t, s, testRun("a"))
+	mustCreateRun(t, s, testRun("b"))
+	other := testRun("c")
+	other.Repo = "acme/api"
+	mustCreateRun(t, s, other)
+	if err := s.Transition(ctx, "b", []RunState{RunQueued}, RunRunning, ""); err != nil {
+		t.Fatal(err)
 	}
 
-	if err := db.CreateRun(ctx, run, []string{"test"}); err != nil {
-		t.Fatalf("CreateRun failed: %v", err)
+	ids := func(runs []Run) string {
+		var out []string
+		for _, r := range runs {
+			out = append(out, r.ID)
+		}
+		return strings.Join(out, ",")
 	}
-
-	// Queued -> Success directly is invalid
-	err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateSuccess, "")
-	if err == nil {
-		t.Fatalf("expected error for Queued -> Success, got nil")
+	cases := []struct {
+		name string
+		f    RunFilter
+		want string
+	}{
+		{"all newest first", RunFilter{}, "c,b,a"},
+		{"repo", RunFilter{Repo: "acme/web"}, "b,a"},
+		{"states", RunFilter{States: []RunState{RunQueued}}, "c,a"},
+		{"repo and states", RunFilter{Repo: "acme/web", States: []RunState{RunQueued, RunRunning}}, "b,a"},
+		{"limit", RunFilter{Limit: 1}, "c"},
 	}
-
-	// Transition to Running
-	if err := db.TransitionRun(ctx, runID, RunStateQueued, RunStateRunning, ""); err != nil {
-		t.Fatalf("TransitionRun Queued->Running failed: %v", err)
-	}
-
-	// Transition with wrong 'from' state
-	err = db.TransitionRun(ctx, runID, RunStateQueued, RunStateSuccess, "")
-	if err == nil {
-		t.Fatalf("expected error for mismatch from state, got nil")
-	}
-
-	// Terminate with Failed
-	if err := db.TransitionRun(ctx, runID, RunStateRunning, RunStateFailed, "test failed"); err != nil {
-		t.Fatalf("TransitionRun Running->Failed failed: %v", err)
-	}
-
-	// Transition from terminal state should be rejected
-	err = db.TransitionRun(ctx, runID, RunStateFailed, RunStateRunning, "")
-	if err == nil {
-		t.Fatalf("expected error for transition from terminal state, got nil")
-	}
-}
-
-func TestJobLifecycle(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	runID := ids.NewRunID()
-	run := &Run{
-		ID:          runID,
-		Repo:        "github.com/example/repo",
-		Ref:         "refs/heads/main",
-		TrustDomain: TrustDomainLocal,
-	}
-
-	if err := db.CreateRun(ctx, run, []string{"build", "lint"}); err != nil {
-		t.Fatalf("CreateRun failed: %v", err)
-	}
-
-	// Transition job: queued -> running
-	if err := db.TransitionJob(ctx, runID, "build", JobStateQueued, JobStateRunning, nil, ""); err != nil {
-		t.Fatalf("TransitionJob queued->running failed: %v", err)
-	}
-
-	j, err := db.GetJob(ctx, runID, "build")
-	if err != nil {
-		t.Fatalf("GetJob failed: %v", err)
-	}
-	if j.State != JobStateRunning || j.StartedAt == nil {
-		t.Errorf("job state or started_at mismatch: %+v", j)
-	}
-
-	// Transition job: running -> success with exit code 0
-	exit0 := 0
-	if err := db.TransitionJob(ctx, runID, "build", JobStateRunning, JobStateSuccess, &exit0, ""); err != nil {
-		t.Fatalf("TransitionJob running->success failed: %v", err)
-	}
-
-	j, err = db.GetJob(ctx, runID, "build")
-	if err != nil {
-		t.Fatalf("GetJob failed: %v", err)
-	}
-	if j.State != JobStateSuccess || j.FinishedAt == nil || j.ExitCode == nil || *j.ExitCode != 0 {
-		t.Errorf("job state, finished_at or exit_code mismatch: %+v", j)
-	}
-
-	// Transition lint: queued -> cancelled
-	if err := db.TransitionJob(ctx, runID, "lint", JobStateQueued, JobStateCancelled, nil, "superseded"); err != nil {
-		t.Fatalf("TransitionJob queued->cancelled failed: %v", err)
-	}
-
-	j, err = db.GetJob(ctx, runID, "lint")
-	if err != nil {
-		t.Fatalf("GetJob failed: %v", err)
-	}
-	if j.State != JobStateCancelled || j.Error != "superseded" {
-		t.Errorf("job mismatch: %+v", j)
-	}
-}
-
-func TestOutboxAndHWM(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	runID := ids.NewRunID()
-	run := &Run{
-		ID:          runID,
-		Repo:        "github.com/example/repo",
-		Ref:         "refs/heads/main",
-		TrustDomain: TrustDomainLocal,
-	}
-
-	if err := db.CreateRun(ctx, run, []string{"lint"}); err != nil {
-		t.Fatalf("CreateRun failed: %v", err)
-	}
-
-	// Should have 2 outbox events: job.transition (lint: Queued) and run.transition (Queued)
-	events, err := db.FetchOutbox(ctx, 0, 100)
-	if err != nil {
-		t.Fatalf("FetchOutbox failed: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("expected 2 outbox events, got %d", len(events))
-	}
-	if events[0].Seq >= events[1].Seq {
-		t.Errorf("expected monotonic seq, got %d and %d", events[0].Seq, events[1].Seq)
-	}
-
-	// Ack first event
-	if err := db.AckOutbox(ctx, events[0].Seq); err != nil {
-		t.Fatalf("AckOutbox failed: %v", err)
-	}
-
-	remaining, err := db.FetchOutbox(ctx, 0, 100)
-	if err != nil {
-		t.Fatalf("FetchOutbox failed: %v", err)
-	}
-	if len(remaining) != 1 {
-		t.Fatalf("expected 1 event remaining, got %d", len(remaining))
-	}
-	if remaining[0].Seq != events[1].Seq {
-		t.Errorf("remaining seq = %d, want %d", remaining[0].Seq, events[1].Seq)
-	}
-
-	// Verify HWM
-	inSeq, outAcked, err := db.GetHWM(ctx)
-	if err != nil {
-		t.Fatalf("GetHWM failed: %v", err)
-	}
-	if inSeq != 0 {
-		t.Errorf("inSeq = %d, want 0", inSeq)
-	}
-	if outAcked != events[0].Seq {
-		t.Errorf("outAcked = %d, want %d", outAcked, events[0].Seq)
-	}
-
-	// Set incoming HWM
-	if err := db.SetHWMIn(ctx, 42); err != nil {
-		t.Fatalf("SetHWMIn failed: %v", err)
-	}
-	inSeq, _, err = db.GetHWM(ctx)
-	if err != nil {
-		t.Fatalf("GetHWM failed: %v", err)
-	}
-	if inSeq != 42 {
-		t.Errorf("inSeq = %d, want 42", inSeq)
-	}
-}
-
-func TestSupersedeQueuedRuns(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	run1 := ids.NewRunID()
-	run2 := ids.NewRunID()
-	run3 := ids.NewRunID()
-	runOther := ids.NewRunID()
-
-	repo := "github.com/example/repo"
-	ref := "refs/heads/main"
-
-	_ = db.CreateRun(ctx, &Run{ID: run1, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
-	time.Sleep(10 * time.Millisecond)
-	_ = db.CreateRun(ctx, &Run{ID: run2, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
-	time.Sleep(10 * time.Millisecond)
-	_ = db.CreateRun(ctx, &Run{ID: run3, Repo: repo, Ref: ref, TrustDomain: TrustDomainLocal}, nil)
-	_ = db.CreateRun(ctx, &Run{ID: runOther, Repo: "other/repo", Ref: ref, TrustDomain: TrustDomainLocal}, nil)
-
-	// Supersede queued runs on repo/ref except run3
-	superseded, err := db.SupersedeQueuedRuns(ctx, repo, ref, run3)
-	if err != nil {
-		t.Fatalf("SupersedeQueuedRuns failed: %v", err)
-	}
-	if len(superseded) != 2 {
-		t.Fatalf("expected 2 superseded runs, got %d", len(superseded))
-	}
-
-	r1, _ := db.GetRun(ctx, run1)
-	if r1.State != RunStateSuperseded {
-		t.Errorf("run1 state = %s, want Superseded", r1.State)
-	}
-	r2, _ := db.GetRun(ctx, run2)
-	if r2.State != RunStateSuperseded {
-		t.Errorf("run2 state = %s, want Superseded", r2.State)
-	}
-	r3, _ := db.GetRun(ctx, run3)
-	if r3.State != RunStateQueued {
-		t.Errorf("run3 state = %s, want Queued", r3.State)
-	}
-	rOther, _ := db.GetRun(ctx, runOther)
-	if rOther.State != RunStateQueued {
-		t.Errorf("runOther state = %s, want Queued", rOther.State)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runs, err := s.ListRuns(ctx, tc.f)
+			if err != nil {
+				t.Fatalf("ListRuns: %v", err)
+			}
+			if got := ids(runs); got != tc.want {
+				t.Errorf("ListRuns = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }

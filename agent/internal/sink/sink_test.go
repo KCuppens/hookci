@@ -10,93 +10,71 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-func TestEmitTransitions(t *testing.T) {
-	var buf bytes.Buffer
-	s := NewStdout(&buf)
-	ctx := context.Background()
-
-	// 1. Run transition
-	runEv := store.OutboxEvent{
-		Seq:       1,
-		RunID:     "01j7run",
-		EventType: store.EventRunTransition,
-		Payload:   `{"run_id":"01j7run","repo":"test/repo","ref":"main","from_state":"Queued","to_state":"Running"}`,
-	}
-	if err := s.Emit(ctx, runEv); err != nil {
-		t.Fatalf("Emit runEv: %v", err)
-	}
-
-	// 2. Job transition
-	jobEv := store.OutboxEvent{
-		Seq:       2,
-		RunID:     "01j7run",
-		EventType: store.EventJobTransition,
-		Payload:   `{"run_id":"01j7run","job_name":"lint","from_state":"queued","to_state":"running"}`,
-	}
-	if err := s.Emit(ctx, jobEv); err != nil {
-		t.Fatalf("Emit jobEv: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "[run 01j7run] Queued -> Running (repo=test/repo ref=main)") {
-		t.Errorf("unexpected run transition output: %s", out)
-	}
-	if !strings.Contains(out, "[job 01j7run/lint] queued -> running") {
-		t.Errorf("unexpected job transition output: %s", out)
-	}
-}
-
 func TestDrainAndAckOutbox(t *testing.T) {
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := store.Open(ctx, dbPath)
+	db, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("Open db: %v", err)
 	}
 	defer db.Close()
 
-	// Create run
-	run := &store.Run{
-		ID:          "01j7testrun",
-		Repo:        "owner/repo",
-		Ref:         "main",
-		TrustDomain: "local",
+	run := store.Run{
+		ID: "01j7testrun", Repo: "test/repo", SHA: "abc", Ref: "main", Event: "local",
+		Kind: "check", TrustDomain: "trusted:local/repo",
 	}
-	if err := db.CreateRun(ctx, run, []string{"lint"}); err != nil {
+	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}, {Name: "test", Needs: []string{"lint"}}}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
-
-	// Transition run state (writes to outbox in tx)
-	if err := db.TransitionRun(ctx, "01j7testrun", "Queued", "Running", ""); err != nil {
-		t.Fatalf("TransitionRun: %v", err)
+	if err := db.Transition(ctx, run.ID, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
+		t.Fatalf("Transition: %v", err)
 	}
-
-	// Verify outbox has events
-	events, err := db.FetchOutbox(ctx, 0, 10)
+	if err := db.TransitionJob(ctx, run.ID, "lint", []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{}); err != nil {
+		t.Fatalf("TransitionJob running: %v", err)
+	}
+	dur := int64(42)
+	if err := db.TransitionJob(ctx, run.ID, "lint", []store.JobState{store.JobRunning}, store.JobFailed,
+		store.JobUpdate{DurationMS: &dur, Reason: "exit status 1"}); err != nil {
+		t.Fatalf("TransitionJob failed: %v", err)
+	}
+	pending, err := db.Pending(ctx, 0, 0)
 	if err != nil {
-		t.Fatalf("FetchOutbox: %v", err)
-	}
-	if len(events) == 0 {
-		t.Fatalf("expected outbox events before drain")
+		t.Fatalf("Pending: %v", err)
 	}
 
 	var buf bytes.Buffer
 	s := NewStdout(&buf)
-
 	if err := s.Drain(ctx, db); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "[run 01j7testrun] Queued -> Running") {
-		t.Errorf("expected drain output to contain run transition: %s", buf.String())
+	want := "[run 01j7testrun] queued\n" +
+		"[run 01j7testrun] planned lint, test\n" +
+		"[run 01j7testrun] running\n" +
+		"[job 01j7testrun/lint] running\n" +
+		"[job 01j7testrun/lint] failed duration_ms=42\n"
+	if got := buf.String(); got != want {
+		t.Errorf("drain output:\n%s\nwant:\n%s", got, want)
 	}
 
-	// Verify outbox is acked and drained
-	remaining, err := db.FetchOutbox(ctx, 0, 10)
+	remaining, err := db.Pending(ctx, 0, 0)
 	if err != nil {
-		t.Fatalf("FetchOutbox after drain: %v", err)
+		t.Fatalf("Pending after drain: %v", err)
 	}
 	if len(remaining) != 0 {
 		t.Errorf("expected 0 remaining outbox rows, got %d", len(remaining))
+	}
+	acked, err := db.GetHWM(ctx, store.HWMOutAcked)
+	if err != nil || acked != pending[len(pending)-1].Seq {
+		t.Errorf("out_acked = %d, %v; want %d", acked, err, pending[len(pending)-1].Seq)
+	}
+}
+
+func TestEmitUnknownKind(t *testing.T) {
+	var buf bytes.Buffer
+	if err := NewStdout(&buf).Emit(context.Background(), store.OutboxItem{Seq: 9, Kind: "custom", Payload: []byte("raw")}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(buf.String(), "[custom seq=9] raw") {
+		t.Errorf("output = %q, want raw fallback", buf.String())
 	}
 }

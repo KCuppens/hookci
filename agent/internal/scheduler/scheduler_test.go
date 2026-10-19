@@ -14,10 +14,9 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-func newTestDB(t *testing.T) *store.DB {
+func newTestDB(t *testing.T) *store.Store {
 	t.Helper()
-	dir := t.TempDir()
-	db, err := store.Open(context.Background(), filepath.Join(dir, "test.db"))
+	db, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
@@ -25,6 +24,36 @@ func newTestDB(t *testing.T) *store.DB {
 		_ = db.Close()
 	})
 	return db
+}
+
+func createRun(t *testing.T, db *store.Store, runID string, jobNames ...string) {
+	t.Helper()
+	jobs := make([]store.Job, 0, len(jobNames))
+	for _, name := range jobNames {
+		jobs = append(jobs, store.Job{Name: name})
+	}
+	run := store.Run{
+		ID: runID, Repo: "test/repo", SHA: runID, Ref: "main", Event: "local",
+		Kind: "check", TrustDomain: "trusted:local/repo",
+	}
+	if err := db.CreateRun(context.Background(), run, jobs); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+}
+
+func jobState(t *testing.T, db *store.Store, runID, name string) store.JobState {
+	t.Helper()
+	jobs, err := db.Jobs(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("Jobs: %v", err)
+	}
+	for _, j := range jobs {
+		if j.Name == name {
+			return j.State
+		}
+	}
+	t.Fatalf("job %s not found in run %s", name, runID)
+	return ""
 }
 
 func TestDAGBuild(t *testing.T) {
@@ -103,13 +132,7 @@ func TestSchedulerSlotLimiter(t *testing.T) {
 		"job4": {Run: "sleep"},
 	}
 
-	initialJobs := []string{"job1", "job2", "job3", "job4"}
-	_ = db.CreateRun(ctx, &store.Run{
-		ID:          runID,
-		Repo:        "test/repo",
-		Ref:         "main",
-		TrustDomain: store.TrustDomainLocal,
-	}, initialJobs)
+	createRun(t, db, runID, "job1", "job2", "job3", "job4")
 
 	slots := 2
 	var currentActive int32
@@ -141,7 +164,7 @@ func TestSchedulerSlotLimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun failed: %v", err)
 	}
-	if r.State != store.RunStateSuccess {
+	if r.State != store.RunSuccess {
 		t.Errorf("run state = %s, want Success", r.State)
 	}
 }
@@ -157,12 +180,7 @@ func TestSchedulerDependencyOrder(t *testing.T) {
 		"test":       {Run: "echo test", Needs: []string{"build"}},
 	}
 
-	_ = db.CreateRun(ctx, &store.Run{
-		ID:          runID,
-		Repo:        "test/repo",
-		Ref:         "main",
-		TrustDomain: store.TrustDomainLocal,
-	}, []string{"setup_step", "build", "test"})
+	createRun(t, db, runID, "setup_step", "build", "test")
 
 	var mu sync.Mutex
 	var order []string
@@ -197,12 +215,7 @@ func TestSchedulerFailureSkipDownstream(t *testing.T) {
 		"unrelated": {Run: "echo ok"},
 	}
 
-	_ = db.CreateRun(ctx, &store.Run{
-		ID:          runID,
-		Repo:        "test/repo",
-		Ref:         "main",
-		TrustDomain: store.TrustDomainLocal,
-	}, []string{"lint", "unit", "unrelated"})
+	createRun(t, db, runID, "lint", "unit", "unrelated")
 
 	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		if jobName == "lint" {
@@ -218,18 +231,16 @@ func TestSchedulerFailureSkipDownstream(t *testing.T) {
 	}
 
 	r, _ := db.GetRun(ctx, runID)
-	if r.State != store.RunStateFailed {
+	if r.State != store.RunFailed {
 		t.Errorf("run state = %s, want Failed", r.State)
 	}
 
-	unitJob, _ := db.GetJob(ctx, runID, "unit")
-	if unitJob.State != store.JobStateSkipped {
-		t.Errorf("downstream unit job state = %s, want skipped", unitJob.State)
+	if st := jobState(t, db, runID, "unit"); st != store.JobSkipped {
+		t.Errorf("downstream unit job state = %s, want skipped", st)
 	}
 
-	unrelatedJob, _ := db.GetJob(ctx, runID, "unrelated")
-	if unrelatedJob.State != store.JobStateSuccess {
-		t.Errorf("unrelated job state = %s, want success", unrelatedJob.State)
+	if st := jobState(t, db, runID, "unrelated"); st != store.JobSuccess {
+		t.Errorf("unrelated job state = %s, want success", st)
 	}
 }
 
@@ -243,12 +254,7 @@ func TestSchedulerInterrupted(t *testing.T) {
 		"long2": {Run: "sleep"},
 	}
 
-	_ = db.CreateRun(ctx, &store.Run{
-		ID:          runID,
-		Repo:        "test/repo",
-		Ref:         "main",
-		TrustDomain: store.TrustDomainLocal,
-	}, []string{"long1", "long2"})
+	createRun(t, db, runID, "long1", "long2")
 
 	runner := RunnerFunc(func(ctx context.Context, runID string, jobName string, job config.Job) JobResult {
 		cancel() // Cancel context mid-job
@@ -267,7 +273,7 @@ func TestSchedulerInterrupted(t *testing.T) {
 	}
 
 	r, _ := db.GetRun(context.Background(), runID)
-	if r.State != store.RunStateInterrupted {
+	if r.State != store.RunInterrupted {
 		t.Errorf("run state = %s, want Interrupted", r.State)
 	}
 }

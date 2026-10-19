@@ -2,20 +2,21 @@ package sink
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
 // Sink defines the destination interface for consuming state transitions and outbox events.
 type Sink interface {
-	Emit(ctx context.Context, ev store.OutboxEvent) error
-	Drain(ctx context.Context, db *store.DB) error
+	Emit(ctx context.Context, it store.OutboxItem) error
+	Drain(ctx context.Context, db *store.Store) error
 	Close() error
 }
 
@@ -33,83 +34,73 @@ func NewStdout(w io.Writer) *StdoutSink {
 	return &StdoutSink{writer: w}
 }
 
-// Emit formats and writes a single outbox event to the output writer.
-func (s *StdoutSink) Emit(ctx context.Context, ev store.OutboxEvent) error {
+// Emit formats and writes a single outbox frame to the output writer.
+func (s *StdoutSink) Emit(ctx context.Context, it store.OutboxItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var line string
-	switch ev.EventType {
-	case store.EventRunTransition:
-		var p store.RunTransitionPayload
-		if err := json.Unmarshal([]byte(ev.Payload), &p); err == nil {
-			errStr := ""
-			if p.Error != "" {
-				errStr = fmt.Sprintf(" error=%q", p.Error)
-			}
-			line = fmt.Sprintf("[run %s] %s -> %s (repo=%s ref=%s)%s\n",
-				p.RunID, p.FromState, p.ToState, p.Repo, p.Ref, errStr)
-		} else {
-			line = fmt.Sprintf("[run %s] %s: %s\n", ev.RunID, ev.EventType, ev.Payload)
-		}
-
-	case store.EventJobTransition:
-		var p store.JobTransitionPayload
-		if err := json.Unmarshal([]byte(ev.Payload), &p); err == nil {
-			statusStr := ""
-			if p.ExitCode != nil {
-				statusStr = fmt.Sprintf(" exit_code=%d", *p.ExitCode)
-			}
-			if p.Error != "" {
-				statusStr += fmt.Sprintf(" error=%q", p.Error)
-			}
-			line = fmt.Sprintf("[job %s/%s] %s -> %s%s\n",
-				p.RunID, p.JobName, p.FromState, p.ToState, statusStr)
-		} else {
-			line = fmt.Sprintf("[job %s] %s: %s\n", ev.RunID, ev.EventType, ev.Payload)
-		}
-
-	default:
-		line = fmt.Sprintf("[%s seq=%d] run=%s payload=%s\n",
-			ev.EventType, ev.Seq, ev.RunID, ev.Payload)
-	}
-
-	_, err := io.WriteString(s.writer, line)
+	_, err := io.WriteString(s.writer, formatItem(it))
 	return err
 }
 
-// DrainOnce fetches unacked events from the SQLite outbox, emits them to the sink,
-// and acknowledges them in the database. Returns count of events processed.
-func (s *StdoutSink) DrainOnce(ctx context.Context, db *store.DB) (int, error) {
-	events, err := db.FetchOutbox(ctx, 0, 100)
+func formatItem(it store.OutboxItem) string {
+	switch it.Kind {
+	case store.KindEvent:
+		var ev protocol.Event
+		if err := protocol.Unmarshal(it.Payload, &ev); err != nil {
+			break
+		}
+		var detail string
+		if ev.DurationMs != nil {
+			detail += fmt.Sprintf(" duration_ms=%d", *ev.DurationMs)
+		}
+		if ev.Reason != nil {
+			detail += fmt.Sprintf(" reason=%q", *ev.Reason)
+		}
+		if ev.Job != nil {
+			return fmt.Sprintf("[job %s/%s] %s%s\n", ev.RunId, *ev.Job, ev.State, detail)
+		}
+		return fmt.Sprintf("[run %s] %s%s\n", ev.RunId, ev.State, detail)
+	case store.KindJobPlanned:
+		var plan protocol.JobPlanned
+		if err := protocol.Unmarshal(it.Payload, &plan); err != nil {
+			break
+		}
+		names := make([]string, 0, len(plan.Jobs))
+		for _, j := range plan.Jobs {
+			names = append(names, j.Name)
+		}
+		return fmt.Sprintf("[run %s] planned %s\n", plan.RunId, strings.Join(names, ", "))
+	}
+	return fmt.Sprintf("[%s seq=%d] %s\n", it.Kind, it.Seq, it.Payload)
+}
+
+// DrainOnce fetches pending frames from the SQLite outbox, emits them to the sink,
+// and acknowledges them in the database. Returns count of frames processed.
+func (s *StdoutSink) DrainOnce(ctx context.Context, db *store.Store) (int, error) {
+	items, err := db.Pending(ctx, 0, 100)
 	if err != nil {
 		return 0, fmt.Errorf("fetch outbox: %w", err)
 	}
-	if len(events) == 0 {
+	if len(items) == 0 {
 		return 0, nil
 	}
 
-	var lastSeq int64
-	for _, ev := range events {
-		if err := s.Emit(ctx, ev); err != nil {
-			return 0, fmt.Errorf("emit event seq %d: %w", ev.Seq, err)
-		}
-		if ev.Seq > lastSeq {
-			lastSeq = ev.Seq
+	for _, it := range items {
+		if err := s.Emit(ctx, it); err != nil {
+			return 0, fmt.Errorf("emit outbox seq %d: %w", it.Seq, err)
 		}
 	}
 
-	if lastSeq > 0 {
-		if err := db.AckOutbox(ctx, lastSeq); err != nil {
-			return len(events), fmt.Errorf("ack outbox seq %d: %w", lastSeq, err)
-		}
+	lastSeq := items[len(items)-1].Seq
+	if err := db.Ack(ctx, lastSeq); err != nil {
+		return len(items), fmt.Errorf("ack outbox seq %d: %w", lastSeq, err)
 	}
-
-	return len(events), nil
+	return len(items), nil
 }
 
 // Drain drains all currently pending outbox rows until empty.
-func (s *StdoutSink) Drain(ctx context.Context, db *store.DB) error {
+func (s *StdoutSink) Drain(ctx context.Context, db *store.Store) error {
 	for {
 		count, err := s.DrainOnce(ctx, db)
 		if err != nil {
@@ -122,7 +113,7 @@ func (s *StdoutSink) Drain(ctx context.Context, db *store.DB) error {
 }
 
 // DrainLoop runs Drain at regular intervals until ctx is cancelled.
-func (s *StdoutSink) DrainLoop(ctx context.Context, db *store.DB, interval time.Duration) error {
+func (s *StdoutSink) DrainLoop(ctx context.Context, db *store.Store, interval time.Duration) error {
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
 	}

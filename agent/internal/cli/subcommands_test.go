@@ -126,7 +126,7 @@ checks:
 	}
 
 	runOut := stdout.String()
-	if !strings.Contains(runOut, "Queued -> Running") {
+	if !strings.Contains(runOut, "] running\n") {
 		t.Errorf("expected transition in output, got: %s", runOut)
 	}
 
@@ -138,8 +138,8 @@ checks:
 		t.Fatalf("status list failed with code %d: %s", code, stderr.String())
 	}
 	statusListOut := stdout.String()
-	if !strings.Contains(statusListOut, "Success") {
-		t.Errorf("expected status list to show Success, got: %s", statusListOut)
+	if !strings.Contains(statusListOut, "success") {
+		t.Errorf("expected status list to show success, got: %s", statusListOut)
 	}
 
 	// Extract run ID from status list

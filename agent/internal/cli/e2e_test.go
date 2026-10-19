@@ -59,8 +59,8 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("status failed: %d (stderr: %s)", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Success") {
-		t.Errorf("expected Success in status, got: %s", stdout.String())
+	if !strings.Contains(stdout.String(), "success") {
+		t.Errorf("expected success in status, got: %s", stdout.String())
 	}
 
 	// Parse runID

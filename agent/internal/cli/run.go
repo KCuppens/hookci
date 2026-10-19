@@ -128,8 +128,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer unlock()
 
-	dbPath := filepath.Join(stateDir, "zeroci.db")
-	db, err := store.Open(ctx, dbPath)
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"))
 	if err != nil {
 		fmt.Fprintf(stderr, "zeroci: open database: %v\n", err)
 		return ExitInternal
@@ -155,19 +154,25 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// 5. Create new Run record in store
 	runID := ids.NewRunID()
-	var jobNames []string
-	for name := range cfg.ZeroCIConfig.Checks.Jobs {
-		jobNames = append(jobNames, name)
+	var jobs []store.Job
+	for name, job := range cfg.ZeroCIConfig.Checks.Jobs {
+		jobs = append(jobs, store.Job{Name: name, Needs: job.Needs})
 	}
-	sort.Strings(jobNames)
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
 
-	runRec := &store.Run{
+	// Each local invocation is its own run, so the run ID stands in for the commit SHA
+	// to keep the (repo, sha, event, env, attempt) key unique.
+	localRepo := "local/" + filepath.Base(absWorkDir)
+	runRec := store.Run{
 		ID:          runID,
-		Repo:        "local",
+		Repo:        localRepo,
+		SHA:         runID,
 		Ref:         "HEAD",
-		TrustDomain: store.TrustDomainLocal,
+		Event:       "local",
+		Kind:        "check",
+		TrustDomain: "trusted:" + localRepo,
 	}
-	if err := db.CreateRun(ctx, runRec, jobNames); err != nil {
+	if err := db.CreateRun(ctx, runRec, jobs); err != nil {
 		fmt.Fprintf(stderr, "zeroci: create run in store: %v\n", err)
 		return ExitInternal
 	}
@@ -206,7 +211,7 @@ func runRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitInternal
 	}
 
-	if finalRun.State == store.RunStateSuccess {
+	if finalRun.State == store.RunSuccess {
 		return ExitOK
 	}
 	return ExitRunFailed

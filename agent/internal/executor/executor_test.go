@@ -45,21 +45,18 @@ func TestExecuteRunSuccess(t *testing.T) {
 	stateDir := t.TempDir()
 	workDir := filepath.Join(stateDir, "workdir")
 
-	dbPath := filepath.Join(stateDir, "test.db")
-	db, err := store.Open(ctx, dbPath)
+	db, err := store.Open(filepath.Join(stateDir, "agent.db"))
 	if err != nil {
 		t.Fatalf("Open db: %v", err)
 	}
 	defer db.Close()
 
 	runID := "01j7execsuccess"
-	run := &store.Run{
-		ID:          runID,
-		Repo:        "owner/repo",
-		Ref:         "main",
-		TrustDomain: store.TrustDomainLocal,
+	run := store.Run{
+		ID: runID, Repo: "owner/repo", SHA: "abc", Ref: "main", Event: "push",
+		Kind: "check", TrustDomain: "trusted:owner/repo",
 	}
-	if err := db.CreateRun(ctx, run, []string{"lint", "unit"}); err != nil {
+	if err := db.CreateRun(ctx, run, []store.Job{{Name: "lint"}, {Name: "unit"}}); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
 
@@ -99,8 +96,8 @@ func TestExecuteRunSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if savedRun.State != store.RunStateSuccess {
-		t.Errorf("expected run state Success, got %s", savedRun.State)
+	if savedRun.State != store.RunSuccess {
+		t.Errorf("expected run state success, got %s", savedRun.State)
 	}
 }
 

@@ -17,14 +17,14 @@ const InterruptedReason = "agent crashed or was killed"
 
 // Manager handles startup crash recovery for active runs and orphan resources.
 type Manager struct {
-	store     *store.DB
+	store     *store.Store
 	isolation isolation.Isolation
 	services  *services.Manager
 	netns     *netns.Manager
 }
 
 // New constructs a crash recovery Manager.
-func New(db *store.DB, iso isolation.Isolation, svcs *services.Manager, netnsMgr *netns.Manager) *Manager {
+func New(db *store.Store, iso isolation.Isolation, svcs *services.Manager, netnsMgr *netns.Manager) *Manager {
 	return &Manager{
 		store:     db,
 		isolation: iso,
@@ -37,8 +37,8 @@ func New(db *store.DB, iso isolation.Isolation, svcs *services.Manager, netnsMgr
 // docker daemon delays startup by at most this long no matter how many runs need recovery.
 const serviceCleanupBudget = 30 * time.Second
 
-// Recover scans the database for non-terminal active runs (Running, Verifying, RollingBack),
-// marks them as Interrupted, cancels/fails any running jobs, and tears down orphan units/containers.
+// Recover scans the database for non-terminal active runs (running, verifying, rolling_back),
+// marks them and their unfinished jobs interrupted, and tears down orphan units/containers.
 // Returns the list of recovered run IDs. A run whose service containers cannot be removed is
 // left in its active state so the next Recover retries it; those failures are joined into the
 // returned error and recovery moves on to the next run.
@@ -47,7 +47,9 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 
-	runs, err := m.store.GetIncompleteRuns(ctx)
+	runs, err := m.store.ListRuns(ctx, store.RunFilter{
+		States: []store.RunState{store.RunRunning, store.RunVerifying, store.RunRollingBack},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fetch incomplete runs: %w", err)
 	}
@@ -66,23 +68,19 @@ func (m *Manager) Recover(ctx context.Context) ([]string, error) {
 			}
 		}
 
-		// 2. Mark unfinished jobs as failed
-		jobs, err := m.store.ListJobs(ctx, run.ID)
+		// 2. Mark unfinished jobs as interrupted
+		jobs, err := m.store.Jobs(ctx, run.ID)
 		if err == nil {
 			for _, j := range jobs {
-				if j.State == store.JobStateQueued || j.State == store.JobStateRunning {
-					targetState := store.JobStateCancelled
-					if j.State == store.JobStateRunning {
-						targetState = store.JobStateFailed
-					}
-					exitCode := 137 // SIGKILL indicator
-					_ = m.store.TransitionJob(ctx, run.ID, j.Name, j.State, targetState, &exitCode, InterruptedReason)
+				if j.State == store.JobQueued || j.State == store.JobRunning {
+					_ = m.store.TransitionJob(ctx, run.ID, j.Name, []store.JobState{j.State}, store.JobInterrupted,
+						store.JobUpdate{Reason: InterruptedReason})
 				}
 			}
 		}
 
 		// 3. Transition run to Interrupted
-		if err := m.store.TransitionRun(ctx, run.ID, run.State, store.RunStateInterrupted, InterruptedReason); err != nil {
+		if err := m.store.Transition(ctx, run.ID, []store.RunState{run.State}, store.RunInterrupted, InterruptedReason); err != nil {
 			transitionErr := fmt.Errorf("transition run %s to interrupted: %w", run.ID, err)
 			return recovered, errors.Join(append(cleanupErrs, transitionErr)...)
 		}
