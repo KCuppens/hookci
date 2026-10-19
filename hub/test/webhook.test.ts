@@ -11,6 +11,7 @@ import worker from "../src/index";
 import type { TriggerRequest } from "../src/webhook/route";
 import * as outcome from "../src/webhook/outcome";
 import { clearTables } from "./db/helpers";
+import { recordSink } from "./sinks/recording";
 import prOpened from "./fixtures/github/pull_request.opened.json";
 import prFork from "./fixtures/github/pull_request.synchronize.fork.json";
 import pushBranch from "./fixtures/github/push.branch.json";
@@ -224,7 +225,8 @@ describe("POST /github/webhook routing", () => {
 
   it("records a pending no_agent run for an unbound repo and notifies once", async () => {
     const notify = vi.spyOn(outcome, "notifyOutcome");
-    const res = await deliver("pull_request", prOpened, { id: "d-unbound" });
+    const sink = recordSink();
+    const res = await deliver("pull_request", prOpened, { id: "d-unbound" }).finally(sink.undo);
     expect(res.status).toBe(202);
     expect(agents.calls).toEqual([]);
     const { results } = await env.DB.prepare("SELECT * FROM runs").all();
@@ -245,7 +247,12 @@ describe("POST /github/webhook routing", () => {
       }),
     ]);
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repoId: REPO, event: "pull_request" }), { kind: "no_agent" });
+    const [, trig, routed] = notify.mock.calls[0] ?? [];
+    expect(trig).toMatchObject({ repoId: REPO, event: "pull_request" });
+    expect(routed).toEqual({ kind: "no_agent" });
+    expect(sink.calls).toEqual([
+      { op: "onRunUpdate", run: expect.objectContaining({ repoId: REPO, prNumber: 7, target: "checks", state: "pending", reason: "no_agent" }) },
+    ]);
     expect(await deliveryRow("d-unbound")).toMatchObject({ status: "processed" });
   });
 

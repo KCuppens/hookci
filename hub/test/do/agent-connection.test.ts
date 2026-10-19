@@ -2,7 +2,7 @@ import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from 
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomToken } from "../../src/crypto";
-import { type AgentRow, agentCredentialHash, insertAgent, revokeAgent } from "../../src/db/agents";
+import { type AgentRow, revokeAgent } from "../../src/db/agents";
 import { markSuspended, upsertInstallation } from "../../src/db/installations";
 import { tenantDb } from "../../src/db/tenant";
 import { AgentDO } from "../../src/do/agent";
@@ -11,88 +11,10 @@ import { registerOfflineHook } from "../../src/do/agent-hooks";
 import { MAX_FRAME_BYTES, PROTOCOL_MAX, PROTOCOL_MIN } from "../../src/do/agent-protocol";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
+import { AGENT_VERSION, type Agent, connect, connectRequest, seedAgent as seedAgentIn } from "./agent-socket";
 
 const INSTALLATION = 42;
-const AGENT_VERSION = "1.4.0";
-
-interface Agent {
-  agentId: string;
-  credential: string;
-  stub: DurableObjectStub<AgentDO>;
-}
-
-// Every test gets its own agent id, so its AgentDO starts empty.
-async function seedAgent(): Promise<Agent> {
-  const agentId = `agt_${crypto.randomUUID()}`;
-  const credential = randomToken("zc_agent_", 32);
-  await insertAgent(tenantDb(env.DB, INSTALLATION), {
-    agent_id: agentId,
-    name: "builder",
-    hostname: "builder.local",
-    os: "linux",
-    arch: "amd64",
-    credential_hash: await agentCredentialHash(credential),
-    agent_version: AGENT_VERSION,
-    paired_by_github_id: 7,
-    paired_at: 1,
-  });
-  return { agentId, credential, stub: env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId)) };
-}
-
-function connectRequest(credential: string | null): Promise<Response> {
-  const headers: Record<string, string> = { upgrade: "websocket" };
-  if (credential !== null) headers.authorization = `Bearer ${credential}`;
-  return exports.default.fetch("https://hub.test/v1/agent/connect", { headers });
-}
-
-interface Closed {
-  code: number;
-  reason: string;
-}
-
-class AgentSocket {
-  readonly closed: Promise<Closed>;
-  private readonly queue: string[] = [];
-  private readonly waiting: ((text: string) => void)[] = [];
-
-  constructor(readonly ws: WebSocket) {
-    ws.addEventListener("message", (e) => {
-      const text = typeof e.data === "string" ? e.data : "<binary>";
-      const waiter = this.waiting.shift();
-      if (waiter) waiter(text);
-      else this.queue.push(text);
-    });
-    // tsconfig's ES2022 lib has no Promise.withResolvers.
-    this.closed = new Promise((resolve) => ws.addEventListener("close", (e) => resolve({ code: e.code, reason: e.reason })));
-    ws.accept();
-  }
-
-  nextText(): Promise<string> {
-    const text = this.queue.shift();
-    if (text !== undefined) return Promise.resolve(text);
-    return new Promise((resolve) => this.waiting.push(resolve));
-  }
-
-  async next(): Promise<Record<string, unknown>> {
-    return JSON.parse(await this.nextText());
-  }
-
-  send(frame: Record<string, unknown> | string): void {
-    this.ws.send(typeof frame === "string" ? frame : JSON.stringify(frame));
-  }
-
-  async hello(protocol = PROTOCOL_MAX, inboundHwm?: number): Promise<Record<string, unknown>> {
-    this.send({ v: 1, type: "hello", protocol_version: protocol, agent_version: AGENT_VERSION, inbound_hwm: inboundHwm });
-    return this.next();
-  }
-}
-
-async function connect(agent: Agent): Promise<AgentSocket> {
-  const res = await connectRequest(agent.credential);
-  expect(res.status).toBe(101);
-  if (!res.webSocket) throw new Error("no websocket in 101 response");
-  return new AgentSocket(res.webSocket);
-}
+const seedAgent = () => seedAgentIn(INSTALLATION);
 
 function event(seq: number): Record<string, unknown> {
   return { v: 1, type: "event", seq, agent_seq: seq, run_id: "run_1", state: "running" };

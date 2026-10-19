@@ -10,6 +10,7 @@ import { HubError } from "../errors";
 import { verifyGithubSignature } from "../github/verify";
 import { logEvent, reportError } from "../observability";
 import { QUOTAS } from "../quotas";
+import type { WaitUntil } from "../sinks";
 import { handlerFor, type WebhookHandler } from "../webhook/handlers";
 
 // GitHub caps webhook payloads at 25 MB.
@@ -26,9 +27,9 @@ function installationIdOf(payload: unknown): number | null {
 	return typeof installation.id === "number" && Number.isSafeInteger(installation.id) ? installation.id : null;
 }
 
-async function runHandler(env: Env, handler: WebhookHandler, payload: unknown, delivery: DeliveryRow): Promise<void> {
+async function runHandler(env: Env, ctx: WaitUntil, handler: WebhookHandler, payload: unknown, delivery: DeliveryRow): Promise<void> {
 	try {
-		const result = await handler(env, payload);
+		const result = await handler(env, payload, ctx);
 		if (result.status === "dropped") await markDelivery(env.DB, delivery.delivery_id, "dropped", result.note);
 	} catch (err) {
 		reportError(err, {
@@ -86,6 +87,6 @@ export async function githubWebhook(c: Context<{ Bindings: Env }>): Promise<Resp
 	}
 
 	const handler = handlerFor(event);
-	if (handler) c.executionCtx.waitUntil(runHandler(c.env, handler, payload, delivery));
+	if (handler) c.executionCtx.waitUntil(runHandler(c.env, c.executionCtx, handler, payload, delivery));
 	return c.body(null, 202);
 }

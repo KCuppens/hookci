@@ -36,6 +36,7 @@ import {
 	SEEN_WRITE_INTERVAL_MS,
 	negotiate,
 } from "./agent-protocol";
+import { createTriggersTable, registerRunLifecycle } from "./agent-runs";
 import { doRoute } from "./agent-routes";
 import { type Clock, systemClock } from "./clock";
 
@@ -66,7 +67,10 @@ const MIGRATIONS: ((sql: SqlStorage) => void)[] = [
 		);
 		sql.exec("CREATE TABLE hwm (direction TEXT PRIMARY KEY CHECK (direction IN ('in', 'out')), seq INTEGER NOT NULL)");
 	},
+	createTriggersTable,
 ];
+
+registerRunLifecycle();
 
 type MetaKey =
 	| typeof SCHEMA_VERSION
@@ -134,7 +138,7 @@ function sendError(ws: WebSocket, code: ProtocolErrorFrame["code"], message: str
 
 /** One per paired agent, named by agent_id (`AGENT_DO.idFromName(agentId)`). */
 export class AgentDO extends DurableObject<Env> {
-	private readonly sql: SqlStorage;
+	readonly sql: SqlStorage;
 	// Inbound messages are handled one at a time, in arrival order, so seq
 	// dedupe and frame handlers never interleave across awaits.
 	private inbox: Promise<void> = Promise.resolve();
@@ -146,8 +150,17 @@ export class AgentDO extends DurableObject<Env> {
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
 	}
 
-	private get clock(): Clock {
+	get clock(): Clock {
 		return this.env.__TEST_CLOCK ?? systemClock;
+	}
+
+	/** The DO state, for waitUntil and alarms. */
+	get state(): DurableObjectState {
+		return this.ctx;
+	}
+
+	get bindings(): Env {
+		return this.env;
 	}
 
 	get agentId(): string {
@@ -158,8 +171,22 @@ export class AgentDO extends DurableObject<Env> {
 		return Number(this.meta("installation_id"));
 	}
 
-	private tenant(): TenantDb {
+	tenant(): TenantDb {
 		return tenantDb(this.env.DB, this.installationId);
+	}
+
+	/**
+	 * Binds a DO that has not seen its agent yet to agentId; afterwards true
+	 * only for the same agent and installation.
+	 */
+	adopt(agentId: string, installationId: number): boolean {
+		const known = this.meta("agent_id");
+		if (known === null) {
+			this.setMeta("agent_id", agentId);
+			this.setMeta("installation_id", String(installationId));
+			return true;
+		}
+		return known === agentId && this.installationId === installationId;
 	}
 
 	private migrate(): void {

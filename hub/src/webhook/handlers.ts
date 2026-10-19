@@ -3,6 +3,7 @@
 
 import type { Env } from "../env";
 import { normalize } from "../github/normalize";
+import type { WaitUntil } from "../sinks";
 import { routeTrigger } from "./route";
 
 export type WebhookEvent =
@@ -17,19 +18,19 @@ export type WebhookEvent =
 /** What a handler did with a delivery: handled it, or deliberately dropped it with a note for the deliveries row. */
 export type HandlerResult = { status: "processed" } | { status: "dropped"; note: string };
 
-export type WebhookHandler = (env: Env, payload: unknown) => Promise<HandlerResult>;
+export type WebhookHandler = (env: Env, payload: unknown, ctx: WaitUntil) => Promise<HandlerResult>;
 
-async function onTriggerEvent(env: Env, event: "pull_request" | "push", payload: unknown): Promise<HandlerResult> {
+async function onTriggerEvent(env: Env, event: "pull_request" | "push", payload: unknown, ctx: WaitUntil): Promise<HandlerResult> {
 	const trig = normalize(event, payload);
 	if (!trig) return { status: "processed" };
-	const outcome = await routeTrigger(env, trig);
+	const outcome = await routeTrigger(env, trig, ctx);
 	if (outcome.kind === "suspended" || outcome.kind === "unknown_installation") return { status: "dropped", note: outcome.kind };
 	return { status: "processed" };
 }
 
 const handlers: Record<WebhookEvent, WebhookHandler | null> = {
-	pull_request: (env, payload) => onTriggerEvent(env, "pull_request", payload),
-	push: (env, payload) => onTriggerEvent(env, "push", payload),
+	pull_request: (env, payload, ctx) => onTriggerEvent(env, "pull_request", payload, ctx),
+	push: (env, payload, ctx) => onTriggerEvent(env, "push", payload, ctx),
 	installation: null,
 	installation_repositories: null,
 	github_app_authorization: null,

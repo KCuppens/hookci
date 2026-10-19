@@ -14,4 +14,5 @@ export const S = {
 	agentFrameNotFromAgent: (type: string) => `${type} frames are sent by the hub, not the agent.`,
 	agentFrameLacksSeq: (type: string) => `${type} frame lacks a positive integer seq.`,
 	agentRateLimited: "More than 200 frames in one second.",
+	runNotBound: "run not bound to this agent",
 } as const;

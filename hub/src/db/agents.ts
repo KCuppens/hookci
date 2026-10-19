@@ -57,6 +57,10 @@ export async function listAgents(t: TenantDb): Promise<AgentRow[]> {
 	return t.all<AgentRow>("SELECT * FROM agents WHERE installation_id = ?1 ORDER BY paired_at, agent_id");
 }
 
+export async function getAgent(t: TenantDb, agentId: string): Promise<AgentRow | null> {
+	return t.first<AgentRow>("SELECT * FROM agents WHERE installation_id = ?1 AND agent_id = ?2", agentId);
+}
+
 /** Marks the agent revoked; false when it is not an agent of this installation. */
 export async function revokeAgent(t: TenantDb, agentId: string, at: number): Promise<boolean> {
 	const res = await t.run(

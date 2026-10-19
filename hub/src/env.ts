@@ -1,5 +1,6 @@
 import type { AgentDO } from "./do/agent";
 import type { Clock } from "./do/clock";
+import type { Fetcher } from "./http";
 
 // Worker bindings. DB, LOGS, the Durable Objects and the vars come from
 // wrangler.toml; everything else is a secret set with `wrangler secret put`.
@@ -28,4 +29,6 @@ export interface Env {
 	ROTATION_IN_PROGRESS?: string;
 	/** Tests only: replaces the AgentDO's wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;
+	/** Tests only: replaces the AgentDO's fetch for GitHub calls. Never set in wrangler.toml. */
+	__TEST_FETCHER?: Fetcher;
 }

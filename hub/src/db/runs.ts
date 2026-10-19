@@ -80,6 +80,34 @@ export async function updateRunState(t: TenantDb, runId: string, state: string, 
 }
 
 /**
+ * Gives the run the agent's run_id in place of its provisional one (the
+ * trigger_id). A run still waiting (received, queued or pending) becomes
+ * queued with no reason; any other state is kept. False when no such run.
+ */
+export async function acceptRun(t: TenantDb, provisionalRunId: string, runId: string, agentId: string): Promise<boolean> {
+	const res = await t.run(
+		`UPDATE runs SET run_id = ?3, agent_id = ?4,
+			reason = CASE WHEN state IN ('received', 'queued', 'pending') THEN NULL ELSE reason END,
+			state = CASE WHEN state IN ('received', 'queued', 'pending') THEN 'queued' ELSE state END
+		WHERE installation_id = ?1 AND run_id = ?2`,
+		provisionalRunId,
+		runId,
+		agentId,
+	);
+	return res.meta.changes > 0;
+}
+
+/** Moves a run the agent has not started (received or queued) to pending with reason; false when it was not waiting. */
+export async function markRunPending(t: TenantDb, runId: string, reason: string): Promise<boolean> {
+	const res = await t.run(
+		"UPDATE runs SET state = 'pending', reason = ?3 WHERE installation_id = ?1 AND run_id = ?2 AND state IN ('received', 'queued')",
+		runId,
+		reason,
+	);
+	return res.meta.changes > 0;
+}
+
+/**
  * Inserts or updates a job of one of this installation's runs; false when the
  * run is not this installation's. Progress columns given as null keep their
  * stored value.

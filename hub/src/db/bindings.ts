@@ -2,6 +2,13 @@ import type { TenantDb } from "./tenant";
 
 export type BindingTarget = "checks" | `deploy:${string}`;
 
+const DEPLOY_PREFIX = "deploy:";
+
+/** The environment a `deploy:<env>` target deploys to; null for `checks`. */
+export function deployEnv(target: BindingTarget): string | null {
+	return target.startsWith(DEPLOY_PREFIX) ? target.slice(DEPLOY_PREFIX.length) : null;
+}
+
 export interface BindingRow {
 	installation_id: number;
 	repo_id: number;
