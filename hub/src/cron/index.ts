@@ -1,0 +1,20 @@
+import type { Env } from "../env";
+import { reportError } from "../observability";
+
+type CronTask = { name: string; run(env: Env): Promise<void> };
+
+// Tasks per cron expression from wrangler.toml [triggers].
+const SCHEDULES: Record<string, readonly CronTask[]> = {
+	"*/5 * * * *": [],
+};
+
+/** Runs the tasks for cron in order; a failing task is reported and does not stop the rest. */
+export async function runCron(env: Env, cron: string): Promise<void> {
+	for (const task of SCHEDULES[cron] ?? []) {
+		try {
+			await task.run(env);
+		} catch (err) {
+			reportError(err, { task: task.name, cron });
+		}
+	}
+}

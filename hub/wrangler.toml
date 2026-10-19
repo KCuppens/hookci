@@ -1,0 +1,73 @@
+# zeroci-hub Worker. Secrets are set with `wrangler secret put` and typed in
+# src/env.ts; none belong in this file. Database ids are placeholders until
+# the Cloudflare resources are created (M1-29).
+
+name = "zeroci-hub"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+HUB_ORIGIN = "https://ci.webuno.io"
+HUB_VERSION = "dev"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zeroci-hub"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "zeroci-logs"
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "AgentDO"
+
+[[durable_objects.bindings]]
+name = "SLACK_DO"
+class_name = "SlackWorkspaceDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sh"]
+fallthrough = true
+
+[env.staging]
+name = "zeroci-hub-staging"
+
+[env.staging.vars]
+HUB_ORIGIN = "https://ci-staging.webuno.io"
+HUB_VERSION = "dev"
+
+[env.staging.observability]
+enabled = true
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "zeroci-hub-staging"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "LOGS"
+bucket_name = "zeroci-logs-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "AgentDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "SLACK_DO"
+class_name = "SlackWorkspaceDO"

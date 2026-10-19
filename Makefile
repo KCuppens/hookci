@@ -5,7 +5,7 @@ LDFLAGS = -s -w -X github.com/KCuppens/zerocideploy/agent/internal/version.Versi
 .PHONY: check schema schema-check agent test-integration hub-test
 
 check:
-	sh scripts/check.sh
+	scripts/check.sh
 
 schema:
 	scripts/gen-schema.sh
