@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,7 @@ edition = "2021"
 
 	t.Run("init creates .zeroci.yml", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"init", tmpDir}, &stdout, &stderr)
+		code := Main([]string{"init", tmpDir}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, ExitOK, stderr.String())
 		}
@@ -43,7 +42,7 @@ edition = "2021"
 
 	t.Run("init fails if file exists without --force", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"init", tmpDir}, &stdout, &stderr)
+		code := Main([]string{"init", tmpDir}, &stdout, &stderr)
 		if code != ExitUsage {
 			t.Fatalf("exit code = %d, want %d", code, ExitUsage)
 		}
@@ -54,7 +53,7 @@ edition = "2021"
 
 	t.Run("init overwrites with --force", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"init", "--force", tmpDir}, &stdout, &stderr)
+		code := Main([]string{"init", "--force", tmpDir}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, ExitOK, stderr.String())
 		}
@@ -66,7 +65,7 @@ edition = "2021"
 	t.Run("init fails on empty dir", func(t *testing.T) {
 		emptyDir := t.TempDir()
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"init", emptyDir}, &stdout, &stderr)
+		code := Main([]string{"init", emptyDir}, &stdout, &stderr)
 		if code != ExitNoChecks {
 			t.Fatalf("exit code = %d, want %d", code, ExitNoChecks)
 		}
@@ -77,7 +76,7 @@ edition = "2021"
 
 	t.Run("init help flag", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"init", "-h"}, &stdout, &stderr)
+		code := Main([]string{"init", "-h"}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d", code, ExitOK)
 		}

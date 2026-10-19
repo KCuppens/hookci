@@ -16,7 +16,7 @@ func TestRunNoChecks(t *testing.T) {
 	emptyDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 
-	code := Main(context.Background(), []string{"run", emptyDir}, &stdout, &stderr)
+	code := Main([]string{"run", emptyDir}, &stdout, &stderr)
 	if code != ExitNoChecks {
 		t.Fatalf("expected ExitNoChecks (%d), got %d (stderr: %s)", ExitNoChecks, code, stderr.String())
 	}
@@ -26,7 +26,7 @@ func runLogsWithDeadline(t *testing.T, ctx context.Context, args []string) (int,
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	done := make(chan int, 1)
-	go func() { done <- Main(ctx, args, &stdout, &stderr) }()
+	go func() { done <- dispatch(ctx, args, &stdout, &stderr) }()
 	select {
 	case code := <-done:
 		return code, stdout.String(), stderr.String()
@@ -83,7 +83,7 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
 	if code != ExitInternal {
 		t.Fatalf("locked run: code = %d, want ExitInternal (%d); stderr: %s", code, ExitInternal, stderr.String())
 	}
@@ -94,7 +94,7 @@ func TestRunRefusesLockedStateDir(t *testing.T) {
 	unlock()
 	stdout.Reset()
 	stderr.Reset()
-	if code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr); code != ExitOK {
+	if code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("run after unlock: code = %d, want ExitOK; stderr: %s", code, stderr.String())
 	}
 }
@@ -119,7 +119,7 @@ checks:
 
 	// 1. Execute run
 	var stdout, stderr bytes.Buffer
-	code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("run failed with code %d: stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -132,7 +132,7 @@ checks:
 	// 2. Check status list
 	stdout.Reset()
 	stderr.Reset()
-	code = Main(ctx, []string{"status", "-s", stateDir}, &stdout, &stderr)
+	code = dispatch(ctx, []string{"status", "-s", stateDir}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("status list failed with code %d: %s", code, stderr.String())
 	}
@@ -152,7 +152,7 @@ checks:
 	// 3. Check status for specific run
 	stdout.Reset()
 	stderr.Reset()
-	code = Main(ctx, []string{"status", "-s", stateDir, runID}, &stdout, &stderr)
+	code = dispatch(ctx, []string{"status", "-s", stateDir, runID}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("status run failed with code %d: %s", code, stderr.String())
 	}
@@ -164,7 +164,7 @@ checks:
 	// 4. View logs for specific job
 	stdout.Reset()
 	stderr.Reset()
-	code = Main(ctx, []string{"logs", "-s", stateDir, runID, "lint"}, &stdout, &stderr)
+	code = dispatch(ctx, []string{"logs", "-s", stateDir, runID, "lint"}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("logs failed with code %d: %s", code, stderr.String())
 	}
@@ -175,7 +175,7 @@ checks:
 	// 5. View all logs for run
 	stdout.Reset()
 	stderr.Reset()
-	code = Main(ctx, []string{"logs", "-s", stateDir, runID}, &stdout, &stderr)
+	code = dispatch(ctx, []string{"logs", "-s", stateDir, runID}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("logs all failed with code %d: %s", code, stderr.String())
 	}
@@ -200,7 +200,7 @@ checks:
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := Main(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
+	code := dispatch(ctx, []string{"run", "-s", stateDir, "--unisolated", workDir}, &stdout, &stderr)
 	if code != ExitRunFailed {
 		t.Fatalf("expected ExitRunFailed (%d), got %d (stderr: %s)", ExitRunFailed, code, stderr.String())
 	}

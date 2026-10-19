@@ -12,7 +12,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
@@ -67,8 +70,16 @@ func commandTable() map[string]command {
 
 // Main runs the zeroci CLI with args (excluding the program name) and
 // returns the process exit code. stdout and stderr receive command output;
-// callers typically pass os.Stdout and os.Stderr.
-func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// callers typically pass os.Stdout and os.Stderr. SIGINT and SIGTERM cancel
+// the context passed to the running command.
+func Main(args []string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return dispatch(ctx, args, stdout, stderr)
+}
+
+// dispatch parses global flags and runs the named subcommand with ctx.
+func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }

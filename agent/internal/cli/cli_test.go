@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 )
@@ -10,7 +9,7 @@ import (
 func TestMainVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Main(context.Background(), []string{"version"}, &stdout, &stderr)
+	code := Main([]string{"version"}, &stdout, &stderr)
 
 	if code != ExitOK {
 		t.Fatalf("exit code = %d, want %d", code, ExitOK)
@@ -23,7 +22,7 @@ func TestMainVersion(t *testing.T) {
 func TestMainUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Main(context.Background(), []string{"nope"}, &stdout, &stderr)
+	code := Main([]string{"nope"}, &stdout, &stderr)
 
 	if code != ExitUsage {
 		t.Fatalf("exit code = %d, want %d", code, ExitUsage)
@@ -48,7 +47,7 @@ func TestMainHelp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
-			code := Main(context.Background(), tc.args, &stdout, &stderr)
+			code := Main(tc.args, &stdout, &stderr)
 
 			if code != ExitOK {
 				t.Fatalf("exit code = %d, want %d", code, ExitOK)

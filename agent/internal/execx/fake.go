@@ -3,6 +3,7 @@ package execx
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -66,7 +67,7 @@ func (f *Fake) Run(_ context.Context, c Cmd) error {
 	f.mu.Unlock()
 
 	if matched == nil {
-		return fmt.Errorf("execx fake: unexpected command %s %v", c.Name, c.Args)
+		return fmt.Errorf("execx fake: unexpected command %s %s", c.Name, strings.Join(c.Args, " "))
 	}
 
 	resp := matched.resp

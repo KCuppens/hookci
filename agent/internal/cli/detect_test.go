@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +21,7 @@ go 1.24
 
 	t.Run("detect valid go project", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"detect", tmpDir}, &stdout, &stderr)
+		code := Main([]string{"detect", tmpDir}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, ExitOK, stderr.String())
 		}
@@ -37,7 +36,7 @@ go 1.24
 	t.Run("detect empty dir", func(t *testing.T) {
 		emptyDir := t.TempDir()
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"detect", emptyDir}, &stdout, &stderr)
+		code := Main([]string{"detect", emptyDir}, &stdout, &stderr)
 		if code != ExitNoChecks {
 			t.Fatalf("exit code = %d, want %d", code, ExitNoChecks)
 		}
@@ -48,7 +47,7 @@ go 1.24
 
 	t.Run("detect help flag", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"detect", "-h"}, &stdout, &stderr)
+		code := Main([]string{"detect", "-h"}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d", code, ExitOK)
 		}

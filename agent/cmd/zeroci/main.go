@@ -2,12 +2,9 @@
 package main
 
 import (
-	"context"
 	"os"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/cli"
 )
 
-func main() {
-	os.Exit(cli.Main(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
-}
+func main() { os.Exit(cli.Main(os.Args[1:], os.Stdout, os.Stderr)) }

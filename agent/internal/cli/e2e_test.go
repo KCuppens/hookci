@@ -2,7 +2,6 @@ package cli_test
 
 import (
 	"bytes"
-	"context"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,8 +11,6 @@ import (
 )
 
 func TestNodeAppEndToEnd(t *testing.T) {
-	ctx := context.Background()
-
 	// Locate examples/node-app relative to repo root
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -25,7 +22,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "zeroci-state")
 
 	var stdout, stderr bytes.Buffer
-	code := cli.Main(ctx, []string{"run", "-s", stateDir, "--unisolated", nodeAppDir}, &stdout, &stderr)
+	code := cli.Main([]string{"run", "-s", stateDir, "--unisolated", nodeAppDir}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("expected ExitOK (%d), got %d (stderr: %s, stdout: %s)",
 			cli.ExitOK, code, stderr.String(), stdout.String())
@@ -42,7 +39,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	// Verify status command on state directory
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Main(ctx, []string{"status", "-s", stateDir}, &stdout, &stderr)
+	code = cli.Main([]string{"status", "-s", stateDir}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("status failed: %d (stderr: %s)", code, stderr.String())
 	}
@@ -60,7 +57,7 @@ func TestNodeAppEndToEnd(t *testing.T) {
 	// Verify logs for unit job
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Main(ctx, []string{"logs", "-s", stateDir, runID, "unit"}, &stdout, &stderr)
+	code = cli.Main([]string{"logs", "-s", stateDir, runID, "unit"}, &stdout, &stderr)
 	if code != cli.ExitOK {
 		t.Fatalf("logs failed: %d (stderr: %s)", code, stderr.String())
 	}

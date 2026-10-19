@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +41,7 @@ checks:
 
 	t.Run("valid positional arg", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"validate", validPath}, &stdout, &stderr)
+		code := Main([]string{"validate", validPath}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, ExitOK, stderr.String())
 		}
@@ -53,7 +52,7 @@ checks:
 
 	t.Run("valid -f flag", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"validate", "-f", validPath}, &stdout, &stderr)
+		code := Main([]string{"validate", "-f", validPath}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, ExitOK, stderr.String())
 		}
@@ -64,7 +63,7 @@ checks:
 
 	t.Run("invalid config", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"validate", invalidPath}, &stdout, &stderr)
+		code := Main([]string{"validate", invalidPath}, &stdout, &stderr)
 		if code != ExitUsage {
 			t.Fatalf("exit code = %d, want %d", code, ExitUsage)
 		}
@@ -75,7 +74,7 @@ checks:
 
 	t.Run("file not found", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"validate", filepath.Join(tmpDir, "nonexistent.yml")}, &stdout, &stderr)
+		code := Main([]string{"validate", filepath.Join(tmpDir, "nonexistent.yml")}, &stdout, &stderr)
 		if code != ExitUsage {
 			t.Fatalf("exit code = %d, want %d", code, ExitUsage)
 		}
@@ -86,7 +85,7 @@ checks:
 
 	t.Run("help flag", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Main(context.Background(), []string{"validate", "-h"}, &stdout, &stderr)
+		code := Main([]string{"validate", "-h"}, &stdout, &stderr)
 		if code != ExitOK {
 			t.Fatalf("exit code = %d, want %d", code, ExitOK)
 		}
