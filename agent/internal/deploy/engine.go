@@ -99,6 +99,12 @@ func (e *Engine) Resume(ctx context.Context, runID string) error {
 	return x.execute(ctx, from, outputs)
 }
 
+// Retry runs runID again after an earlier attempt. It is Resume until M2-12
+// gives retries their own semantics.
+func (e *Engine) Retry(ctx context.Context, runID string) error {
+	return e.Resume(ctx, runID)
+}
+
 func (e *Engine) loadStartable(ctx context.Context, runID string) (store.DeployRun, error) {
 	run, err := e.Store.GetDeployRun(ctx, runID)
 	if err != nil {

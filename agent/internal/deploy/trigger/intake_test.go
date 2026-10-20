@@ -44,26 +44,6 @@ func (f *fakeRefs) ChangedFiles(_ context.Context, _, base, head string) ([]stri
 	return f.files, f.truncated, f.err
 }
 
-type fakeSched struct {
-	mu   sync.Mutex
-	runs []string
-}
-
-func (f *fakeSched) Enqueue(_ context.Context, runID string, retry bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if retry {
-		runID += "+retry"
-	}
-	f.runs = append(f.runs, runID)
-}
-
-func (f *fakeSched) enqueued() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.runs...)
-}
-
 // deployment is the prod env of the test configuration.
 func deployment(paths ...string) config.Deployment {
 	return config.Deployment{
@@ -74,11 +54,10 @@ func deployment(paths ...string) config.Deployment {
 }
 
 type fixture struct {
-	in    *Intake
-	st    *store.Store
-	refs  *fakeRefs
-	sched *fakeSched
-	n     int
+	in   *Intake
+	st   *store.Store
+	refs *fakeRefs
+	n    int
 }
 
 func newFixture(t *testing.T, dep config.Deployment) *fixture {
@@ -88,7 +67,7 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{st: st, refs: &fakeRefs{}, sched: &fakeSched{}}
+	f := &fixture{st: st, refs: &fakeRefs{}}
 	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
 		Deployments: config.ZeroCIConfigDeployments{"prod": dep},
 	}}
@@ -106,7 +85,6 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 			f.n++
 			return "run-" + string(rune('0'+f.n))
 		},
-		Sched: f.sched,
 	}
 	return f
 }
@@ -144,18 +122,6 @@ func TestIntake_AcceptsProtectedPushOnRef(t *testing.T) {
 	if run != want {
 		t.Errorf("deploy run = %+v\nwant %+v", run, want)
 	}
-	if got := f.sched.enqueued(); len(got) != 1 || got[0] != "run-1" {
-		t.Errorf("enqueued = %v, want [run-1]", got)
-	}
-}
-
-func TestIntake_NilSchedulerStillAccepts(t *testing.T) {
-	f := newFixture(t, deployment())
-	f.in.Sched = nil
-	got, err := f.in.Handle(context.Background(), pushTrigger())
-	if err != nil || !got.Accepted {
-		t.Fatalf("Handle = %+v, %v; want accepted", got, err)
-	}
 }
 
 func TestIntake_RedeliveryIsIdempotent(t *testing.T) {
@@ -173,9 +139,6 @@ func TestIntake_RedeliveryIsIdempotent(t *testing.T) {
 	second, err := f.in.Handle(ctx, again)
 	if err != nil || second != first {
 		t.Fatalf("second Handle = %+v, %v; want %+v", second, err, first)
-	}
-	if got := f.sched.enqueued(); len(got) != 1 {
-		t.Errorf("enqueued = %v, want one run", got)
 	}
 	runs, err := f.st.ListDeployRunsInStates(ctx, store.DeployQueued)
 	if err != nil || len(runs) != 1 {
@@ -274,9 +237,6 @@ func TestIntake_Rejections(t *testing.T) {
 			}
 			if runs, _ := f.st.ListDeployRunsInStates(ctx, store.DeployQueued); len(runs) != 0 {
 				t.Errorf("a rejection stored runs: %+v", runs)
-			}
-			if got := f.sched.enqueued(); len(got) != 0 {
-				t.Errorf("a rejection enqueued %v", got)
 			}
 		})
 	}

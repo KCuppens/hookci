@@ -17,11 +17,6 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-// Scheduler queues an accepted deploy run.
-type Scheduler interface {
-	Enqueue(ctx context.Context, runID string, retry bool)
-}
-
 // Decision is the answer to a deploy trigger: accepted for RunID, or
 // rejected with Reason.
 type Decision struct {
@@ -31,7 +26,8 @@ type Decision struct {
 }
 
 // Intake decides deploy triggers and records accepted ones as queued
-// deploy runs.
+// deploy runs. The caller queues an accepted run once the hub has its
+// accepted frame.
 type Intake struct {
 	Store *store.Store
 	Refs  RefChecker
@@ -39,7 +35,6 @@ type Intake struct {
 	LoadConfig func(ctx context.Context, repo, sha string) (*config.Config, error)
 	Clock      func() time.Time // nil means time.Now
 	NewRunID   func() string    // nil means ids.NewRunID
-	Sched      Scheduler        // may be nil
 }
 
 // Handle decides t, a trigger with an env. A redelivered trigger gets the
@@ -115,9 +110,6 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 		CreatedAt: in.now(),
 	}); err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)
-	}
-	if in.Sched != nil {
-		in.Sched.Enqueue(ctx, runID, false)
 	}
 	return Decision{Accepted: true, RunID: runID}, nil
 }

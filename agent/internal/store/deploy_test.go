@@ -347,6 +347,73 @@ func TestFindDeployRun(t *testing.T) {
 	}
 }
 
+func TestLatestDeployRunFor(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	first := testDeployRun("r1", "prod", DeployFailed)
+	first.SHA = "abc"
+	retried := first
+	retried.RunID, retried.Attempt, retried.State = "r2", 2, DeployQueued
+	sameAttemptLater := retried
+	sameAttemptLater.RunID, sameAttemptLater.CreatedAt = "r3", t0.Add(time.Minute)
+	staging := first
+	staging.RunID, staging.Env = "r4", "staging"
+	for _, r := range []DeployRun{first, retried, sameAttemptLater, staging} {
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	for _, tc := range []struct {
+		name, repo, env, sha string
+		want                 string // run id; "" means ErrNotFound
+	}{
+		{name: "highest attempt, oldest of it", repo: "acme/web", env: "prod", sha: "abc", want: "r2"},
+		{name: "other env", repo: "acme/web", env: "staging", sha: "abc", want: "r4"},
+		{name: "different sha", repo: "acme/web", env: "prod", sha: "def"},
+		{name: "different repo", repo: "acme/api", env: "prod", sha: "abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.LatestDeployRunFor(ctx, tc.repo, tc.env, tc.sha)
+			if tc.want == "" {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("LatestDeployRunFor = %+v, %v; want ErrNotFound", got, err)
+				}
+				return
+			}
+			if err != nil || got.RunID != tc.want {
+				t.Fatalf("LatestDeployRunFor = %q, %v; want %q", got.RunID, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestListQueuedDeployRuns(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for i, r := range []DeployRun{
+		testDeployRun("late", "prod", DeployQueued),
+		testDeployRun("busy", "prod", DeployRunning),
+		testDeployRun("early", "staging", DeployQueued),
+		testDeployRun("done", "prod", DeploySuccess),
+	} {
+		r.CreatedAt = t0.Add(time.Duration(3-i) * time.Second)
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	runs, err := s.ListQueuedDeployRuns(ctx)
+	if err != nil {
+		t.Fatalf("ListQueuedDeployRuns: %v", err)
+	}
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.RunID)
+	}
+	if want := []string{"early", "late"}; !slices.Equal(got, want) {
+		t.Errorf("ListQueuedDeployRuns = %v, want %v", got, want)
+	}
+}
+
 func TestDeployState_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "agent.db")

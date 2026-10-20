@@ -97,7 +97,9 @@ func (d *Daemon) deployWorker(ctx context.Context) {
 // decideDeploy runs the intake of t and answers the hub. A trigger already
 // answered is skipped: the hub resends frames it has not seen acknowledged,
 // and it refuses tokens for answered triggers. One cut short by shutdown
-// gets no answer; the hub redelivers it.
+// gets no answer; the hub redelivers it. An accepted run is queued for the
+// deploy lane only once its accepted frame is in the outbox, so the hub
+// knows the run before any token request for it.
 func (d *Daemon) decideDeploy(ctx context.Context, t protocol.Trigger) {
 	answered, err := d.st.TriggerRecorded(ctx, t.TriggerId)
 	if err != nil {
@@ -131,4 +133,7 @@ func (d *Daemon) decideDeploy(ctx context.Context, t protocol.Trigger) {
 		return
 	}
 	d.client.Flush()
+	if runID != "" {
+		d.deploySched.Enqueue(ctx, runID, false)
+	}
 }

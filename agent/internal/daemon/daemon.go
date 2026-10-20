@@ -18,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
@@ -83,10 +84,11 @@ type Daemon struct {
 	queue   []*work // accepted, not started
 	current *work
 
-	deploys    DeployIntake
-	deployWake chan struct{}
-	deployQ    []protocol.Trigger // guarded by mu
-	deploying  map[string]bool    // trigger ids queued or being decided; guarded by mu
+	deploys     DeployIntake
+	deployWake  chan struct{}
+	deployQ     []protocol.Trigger // guarded by mu
+	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
+	deploySched *deploy.Scheduler  // runs accepted deploy runs
 }
 
 // work is one accepted trigger.
@@ -130,13 +132,15 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if d.src == nil {
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
 	}
+	github := &http.Client{Timeout: githubTimeout}
 	if d.deploys == nil {
 		d.deploys = &hubIntake{
 			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
-			http:   &http.Client{Timeout: githubTimeout},
+			http:   github,
 			tokens: d.tokens.RequestTrigger,
 		}
 	}
+	d.deploySched = newDeployScheduler(st, o, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
 	return d
 }
 
@@ -154,6 +158,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.recoverTriggers(ctx); err != nil {
 		return err
 	}
+	if err := d.deploySched.Recover(ctx); err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
 	reset, err := d.st.BindAgent(ctx, d.agentID)
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
@@ -166,9 +173,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
 	wg.Go(func() { d.deployWorker(wctx) })
+	wg.Go(func() { d.deploySched.Run(wctx) })
 	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
+	d.deploySched.Wait()
 	return err
 }
 

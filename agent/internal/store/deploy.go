@@ -121,6 +121,21 @@ func (s *Store) FindDeployRun(ctx context.Context, repo, env, sha string, attemp
 	return r, nil
 }
 
+// LatestDeployRunFor returns the highest-attempt deploy run of (repo, env,
+// sha), the oldest when several share that attempt, or ErrNotFound.
+func (s *Store) LatestDeployRunFor(ctx context.Context, repo, env, sha string) (DeployRun, error) {
+	r, err := scanDeployRun(s.db.QueryRowContext(ctx,
+		`SELECT `+deployRunColumns+` FROM deploy_runs WHERE repo = ? AND env = ? AND sha = ?
+		 ORDER BY attempt DESC, created_at ASC, run_id ASC LIMIT 1`, repo, env, sha))
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeployRun{}, fmt.Errorf("store: latest deploy run %s/%s at %s: %w", repo, env, sha, ErrNotFound)
+	}
+	if err != nil {
+		return DeployRun{}, fmt.Errorf("store: latest deploy run %s/%s at %s: %w", repo, env, sha, err)
+	}
+	return r, nil
+}
+
 // SetDeployRunState moves runID to state with error text errMsg ("" clears
 // it). Running stamps started_at with at; Success, Failed, Interrupted and
 // Superseded stamp finished_at; any other state clears finished_at.
@@ -187,6 +202,11 @@ func (s *Store) ListDeployRunsInStates(ctx context.Context, states ...string) ([
 		return nil, fmt.Errorf("store: list deploy runs: %w", err)
 	}
 	return out, nil
+}
+
+// ListQueuedDeployRuns returns the Queued deploy runs, oldest first.
+func (s *Store) ListQueuedDeployRuns(ctx context.Context) ([]DeployRun, error) {
+	return s.ListDeployRunsInStates(ctx, DeployQueued)
 }
 
 // BeginStep records step index of runID as running with outputs before the
