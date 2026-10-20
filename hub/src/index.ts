@@ -14,6 +14,7 @@ import "./sinks/checks";
 import "./sinks/slack";
 import "./sinks/webhook";
 import "./sinks/telegram";
+import "./sinks/linear";
 
 export { AgentDO } from "./do/agent";
 export { SinkOutboxDO } from "./do/sink-outbox";

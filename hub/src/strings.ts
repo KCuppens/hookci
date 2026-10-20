@@ -117,7 +117,7 @@ export const S = {
 		sinkUsage: "/zeroci sink add <owner/repo> | list <owner/repo> | remove <sink-id> | test <sink-id>",
 		sinkSecretInCommand: "Do not paste secrets in commands. Use the form.",
 		sinkFormOpened: (repo: string) => `Opened the Add sink form for ${repo}.`,
-		sinkKind: { telegram: "Telegram", webhook: "Webhook" },
+		sinkKind: { telegram: "Telegram", webhook: "Webhook", linear: "Linear" },
 		sinkNone: (repo: string) => `${repo} has no sinks. Add one: /zeroci sink add ${repo}`,
 		sinkListHeader: (repo: string) => `Sinks of ${repo}:`,
 		sinkListItem: (id: string, kind: string, target: string, label: string | null, lastError: string | null) =>
@@ -253,6 +253,21 @@ export const S = {
 		environment: (env: string) => `Environment: ${env}`,
 		moreJobs: (n: number) => `... and ${n} more jobs`,
 		viewLogs: "View logs",
+	},
+	linear: {
+		title: (repo: string, env: string, sha7: string, status: string) => `Deploy ${repo} ${env} ${sha7}: ${status}`,
+		repo: (repo: string) => `**Repo:** ${repo}`,
+		environment: (env: string) => `**Environment:** ${env}`,
+		commit: (sha7: string, url: string) => `**Commit:** [${sha7}](${url})`,
+		actor: (login: string) => `**Actor:** ${login}`,
+		started: (iso: string) => `**Started:** ${iso}`,
+		finished: (iso: string) => `**Finished:** ${iso}`,
+		duration: (d: string) => `**Duration:** ${d}`,
+		steps: "**Steps:**",
+		step: (name: string, state: string) => `- ${name}: ${state}`,
+		logs: (url: string) => `[View logs](${url})`,
+		failureComment: (who: string, repo: string, env: string, sha7: string, step: string, logLink: string | undefined) =>
+			`${who ? `${who} ` : ""}deploy of ${repo} to ${env} at ${sha7} failed: ${step}.${logLink ? ` Logs: ${logLink}` : ""}`,
 	},
 	sinks: {
 		/** The message of each SinkConfigError code, as the agent CLI and Slack show it. */
