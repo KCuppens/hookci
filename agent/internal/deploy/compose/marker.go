@@ -42,6 +42,15 @@ func WriteMarker(path, color string) error {
 	return nil
 }
 
+// RemoveMarker removes the marker file at path, so nothing is recorded as
+// serving. A missing marker is not an error.
+func RemoveMarker(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("compose: removing marker: %w", err)
+	}
+	return nil
+}
+
 // OtherColor returns the color a deploy targets when c serves: "blue" when
 // nothing or green serves, "green" when blue serves.
 func OtherColor(c string) string {

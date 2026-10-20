@@ -89,6 +89,58 @@ func TestPipeStepMarkers(t *testing.T) {
 	}
 }
 
+func TestPipeCapsLogFile(t *testing.T) {
+	runDir := t.TempDir()
+	var mirror bytes.Buffer
+	var steps []StepEvent
+	p, err := New(Options{RunDir: runDir, Job: "big", MaxBytes: 100, Mirror: &mirror, OnStep: func(e StepEvent) { steps = append(steps, e) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Repeat("a", 39) + "\n" // 40 bytes
+	fmt.Fprint(p.Stdout(), line+line+"partial")
+	fmt.Fprint(p.Stdout(), "\n"+line+"::zeroci step late\nlast\n")
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(LogPath(runDir, "big"))
+	if want := line + line + "partial\n" + truncationNote(100); string(data) != want {
+		t.Errorf("file = %q, want %q", data, want)
+	}
+	if !strings.HasSuffix(mirror.String(), "last\n") {
+		t.Errorf("mirror stopped at the file cap: %q", mirror.String())
+	}
+	if tail := p.Tail(); tail[len(tail)-1] != "last" {
+		t.Errorf("Tail ends %q, want last", tail[len(tail)-1])
+	}
+	if len(steps) != 1 || steps[0].Name != "late" {
+		t.Errorf("steps = %+v, want the marker past the cap", steps)
+	}
+}
+
+func TestPipeIgnoresStepMarkersPastMax(t *testing.T) {
+	runDir := t.TempDir()
+	var steps int
+	p, err := New(Options{RunDir: runDir, Job: "loop", OnStep: func(StepEvent) { steps++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range MaxSteps + 7 {
+		fmt.Fprintf(p.Stdout(), "::zeroci step s%d\n", i)
+	}
+	fmt.Fprint(p.Stdout(), "unterminated")
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if steps != MaxSteps {
+		t.Errorf("OnStep called %d times, want %d", steps, MaxSteps)
+	}
+	data, _ := os.ReadFile(LogPath(runDir, "loop"))
+	if want := fmt.Sprintf("unterminated\n[zeroci: ignored 7 step markers past the first %d]\n", MaxSteps); !strings.HasSuffix(string(data), want) {
+		t.Errorf("log does not end with %q", want)
+	}
+}
+
 func TestCountStepMarkers(t *testing.T) {
 	script := "echo '::zeroci step install'\nnpm ci\necho \"::zeroci step build\"\nmake\nprintf '::zeroci step test\\n'"
 	if got := CountStepMarkers(script); got != 3 {

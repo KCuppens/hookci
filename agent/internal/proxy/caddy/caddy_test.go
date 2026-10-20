@@ -45,9 +45,10 @@ func (r *scriptedRunner) Run(_ context.Context, c execx.Cmd) error {
 	return &execx.ExitError{Code: 1, Stderr: stderr}
 }
 
-func newAdapter(t *testing.T, r execx.Runner) *Adapter {
+// newAdapter returns the default-reload adapter whose route dir is dir.
+func newAdapter(t *testing.T, r execx.Runner, dir string) *Adapter {
 	t.Helper()
-	a, err := New(r, "")
+	a, err := New(r, "", []string{dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func assertNoTemp(t *testing.T, dir string) {
 }
 
 func TestRender(t *testing.T) {
-	a := newAdapter(t, &scriptedRunner{})
+	a := newAdapter(t, &scriptedRunner{}, t.TempDir())
 	got, err := a.Render(proxy.RouteSpec{Repo: "myapp", Env: "production", Color: "green", UpstreamHost: "127.0.0.1", Port: 20001})
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestRender(t *testing.T) {
 }
 
 func TestRender_RejectsBadInput(t *testing.T) {
-	a := newAdapter(t, &scriptedRunner{})
+	a := newAdapter(t, &scriptedRunner{}, t.TempDir())
 	for _, tc := range []struct {
 		name string
 		host string
@@ -142,7 +143,7 @@ func TestApply_AtomicRename(t *testing.T) {
 		file := filepath.Join(dir, "myapp-production.caddy")
 		writeFile(t, file, "old route\n")
 
-		prev, err := newAdapter(t, &scriptedRunner{}).Apply(ctx, file, []byte("new route\n"))
+		prev, err := newAdapter(t, &scriptedRunner{}, dir).Apply(ctx, file, []byte("new route\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +166,7 @@ func TestApply_AtomicRename(t *testing.T) {
 	t.Run("missing file returns nil prev", func(t *testing.T) {
 		dir := t.TempDir()
 		file := filepath.Join(dir, "route.caddy")
-		prev, err := newAdapter(t, &scriptedRunner{}).Apply(ctx, file, []byte("new route\n"))
+		prev, err := newAdapter(t, &scriptedRunner{}, dir).Apply(ctx, file, []byte("new route\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,9 +180,10 @@ func TestApply_AtomicRename(t *testing.T) {
 	})
 
 	t.Run("empty existing file returns non-nil prev", func(t *testing.T) {
-		file := filepath.Join(t.TempDir(), "route.caddy")
+		dir := t.TempDir()
+		file := filepath.Join(dir, "route.caddy")
 		writeFile(t, file, "")
-		prev, err := newAdapter(t, &scriptedRunner{}).Apply(ctx, file, []byte("new route\n"))
+		prev, err := newAdapter(t, &scriptedRunner{}, dir).Apply(ctx, file, []byte("new route\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +196,7 @@ func TestApply_AtomicRename(t *testing.T) {
 		dir := t.TempDir()
 		file := filepath.Join(dir, "route.caddy")
 		writeFile(t, file, "old route\n")
-		a := newAdapter(t, &scriptedRunner{})
+		a := newAdapter(t, &scriptedRunner{}, dir)
 		a.FS = faultFS{}
 
 		if _, err := a.Apply(ctx, file, []byte("new route\n")); err == nil || !strings.Contains(err.Error(), "no space left on device") {
@@ -208,11 +210,12 @@ func TestApply_AtomicRename(t *testing.T) {
 }
 
 func TestApplyAndReload_Success(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "route.caddy")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "route.caddy")
 	writeFile(t, file, "old route\n")
 	r := &scriptedRunner{file: file}
 
-	if err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r), file, []byte("new route\n")); err != nil {
+	if err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r, dir), file, []byte("new route\n")); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, file); got != "new route\n" {
@@ -229,7 +232,7 @@ func TestApplyAndReload_RestoresOnReloadFailure(t *testing.T) {
 	writeFile(t, file, "old route\n")
 	r := &scriptedRunner{file: file, fail: map[int]string{1: "Error: adapting config: unrecognized directive"}}
 
-	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r), file, []byte("new route\n"))
+	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r, dir), file, []byte("new route\n"))
 	if err == nil || !strings.Contains(err.Error(), "previous route restored") || !strings.Contains(err.Error(), "unrecognized directive") {
 		t.Fatalf("err = %v, want previous route restored with reload stderr", err)
 	}
@@ -246,10 +249,11 @@ func TestApplyAndReload_RestoresOnReloadFailure(t *testing.T) {
 }
 
 func TestApplyAndReload_NoPrevRemovesFile(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "route.caddy")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "route.caddy")
 	r := &scriptedRunner{fail: map[int]string{1: "reload refused"}}
 
-	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r), file, []byte("new route\n"))
+	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r, dir), file, []byte("new route\n"))
 	if err == nil || !strings.Contains(err.Error(), "previous route restored") {
 		t.Fatalf("err = %v, want previous route restored", err)
 	}
@@ -262,11 +266,12 @@ func TestApplyAndReload_NoPrevRemovesFile(t *testing.T) {
 }
 
 func TestApplyAndReload_RestoreReloadFails(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "route.caddy")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "route.caddy")
 	writeFile(t, file, "old route\n")
 	r := &scriptedRunner{fail: map[int]string{1: "first failure", 2: "second failure"}}
 
-	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r), file, []byte("new route\n"))
+	err := proxy.ApplyAndReload(context.Background(), newAdapter(t, r, dir), file, []byte("new route\n"))
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -286,7 +291,7 @@ func TestApplyAndReload_RestoreReloadFails(t *testing.T) {
 func TestReload_ErrorIncludesStderrHead(t *testing.T) {
 	stderr := strings.Repeat("x", 600) + "TAIL"
 	r := &scriptedRunner{fail: map[int]string{1: stderr}}
-	a, err := New(r, "systemctl reload caddy")
+	a, err := New(r, "systemctl reload caddy", []string{"/etc/caddy"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,10 +316,13 @@ func TestNew_ParsesReloadArgv(t *testing.T) {
 	}{
 		{"", []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}},
 		{"systemctl reload caddy", []string{"systemctl", "reload", "caddy"}},
-		{`"/usr/local/bin/caddy" reload --config /etc/caddy/Caddyfile`, []string{"/usr/local/bin/caddy", "reload", "--config", "/etc/caddy/Caddyfile"}},
+		{`"/usr/bin/caddy" reload --config /etc/caddy/Caddyfile`, []string{"/usr/bin/caddy", "reload", "--config", "/etc/caddy/Caddyfile"}},
+		{"/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile", []string{"/usr/local/bin/caddy", "reload", "--config", "/etc/caddy/Caddyfile"}},
+		{"docker exec caddy caddy reload --config /etc/caddy/Caddyfile", []string{"docker", "exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}},
+		{"docker exec infra_caddy.1 caddy reload", []string{"docker", "exec", "infra_caddy.1", "caddy", "reload"}},
 	} {
 		t.Run(tc.reload, func(t *testing.T) {
-			a, err := New(&scriptedRunner{}, tc.reload)
+			a, err := New(&scriptedRunner{}, tc.reload, []string{"/etc/caddy"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -325,9 +333,126 @@ func TestNew_ParsesReloadArgv(t *testing.T) {
 	}
 
 	for _, reload := range []string{`caddy reload --config "/etc/caddy/Caddyfile`, `'' reload`, "\\\n"} {
-		if _, err := New(&scriptedRunner{}, reload); err == nil || !strings.Contains(err.Error(), "route.reload") {
+		if _, err := New(&scriptedRunner{}, reload, []string{"/etc/caddy"}); err == nil || !strings.Contains(err.Error(), "route.reload") {
 			t.Errorf("New(%q): err = %v, want route.reload error", reload, err)
 		}
+	}
+}
+
+// The reload command runs as root, so only caddy reload commands are
+// allowed, both from New and when an Adapter is built by hand.
+func TestNew_RejectsNonCaddyReload(t *testing.T) {
+	for _, reload := range []string{
+		`sh -c 'caddy reload; id > /tmp/pwned'`,
+		"bash -c 'caddy reload'",
+		"/usr/local/bin/caddy run",
+		"/usr/sbin/caddy reload",
+		"/tmp/caddy reload",
+		"caddy run",
+		"caddy",
+		"systemctl restart caddy",
+		"systemctl reload caddy nginx",
+		"docker exec -u root caddy caddy reload",
+		"docker exec caddy sh -c 'caddy reload'",
+		"docker exec caddy caddy run",
+		"docker run caddy caddy reload",
+		"docker exec -caddy caddy reload",
+		"rm -rf /",
+	} {
+		if _, err := New(&scriptedRunner{}, reload, []string{"/etc/caddy"}); err == nil || !strings.Contains(err.Error(), "route.reload may only be") {
+			t.Errorf("New(%q): err = %v, want the reload allowlist error", reload, err)
+		}
+	}
+
+	r := &scriptedRunner{}
+	a := &Adapter{Runner: r, ReloadArgv: []string{"sh", "-c", "caddy reload"}}
+	if err := a.Reload(context.Background()); err == nil || !strings.Contains(err.Error(), "route.reload may only be") {
+		t.Errorf("Reload: err = %v, want the reload allowlist error", err)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("calls = %q, want none", r.calls)
+	}
+}
+
+func TestNew_RejectsBadRouteDirs(t *testing.T) {
+	for _, dirs := range [][]string{nil, {}, {"etc/caddy"}, {"/etc/caddy/"}, {"/etc/../etc/caddy"}, {"/"}, {"/etc/caddy", ""}} {
+		if _, err := New(&scriptedRunner{}, "", dirs); err == nil || !strings.Contains(err.Error(), "deploy.route_dirs") {
+			t.Errorf("New(dirs %q): err = %v, want deploy.route_dirs error", dirs, err)
+		}
+	}
+}
+
+// Apply writes as root, so a route file outside the route dirs is refused
+// before anything is read or written: by its path, through a symlinked
+// directory, or as a symlink itself.
+func TestApply_RefusesFileOutsideRouteDirs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	routes := filepath.Join(root, "routes")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{routes, outside} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(outside, "shadow")
+	writeFile(t, secret, "root:secret\n")
+	if err := os.Symlink(outside, filepath.Join(routes, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(routes, "link.caddy")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(routes, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ file, want string }{
+		{secret, "not inside the agent's deploy.route_dirs"},
+		{"/etc/passwd", "not inside the agent's deploy.route_dirs"},
+		{routes + "/../outside/shadow", "not an absolute, clean path"},
+		{"routes/app.caddy", "not an absolute, clean path"},
+		{routes, "not inside the agent's deploy.route_dirs"},
+		{routes + "x/app.caddy", "not inside the agent's deploy.route_dirs"},
+		{filepath.Join(routes, "escape", "shadow"), "outside " + routes},
+		{filepath.Join(routes, "link.caddy"), "is not a regular file"},
+		{filepath.Join(routes, "sub"), "is not a regular file"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			r := &scriptedRunner{}
+			prev, err := newAdapter(t, r, routes).Apply(ctx, tc.file, []byte("new route\n"))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Apply = %q, %v; want error containing %q", prev, err, tc.want)
+			}
+			if prev != nil {
+				t.Errorf("prev = %q, want nil", prev)
+			}
+		})
+	}
+	if got := readFile(t, secret); got != "root:secret\n" {
+		t.Errorf("outside file = %q, want unchanged", got)
+	}
+	assertNoTemp(t, outside)
+}
+
+// A route file below a nested route dir and below a symlinked route dir
+// itself are fine: only the resolved path has to stay inside.
+func TestApply_AcceptsSymlinkedRouteDir(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "caddy")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(link, "app.caddy")
+	if _, err := newAdapter(t, &scriptedRunner{}, link).Apply(context.Background(), file, []byte("new route\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(real, "app.caddy")); got != "new route\n" {
+		t.Errorf("file = %q, want new route", got)
 	}
 }
 
@@ -338,7 +463,7 @@ func TestSplitArgv(t *testing.T) {
 		wantErr string
 	}{
 		{in: "  caddy\treload \n --force ", want: []string{"caddy", "reload", "--force"}},
-		{in: `sh -c 'caddy reload; echo $HOME'`, want: []string{"sh", "-c", "caddy reload; echo $HOME"}},
+		{in: `caddy reload --config '/etc/caddy/My Caddyfile; $HOME'`, want: []string{"caddy", "reload", "--config", "/etc/caddy/My Caddyfile; $HOME"}},
 		{in: `a "b \"c\" \\ \$d \x"`, want: []string{"a", `b "c" \ $d \x`}},
 		{in: `a\ b c`, want: []string{"a b", "c"}},
 		{in: `x"y"'z' ""`, want: []string{"xyz", ""}},

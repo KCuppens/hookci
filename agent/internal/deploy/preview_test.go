@@ -76,7 +76,7 @@ func newPreviewRig(t *testing.T) *previewRig {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	r.store = st
-	if r.proxy, err = caddy.New(r.runner, ""); err != nil {
+	if r.proxy, err = caddy.New(r.runner, "", []string{filepath.Dir(r.route)}); err != nil {
 		t.Fatalf("caddy.New: %v", err)
 	}
 	r.engine = &deploy.Engine{

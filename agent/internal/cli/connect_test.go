@@ -132,12 +132,21 @@ func (f *fakeServices) ActiveState(context.Context, string) (string, error) {
 	return f.state, nil
 }
 
-// runConnectCLI runs zeroci with svc in place of systemctl.
+// runConnectCLI runs zeroci with svc in place of systemctl, an empty stdin
+// and a state root no test can write, so each test passes --state-dir.
 func runConnectCLI(svc systemd.ServiceManager, args ...string) (int, string, string) {
+	return runConnectCLIIn(os.DevNull, "", svc, args...)
+}
+
+// runConnectCLIIn runs zeroci with svc in place of systemctl, stdin as the
+// standard input and root as the state root.
+func runConnectCLIIn(root, stdin string, svc systemd.ServiceManager, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := MainWithDeps(args, &stdout, &stderr, func(g Globals, w io.Writer) Deps {
 		d := DefaultDeps(g, w)
 		d.Services = svc
+		d.StateRoot = root
+		d.Stdin = strings.NewReader(stdin)
 		return d
 	})
 	return code, stdout.String(), stderr.String()
@@ -145,10 +154,11 @@ func runConnectCLI(svc systemd.ServiceManager, args ...string) (int, string, str
 
 func TestConnectWritesConfig(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
-	dir := filepath.Join(t.TempDir(), "state")
+	root := t.TempDir()
+	dir := filepath.Join(root, "42")
 
 	svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": true}}
-	code, stdout, stderr := runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--name", "build-1", "--state-dir", dir)
+	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--name", "build-1")
 	if code != ExitOK {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, stderr)
 	}
@@ -202,6 +212,61 @@ func TestConnectWritesConfig(t *testing.T) {
 	}
 }
 
+// The unit runs the agent of <state root>/<installation_id>, so connect
+// must not start it for an agent saved anywhere else.
+func TestConnectCustomStateDirLeavesUnit(t *testing.T) {
+	hub := newFakePairHub(t, http.StatusOK, redeemOK)
+	root, dir := t.TempDir(), filepath.Join(t.TempDir(), "state")
+	svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": true}, state: "active"}
+	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, stderr)
+	}
+	if _, err := agentconf.Load(dir); err != nil {
+		t.Fatalf("agent.json not saved to --state-dir: %v", err)
+	}
+	if len(svc.enabled) != 0 || len(svc.restarted) != 0 {
+		t.Errorf("enabled %v restarted %v, want neither", svc.enabled, svc.restarted)
+	}
+	if want := "zeroci agent --state-dir " + dir; !strings.Contains(stdout, want) || !strings.Contains(stdout, filepath.Join(root, "42")) {
+		t.Errorf("stdout = %q, want a hint naming %s and %q", stdout, filepath.Join(root, "42"), want)
+	}
+}
+
+// The pair token comes from $ZEROCI_PAIR_TOKEN, else stdin, so it need not
+// show in the process list.
+func TestConnectPairTokenWithoutArgument(t *testing.T) {
+	for _, tc := range []struct{ name, env, stdin string }{
+		{"env", testPairToken, "ignored\n"},
+		{"stdin", "", testPairToken + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(pairTokenEnv, tc.env)
+			hub := newFakePairHub(t, http.StatusOK, redeemOK)
+			code, _, stderr := runConnectCLIIn(os.DevNull, tc.stdin, &fakeServices{}, "connect", "--hub", hub.srv.URL, "--state-dir", t.TempDir())
+			if code != ExitOK {
+				t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
+			}
+			if req := hub.req.Load(); req == nil || req.PairToken != testPairToken {
+				t.Errorf("redeem request = %+v, want pair_token %s", req, testPairToken)
+			}
+		})
+	}
+}
+
+// agent.json without an installation id cannot name its unit or state dir.
+func TestConnectRejectsMissingInstallationID(t *testing.T) {
+	hub := newFakePairHub(t, http.StatusOK, `{"agent_id":"agt_1","credential":"`+testCredential+`","name":"build-1"}`)
+	root := t.TempDir()
+	code, _, stderr := runConnectCLIIn(root, "", &fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL)
+	if code == ExitOK || !strings.Contains(stderr, "installation_id") {
+		t.Fatalf("exit = %d stderr = %q, want a refusal naming installation_id", code, stderr)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("state root holds %v after the refusal", entries)
+	}
+}
+
 func TestConnectServiceSkipped(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -216,8 +281,8 @@ func TestConnectServiceSkipped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			hub := newFakePairHub(t, http.StatusOK, redeemOK)
 			svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": tc.exist}}
-			args := append([]string{"connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir()}, tc.flags...)
-			code, stdout, stderr := runConnectCLI(svc, args...)
+			args := append([]string{"connect", testPairToken, "--hub", hub.srv.URL}, tc.flags...)
+			code, stdout, stderr := runConnectCLIIn(t.TempDir(), "", svc, args...)
 			if code != ExitOK {
 				t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
 			}
@@ -297,13 +362,17 @@ func TestConnectRefusesExistingAgent(t *testing.T) {
 // restarts; enable --now alone leaves it running.
 func TestConnectForceRestartsRunningAgent(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "42")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
 		t.Fatal(err)
 	}
 	unit := "zeroci-agent@42.service"
 	svc := &fakeServices{exist: map[string]bool{unit: true}, state: "active"}
-	code, stdout, stderr := runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force")
+	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--force")
 	if code != ExitOK {
 		t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
 	}
@@ -315,7 +384,7 @@ func TestConnectForceRestartsRunningAgent(t *testing.T) {
 	}
 
 	svc = &fakeServices{exist: map[string]bool{unit: true}}
-	code, stdout, stderr = runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force", "--no-service")
+	code, stdout, stderr = runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--force", "--no-service")
 	if code != ExitOK || !strings.Contains(stdout, "sudo systemctl restart "+unit) {
 		t.Errorf("--no-service exit = %d stdout = %q stderr = %q, want a restart hint", code, stdout, stderr)
 	}

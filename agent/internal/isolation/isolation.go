@@ -23,8 +23,6 @@ type Limits struct {
 	MemoryBytes int64         // MemoryMax=<bytes> MemorySwapMax=0
 	Tasks       int           // TasksMax=<n>
 	Timeout     time.Duration // RuntimeMaxSec=<seconds, rounded up>
-	IOReadBps   int64         // IOReadBandwidthMax=<rundir> <bytes>
-	IOWriteBps  int64         // IOWriteBandwidthMax=<rundir> <bytes>
 }
 
 // Spec describes one process to run in isolation.

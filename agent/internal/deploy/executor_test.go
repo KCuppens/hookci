@@ -70,6 +70,24 @@ func TestUnitExecutor_NoTimeoutIsInfinity(t *testing.T) {
 	}
 }
 
+// systemd expands $VAR and $$ in a unit's command line, so every "$" in the
+// script must reach systemd-run doubled for sh to see the original text.
+func TestUnitExecutor_EscapesDollarSigns(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("systemd-run", nil, execx.FakeResponse{})
+	u := &UnitExecutor{Runner: fake, RunID: "r1"}
+	script := `pg_dump "${DATABASE_URL}"; echo $$ $1 100%`
+	if err := u.Run(context.Background(), "migrate", []string{"sh", "-c", script}, ExecOpts{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := fake.Calls[0].Args
+	sep := slices.Index(args, "--")
+	want := []string{"sh", "-c", `pg_dump "$${DATABASE_URL}"; echo $$$$ $$1 100%`}
+	if sep < 0 || !slices.Equal(args[sep+1:], want) {
+		t.Errorf("command = %q, want %q", args[sep+1:], want)
+	}
+}
+
 func TestUnitExecutor_RedactsEnvValues(t *testing.T) {
 	const secret = "hunter2-db-password"
 	fake := &execx.Fake{}

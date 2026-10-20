@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/cache"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
@@ -393,9 +395,126 @@ func TestRunBestEffort_LogsRemovalsAndErrors(t *testing.T) {
 
 	h.c.RunBestEffort(h.ctx)
 	logs := h.logs.String()
-	for _, want := range []string{"gc: 1 images, 1 run dirs removed", "level=WARN msg=\"gc: prune build cache"} {
+	for _, want := range []string{"gc: 1 images, 1 run dirs, 0 cache entries removed", "level=WARN msg=\"gc: prune build cache"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs missing %q:\n%s", want, logs)
 		}
+	}
+}
+
+// newCache sets up h.c.Cache in a temp dir and returns the cache root.
+func (h *harness) newCache(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "cache")
+	c, err := cache.New(cache.Options{Root: root, Mode: cache.ModeCopy, Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.c.Cache = c
+	return root
+}
+
+// saveCacheEntry saves a node_modules of size bytes under a lockfile unique
+// to name, sets its last use to at and returns the entry's rel.
+func (h *harness) saveCacheEntry(t *testing.T, root, name string, size int, at time.Time) string {
+	t.Helper()
+	wd := t.TempDir()
+	for file, content := range map[string]string{"package-lock.json": name, "node_modules/m.js": strings.Repeat("x", size)} {
+		path := filepath.Join(wd, file)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	k, err := cache.ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.c.Cache.Save(context.Background(), k, cache.Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}, wd); err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join("trusted__kcuppens__app", k.Hash)
+	if err := os.Chtimes(filepath.Join(root, rel), at, at); err != nil {
+		t.Fatal(err)
+	}
+	return rel
+}
+
+func TestCacheEvictsOldAndLeastRecentlyUsedOverCap(t *testing.T) {
+	h := newHarness(t)
+	root := h.newCache(t)
+	h.c.Cfg = config.AgentConfig{Gc: &config.AgentConfigGc{CacheMaxBytes: 150}}
+	newest := h.saveCacheEntry(t, root, "newest", 100, start.Add(-time.Hour))
+	overCap := h.saveCacheEntry(t, root, "over cap", 100, start.Add(-2*time.Hour))
+	stale := h.saveCacheEntry(t, root, "stale", 10, start.Add(-CacheMaxAge-time.Hour))
+	young := h.saveCacheEntry(t, root, "young", 10, start.Add(-CacheMaxAge+time.Hour))
+
+	p, err := h.c.Plan(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{stale, young, overCap}; !slices.Equal(p.RemoveCacheEntries, want) {
+		t.Fatalf("RemoveCacheEntries = %q, want %q (least recently used first)", p.RemoveCacheEntries, want)
+	}
+	res, err := h.c.Apply(h.ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(res.RemovedCacheEntries, p.RemoveCacheEntries) || len(res.Errors) != 0 {
+		t.Errorf("Result = %+v, want the planned entries removed", res)
+	}
+	entries, err := h.c.Cache.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Rel != newest {
+		t.Errorf("Entries after GC = %+v, want only %s", entries, newest)
+	}
+}
+
+func TestCacheKeepsEntryInUse(t *testing.T) {
+	h := newHarness(t)
+	root := h.newCache(t)
+	rel := h.saveCacheEntry(t, root, "stale", 10, start.Add(-CacheMaxAge-time.Hour))
+	stalePlan, err := h.c.Plan(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(stalePlan.RemoveCacheEntries, []string{rel}) {
+		t.Fatalf("RemoveCacheEntries = %q, want %q", stalePlan.RemoveCacheEntries, rel)
+	}
+
+	// A job restores the entry between plan and apply.
+	wd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wd, "package-lock.json"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	k, err := cache.ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hit, cleanup, err := h.c.Cache.Restore(h.ctx, k, wd)
+	if err != nil || !hit {
+		t.Fatalf("Restore = %v, %v", hit, err)
+	}
+	defer cleanup()
+	if err := os.Chtimes(filepath.Join(root, rel), start.Add(-CacheMaxAge-time.Hour), start.Add(-CacheMaxAge-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if p, err := h.c.Plan(h.ctx); err != nil || len(p.RemoveCacheEntries) != 0 {
+		t.Errorf("Plan while in use = %q, %v; want nothing to remove", p.RemoveCacheEntries, err)
+	}
+	res, err := h.c.Apply(h.ctx, stalePlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.RemovedCacheEntries) != 0 || len(res.Errors) != 0 {
+		t.Errorf("Apply while in use = %+v, want the entry kept without an error", res)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "node_modules", "m.js")); err != nil {
+		t.Errorf("restored files gone: %v", err)
 	}
 }

@@ -1,7 +1,8 @@
 // Package gc keeps a deploy host's disk from filling up: it removes old
 // "<project>:<sha7>" images beyond each env's retain.images, caps the
-// BuildKit cache, and deletes run dirs of finished runs. Removals are best
-// effort; one failure never stops the rest.
+// BuildKit cache, deletes run dirs of finished runs and evicts setup step
+// cache entries by age and total size. Removals are best effort; one failure
+// never stops the rest.
 package gc
 
 import (
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/cache"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
@@ -30,6 +32,10 @@ import (
 
 // RunDirMaxAge is how long the dir of a finished run is kept.
 const RunDirMaxAge = 24 * time.Hour
+
+// CacheMaxAge is how long a setup step cache entry is kept after its last
+// use. gc.cache_max_bytes caps the total size of the younger ones.
+const CacheMaxAge = 14 * 24 * time.Hour
 
 // Retention defaults of retain.images.
 const (
@@ -66,20 +72,22 @@ type Image struct {
 
 // Plan is what one GC pass removes.
 type Plan struct {
-	RemoveImages     []string `json:"remove_images"` // image refs, sorted
-	PruneBuildCache  bool     `json:"prune_build_cache"`
-	KeepStorageBytes int64    `json:"keep_storage_bytes"`
-	PruneFlag        string   `json:"prune_flag"`      // FlagMaxUsedSpace or FlagKeepStorage
-	RemoveRunDirs    []string `json:"remove_run_dirs"` // absolute paths, sorted
-	SkippedEnvs      []string `json:"skipped_envs"`    // "<repo>/<env>: env lock held"
+	RemoveImages       []string `json:"remove_images"` // image refs, sorted
+	PruneBuildCache    bool     `json:"prune_build_cache"`
+	KeepStorageBytes   int64    `json:"keep_storage_bytes"`
+	PruneFlag          string   `json:"prune_flag"`           // FlagMaxUsedSpace or FlagKeepStorage
+	RemoveRunDirs      []string `json:"remove_run_dirs"`      // absolute paths, sorted
+	RemoveCacheEntries []string `json:"remove_cache_entries"` // under <state>/cache, least recently used first
+	SkippedEnvs        []string `json:"skipped_envs"`         // "<repo>/<env>: env lock held"
 }
 
 // Result is what one GC pass removed.
 type Result struct {
-	RemovedImages    []string `json:"removed_images"`
-	PrunedBuildCache bool     `json:"pruned_build_cache"`
-	RemovedRunDirs   []string `json:"removed_run_dirs"`
-	Errors           []string `json:"errors"` // one entry per failed removal
+	RemovedImages       []string `json:"removed_images"`
+	PrunedBuildCache    bool     `json:"pruned_build_cache"`
+	RemovedRunDirs      []string `json:"removed_run_dirs"`
+	RemovedCacheEntries []string `json:"removed_cache_entries"`
+	Errors              []string `json:"errors"` // one entry per failed removal
 }
 
 // Collector plans and applies GC passes. RunBestEffort and HandleControl run
@@ -88,8 +96,9 @@ type Collector struct {
 	Runner   execx.Runner
 	Store    *store.Store
 	StateDir string
-	Cfg      config.AgentConfig                           // gc.build_cache_max_bytes
+	Cfg      config.AgentConfig                           // gc.build_cache_max_bytes, gc.cache_max_bytes
 	Repos    func(ctx context.Context) ([]RepoEnv, error) // repos and envs with deployments
+	Cache    *cache.Cache                                 // the jobs' setup step cache; nil: not evicted
 	Clock    clock.Clock                                  // nil: real clock
 	FS       FS                                           // nil: the real file system
 	Log      *slog.Logger                                 // nil: discard
@@ -120,7 +129,7 @@ type RepoEnv struct {
 
 // Plan works out what a GC pass removes without removing anything.
 func (c *Collector) Plan(ctx context.Context) (Plan, error) {
-	p := Plan{RemoveImages: []string{}, RemoveRunDirs: []string{}, SkippedEnvs: []string{}}
+	p := Plan{RemoveImages: []string{}, RemoveRunDirs: []string{}, RemoveCacheEntries: []string{}, SkippedEnvs: []string{}}
 	envs, err := c.Repos(ctx)
 	if err != nil {
 		return Plan{}, fmt.Errorf("gc: list deploy envs: %w", err)
@@ -140,6 +149,9 @@ func (c *Collector) Plan(ctx context.Context) (Plan, error) {
 		return Plan{}, err
 	}
 	p.RemoveRunDirs = dirs
+	if p.RemoveCacheEntries, err = c.planCache(); err != nil {
+		return Plan{}, err
+	}
 	slices.Sort(p.RemoveImages)
 	slices.Sort(p.SkippedEnvs)
 	return p, nil
@@ -266,12 +278,44 @@ func (c *Collector) pruneFlag(ctx context.Context) (string, error) {
 }
 
 func (c *Collector) buildCacheMaxBytes() int64 {
-	g := c.Cfg.Gc
-	if g == nil {
-		g = &config.AgentConfigGc{}
-		_ = json.Unmarshal([]byte("{}"), g)
+	return int64(c.gcConfig().BuildCacheMaxBytes)
+}
+
+// gcConfig is the gc section of Cfg, with the schema defaults when it is absent.
+func (c *Collector) gcConfig() *config.AgentConfigGc {
+	if c.Cfg.Gc != nil {
+		return c.Cfg.Gc
 	}
-	return int64(g.BuildCacheMaxBytes)
+	g := &config.AgentConfigGc{}
+	_ = json.Unmarshal([]byte("{}"), g)
+	return g
+}
+
+// planCache returns the cache entries to evict, least recently used first:
+// those unused for longer than CacheMaxAge, and, walking from the most
+// recently used, every entry past the point where the sizes sum to more than
+// gc.cache_max_bytes. Entries a job still uses count toward the sum but are
+// never evicted.
+func (c *Collector) planCache() ([]string, error) {
+	remove := []string{}
+	if c.Cache == nil {
+		return remove, nil
+	}
+	entries, err := c.Cache.Entries()
+	if err != nil {
+		return nil, fmt.Errorf("gc: %w", err)
+	}
+	cutoff := c.now().Add(-CacheMaxAge)
+	limit := int64(c.gcConfig().CacheMaxBytes)
+	var total int64
+	for _, e := range entries {
+		total += e.Bytes
+		if !e.InUse && (total > limit || e.LastUse.Before(cutoff)) {
+			remove = append(remove, e.Rel)
+		}
+	}
+	slices.Reverse(remove)
+	return remove, nil
 }
 
 // planRunDirs returns the run dirs to remove: <state>/runs/<id> of check and
@@ -367,10 +411,11 @@ func (c *Collector) readDir(root string) ([]fs.DirEntry, error) {
 }
 
 // Apply removes the images of p one by one, prunes the build cache, then
-// removes the run dirs. A failed removal is recorded in Result.Errors and the
-// rest still run. The error is non-nil only when ctx ends first.
+// removes the run dirs and cache entries. A failed removal is recorded in
+// Result.Errors and the rest still run; a cache entry a job took into use
+// since the plan is kept. The error is non-nil only when ctx ends first.
 func (c *Collector) Apply(ctx context.Context, p Plan) (Result, error) {
-	res := Result{RemovedImages: []string{}, RemovedRunDirs: []string{}, Errors: []string{}}
+	res := Result{RemovedImages: []string{}, RemovedRunDirs: []string{}, RemovedCacheEntries: []string{}, Errors: []string{}}
 	for _, ref := range p.RemoveImages {
 		if err := ctx.Err(); err != nil {
 			return res, fmt.Errorf("gc: %w", err)
@@ -401,6 +446,20 @@ func (c *Collector) Apply(ctx context.Context, p Plan) (Result, error) {
 			continue
 		}
 		res.RemovedRunDirs = append(res.RemovedRunDirs, dir)
+	}
+	for _, rel := range p.RemoveCacheEntries {
+		if err := ctx.Err(); err != nil {
+			return res, fmt.Errorf("gc: %w", err)
+		}
+		err := c.Cache.Remove(rel)
+		switch {
+		case errors.Is(err, cache.ErrInUse):
+			c.log().Info("gc: kept cache entry " + rel + ": in use")
+		case err != nil:
+			res.Errors = append(res.Errors, fmt.Sprintf("remove cache entry %s: %v", rel, err))
+		default:
+			res.RemovedCacheEntries = append(res.RemovedCacheEntries, rel)
+		}
 	}
 	return res, nil
 }
@@ -456,7 +515,7 @@ func (c *Collector) RunBestEffort(ctx context.Context) {
 
 func (c *Collector) logResult(res Result) {
 	log := c.log()
-	log.Info(fmt.Sprintf("gc: %d images, %d run dirs removed", len(res.RemovedImages), len(res.RemovedRunDirs)))
+	log.Info(fmt.Sprintf("gc: %d images, %d run dirs, %d cache entries removed", len(res.RemovedImages), len(res.RemovedRunDirs), len(res.RemovedCacheEntries)))
 	for _, e := range res.Errors {
 		log.Warn("gc: " + e)
 	}

@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,10 +33,39 @@ func TestAgentTooOldExits4(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := cmdAgent(ctx, d, nil, &stdout, &stderr)
 
-	if code != ExitInternal {
-		t.Fatalf("exit = %d, want %d; stderr:\n%s", code, ExitInternal, stderr.String())
+	if code != ExitAgentTooOld || ExitAgentTooOld != 4 {
+		t.Fatalf("exit = %d, want 4; stderr:\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "zeroci: agent_too_old:") || !strings.Contains(stderr.String(), "zeroci upgrade") {
 		t.Fatalf("stderr does not report agent_too_old with an upgrade hint:\n%s", stderr.String())
+	}
+}
+
+// The unit stops restarting an agent without agent.json (exit 3), but an
+// internal error must stay restartable: RestartPreventExitStatus is 3 4.
+func TestAgentNotConfiguredExits3(t *testing.T) {
+	if ExitInternal == 3 || ExitInternal == 4 {
+		t.Fatalf("ExitInternal = %d, which the unit never restarts", ExitInternal)
+	}
+	d, _ := testDeps(t, t.TempDir())
+	d.StateRoot = t.TempDir()
+	var stderr bytes.Buffer
+	code := cmdAgent(context.Background(), d, []string{"--installation", "7"}, io.Discard, &stderr)
+	if code != ExitNotConfigured || ExitNotConfigured != 3 {
+		t.Fatalf("exit = %d, want 3; stderr:\n%s", code, stderr.String())
+	}
+	if want := filepath.Join(d.StateRoot, "7", agentconf.FileName); !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr = %q, want the missing %s", stderr.String(), want)
+	}
+}
+
+func TestAgentRejectsNegativeInstallation(t *testing.T) {
+	d, _ := testDeps(t, t.TempDir())
+	var stderr bytes.Buffer
+	if code := cmdAgent(context.Background(), d, []string{"--installation", "-1"}, io.Discard, &stderr); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(stderr.String(), "--installation must be a positive installation id") {
+		t.Errorf("stderr = %q", stderr.String())
 	}
 }

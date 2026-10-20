@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"io/fs"
 	"reflect"
 	"slices"
 	"strings"
@@ -29,7 +30,7 @@ func TestDetectPnpmTurbo(t *testing.T) {
 		t.Errorf("unit run = %q, want %q", got, want)
 	}
 	paths := c.Setup[0].Cache.Paths
-	for _, want := range []string{"node_modules", "packages/*/node_modules"} {
+	for _, want := range []string{"apps/web/node_modules", "node_modules", "packages/ui/node_modules"} {
 		if !slices.Contains(paths, want) {
 			t.Errorf("cache paths %v lack %q", paths, want)
 		}
@@ -152,7 +153,7 @@ func TestDetectYarnBerryVsClassic(t *testing.T) {
 	if got := checksOf(t, berry).Setup[0].Run; got != "yarn install --immutable" {
 		t.Errorf("with .yarnrc.yml: setup = %q, want yarn install --immutable", got)
 	}
-	if got, want := checksOf(t, berry).Setup[0].Cache.Paths, []string{"node_modules", "packages/*/node_modules"}; !reflect.DeepEqual(got, want) {
+	if got, want := checksOf(t, berry).Setup[0].Cache.Paths, []string{"node_modules", "packages/core/node_modules"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("cache paths = %v, want %v from package.json workspaces", got, want)
 	}
 	if got := mustJob(t, berry, "test").Run; got != "yarn run test" {
@@ -160,14 +161,19 @@ func TestDetectYarnBerryVsClassic(t *testing.T) {
 	}
 
 	classic := detectFS(t, fstest.MapFS{
-		"package.json": file(`{"workspaces": {"packages": ["apps/*", "!apps/skip"]}, "scripts": {"test": "jest"}}`),
-		"yarn.lock":    file(""),
+		"package.json":           file(`{"workspaces": {"packages": ["apps/*", "!apps/skip"]}, "scripts": {"test": "jest"}}`),
+		"yarn.lock":              file(""),
+		"apps/web/package.json":  file("{}"),
+		"apps/skip/package.json": file("{}"),
+		"apps/notes/README.md":   file(""),
+		"apps/link":              &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("web")},
 	})
 	if got := checksOf(t, classic).Setup[0].Run; got != "yarn install --frozen-lockfile" {
 		t.Errorf("without .yarnrc.yml: setup = %q, want yarn install --frozen-lockfile", got)
 	}
-	if got, want := checksOf(t, classic).Setup[0].Cache.Paths, []string{"apps/*/node_modules", "node_modules"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("cache paths = %v, want %v", got, want)
+	want := []string{"apps/web/node_modules", "node_modules"}
+	if got := checksOf(t, classic).Setup[0].Cache.Paths; !reflect.DeepEqual(got, want) {
+		t.Errorf("cache paths = %v, want %v (globs expanded; negated, package-less and symlinked dirs skipped)", got, want)
 	}
 }
 

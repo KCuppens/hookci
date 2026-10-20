@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"regexp/syntax"
 	"slices"
@@ -27,6 +26,7 @@ func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnost
 		diags = append(diags, checkNeeds(c.Jobs, li)...)
 		diags = append(diags, checkCommands(c, li)...)
 		diags = append(diags, checkCachePaths(c.Setup, li)...)
+		diags = append(diags, checkPostgresImage(c.Services, li)...)
 		diags = append(diags, checkLimits(c, li)...)
 	}
 	diags = append(diags, checkTrust(cfg, opts, li)...)
@@ -172,15 +172,23 @@ func checkCachePaths(setup []SetupStep, li lineIndex) Diagnostics {
 			continue
 		}
 		for j, p := range step.Cache.Paths {
-			clean := filepath.Clean(p)
-			if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+			if _, _, err := SplitCachePath(p); err != nil {
 				diags = append(diags, li.errorf(joinIndex(joinIndex("checks.setup", i)+".cache.paths", j),
-					"use a path inside the repository, for example node_modules",
-					"cache path %s must be relative to the repository root and stay inside it", quote(p)))
+					"use a path inside the repository, for example node_modules, or under ~/", "%v", err))
 			}
 		}
 	}
 	return diags
+}
+
+// checkPostgresImage accepts only the official postgres image with a tag or
+// digest; the agent pulls and runs it.
+func checkPostgresImage(s *ChecksServices, li lineIndex) Diagnostics {
+	if s == nil || s.Postgres == nil || s.Postgres.Image == "" || ValidPostgresImage(s.Postgres.Image) {
+		return nil
+	}
+	return Diagnostics{li.errorf("checks.services.postgres.image", "use the official image with a tag, for example postgres:16-alpine",
+		"image %s is not the official postgres image with a tag or digest", quote(s.Postgres.Image))}
 }
 
 // checkLimits rejects memory sizes and durations that match the schema
@@ -263,8 +271,13 @@ func validationDiagnostic(e ValidationError, li lineIndex) Diagnostic {
 	return li.errorf(e.Path, e.Fix, "%s", e.Msg)
 }
 
+// EnvFilePermOK reports whether perm, the permission bits of an env_file,
+// gives group and others no access, as a trusted deploy requires: 0600 or
+// stricter.
+func EnvFilePermOK(perm fs.FileMode) bool { return perm&0o077 == 0 }
+
 // checkEnvFile warns when the env_file is missing, not owned by root, or
-// writable by group or others. file is an absolute path.
+// open to group or others. file is an absolute path.
 func checkEnvFile(file, p string, opts ParseOptions, li lineIndex) Diagnostics {
 	stat := opts.Stat
 	if stat == nil {
@@ -293,9 +306,9 @@ func checkEnvFile(file, p string, opts ParseOptions, li lineIndex) Diagnostics {
 		diags = append(diags, li.warnf(p, "chown root:root "+file,
 			"env_file %s is owned by uid %d, not root", quote(file), st.Uid))
 	}
-	if perm := fi.Mode().Perm(); perm&0o022 != 0 {
-		diags = append(diags, li.warnf(p, "chmod go-w "+file,
-			"env_file %s is writable by group or others (mode %04o)", quote(file), perm))
+	if perm := fi.Mode().Perm(); !EnvFilePermOK(perm) {
+		diags = append(diags, li.warnf(p, "chmod 600 "+file,
+			"env_file %s gives group or others access (mode %04o), want 0600", quote(file), perm))
 	}
 	return diags
 }

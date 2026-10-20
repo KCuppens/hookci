@@ -230,6 +230,49 @@ deployments:
 	}
 }
 
+// TestGitHubRefChecker_PermanentErrors: answers a retry would only repeat
+// are permanent, through the intake's wrapping; outages, rate limits and
+// token failures are not.
+func TestGitHubRefChecker_PermanentErrors(t *testing.T) {
+	const branches = "/repos/acme/web/branches/main"
+	for status, want := range map[int]bool{
+		400: true, 410: true, 422: true,
+		401: false, 403: false, 408: false, 429: false, 500: false, 502: false, 503: false,
+	} {
+		t.Run(fmt.Sprintf("branch status %d", status), func(t *testing.T) {
+			_, err := newChecker(t, &github{path: branches, status: status}).IsProtected(context.Background(), "acme/web", "main")
+			if err == nil || IsPermanent(fmt.Errorf("trigger: %w", err)) != want {
+				t.Fatalf("IsProtected err = %v, want permanent %v", err, want)
+			}
+		})
+	}
+	t.Run("compare unknown to GitHub", func(t *testing.T) {
+		_, _, err := newChecker(t, &github{path: "/repos/acme/web/compare/old...new", status: 404}).ChangedFiles(context.Background(), "acme/web", "old", "new")
+		if !IsPermanent(err) {
+			t.Fatalf("ChangedFiles err = %v, want permanent", err)
+		}
+	})
+	t.Run("invalid config", func(t *testing.T) {
+		const sha = "0123456789abcdef0123456789abcdef01234567"
+		g := &github{path: "/repos/acme/web/contents/.zeroci.yml?ref=" + sha, status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n"}
+		_, err := newChecker(t, g).LoadConfig(context.Background(), "acme/web", sha)
+		if !IsPermanent(err) {
+			t.Fatalf("LoadConfig err = %v, want permanent", err)
+		}
+	})
+	t.Run("token failure", func(t *testing.T) {
+		c := newChecker(t, &github{path: branches, status: 200})
+		c.Token = func(context.Context, string) (string, error) { return "", errors.New("no token within 30s") }
+		if _, err := c.IsProtected(context.Background(), "acme/web", "main"); err == nil || IsPermanent(err) {
+			t.Fatalf("IsProtected err = %v, want a transient error", err)
+		}
+		c.Token = func(context.Context, string) (string, error) { return "", Permanent(errors.New("refused")) }
+		if _, err := c.IsProtected(context.Background(), "acme/web", "main"); !IsPermanent(err) {
+			t.Fatalf("IsProtected err = %v, want the token's permanent error", err)
+		}
+	})
+}
+
 func checkResult(t *testing.T, got, want bool, err error, wantErr string) {
 	t.Helper()
 	if wantErr != "" {

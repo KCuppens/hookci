@@ -48,8 +48,9 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	dryRun := fs.Bool("dry-run", false, "print the plan without deploying")
 	repoFlag := fs.String("repo", "", "repository as owner/name (default: the github.com origin remote)")
 	shaFlag := fs.String("sha", "", "commit to preview (default: the last deployed commit, else HEAD)")
+	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] deploy <env> --dry-run [--repo owner/name] [--sha SHA]")
+		fmt.Fprintln(stderr, "usage: zeroci [global flags] deploy <env> --dry-run [--repo owner/name] [--sha SHA] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Print what a deploy of env from the current checkout would do. Nothing runs and nothing changes.")
 		fs.PrintDefaults()
@@ -74,6 +75,11 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "zeroci: deploy: --sha %q must be a full 40-character lowercase commit\n", *shaFlag)
 		return ExitUsage
 	}
+	stateDir, ok := dirFlags.resolve(stderr)
+	if !ok {
+		return ExitUsage
+	}
+	d.Globals.StateDir = stateDir
 
 	wd, err := d.Getwd()
 	if err != nil {
@@ -117,9 +123,17 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		return ExitInternal
 	}
 
-	stateDir := d.Globals.StateDir
+	// The dry run never applies a route, so an agent.json this user cannot
+	// read falls back to the default deploy.route_dirs.
+	var agentCfg config.AgentConfig
+	if ac, err := agentconf.Load(stateDir); err == nil {
+		agentCfg = ac.AgentConfig
+	}
+	routeDirs := deploy.RouteDirs(agentCfg)
 	engine := &deploy.Engine{Strategies: strategies.New(strategies.Deps{
-		Proxy:    func(config.DeploymentRoute) (proxy.ProxyAdapter, error) { return &caddy.Adapter{}, nil },
+		Proxy: func(route config.DeploymentRoute) (proxy.ProxyAdapter, error) {
+			return caddy.New(nil, route.Reload, routeDirs)
+		},
 		StateDir: stateDir,
 		WorkDir:  func(store.DeployRun) string { return top },
 	})}

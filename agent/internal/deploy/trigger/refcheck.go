@@ -85,7 +85,7 @@ func (g *GitHubRefChecker) ChangedFiles(ctx context.Context, repo, base, head st
 		return nil, false, err
 	}
 	if !found {
-		return nil, false, fmt.Errorf("github %s: %d", path, http.StatusNotFound)
+		return nil, false, Permanent(fmt.Errorf("github %s: %d", path, http.StatusNotFound))
 	}
 	files := make([]string, len(body.Files))
 	for i, f := range body.Files {
@@ -116,7 +116,7 @@ func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*c
 	}
 	cfg, diags := config.Parse(data, config.ParseOptions{})
 	if diags.HasErrors() {
-		return nil, fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(sha), diags.Format(configFile))
+		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(sha), diags.Format(configFile)))
 	}
 	return cfg, nil
 }
@@ -169,12 +169,23 @@ func (g *GitHubRefChecker) get(ctx context.Context, repo, path, accept string) (
 	return resp, nil
 }
 
-// statusErr is the error of a non-2xx response other than 404.
+// statusErr is the error of a non-2xx response other than 404. A 4xx is
+// permanent except 401 and 403, which an expired token or a rate limit
+// also answers, and 408 and 429.
 func statusErr(path string, resp *http.Response) error {
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("github %s: %d", path, resp.StatusCode)
+	code := resp.StatusCode
+	if code >= 200 && code <= 299 {
+		return nil
 	}
-	return nil
+	err := fmt.Errorf("github %s: %d", path, code)
+	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return err
+	}
+	if code >= 400 && code <= 499 {
+		return Permanent(err)
+	}
+	return err
 }
 
 func comparePath(repo, base, head string) string {

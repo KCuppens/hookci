@@ -119,7 +119,7 @@ func TestSinkAddWebhookPrintsSecretOnce(t *testing.T) {
 func TestSinkAddWebhookSecretStdinPrintsOnlySecret(t *testing.T) {
 	h := &sinkHub{status: http.StatusCreated, answer: `{"sink":` + sinkJSON + `,"generated_secret":"whsec_xyz"}`}
 	d := newSinkDeps(t, h, "")
-	code, stdout, stderr := runSink(d, "add", "webhook", "--repo", "o/r", "--url", "https://ex.com/hook", "--secret-stdin")
+	code, stdout, stderr := runSink(d, "add", "webhook", "--repo", "o/r", "--url", "https://ex.com/hook", "--secret-only")
 	if code != ExitOK {
 		t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
 	}

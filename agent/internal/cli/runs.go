@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/runstats"
@@ -57,8 +55,8 @@ func cmdRuns(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 // the agent database and the window.
 type runsFlags struct {
 	*flag.FlagSet
-	stateDir     *string
-	installation *int64
+	dirFlags     stateDirFlags
+	stateDir     string // set by parse
 	since, until *string
 	repo         *string
 }
@@ -67,12 +65,11 @@ func newRunsFlags(d Deps, usage string, stderr io.Writer) *runsFlags {
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	f := &runsFlags{
-		FlagSet:      fs,
-		stateDir:     fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect"),
-		installation: fs.Int64("installation", 0, "use the agent of this installation in "+defaultStateRoot+"/<ID>"),
-		since:        fs.String("since", "", "first finish time to include, RFC3339"),
-		until:        fs.String("until", "", "last finish time to include, RFC3339"),
-		repo:         fs.String("repo", "", "only runs of this repo (OWNER/NAME)"),
+		FlagSet:  fs,
+		dirFlags: addStateDirFlags(fs, d),
+		since:    fs.String("since", "", "first finish time to include, RFC3339"),
+		until:    fs.String("until", "", "last finish time to include, RFC3339"),
+		repo:     fs.String("repo", "", "only runs of this repo (OWNER/NAME)"),
 	}
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: zeroci [global flags] runs %s [--state-dir DIR | --installation ID]\n", usage)
@@ -95,13 +92,11 @@ func (f *runsFlags) parse(args []string, stderr io.Writer) (code int, ok bool) {
 		f.Usage()
 		return ExitUsage, false
 	}
-	if *f.installation < 0 {
-		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+	dir, ok := f.dirFlags.resolve(stderr)
+	if !ok {
 		return ExitUsage, false
 	}
-	if *f.installation > 0 {
-		*f.stateDir = filepath.Join(defaultStateRoot, strconv.FormatInt(*f.installation, 10))
-	}
+	f.stateDir = dir
 	return ExitOK, true
 }
 
@@ -128,7 +123,7 @@ func (f *runsFlags) window(d Deps) (since, until time.Time, err error) {
 // list reads the finished runs of the agent database. A state dir without a
 // database has no runs.
 func (f *runsFlags) list(ctx context.Context, d Deps, since, until time.Time, kind string) ([]runstats.RunRecord, error) {
-	d.Globals.StateDir = *f.stateDir
+	d.Globals.StateDir = f.stateDir
 	st, err := openStateStore(d)
 	if err != nil || st == nil {
 		return nil, err

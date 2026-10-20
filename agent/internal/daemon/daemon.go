@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/zerocideploy/agent/internal/cache"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/control"
@@ -52,8 +54,10 @@ const (
 const flushInterval = 100 * time.Millisecond
 
 // ExecutorFunc builds the runner of one checked-out run whose checks are
-// already resolved, held to policy.
-type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error)
+// already resolved, held to policy. protected is whether the run is a
+// trusted push to a branch with GitHub branch protection, whose caches may
+// be saved.
+type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, protected bool) (scheduler.JobRunner, error)
 
 // Options configures a Daemon.
 type Options struct {
@@ -66,6 +70,9 @@ type Options struct {
 	Source  source.Source
 	JobUser executor.JobUser
 	Slots   int // job slots of a run; <= 0 means scheduler.DefaultSlots()
+	// Cache is the setup step cache the executor uses; GC evicts its
+	// entries. nil: GC leaves <state>/cache alone.
+	Cache *cache.Cache
 	// Deploys decides triggers that name an env; nil checks GitHub with
 	// hub-issued tokens and records accepted runs in the store.
 	Deploys DeployIntake
@@ -79,6 +86,10 @@ type Options struct {
 	// HubInfo reads the hub's /v1/info when the daemon starts; nil fetches
 	// it from the paired hub.
 	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
+	// BranchProtected reports whether branch of repo has GitHub branch
+	// protection, asked for the check run runID; nil asks GitHub with a
+	// token the hub issues for the run.
+	BranchProtected func(ctx context.Context, runID, repo, branch string) (bool, error)
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -105,9 +116,9 @@ type Daemon struct {
 
 	deploys     DeployIntake
 	deployWake  chan struct{}
-	deployQ     []protocol.Trigger // guarded by mu
-	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
-	deploySched *deploy.Scheduler  // runs accepted deploy runs
+	deployQ     []queuedDeploy    // guarded by mu
+	deploying   map[string]bool   // trigger ids queued, being decided or waiting to retry; guarded by mu
+	deploySched *deploy.Scheduler // runs accepted deploy runs
 	// deployRefs returns the GitHub client of a deploy run.
 	deployRefs func(run store.DeployRun) *trigger.GitHubRefChecker
 	// deployConfig loads the trusted .zeroci.yml at a deploy run's sha.
@@ -119,6 +130,9 @@ type Daemon struct {
 type work struct {
 	trig  protocol.Trigger
 	runID string
+	// retry: runID is the queued retry recovery stored for the trigger's
+	// interrupted run, so the run exists before the worker takes it.
+	retry bool
 
 	// Set when the worker takes it; guarded by Daemon.mu after that.
 	ctx         context.Context
@@ -166,6 +180,14 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
 	}
 	github := &http.Client{Timeout: githubTimeout}
+	if d.o.BranchProtected == nil {
+		d.o.BranchProtected = func(ctx context.Context, runID, repo, branch string) (bool, error) {
+			refs := &trigger.GitHubRefChecker{HTTP: github, Token: func(ctx context.Context, _ string) (string, error) {
+				return d.tokens.Request(ctx, runID)
+			}}
+			return refs.IsProtected(ctx, repo, branch)
+		}
+	}
 	if d.deploys == nil {
 		d.deploys = &hubIntake{
 			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
@@ -330,7 +352,7 @@ func (d *Daemon) interrupt(ctx context.Context, it protocol.Interrupt) {
 		w := d.queue[i]
 		d.queue = slices.Delete(d.queue, i, i+1)
 		d.mu.Unlock()
-		d.endUnstarted(ctx, w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+		d.cancelUnstarted(ctx, w, reason)
 		return
 	}
 	w := d.current
@@ -447,7 +469,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		return
 	}
 	policy := optionsForTrust(t.Trust)
-	inner, err := d.exec(co, p.checks, policy)
+	inner, err := d.exec(co, p.checks, policy, d.protectedPush(w.ctx, w))
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
@@ -465,9 +487,8 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.stopped(ctx, w)
 		return
 	}
-	run := storeRun(t, w.runID, co.SHA)
-	run.Slack = p.slack
-	if err := d.st.CreateRun(bg, run, storeJobs(p.checks)); err != nil {
+	run, err := d.startRun(bg, w, co.SHA, p)
+	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
 		return
@@ -530,8 +551,51 @@ func (d *Daemon) stopped(ctx context.Context, w *work) bool {
 	d.mu.Lock()
 	reason := w.interrupted
 	d.mu.Unlock()
-	d.endUnstarted(context.WithoutCancel(ctx), w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+	d.cancelUnstarted(context.WithoutCancel(ctx), w, reason)
 	return true
+}
+
+// startRun returns the stored run of w checked out at sha: a retry's run
+// is already stored, any other is created from w's trigger and p.
+func (d *Daemon) startRun(ctx context.Context, w *work, sha string, p plan) (store.Run, error) {
+	if w.retry {
+		return d.st.GetRun(ctx, w.runID)
+	}
+	run := storeRun(w.trig, w.runID, sha)
+	run.Slack = p.slack
+	return run, d.st.CreateRun(ctx, run, storeJobs(p.checks))
+}
+
+// protectedPush reports whether w is a trusted push to a protected branch.
+// A failed lookup is logged and counts as unprotected, so the run saves no
+// caches.
+func (d *Daemon) protectedPush(ctx context.Context, w *work) bool {
+	t := w.trig
+	branch, ok := strings.CutPrefix(t.Ref, "refs/heads/")
+	if t.Pr != nil || t.Trust != protocol.TriggerTrustTrusted || !ok {
+		return false
+	}
+	protected, err := d.o.BranchProtected(ctx, w.runID, t.Repo, branch)
+	if err != nil {
+		d.log.Warn("branch protection lookup failed; caches will not be saved", "repo", t.Repo, "branch", branch, "err", err)
+		return false
+	}
+	return protected
+}
+
+// cancelUnstarted reports w cancelled with reason before its run started.
+// A retry's run is already stored, so the store cancels it and reports that.
+func (d *Daemon) cancelUnstarted(ctx context.Context, w *work, reason string) {
+	if !w.retry {
+		d.endUnstarted(ctx, w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+		return
+	}
+	if err := d.st.Transition(ctx, w.runID, []store.RunState{store.RunQueued}, store.RunCancelled, reason); err != nil {
+		d.log.Error("cancel retry run failed", "run", w.runID, "err", err)
+	}
+	if err := d.st.SetTriggerState(ctx, w.trig.TriggerId, store.TriggerDone); err != nil {
+		d.log.Error("record trigger state failed", "trigger", w.trig.TriggerId, "err", err)
+	}
 }
 
 // endUnstarted reports the end of a trigger whose run was never created.
@@ -548,9 +612,13 @@ func (d *Daemon) endUnstarted(ctx context.Context, triggerID, runID string, stat
 	}
 }
 
+// reject reports that w's trigger cannot run. The hub has already been told
+// a retry's run, so that run is cancelled with reason instead.
 func (d *Daemon) reject(ctx context.Context, w *work, reason string, cause error) {
 	d.log.Warn("trigger rejected", "trigger", w.trig.TriggerId, "reason", reason, "err", cause)
-	if err := d.st.RejectTrigger(ctx, w.trig.TriggerId, reason); err != nil {
+	if w.retry {
+		d.cancelUnstarted(ctx, w, reason)
+	} else if err := d.st.RejectTrigger(ctx, w.trig.TriggerId, reason); err != nil {
 		d.log.Error("record rejected trigger failed", "trigger", w.trig.TriggerId, "err", err)
 	}
 	d.client.Flush()
@@ -574,9 +642,10 @@ func (d *Daemon) reportConfig(ctx context.Context, runID string, diags config.Di
 }
 
 // recoverTriggers settles the triggers an earlier daemon accepted but did
-// not finish. recovery.Recover has already interrupted their running runs; a
-// run still queued is cancelled and a trigger without a run is reported
-// interrupted.
+// not finish. recovery.Recover has already interrupted their running runs
+// and pointed a trigger whose check it re-queued at the retry; that retry is
+// queued to run again. Any other run still queued is cancelled and a
+// trigger without a run is reported interrupted.
 func (d *Daemon) recoverTriggers(ctx context.Context) error {
 	open, err := d.st.ListTriggers(ctx, store.TriggerAccepted, store.TriggerRunning)
 	if err != nil {
@@ -590,6 +659,11 @@ func (d *Daemon) recoverTriggers(ctx context.Context) error {
 			continue
 		case err != nil:
 			return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
+		case run.State == store.RunQueued && run.RetryOf != nil:
+			d.mu.Lock()
+			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true})
+			d.mu.Unlock()
+			continue
 		case run.State == store.RunQueued:
 			if err := d.st.Transition(ctx, run.ID, []store.RunState{store.RunQueued}, store.RunCancelled, recovery.InterruptedReason); err != nil {
 				return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
@@ -637,6 +711,30 @@ func storeRun(t protocol.Trigger, runID, sha string) store.Run {
 		r.BaseSHA = *t.BaseSha
 	}
 	return r
+}
+
+// retryTrigger rebuilds the trigger of retry, a stored retry of a hub check.
+// The fields the run does not keep (the pull request's head details, the
+// hub sequence numbers) are not used to run it.
+func retryTrigger(retry store.Run) protocol.Trigger {
+	trust, _, _ := strings.Cut(retry.TrustDomain, ":")
+	t := protocol.Trigger{
+		TriggerId: retry.TriggerID,
+		Repo:      retry.Repo,
+		Sha:       retry.SHA,
+		Ref:       retry.Ref,
+		Event:     protocol.TriggerEvent(retry.Event),
+		Attempt:   retry.Attempt,
+		Trust:     protocol.TriggerTrust(trust),
+	}
+	if retry.PR != nil {
+		t.Pr = &protocol.TriggerPr{Number: *retry.PR}
+	}
+	if retry.BaseSHA != "" {
+		base := retry.BaseSHA
+		t.BaseSha = &base
+	}
+	return t
 }
 
 func storeJobs(checks *config.ResolvedChecks) []store.Job {

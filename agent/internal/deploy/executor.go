@@ -93,7 +93,7 @@ func (u *UnitExecutor) Run(ctx context.Context, step string, argv []string, opts
 	if len(argv) == 0 {
 		return fmt.Errorf("deploy: step %s: empty command", step)
 	}
-	red := u.redactor()
+	red := u.Masker()
 	stdout := red.Writer(orDiscard(opts.Stdout))
 	stderr := red.Writer(orDiscard(opts.Stderr))
 	unit := UnitName(u.RunID)
@@ -115,8 +115,10 @@ func (u *UnitExecutor) Run(ctx context.Context, step string, argv []string, opts
 	return fmt.Errorf("deploy: step %s: %w", step, err)
 }
 
-// redactor returns u.Redactor extended with every Secrets value.
-func (u *UnitExecutor) redactor() *redact.Redactor {
+// Masker returns u.Redactor extended with every Secrets value: what masks the
+// command output, and what the engine masks the run log and failure reason
+// with.
+func (u *UnitExecutor) Masker() *redact.Redactor {
 	base := u.Redactor
 	if base == nil {
 		base, _ = redact.New(nil, nil)
@@ -156,7 +158,7 @@ func (u *UnitExecutor) args(unit string, argv []string, opts ExecOpts) []string 
 		args = append(args, "--working-directory="+opts.Dir)
 	}
 	args = append(args, "--")
-	return append(args, argv...)
+	return append(args, isolation.EscapeCommand(argv)...)
 }
 
 func orDiscard(w io.Writer) io.Writer {

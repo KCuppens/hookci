@@ -178,7 +178,11 @@ func TestRestoreIsCopyOnWrite(t *testing.T) {
 	if err := cleanup(); err != nil {
 		t.Fatal(err)
 	}
-	if after := treeState(t, entry); !maps.Equal(before, after) {
+	after := treeState(t, entry)
+	// Restore records the last use in the entry dir's mtime.
+	delete(before, ".")
+	delete(after, ".")
+	if !maps.Equal(before, after) {
 		t.Errorf("entry changed through the workdir:\nbefore %v\n after %v", before, after)
 	}
 }
@@ -534,5 +538,55 @@ func TestOverlayRestoreFailureUndoes(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(dst, p)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s left after a failed restore: %v", p, err)
 		}
+	}
+}
+
+// flakyUmount mounts every path but "b" and fails the first umount.
+type flakyUmount struct {
+	umounts int
+}
+
+func (f *flakyUmount) Run(_ context.Context, c execx.Cmd) error {
+	switch c.Name {
+	case "mount":
+		if filepath.Base(c.Args[len(c.Args)-1]) == "b" {
+			return errors.New("mount b failed")
+		}
+	case "umount":
+		f.umounts++
+		if f.umounts == 1 {
+			return errors.New("target busy")
+		}
+	}
+	return nil
+}
+
+func TestOverlayRestoreFailedUndoReturnsRetryingCleanup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("overlay is linux only")
+	}
+	runner := &flakyUmount{}
+	c := newCache(t, ModeOverlay, runner)
+	src := newWorkdir(t, map[string]string{"a/x.js": "x", "b/y.js": "y"})
+	k := mustKey(t, trustedApp, src, "a", "b")
+	if err := c.Save(context.Background(), k, pushPolicy, src); err != nil {
+		t.Fatal(err)
+	}
+	dst := newWorkdir(t, nil)
+	hit, cleanup, err := c.Restore(context.Background(), k, dst)
+	if hit || err == nil {
+		t.Fatalf("Restore = %v, %v, want an error", hit, err)
+	}
+	if runner.umounts != 1 {
+		t.Fatalf("umounts = %d, want the one failed undo umount", runner.umounts)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup retry: %v", err)
+	}
+	if runner.umounts != 2 {
+		t.Errorf("umounts = %d, want cleanup to retry the failed umount", runner.umounts)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, ".zeroci-cache")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("scratch left after cleanup retry: %v", err)
 	}
 }

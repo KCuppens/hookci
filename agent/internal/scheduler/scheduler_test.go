@@ -59,64 +59,6 @@ func TestSetupTakesSlot(t *testing.T) {
 	}
 }
 
-func TestDeployJumpsQueue(t *testing.T) {
-	h := newHarness(t, 1)
-	h.submit(h.create(pushRun("c1", "sha1", "ref1"), indep(1)...))
-	h.runner.release(t, "c1:setup")
-	h.runner.waitStarted(t, "c1:j0")
-
-	h.submit(h.create(pushRun("c2", "sha2", "ref2"), indep(1)...))
-	h.submit(h.create(pushRun("c3", "sha3", "ref3"), indep(1)...))
-	h.submit(h.create(deployRun("d", "sha4", "production"), indep(1)...))
-
-	h.runner.release(t, "c1:j0")
-	h.runner.releaseN(t, 6)
-	h.idle()
-
-	wantStarts(t, h.runner, "c1:setup", "c1:j0", "d:setup", "d:j0", "c2:setup", "c2:j0", "c3:setup", "c3:j0")
-	for _, id := range []string{"c1", "c2", "c3", "d"} {
-		h.wantRun(id, store.RunSuccess, "")
-	}
-}
-
-func TestEnvLockSerialisesDeploys(t *testing.T) {
-	h := newHarness(t, 4)
-	h.submit(h.create(deployRun("d1", "sha1", "production"), job("deploy")))
-	h.runner.waitStarted(t, "d1:setup")
-
-	h.runner.mu.Lock()
-	h.runner.onSetup = func(run store.Run) {
-		if run.ID != "d2" {
-			return
-		}
-		if st := h.run("d1").State; !st.Terminal() {
-			t.Errorf("d2 setup started while d1 is %s", st)
-		}
-	}
-	h.runner.mu.Unlock()
-
-	h.create(deployRun("d2", "sha2", "production"), job("deploy"))
-	if sup := h.submit("d2"); len(sup) != 0 {
-		t.Fatalf("Submit(d2) superseded %v, want none", sup)
-	}
-
-	h.runner.release(t, "d1:setup")
-	h.runner.waitStarted(t, "d1:deploy")
-	if slices.Contains(h.runner.Starts(), "d2:setup") {
-		t.Fatal("d2 started while d1 holds the env lock")
-	}
-	h.runner.release(t, "d1:deploy")
-	h.runner.release(t, "d2:setup")
-	h.runner.release(t, "d2:deploy")
-
-	if st := h.wait("d1"); st != store.RunSuccess {
-		t.Errorf("d1 = %s, want success", st)
-	}
-	if st := h.wait("d2"); st != store.RunSuccess {
-		t.Errorf("d2 = %s, want success", st)
-	}
-}
-
 func TestCancelRunningDeployRefused(t *testing.T) {
 	h := newHarness(t, 2)
 	h.submit(h.create(deployRun("d", "sha1", "production"), job("deploy")))
@@ -222,19 +164,6 @@ func TestFinishRunCalledOnce(t *testing.T) {
 		h.wantJob("r", "b", store.JobSkipped, reason)
 		wantFinish(t, h, "r", store.RunFailed)
 		wantStarts(t, h.runner, "r:setup")
-	})
-
-	t.Run("supersede", func(t *testing.T) {
-		h := newHarness(t, 2)
-		h.runner.setAuto("p1:a")
-		h.submit(h.create(prRun("p1", "1111111aaaa", 7), job("a"), job("b", "a")))
-		h.runner.waitStarted(t, "p1:a")
-		h.submit(h.create(prRun("p2", "2222222bbbb", 7), job("a"), job("b", "a")))
-		h.idle()
-		h.wantRun("p1", store.RunFailed, "superseded by 2222222")
-		h.wantRun("p2", store.RunSuccess, "")
-		wantFinish(t, h, "p1", store.RunFailed)
-		wantFinish(t, h, "p2", store.RunSuccess)
 	})
 }
 

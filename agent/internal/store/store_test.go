@@ -271,6 +271,28 @@ func TestCreateRetryTwice(t *testing.T) {
 	}
 }
 
+func TestLastAttempt(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"})
+	mustCreateRun(t, s, testRun("r2"), Job{Name: "lint"})
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRetry(ctx, "r1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		sha, event string
+		want       int
+	}{{"sha-r1", "push", 2}, {"sha-r2", "push", 1}, {"sha-r1", "local", 0}, {"sha-none", "push", 0}} {
+		got, err := s.LastAttempt(ctx, "acme/web", tc.sha, tc.event, "")
+		if err != nil || got != tc.want {
+			t.Errorf("LastAttempt(%s, %s) = %d, %v; want %d", tc.sha, tc.event, got, err, tc.want)
+		}
+	}
+}
+
 func TestInterruptRun(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -308,10 +330,60 @@ func TestInterruptRun(t *testing.T) {
 	if retry.Attempt != 2 || retry.RetryOf == nil || *retry.RetryOf != "r1" || retry.State != RunQueued {
 		t.Errorf("retry = %+v, want queued attempt 2 of r1", retry)
 	}
+	items, err := s.Pending(ctx, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Kind == "accepted" {
+			t.Errorf("accepted frame %s for a run without a trigger row", it.Payload)
+		}
+	}
 
 	noRetry, err := s.InterruptRun(ctx, "r1", "again", false)
 	if !errors.Is(err, ErrStateMismatch) || noRetry.ID != "" {
 		t.Errorf("InterruptRun of an interrupted run = %+v, %v; want ErrStateMismatch", noRetry, err)
+	}
+}
+
+// A retry takes over the trigger of the run it retries, reported in an
+// accepted frame ahead of the interrupted run's events.
+func TestInterruptRunMovesTrigger(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	if _, err := s.AcceptTrigger(ctx, "trig-r1", "r1"); err != nil {
+		t.Fatal(err)
+	}
+	mustCreateRun(t, s, testRun("r1"), Job{Name: "lint"})
+	if err := s.Transition(ctx, "r1", []RunState{RunQueued}, RunRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Pending(ctx, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	retry, err := s.InterruptRun(ctx, "r1", "agent restarted", true)
+	if err != nil {
+		t.Fatalf("InterruptRun: %v", err)
+	}
+	triggers, err := s.ListTriggers(ctx)
+	if err != nil || len(triggers) != 1 || triggers[0].RunID != retry.ID {
+		t.Fatalf("triggers = %+v, %v; want trig-r1 on %s", triggers, err, retry.ID)
+	}
+	items, err := s.Pending(ctx, before[len(before)-1].Seq, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) < 2 || items[0].Kind != "accepted" || items[1].Kind != KindEvent {
+		t.Fatalf("frames = %+v, want accepted then the interrupted events", items)
+	}
+	var acc protocol.Accepted
+	if err := protocol.Unmarshal(items[0].Payload, &acc); err != nil {
+		t.Fatal(err)
+	}
+	if acc.TriggerId != "trig-r1" || acc.RunId != retry.ID {
+		t.Fatalf("accepted = %+v, want trig-r1 on %s", acc, retry.ID)
 	}
 }
 

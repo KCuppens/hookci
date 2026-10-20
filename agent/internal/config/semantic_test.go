@@ -153,8 +153,11 @@ func TestEnvFileWritableWarns(t *testing.T) {
 		want []string
 	}{
 		{"root 0600", fakeInfo{mode: 0o600, sys: &syscall.Stat_t{Uid: 0}}, nil, nil},
-		{"group writable", fakeInfo{mode: 0o620, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"writable by group or others (mode 0620)"}},
-		{"other writable", fakeInfo{mode: 0o602, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"writable by group or others"}},
+		{"root 0400", fakeInfo{mode: 0o400, sys: &syscall.Stat_t{Uid: 0}}, nil, nil},
+		{"group writable", fakeInfo{mode: 0o620, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0620), want 0600"}},
+		{"group readable", fakeInfo{mode: 0o640, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0640), want 0600"}},
+		{"other readable", fakeInfo{mode: 0o604, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0604)"}},
+		{"other writable", fakeInfo{mode: 0o602, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access"}},
 		{"not root", fakeInfo{mode: 0o600, sys: &syscall.Stat_t{Uid: 1000}}, nil, []string{"owned by uid 1000, not root"}},
 		{"missing", nil, fs.ErrNotExist, []string{"does not exist on this machine"}},
 	} {
@@ -188,7 +191,46 @@ func TestEnvFileLookedUpInFS(t *testing.T) {
 	src := oneJob + scriptDeploy + "    env_file: /etc/app.env\n"
 	fsys := fstest.MapFS{"etc/app.env": {Mode: 0o666}}
 	_, diags := Parse([]byte(src), ParseOptions{FS: fsys})
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "writable by group or others (mode 0666)") {
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "gives group or others access (mode 0666)") {
 		t.Errorf("diagnostics:\n%s", diags.Format("test.yml"))
+	}
+}
+
+func TestCachePathsStayInside(t *testing.T) {
+	for p, ok := range map[string]bool{
+		".": false, "src/..": false, "~/../x": false, "/tmp": false, "../x": false,
+		"~": true, "~/.npm": true, "node_modules": true, "a/../b": true,
+	} {
+		src := "version: 1\nchecks:\n  setup:\n    - run: make\n      cache:\n        key: [go.sum]\n        paths: [" + strconv.Quote(p) + "]\n" + oneJob[len("version: 1\nchecks:\n"):]
+		_, diags := parseString(t, src, ParseOptions{})
+		bad := false
+		for _, d := range diags {
+			if d.Path == "checks.setup[0].cache.paths[0]" {
+				bad = true
+			}
+		}
+		if bad == ok {
+			t.Errorf("cache path %q: rejected = %v, want %v\n%s", p, bad, !ok, diags.Format("test.yml"))
+		}
+	}
+}
+
+func TestPostgresImageOfficialOnly(t *testing.T) {
+	for image, ok := range map[string]bool{
+		"postgrest/postgrest:1": false, "postgres:16 ": false, "-x": false, "postgres": false,
+		"postgres.evil.example/x:1": false,
+		"postgres:16-alpine":        true, "docker.io/library/postgres:16": true,
+	} {
+		src := oneJob + "  services:\n    postgres:\n      image: " + strconv.Quote(image) + "\n"
+		_, diags := parseString(t, src, ParseOptions{})
+		bad := false
+		for _, d := range diags {
+			if d.Path == "checks.services.postgres.image" {
+				bad = true
+			}
+		}
+		if bad == ok {
+			t.Errorf("image %q: rejected = %v, want %v\n%s", image, bad, !ok, diags.Format("test.yml"))
+		}
 	}
 }

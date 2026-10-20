@@ -411,11 +411,11 @@
               "enum": ["caddy"]
             },
             "file": {
-              "description": "Absolute path of the route file zeroci writes.",
+              "description": "Absolute, clean path of the route file zeroci writes. It must be inside one of the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink leading out of it.",
               "type": "string"
             },
             "reload": {
-              "description": "Command that reloads the proxy after the route file changes.",
+              "description": "Command that reloads the proxy after the route file changes. It runs as root, so it must be caddy reload [flags], /usr/bin/caddy reload [flags], /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload [flags] or systemctl reload caddy. It is split into words like a shell would, but no shell runs it.",
               "type": "string",
               "minLength": 1,
               "default": "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile"
@@ -537,11 +537,34 @@
               "minimum": 0,
               "default": 10737418240
             },
+            "cache_max_bytes": {
+              "description": "Total size of the setup step caches under <state>/cache above which the agent removes the least recently used entries. Entries unused for 14 days are removed regardless.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 10737418240
+            },
             "min_free_bytes": {
               "description": "Free disk space below which the agent prunes images and build cache. A deploy does not start while the docker root dir or the state dir has less free.",
               "type": "integer",
               "minimum": 0,
               "default": 5368709120
+            }
+          }
+        },
+        "deploy": {
+          "description": "Deploy settings.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "route_dirs": {
+              "description": "Directories a deployment's route.file may be in. Each is an absolute, clean path; the agent writes route files there as root.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "minItems": 1,
+              "default": ["/etc/caddy"]
             }
           }
         },

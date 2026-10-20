@@ -24,8 +24,9 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print a JSON array")
+	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] status [run] [--json]")
+		fmt.Fprintln(stderr, "usage: zeroci [global flags] status [run] [--json] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "List the last 20 runs, or the jobs of one run.")
 		fs.PrintDefaults()
@@ -41,6 +42,11 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		fs.Usage()
 		return ExitUsage
 	}
+	stateDir, ok := dirFlags.resolve(stderr)
+	if !ok {
+		return ExitUsage
+	}
+	d.Globals.StateDir = stateDir
 
 	db, err := openStateStore(d)
 	if err != nil {

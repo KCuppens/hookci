@@ -5,6 +5,7 @@ package hubtokens
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -18,9 +19,15 @@ import (
 // Timeout bounds how long Request waits for the hub's token frame.
 const Timeout = 30 * time.Second
 
-// Sender queues a frame for the hub; *hubclient.Client implements it.
+// ErrRefused is wrapped by the Request error when the hub refused the token,
+// as it does for a run or trigger it no longer holds open.
+var ErrRefused = errors.New("hubtokens: hub refused a token")
+
+// Sender queues a frame for the hub and withdraws one nobody waits for any
+// more; *hubclient.Client implements it.
 type Sender interface {
 	Send(ctx context.Context, f protocol.Frame) (int64, error)
+	Withdraw(ctx context.Context, seq int64) error
 }
 
 // Broker pairs token requests with the hub's answers by run ID. It is safe
@@ -54,7 +61,8 @@ func New(s Sender, clk clock.Clock) *Broker {
 
 // Request asks the hub for a fetch token for id, a run or deploy trigger
 // ID, and waits up to Timeout for it. The token is registered with the
-// redactor before it is returned.
+// redactor before it is returned. A request that gets no answer is withdrawn
+// from the outbox, so a reconnect does not replay it.
 func (b *Broker) Request(ctx context.Context, id string) (string, error) {
 	w := &waiter{id: id, ch: make(chan answer, 1)}
 	b.mu.Lock()
@@ -63,13 +71,14 @@ func (b *Broker) Request(ctx context.Context, id string) (string, error) {
 	defer b.drop(w)
 
 	timeout := b.clk.After(Timeout)
-	if _, err := b.send.Send(ctx, protocol.TokenRequest{RunId: id, Purpose: protocol.TokenRequestPurposeFetch}); err != nil {
+	seq, err := b.send.Send(ctx, protocol.TokenRequest{RunId: id, Purpose: protocol.TokenRequestPurposeFetch})
+	if err != nil {
 		return "", fmt.Errorf("hubtokens: request token for %s: %w", id, err)
 	}
 	select {
 	case a := <-w.ch:
 		if a.refused {
-			return "", fmt.Errorf("hubtokens: hub refused a token for %s: %s", id, a.refusal)
+			return "", fmt.Errorf("%w for %s: %s", ErrRefused, id, a.refusal)
 		}
 		if a.tok.Token == "" {
 			return "", fmt.Errorf("hubtokens: empty token for %s", id)
@@ -77,10 +86,19 @@ func (b *Broker) Request(ctx context.Context, id string) (string, error) {
 		redact.AddSecret(a.tok.Token, time.Unix(int64(a.tok.Exp), 0))
 		return a.tok.Token, nil
 	case <-timeout:
-		return "", fmt.Errorf("hubtokens: no token for %s within %s", id, Timeout)
+		return "", b.withdraw(ctx, seq, fmt.Errorf("hubtokens: no token for %s within %s", id, Timeout))
 	case <-ctx.Done():
-		return "", fmt.Errorf("hubtokens: token for %s: %w", id, ctx.Err())
+		return "", b.withdraw(ctx, seq, fmt.Errorf("hubtokens: token for %s: %w", id, ctx.Err()))
 	}
+}
+
+// withdraw drops the unanswered request seq from the outbox and returns
+// cause, joined with any withdraw failure.
+func (b *Broker) withdraw(ctx context.Context, seq int64, cause error) error {
+	if err := b.send.Withdraw(context.WithoutCancel(ctx), seq); err != nil {
+		return errors.Join(cause, fmt.Errorf("hubtokens: withdraw token request: %w", err))
+	}
+	return cause
 }
 
 // Deliver hands a token frame to every Request waiting on its run ID. A

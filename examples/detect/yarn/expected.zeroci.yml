@@ -6,7 +6,7 @@ checks:
     - run: yarn install --immutable
       cache:
         key: [yarn.lock]
-        paths: [node_modules, packages/*/node_modules]
+        paths: [node_modules, packages/core/node_modules]
   jobs:
     lint:
       run: yarn run lint

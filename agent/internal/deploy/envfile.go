@@ -6,6 +6,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
 )
 
@@ -34,7 +35,7 @@ func LoadEnvFile(path string, requireRootOwned bool) (map[string]string, error) 
 			return nil, fmt.Errorf("env_file: %w", err)
 		}
 		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok || st.Uid != 0 || fi.Mode().Perm()&0o077 != 0 {
+		if !ok || st.Uid != 0 || !config.EnvFilePermOK(fi.Mode().Perm()) {
 			return nil, fmt.Errorf("env_file: %s must be owned by root with mode 0600", path)
 		}
 	}

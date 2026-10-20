@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -28,9 +29,17 @@ const (
 
 var defaultReloadArgv = []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}
 
+// reloadAllowed is the rule ParseReload enforces, for messages.
+const reloadAllowed = "route.reload may only be caddy reload [flags], /usr/bin/caddy reload [flags], /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload [flags] or systemctl reload caddy"
+
+// containerName is a docker container name as docker exec accepts it.
+var containerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
 // fsys is the filesystem surface Apply uses, so tests can inject faults.
 type fsys interface {
 	ReadFile(name string) ([]byte, error)
+	Lstat(name string) (fs.FileInfo, error)
+	EvalSymlinks(path string) (string, error)
 	CreateTemp(dir, pattern string) (tempFile, error)
 	Rename(oldpath, newpath string) error
 	Remove(name string) error
@@ -49,27 +58,117 @@ type tempFile interface {
 // Adapter is the Caddy proxy.ProxyAdapter.
 type Adapter struct {
 	Runner     execx.Runner // M0 command runner (fake in tests)
-	ReloadArgv []string     // parsed from route.reload, default ["caddy","reload","--config","/etc/caddy/Caddyfile","--adapter","caddyfile"]
+	ReloadArgv []string     // from ParseReload; Reload refuses any other
+	RouteDirs  []string     // the agent's deploy.route_dirs; Apply writes only below them
 	FS         fsys         // small interface: ReadFile, WriteTemp+Sync+Rename, for fault injection
 }
 
 var _ proxy.ProxyAdapter = (*Adapter)(nil)
 
-// New returns an Adapter whose reload command is route.reload split into
-// argv with shell-words rules; no shell is ever invoked. An empty reload
-// selects the default caddy reload command.
-func New(runner execx.Runner, reload string) (*Adapter, error) {
-	argv := slices.Clone(defaultReloadArgv)
-	if strings.TrimSpace(reload) != "" {
-		var err error
-		if argv, err = splitArgv(reload); err == nil && (len(argv) == 0 || argv[0] == "") {
-			err = errors.New("empty command")
-		}
-		if err != nil {
-			return nil, fmt.Errorf("caddy: route.reload %q: %w", reload, err)
+// New returns an Adapter whose reload command is ParseReload(reload) and
+// whose route files must be below one of routeDirs, each an absolute, clean
+// directory other than /.
+func New(runner execx.Runner, reload string, routeDirs []string) (*Adapter, error) {
+	argv, err := ParseReload(reload)
+	if err != nil {
+		return nil, fmt.Errorf("caddy: %w", err)
+	}
+	if len(routeDirs) == 0 {
+		return nil, errors.New("caddy: deploy.route_dirs is empty")
+	}
+	for _, d := range routeDirs {
+		if !filepath.IsAbs(d) || filepath.Clean(d) != d || d == "/" {
+			return nil, fmt.Errorf("caddy: deploy.route_dirs entry %q is not an absolute, clean directory below /", d)
 		}
 	}
-	return &Adapter{Runner: runner, ReloadArgv: argv, FS: osFS{}}, nil
+	return &Adapter{Runner: runner, ReloadArgv: argv, RouteDirs: slices.Clone(routeDirs), FS: osFS{}}, nil
+}
+
+// ParseReload splits route.reload into argv with shell-words rules; no shell
+// is ever invoked. An empty reload selects the default caddy reload command.
+// The command runs as root, so only caddy reload commands are allowed: caddy,
+// /usr/bin/caddy or /usr/local/bin/caddy with the reload subcommand, caddy
+// reload inside a container through docker exec <container>, or systemctl
+// reload caddy.
+func ParseReload(reload string) ([]string, error) {
+	if strings.TrimSpace(reload) == "" {
+		return slices.Clone(defaultReloadArgv), nil
+	}
+	argv, err := splitArgv(reload)
+	if err == nil {
+		err = checkReloadArgv(argv)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("route.reload %q: %w", reload, err)
+	}
+	return argv, nil
+}
+
+func checkReloadArgv(argv []string) error {
+	if len(argv) == 0 || argv[0] == "" {
+		return errors.New("empty command")
+	}
+	caddyReload := func(argv []string) bool {
+		return len(argv) > 1 && slices.Contains([]string{"caddy", "/usr/bin/caddy", "/usr/local/bin/caddy"}, argv[0]) && argv[1] == "reload"
+	}
+	switch {
+	case slices.Equal(argv, []string{"systemctl", "reload", "caddy"}),
+		caddyReload(argv),
+		len(argv) > 3 && argv[0] == "docker" && argv[1] == "exec" && containerName.MatchString(argv[2]) &&
+			argv[3] == "caddy" && caddyReload(argv[3:]):
+		return nil
+	}
+	return errors.New("not allowed; " + reloadAllowed)
+}
+
+// RouteDir returns the entry of dirs that file is below. file must be an
+// absolute, clean path. RouteDir does not look at the filesystem.
+func RouteDir(dirs []string, file string) (string, error) {
+	if !filepath.IsAbs(file) || filepath.Clean(file) != file {
+		return "", fmt.Errorf("route.file %q is not an absolute, clean path", file)
+	}
+	for _, d := range dirs {
+		if within(d, file) {
+			return d, nil
+		}
+	}
+	return "", fmt.Errorf("route.file %s is not inside the agent's deploy.route_dirs (%s)", file, strings.Join(dirs, ", "))
+}
+
+// within reports whether path is strictly below dir; both are clean.
+func within(dir, path string) bool {
+	return strings.HasPrefix(path, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator))
+}
+
+// checkTarget refuses a route file that is not below RouteDirs by its path,
+// by a symlinked directory on the way, or by being a symlink itself: the
+// agent reads and writes it as root.
+func (a *Adapter) checkTarget(file string) error {
+	dir, err := RouteDir(a.RouteDirs, file)
+	if err != nil {
+		return fmt.Errorf("caddy: %w", err)
+	}
+	root, err := a.FS.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("caddy: route dir %s: %w", dir, err)
+	}
+	parent, err := a.FS.EvalSymlinks(filepath.Dir(file))
+	if err != nil {
+		return fmt.Errorf("caddy: route.file %s: %w", file, err)
+	}
+	if parent != root && !within(root, parent) {
+		return fmt.Errorf("caddy: route.file %s resolves to %s, outside %s", file, filepath.Join(parent, filepath.Base(file)), dir)
+	}
+	info, err := a.FS.Lstat(file)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("caddy: route.file %s: %w", file, err)
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("caddy: route.file %s is not a regular file (%s)", file, info.Mode().Type())
+	}
+	return nil
 }
 
 // Render returns the two-line route snippet for route.
@@ -91,6 +190,9 @@ func (a *Adapter) Render(route proxy.RouteSpec) ([]byte, error) {
 // same directory, fsyncs it, renames it over file and fsyncs the directory.
 // It returns the previous contents, nil when file did not exist.
 func (a *Adapter) Apply(_ context.Context, file string, content []byte) ([]byte, error) {
+	if err := a.checkTarget(file); err != nil {
+		return nil, err
+	}
 	prev, err := a.FS.ReadFile(file)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -135,8 +237,12 @@ func writeSynced(f tempFile, content []byte) error {
 	return err
 }
 
-// Reload runs ReloadArgv with a 30s timeout.
+// Reload runs ReloadArgv with a 30s timeout. It refuses an argv that
+// ParseReload would not have returned.
 func (a *Adapter) Reload(ctx context.Context) error {
+	if err := checkReloadArgv(a.ReloadArgv); err != nil {
+		return fmt.Errorf("caddy: reload %q: %w", strings.Join(a.ReloadArgv, " "), err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, reloadTimeout)
 	defer cancel()
 
@@ -248,6 +354,10 @@ func isSpace(r rune) bool {
 type osFS struct{}
 
 func (osFS) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
+
+func (osFS) Lstat(name string) (fs.FileInfo, error) { return os.Lstat(name) }
+
+func (osFS) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
 
 func (osFS) CreateTemp(dir, pattern string) (tempFile, error) { return os.CreateTemp(dir, pattern) }
 

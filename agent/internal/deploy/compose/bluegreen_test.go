@@ -617,8 +617,14 @@ func TestBlueGreen_ResumeAfterEachStep(t *testing.T) {
 				t.Fatalf("Start survived a crash at step %d", k)
 			}
 			r.events.onStep = nil
-			if got := r.marker(t); k < 8 && got != "blue" {
-				t.Fatalf("marker after crash at step %d = %q, want blue", k, got)
+			// Step 6 is the swap: a crash before it completes leaves blue in
+			// the marker, a crash after it leaves green, the color it routed to.
+			want := "blue"
+			if k > 6 {
+				want = "green"
+			}
+			if got := r.marker(t); got != want {
+				t.Fatalf("marker after crash at step %d = %q, want %s", k, got, want)
 			}
 			if err := r.store.SetDeployRunState(context.Background(), id, store.DeployInterrupted, "agent restarted", bgT0); err != nil {
 				t.Fatal(err)
@@ -746,10 +752,13 @@ func TestBlueGreen_RetryAfterCrashBeforeRestoreReload_Reloads(t *testing.T) {
 	if got := r.proxy.servedRoute(); got != blue {
 		t.Fatalf("proxy serves %q, want the restored %q", got, blue)
 	}
+	if got := r.marker(t); got != "blue" {
+		t.Fatalf("marker = %q, want the restored blue", got)
+	}
 }
 
-// Once finalize wrote the marker the deploy is committed: a failed stop of
-// the previous color must not roll the live color back.
+// Once verify passed the deploy is committed: a failed stop of the previous
+// color must not roll the live color back.
 func TestBlueGreen_FinalizeDownFailure_KeepsCommittedColor(t *testing.T) {
 	r := newBGRig(t)
 	wantSuccess(t, r.deploy(t))
@@ -772,9 +781,8 @@ func TestBlueGreen_FinalizeDownFailure_KeepsCommittedColor(t *testing.T) {
 	}
 }
 
-// A rollback of a step whose outputs name the color the marker already
-// holds, as the rollback a retry finishes after a failed finalize, must not
-// revert the committed color.
+// The rollback a retry finishes after a failed finalize must not revert the
+// color verify committed.
 func TestBlueGreen_RollbackOfCommittedColor_DoesNothing(t *testing.T) {
 	r := newBGRig(t)
 	wantSuccess(t, r.deploy(t))
@@ -801,6 +809,89 @@ func TestBlueGreen_RollbackOfCommittedColor_DoesNothing(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "nothing to roll back") {
 		t.Fatalf("log = %q, want why nothing was rolled back", log.String())
+	}
+}
+
+// A run stopped right after its swap, whose rollback never ran, leaves the
+// new color serving. The swap recorded that color in the marker, so the next
+// run deploys to the other color: it must not start, migrate or stop the live
+// one before its own swap moves traffic away from it. The engine runs the
+// third deploy directly; the scheduler would hold it until the interrupted
+// run is retried.
+func TestBlueGreen_RunAfterStopAfterSwap_KeepsLiveColor(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	blue := fmt.Sprintf("blue %d\n", store.DefaultPortLo)
+	green := fmt.Sprintf("green %d\n", store.DefaultPortLo+1)
+
+	id := r.newRun(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.events.onStep = func(i int) {
+		if i == finalizeIndex(r.cfg)-1 {
+			cancel()
+		}
+	}
+	if err := r.engine.Start(ctx, id); err == nil {
+		t.Fatal("Start survived a stop after the swap")
+	}
+	r.events.onStep = nil
+	if got := r.proxy.servedRoute(); got != green {
+		t.Fatalf("proxy after the stop serves %q, want %q", got, green)
+	}
+	if got := r.marker(t); got != "green" {
+		t.Fatalf("marker after the stop = %q, want green, the color the swap routed to", got)
+	}
+	if err := r.store.SetDeployRunState(context.Background(), id, store.DeployInterrupted, "agent restarted", bgT0); err != nil {
+		t.Fatal(err)
+	}
+
+	r.exec.reset()
+	swapAt := -1
+	r.proxy.onApply = func(content string) {
+		if content == blue {
+			swapAt = len(r.exec.commands())
+		}
+	}
+	wantSuccess(t, r.deploy(t))
+	cmds := r.exec.commands()
+	if swapAt < 0 {
+		t.Fatalf("third run never routed to blue; commands %q", cmds)
+	}
+	for _, c := range cmds[:swapAt] {
+		if strings.Contains(c, " -p myapp-green ") {
+			t.Fatalf("third run issued %q against the live color before its swap", c)
+		}
+	}
+	if got := downs(cmds); !slices.Equal(got, []string{"myapp-green"}) {
+		t.Fatalf("down projects = %v, want only the finalize stop of myapp-green", got)
+	}
+	if got := r.marker(t); got != "blue" {
+		t.Fatalf("marker = %q, want blue", got)
+	}
+	if got := r.proxy.servedRoute(); got != blue {
+		t.Fatalf("proxy serves %q, want %q", got, blue)
+	}
+}
+
+// A rollback before the swap of a color the marker names must not stop it:
+// that color serves.
+func TestBlueGreen_RollbackBeforeSwapOfServingColor_DoesNothing(t *testing.T) {
+	r := newBGRig(t)
+	run := r.deploy(t)
+	wantSuccess(t, run)
+	r.exec.reset()
+	var log strings.Builder
+
+	sc := &deploy.StepContext{Run: run, Cfg: r.cfg, Outputs: map[string]string{"color": "blue"}, Exec: r.exec, Log: &log, Clock: clock.NewFake(bgT0)}
+	if err := r.strat.Rollback(context.Background(), sc, migrateIndex(r.cfg)+1); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if got := r.exec.commands(); len(got) != 0 {
+		t.Fatalf("commands = %q, want none", got)
+	}
+	if got := r.marker(t); got != "blue" {
+		t.Fatalf("marker = %q, want blue", got)
 	}
 }
 

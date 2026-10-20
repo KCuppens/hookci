@@ -4,18 +4,23 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
 	"net/http"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
+	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
 )
 
 // DefaultCaddyAdmin is the TCP address Caddy serves its admin API on unless
@@ -158,19 +163,31 @@ func caddyCheck(ctx context.Context, env Env, repos func(context.Context) ([]con
 	return pass(title, out)
 }
 
-// routeFileCheck wants the directory of every route file to exist and
-// accept new files, since the route is written to a temp file there and
-// renamed into place.
+// routeFileCheck wants every route file inside deploy.route_dirs of every
+// paired installation, or the default dirs when none is paired, and its
+// directory to exist and accept new files, since the route is written to a
+// temp file there and renamed into place.
 func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.ZeroCIConfig, error)) Result {
 	const title = "route files"
 	deps, err := deployments(ctx, repos)
 	if err != nil {
 		return fail(title, err.Error(), "fix .zeroci.yml: zeroci validate")
 	}
+	insts, err := pairedOrDefault(env)
+	if err != nil {
+		return fail(title, err.Error(), connectFix)
+	}
 	var dirs []string
 	for _, d := range deps {
 		if d.dep.Route == nil {
 			continue
+		}
+		for _, in := range insts {
+			routeDirs := deploy.RouteDirs(in.conf.AgentConfig)
+			if _, err := caddy.RouteDir(routeDirs, d.dep.Route.File); err != nil {
+				return fail(title, fmt.Sprintf("deployments.%s.%v", d.env, err),
+					fmt.Sprintf("move route.file into %s, or add its directory to deploy.route_dirs in %s", strings.Join(routeDirs, " or "), path.Join(in.dir, agentconf.FileName)))
+			}
 		}
 		dir := filepath.Dir(d.dep.Route.File)
 		fi, err := fs.Stat(env.FS, fsPath(dir))
@@ -191,8 +208,8 @@ func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([
 	return pass(title, strings.Join(slices.Compact(slices.Sorted(slices.Values(dirs))), ", ")+" writable")
 }
 
-// envFileCheck wants every env file owned by root and unreadable by others,
-// the rule a trusted deploy enforces when it loads the file.
+// envFileCheck wants every env file owned by root with no permission for
+// group or others, the rule a trusted deploy enforces when it loads the file.
 func envFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.ZeroCIConfig, error)) Result {
 	const title = "env files"
 	deps, err := deployments(ctx, repos)
@@ -216,15 +233,15 @@ func envFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]c
 			return fail(title, "cannot read the owner of "+file, fix)
 		case uid != 0:
 			return fail(title, fmt.Sprintf("%s is owned by uid %d, want root", file, uid), fix)
-		case fi.Mode().Perm()&^0o640 != 0:
-			return fail(title, fmt.Sprintf("%s has mode %04o, want 0600 or 0640", file, fi.Mode().Perm()), fix)
+		case !config.EnvFilePermOK(fi.Mode().Perm()):
+			return fail(title, fmt.Sprintf("%s has mode %04o, want 0600", file, fi.Mode().Perm()), fix)
 		}
 		files = append(files, file)
 	}
 	if len(files) == 0 {
 		return skip(title, "no deployment has an env_file")
 	}
-	return pass(title, strings.Join(files, ", ")+" root-owned, not world-readable")
+	return pass(title, strings.Join(files, ", ")+" root-owned, mode 0600")
 }
 
 // deployUserCheck wants deploy.DeployUser in the docker group, so deploy
@@ -304,8 +321,11 @@ func caddyAdminCheck(ctx context.Context, env Env, admin string) Result {
 		return fail(title, err.Error(), caddyAdminFix)
 	}
 	resp, err := env.HTTP.Do(req)
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return pass(title, "nothing listens on "+req.URL.Host)
+	}
 	if err != nil {
-		return pass(title, "nothing answers on "+req.URL.Host)
+		return warn(title, fmt.Sprintf("cannot tell whether the Caddy admin API is on %s: %v", req.URL.Host, err), caddyAdminFix)
 	}
 	resp.Body.Close()
 	detail := fmt.Sprintf("%s answers with %s", admin, resp.Status)
@@ -341,9 +361,9 @@ func diskCheck(ctx context.Context, env Env) Result {
 	if err != nil {
 		return fail(title, err.Error(), dockerFix)
 	}
-	insts, _ := installations(env)
-	if len(insts) == 0 {
-		insts = []installation{{dir: env.StateRoot}}
+	insts, err := pairedOrDefault(env)
+	if err != nil {
+		return fail(title, err.Error(), connectFix)
 	}
 	for _, in := range insts {
 		if err := deploy.CheckDiskHeadroom([]string{root, in.dir}, deploy.MinFreeBytes(in.conf.AgentConfig), env.DiskFree); err != nil {
@@ -351,4 +371,18 @@ func diskCheck(ctx context.Context, env Env) Result {
 		}
 	}
 	return pass(title, fmt.Sprintf("%s and %s above gc.min_free_bytes", root, env.StateRoot))
+}
+
+// pairedOrDefault is the paired installations, or the state root with the
+// default agent.json when none is paired. An agent.json that cannot be read
+// or decoded is an error.
+func pairedOrDefault(env Env) ([]installation, error) {
+	insts, err := installations(env)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	if len(insts) == 0 {
+		return []installation{{dir: env.StateRoot}}, nil
+	}
+	return insts, nil
 }

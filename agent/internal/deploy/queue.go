@@ -140,9 +140,14 @@ func (s *Scheduler) Wait() {
 	s.wg.Wait()
 }
 
-// Tick applies the queue rules once, in order: supersede, needs, env lock,
-// start. It returns how many runs it started. A run whose rules could not be
-// checked stays queued and its error is returned.
+// Tick applies the queue rules once, in order: interruption, supersede,
+// needs, env lock, start. It returns how many runs it started. A run whose
+// rules could not be checked stays queued and its error is returned.
+//
+// An Interrupted run left its env in an unknown state: a retry of it goes
+// first and is never superseded, the env's other runs wait for it, and while
+// no retry is queued the env's other runs fail until `zeroci retry` finishes
+// the interrupted one.
 func (s *Scheduler) Tick(ctx context.Context) (started int, err error) {
 	s.tickMu.Lock()
 	defer s.tickMu.Unlock()
@@ -174,8 +179,34 @@ func (s *Scheduler) Tick(ctx context.Context) (started int, err error) {
 		groups[k] = append(groups[k], pending{entry: e, run: run})
 	}
 
+	interrupted, err := s.unresolvedInterruptions(ctx, order)
+	if err != nil {
+		return 0, err
+	}
 	for _, k := range order {
 		group := groups[k]
+		if i := slices.IndexFunc(group, resolvesInterruption); i >= 0 {
+			ok, err := s.admit(ctx, group[i], leave)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if ok {
+				started++
+			}
+			continue
+		}
+		if blocker, ok := interrupted[k]; ok {
+			msg := fmt.Sprintf("deployments.%s: run %s was interrupted and left the environment in an unknown state; finish it with zeroci retry %s before deploying again",
+				k.env, blocker.RunID, blocker.RunID)
+			for _, p := range group {
+				if err := s.finish(ctx, p.run.RunID, store.DeployFailed, protocol.EventStateFailed, msg); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				leave[p.run.RunID] = true
+			}
+			continue
+		}
 		newest := group[0]
 		for _, p := range group[1:] {
 			if !p.run.CreatedAt.Before(newest.run.CreatedAt) {
@@ -210,6 +241,47 @@ func (s *Scheduler) Tick(ctx context.Context) (started int, err error) {
 		delete(s.needs, id)
 	}
 	return started, errors.Join(errs...)
+}
+
+// resolvesInterruption reports whether p takes up an Interrupted run: the
+// run itself or a queued retry of it.
+func resolvesInterruption(p pending) bool {
+	return p.run.State == store.DeployInterrupted || p.run.RetryOfState == store.DeployInterrupted
+}
+
+// unresolvedInterruptions returns, per env of keys, the oldest Interrupted
+// run no Success run of that env finished after.
+func (s *Scheduler) unresolvedInterruptions(ctx context.Context, keys []envKey) (map[envKey]store.DeployRun, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	runs, err := s.Store.ListDeployRunsInStates(ctx, store.DeployInterrupted)
+	if err != nil {
+		return nil, fmt.Errorf("deploy: %w", err)
+	}
+	out := map[envKey]store.DeployRun{}
+	lastSuccess := map[envKey]time.Time{}
+	for _, r := range runs {
+		k := envKey{r.Repo, r.Env}
+		if _, done := out[k]; done || !slices.Contains(keys, k) {
+			continue
+		}
+		last, ok := lastSuccess[k]
+		if !ok {
+			succ, err := s.Store.LastSucceededRuns(ctx, r.Repo, r.Env, 1)
+			if err != nil {
+				return nil, fmt.Errorf("deploy: %w", err)
+			}
+			if len(succ) > 0 {
+				last = succ[0].FinishedAt
+			}
+			lastSuccess[k] = last
+		}
+		if !last.After(r.FinishedAt) {
+			out[k] = r
+		}
+	}
+	return out, nil
 }
 
 // admit checks the needs of p, takes its env lock and starts it. It reports

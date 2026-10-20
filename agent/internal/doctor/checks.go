@@ -48,13 +48,14 @@ type installation struct {
 	conf agentconf.AgentConfig
 }
 
-// installations lists the state directories under the state root that hold
-// a readable agent.json, ordered by name.
+// installations lists the paired state directories under the state root,
+// the ones holding an agent.json, ordered by name. An agent.json that cannot
+// be read or decoded is an error naming it, not an unpaired directory.
 func installations(env Env) ([]installation, error) {
 	root := fsPath(env.StateRoot)
 	entries, err := fs.ReadDir(env.FS, root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", env.StateRoot, pathCause(err))
 	}
 	var out []installation
 	for _, e := range entries {
@@ -62,17 +63,30 @@ func installations(env Env) ([]installation, error) {
 			continue
 		}
 		dir := path.Join(root, e.Name())
-		raw, err := fs.ReadFile(env.FS, path.Join(dir, agentconf.FileName))
-		if err != nil {
+		file := "/" + path.Join(dir, agentconf.FileName)
+		raw, err := fs.ReadFile(env.FS, fsPath(file))
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file, pathCause(err))
+		}
 		var c agentconf.AgentConfig
-		if json.Unmarshal(raw, &c) != nil {
-			continue
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		out = append(out, installation{dir: "/" + dir, conf: c})
 	}
 	return out, nil
+}
+
+// pathCause drops the Env.FS path of a *fs.PathError, which lacks the
+// leading slash of the host path the caller names instead.
+func pathCause(err error) error {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		return pe.Err
+	}
+	return err
 }
 
 // PairedHub is the hub URL of the first paired installation under the state
@@ -129,8 +143,11 @@ func (systemdUnitCheck) ID() string { return "systemd_unit" }
 func (systemdUnitCheck) Run(ctx context.Context, env Env) Result {
 	const title = "agent service"
 	insts, err := installations(env)
-	if err != nil || len(insts) == 0 {
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && len(insts) == 0) {
 		return warn(title, "no paired installation under "+env.StateRoot, connectFix)
+	}
+	if err != nil {
+		return fail(title, err.Error(), connectFix)
 	}
 	var active []string
 	for _, in := range insts {
@@ -192,7 +209,7 @@ func (credentialCheck) Run(_ context.Context, env Env) Result {
 	const title = "agent credential"
 	insts, err := installations(env)
 	if err != nil {
-		return fail(title, fmt.Sprintf("%s: %v", env.StateRoot, err), connectFix)
+		return fail(title, err.Error(), connectFix)
 	}
 	var agents []string
 	for _, in := range insts {
