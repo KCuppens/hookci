@@ -28,6 +28,8 @@ if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 24 ]; }; then
 	fail "docker compose $compose is too old: 2.24 or newer is required"
 fi
 command -v caddy >/dev/null 2>&1 || fail "caddy is not installed"
+# Deploy builds set DOCKER_BUILDKIT=1, which needs the buildx plugin.
+docker buildx version >/dev/null 2>&1 || fail "docker buildx is not installed (docker-buildx-plugin, or docker-buildx on Ubuntu)"
 
 cd "$(dirname "$0")/../agent"
 ZEROCI_INTEGRATION=1 go test -tags integration -count=1 -timeout 60m ./internal/deploy/integration/... "$@"

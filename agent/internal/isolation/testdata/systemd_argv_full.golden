@@ -35,6 +35,8 @@ CPUQuota=150%
 -p
 MemoryMax=2147483648
 -p
+MemorySwapMax=0
+-p
 TasksMax=512
 -p
 RuntimeMaxSec=91

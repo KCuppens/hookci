@@ -340,7 +340,7 @@ type logEvents struct{ log *slog.Logger }
 func (logEvents) DeployPlanned(protocol.JobPlanned) {}
 
 func (l logEvents) DeployEvent(ev protocol.Event) {
-	l.log.Info("deploy event", "run", ev.RunId, "state", ev.State, "tail_lines", len(ev.Tail))
+	l.log.Info("deploy event", "run", ev.RunId, "state", ev.State, "tail", ev.Tail)
 }
 
 // eventLog records the events of the in-process agent.
@@ -585,6 +585,11 @@ func (h *harness) wait(t *testing.T, runID string) store.DeployRun {
 	run := h.waitState(t, runID, store.DeploySuccess, store.DeployFailed, store.DeployInterrupted, store.DeploySuperseded)
 	if h.agent != nil {
 		h.agent.sched.Wait()
+	}
+	if run.State == store.DeployFailed {
+		if ev, ok := h.events.last(runID); ok {
+			t.Logf("run %s failed; log tail:\n%s", runID, strings.Join(ev.Tail, "\n"))
+		}
 	}
 	return run
 }

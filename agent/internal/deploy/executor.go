@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -20,6 +21,11 @@ import (
 // DeployUser is the account deploy units run as. It may use docker and
 // localhost, which the PR sandbox user zeroci-run may not.
 const DeployUser = "zeroci-deploy"
+
+// DeployHome is HOME for deploy units: docker keeps its config in ~/.docker,
+// and DeployUser is created without a home. systemd creates it per unit via
+// StateDirectory, owned by DeployUser, mode 0700.
+const DeployHome = "/var/lib/zeroci-deploy"
 
 // stopTimeout bounds the systemctl stop after a canceled step.
 const stopTimeout = 30 * time.Second
@@ -134,9 +140,14 @@ func (u *UnitExecutor) args(unit string, argv []string, opts ExecOpts) []string 
 		"--gid=" + user,
 		"--pipe", "--wait", "--collect", "--quiet",
 		"--property=RuntimeMaxSec=" + maxSec,
+		"--property=StateDirectory=" + filepath.Base(DeployHome),
+		"--property=StateDirectoryMode=0700",
 	}
 	if u.EnvFile != "" {
 		args = append(args, "--property=EnvironmentFile="+u.EnvFile)
+	}
+	if _, ok := opts.Env["HOME"]; !ok {
+		args = append(args, "--setenv=HOME="+DeployHome)
 	}
 	for _, k := range slices.Sorted(maps.Keys(opts.Env)) {
 		args = append(args, "--setenv="+k+"="+opts.Env[k])

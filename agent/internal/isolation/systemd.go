@@ -85,6 +85,8 @@ func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
 	}
 	if l.MemoryBytes > 0 {
 		prop("MemoryMax=" + formatBytes(l.MemoryBytes))
+		// Without this the kernel swaps the overflow instead of killing it.
+		prop("MemorySwapMax=0")
 	}
 	if l.Tasks > 0 {
 		prop("TasksMax=" + strconv.Itoa(l.Tasks))
