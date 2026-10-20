@@ -8,7 +8,17 @@
 
 import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
-import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
+import {
+	acceptRun,
+	insertRun,
+	listJobNames,
+	markRunPending,
+	type RunPatch,
+	setRunSlackOverride,
+	supersedeRun,
+	updateRunState,
+	upsertJob,
+} from "../db/runs";
 import { recordDeployReply } from "../deploy/chain";
 import { onDeployEvent } from "../deploy/render";
 import { HubError } from "../errors";
@@ -18,7 +28,7 @@ import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
 import type { TrustRefusal } from "../policy/trust";
 import type { Event as EventFrame, Interrupt } from "../protocol";
-import { checkQuota } from "../quotas";
+import { checkQuota, QUOTAS } from "../quotas";
 import { fanOut, sinksFor, sinksForRun } from "../sinks";
 import { loadRunView } from "../sinks/runview";
 import { pruneStoredTails } from "../sinks/slack";
@@ -482,7 +492,9 @@ export function registerRunLifecycle(): () => void {
 
 		registerFrameHandler("accepted", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
-			await recordDeployReply(dob.bindings, frame);
+			// First: a malformed or taken run_id throws a 4xx before anything records it.
+			await acceptRun(dob.tenant(), row.trigger_id, frame.run_id, dob.agentId);
+			await recordDeployReply(dob.bindings, dob.installationId, frame);
 			dob.sql.exec(
 				"UPDATE triggers SET run_id = ?, state = CASE WHEN state = 'sent' THEN 'accepted' ELSE state END WHERE trigger_id = ?",
 				frame.run_id,
@@ -490,13 +502,12 @@ export function registerRunLifecycle(): () => void {
 			);
 			// Replaced after the agent already had it: stop the run it just started.
 			if (row.state === "superseded") await dob.send({ v: 1, type: "interrupt", run_id: frame.run_id, reason: "superseded" });
-			await acceptRun(dob.tenant(), row.trigger_id, frame.run_id, dob.agentId);
 			await fanOutRun(dob, frame.run_id, runUpdate);
 		}),
 
 		registerFrameHandler("rejected", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
-			await recordDeployReply(dob.bindings, frame);
+			await recordDeployReply(dob.bindings, dob.installationId, frame);
 			// rejected too: a replay of a frame whose D1 write failed must write it again.
 			if (row.state !== "sent" && row.state !== "accepted" && row.state !== "rejected") return;
 			dob.sql.exec("UPDATE triggers SET state = 'rejected' WHERE trigger_id = ?", row.trigger_id);
@@ -508,6 +519,11 @@ export function registerRunLifecycle(): () => void {
 		registerFrameHandler("job_planned", async (dob, frame) => {
 			ownedRun(dob, frame.run_id);
 			const t = dob.tenant();
+			const names = new Set(await listJobNames(t, frame.run_id));
+			for (const job of frame.jobs) names.add(job.name);
+			if (names.size > QUOTAS.jobsPerRun) {
+				throw new HubError("job_limit", 422, `run ${frame.run_id} would have ${names.size} jobs, over the ${QUOTAS.jobsPerRun} limit`);
+			}
 			for (const job of frame.jobs) {
 				await upsertJob(t, { run_id: frame.run_id, name: job.name, state: "queued", step: null, step_index: null, steps_total: null, duration_ms: null });
 			}
@@ -520,6 +536,11 @@ export function registerRunLifecycle(): () => void {
 			const t = dob.tenant();
 			const { job: name } = frame;
 			if (name !== undefined) {
+				const names = await listJobNames(t, frame.run_id);
+				if (!names.includes(name) && names.length >= QUOTAS.jobsPerRun) {
+					logEvent("job_limit", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, job: name });
+					return;
+				}
 				await upsertJob(t, {
 					run_id: frame.run_id,
 					name,
@@ -533,7 +554,7 @@ export function registerRunLifecycle(): () => void {
 					const job = run.jobs.find((j) => j.name === name);
 					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
 				});
-				await onDeployEvent(dob.bindings, frame);
+				await onDeployEvent(dob.bindings, dob.installationId, frame);
 				return;
 			}
 			const now = dob.clock.now();
@@ -546,7 +567,7 @@ export function registerRunLifecycle(): () => void {
 			if (TERMINAL[frame.state]) dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
 			await updateRunState(t, frame.run_id, frame.state, patch);
 			await fanOutRun(dob, frame.run_id, runUpdate);
-			await onDeployEvent(dob.bindings, frame);
+			await onDeployEvent(dob.bindings, dob.installationId, frame);
 		}),
 
 		registerFrameHandler("annotations", async (dob, frame) => {

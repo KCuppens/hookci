@@ -2,8 +2,10 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { upsertInstallation } from "../src/db/installations";
 import { getWorkspace, setWorkspaceStatus } from "../src/db/workspaces";
+import type { Fetcher } from "../src/http";
 import { issueSession } from "../src/oauth/state";
 import { escapeHtml } from "../src/pages/layout";
+import { exchangeSlackCode, revokeSlackToken } from "../src/slack/oauth";
 import { S } from "../src/strings";
 import { getBotToken } from "../src/slack/tokens";
 import { testClock } from "./clock";
@@ -305,11 +307,34 @@ describe("GET /slack/oauth/callback", () => {
     await storedNothing();
   });
 
+  it("shows slack_oauth_failed when Slack does not answer the code exchange in time", async () => {
+    slack.respond("POST", "/api/oauth.v2.access", () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    const res = await install();
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain(S.pages.errors.slack_oauth_failed);
+    await storedNothing();
+  });
+
   it("returns 429 for the 21st callback from one IP within 10 minutes", async () => {
     testClock.advance(600_000 - (testClock.now() % 600_000));
     for (let i = 1; i <= 20; i++) expect((await callback({ code: "x" })).status).toBe(400);
     expect((await callback({ code: "x" })).status).toBe(429);
     expect((await callback({ code: "x" }, undefined, "198.51.100.8")).status).toBe(400);
+  });
+});
+
+describe("Slack OAuth calls", () => {
+  it("give the code exchange and the revoke a timeout, and refuse a call that runs out", async () => {
+    const signals: unknown[] = [];
+    const late: Fetcher = async (_input, init) => {
+      signals.push(init?.signal);
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    };
+    await expect(exchangeSlackCode(env, late, "slack-code")).rejects.toMatchObject({ code: "slack_oauth_failed", status: 502 });
+    await expect(revokeSlackToken(late, BOT_TOKEN)).rejects.toMatchObject({ code: "slack_revoke_failed", status: 502 });
+    expect(signals).toEqual([expect.any(AbortSignal), expect.any(AbortSignal)]);
   });
 });
 

@@ -24,12 +24,22 @@ import {
 	sendTestDelivery,
 } from "../sinks/config-service";
 import type { DeliveryResult } from "../sinks/deliverers";
+import type { WaitUntil } from "../sinks/index";
 import { S } from "../strings";
 import { slackApi } from "./api";
 import { commandArgs, ephemeral } from "./commands/common";
 import { registerCommand, type SlackCommandRequest, type SlackReply } from "./registry";
 import { requireSinkManager, resolveRepo } from "./resolve";
-import { buildSinkAddedModal, buildSinkAddModal, isSlackViewSubmission, parseSinkAddSubmission, SINK_ADD_CALLBACK_ID, type SinkField } from "./sink-modal";
+import {
+	buildSinkAddModal,
+	buildSinkResultModal,
+	buildSinkSavingModal,
+	isSlackViewSubmission,
+	parseSinkAddSubmission,
+	SINK_ADD_CALLBACK_ID,
+	type SinkAddSubmission,
+	type SinkField,
+} from "./sink-modal";
 import type { SlackView } from "./views";
 
 /** A Telegram bot token, a URL such as a webhook's, or a Linear API or OAuth key: secrets that must not travel in command text. */
@@ -143,40 +153,70 @@ function submitErrors(err: unknown, teamId: string, kind: SinkKind | undefined):
 	return { kind: S.slack.failed };
 }
 
-/**
- * Adds the sink a submitted Add sink modal describes, after checking afresh
- * that the submitter is linked and admin or maintain on the repo. Refusals
- * come back as field errors in the modal. On success the result, with a
- * webhook's signing secret this once, is posted ephemeral to the submitter
- * in the channel the command ran in; when Slack refuses that post, the modal
- * shows the result instead so the secret is not lost.
- */
-export async function handleSinkAddSubmission(env: Env, teamId: string, userId: string, view: unknown): Promise<SinkAddResponse> {
-	let text: string;
-	let channel: string;
-	let kind: SinkKind | undefined;
+/** How long a submission waits on its checks and save before answering Slack, which drops a view_submission answer after 3 seconds. */
+export const SUBMIT_ANSWER_MS = 2_000;
+
+/** The result text of a saved submission, with a webhook's signing secret this once, or the field errors that refused it. */
+type SaveResult = { text: string } | { errors: Record<string, string> };
+
+/** Adds the sink of a parsed submission after checking afresh that the submitter is linked and admin or maintain on the repo. Never rejects. */
+async function saveSubmission(env: Env, teamId: string, userId: string, parsed: Exclude<SinkAddSubmission, { errors: unknown }>): Promise<SaveResult> {
 	try {
 		const user = await requireLinkedUser(env, teamId, userId);
-		const parsed = isSlackViewSubmission(view) ? parseSinkAddSubmission(view) : { errors: { kind: S.slack.sinkModal.expired } };
-		if ("errors" in parsed) return { response_action: "errors", errors: parsed.errors };
-		kind = parsed.input.kind;
-		channel = parsed.channel;
 		const repo = await resolveRepo(env, teamId, parsed.repo);
 		await requireSinkManager(env, repo.installationId, repo.fullName, user.githubLogin);
 		const actor: SinkActor = { type: "slack_user", id: `${teamId}:${userId}` };
 		const { sink, generatedSecret } = await addSinkConfig(env, tenantDb(env.DB, repo.installationId), actor, parsed.input);
 		const added = S.slack.sinkAdded(S.slack.sinkKind[sink.kind], sink.id, sink.repo, targetText(sink.target));
-		text = generatedSecret === undefined ? added : [added, S.slack.sinkSecret(generatedSecret), S.slack.sinkSecretOnce].join("\n");
+		return { text: generatedSecret === undefined ? added : [added, S.slack.sinkSecret(generatedSecret), S.slack.sinkSecretOnce].join("\n") };
 	} catch (err) {
-		return { response_action: "errors", errors: submitErrors(err, teamId, kind) };
+		return { errors: submitErrors(err, teamId, parsed.input.kind) };
 	}
-	try {
-		await slackApi(env, teamId, "chat.postEphemeral", { channel, user: userId, text });
-	} catch (err) {
-		if (!(err instanceof HubError && err.code === "slack_api")) throw err;
-		return { response_action: "update", view: buildSinkAddedModal(text) };
+}
+
+/** Shows a result that outlasted Slack's answer window in the modal, or ephemeral to the submitter in the command's channel once the modal is closed. */
+async function showLateResult(env: Env, teamId: string, userId: string, viewId: string | undefined, channel: string, result: SaveResult): Promise<void> {
+	const text = "errors" in result ? Object.values(result.errors).join("\n") : result.text;
+	if (viewId !== undefined) {
+		try {
+			await slackApi(env, teamId, "views.update", { view_id: viewId, view: buildSinkResultModal(!("errors" in result), text) });
+			return;
+		} catch (err) {
+			if (!(err instanceof HubError && err.code === "slack_api")) throw err;
+		}
 	}
-	return { response_action: "clear" };
+	await slackApi(env, teamId, "chat.postEphemeral", { channel, user: userId, text });
+}
+
+/**
+ * Adds the sink a submitted Add sink modal describes. A save done within
+ * SUBMIT_ANSWER_MS answers with its field errors, or turns the modal into the
+ * result, with a webhook's signing secret this once. A slower one turns the
+ * modal into a saving view without a submit, so it cannot be submitted twice,
+ * and finishes in ctx: the result replaces that view, or is posted ephemeral
+ * to the submitter in the command's channel when the modal was closed.
+ */
+export async function handleSinkAddSubmission(env: Env, ctx: WaitUntil, teamId: string, userId: string, view: unknown): Promise<SinkAddResponse> {
+	if (!isSlackViewSubmission(view)) return { response_action: "errors", errors: { kind: S.slack.sinkModal.expired } };
+	const parsed = parseSinkAddSubmission(view);
+	if ("errors" in parsed) return { response_action: "errors", errors: parsed.errors };
+	const saving = saveSubmission(env, teamId, userId, parsed);
+	let timer = 0;
+	const late = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), SUBMIT_ANSWER_MS);
+	});
+	const result = await Promise.race([saving, late]);
+	clearTimeout(timer);
+	if (result === null) {
+		ctx.waitUntil(
+			saving
+				.then((done) => showLateResult(env, teamId, userId, view.id, parsed.channel, done))
+				.catch((err: unknown) => reportError(err, { team_id: teamId, callback_id: SINK_ADD_CALLBACK_ID })),
+		);
+		return { response_action: "update", view: buildSinkSavingModal() };
+	}
+	if ("errors" in result) return { response_action: "errors", errors: result.errors };
+	return { response_action: "update", view: buildSinkResultModal(true, result.text) };
 }
 
 registerCommand("sink", (ctx) => handleSinkCommand(ctx.env, ctx, commandArgs(ctx.text)));

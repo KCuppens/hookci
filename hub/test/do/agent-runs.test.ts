@@ -3,9 +3,11 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bind } from "../../src/db/bindings";
 import { upsertInstallation } from "../../src/db/installations";
-import { updateRunState } from "../../src/db/runs";
+import { insertRun, updateRunState } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
+import { upsertDeployRender } from "../../src/deploy/render";
 import { pruneFinished, TRIGGER_RETENTION_MS } from "../../src/do/agent-runs";
+import { QUOTAS } from "../../src/quotas";
 import { registerSinkFactory } from "../../src/sinks";
 import type { Sink } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -707,5 +709,117 @@ describe("AgentDO run lifecycle", () => {
       tails: (await dob.state.storage.list({ prefix: "slack:tail:" })).size,
     }));
     expect(left).toEqual({ outbox: 0, triggers: 0, tails: 0 });
+  });
+
+  it("an accepted frame naming another agent's run is acked and leaves that run as it was", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const owner = await seedAgent(INSTALLATION);
+    const ownerSock = await online(owner);
+    const ownerTrigger = await acceptedRun(owner, ownerSock, "run_a");
+    const before = await run("run_a");
+
+    const intruder = await seedAgent(INSTALLATION);
+    const sock = await online(intruder);
+    const triggerId = await trigger(intruder, { repoId: 1002, repo: "acme/gadgets", sha: SHA_2 });
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId });
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_a" })).toEqual([]);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: 7 })).toEqual([]);
+
+    expect(await run("run_a")).toEqual(before);
+    expect(before).toMatchObject({ trigger_id: ownerTrigger, agent_id: owner.agentId, state: "queued" });
+    // The intruder still owns nothing it can report on, and its socket stays open for its own run.
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", state: "success", duration_ms: 1 });
+    expect(await run("run_a")).toEqual(before);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_b" })).toEqual([]);
+    expect(await run("run_b")).toMatchObject({ trigger_id: triggerId, agent_id: intruder.agentId, repo_id: 1002 });
+  });
+
+  it("an accepted deploy naming another installation's run leaves that installation's deploy rows as they were", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const OTHER = 43;
+    const other = tenantDb(env.DB, OTHER);
+    await upsertInstallation(env.DB, { id: OTHER, account_login: "other", account_type: "Organization", account_id: OTHER * 10, created_at: 1 });
+    await insertRun(other, {
+      run_id: "run_other",
+      repo_id: 9001,
+      sha: SHA_3,
+      ref: "refs/heads/main",
+      event: "push",
+      pr_number: null,
+      env: "staging",
+      attempt: 1,
+      trigger_id: "trg_other",
+      agent_id: "agt_other",
+      state: "success",
+      reason: null,
+      author_login: null,
+      commit_title: null,
+      started_at: 1,
+      finished_at: 2,
+      duration_ms: 1,
+      log_key: null,
+    });
+    await env.DB.prepare(
+      `INSERT INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, run_id, status, created_at, updated_at)
+      VALUES (?1, 'other/app', ?2, 'staging', 1, 'push', 'refs/heads/main', 'trg_other', 'agt_other', 'run_other', 'accepted', 1, 1)`,
+    )
+      .bind(OTHER, SHA_3)
+      .run();
+    await upsertDeployRender(other, {
+      run_id: "run_other",
+      repo: "other/app",
+      env: "staging",
+      sha: SHA_3,
+      slack_channel: "C0OTHER",
+      slack_ts: "1.1",
+      check_run_id: 77,
+      state: "succeeded",
+      step: null,
+      step_index: null,
+      steps_total: null,
+      started_at: 1,
+      updated_at: 2,
+    });
+    const deployRows = async () => [
+      (await env.DB.prepare("SELECT * FROM deploy_renders WHERE installation_id = ?1").bind(OTHER).all()).results,
+      (await env.DB.prepare("SELECT * FROM deploy_triggers WHERE installation_id = ?1").bind(OTHER).all()).results,
+      await run("run_other"),
+    ];
+    const before = await deployRows();
+
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const triggerId = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId });
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_other" })).toEqual([]);
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_other", state: "failed", duration_ms: 1 });
+
+    expect(await deployRows()).toEqual(before);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_mine" })).toEqual([]);
+    expect(await run("run_mine")).toMatchObject({ installation_id: INSTALLATION, trigger_id: triggerId });
+  });
+
+  it("caps the jobs of a run at QUOTAS.jobsPerRun", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    const jobs = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ name: `${prefix}${i}`, needs: [] }));
+    const count = async () => (await env.DB.prepare("SELECT count(*) AS n FROM jobs WHERE run_id = 'run_a'").first<number>("n")) ?? 0;
+
+    expect(await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(QUOTAS.jobsPerRun + 1, "j") })).toEqual([]);
+    expect(await count()).toBe(0);
+
+    await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(QUOTAS.jobsPerRun - 1, "j") });
+    expect(await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(2, "extra") })).toEqual([]);
+    expect(await count()).toBe(QUOTAS.jobsPerRun - 1);
+
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", job: "last", state: "running" });
+    expect(await count()).toBe(QUOTAS.jobsPerRun);
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", job: "over", state: "running" });
+    expect(await count()).toBe(QUOTAS.jobsPerRun);
+    expect(await env.DB.prepare("SELECT 1 FROM jobs WHERE run_id = 'run_a' AND name = 'over'").first()).toBeNull();
   });
 });

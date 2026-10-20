@@ -7,6 +7,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hex, hmacSha256 } from "../../src/crypto";
 import { approveForkRun } from "../../src/forks/gate";
+import type { Env } from "../../src/env";
 import type { Installation } from "../../src/github/types";
 import worker from "../../src/index";
 import { LOG_URL_TTL_SEC, signLogUrl } from "../../src/logs/signing";
@@ -216,24 +217,52 @@ describe("fork approval replay", () => {
 
   afterEach(() => world.restore());
 
-  it("dispatches one trigger for an approval and answers its reuse with already_used", async () => {
+  async function gatedRunId(): Promise<string> {
     const [gated] = await runs();
     expect(gated).toMatchObject({ state: "gated", reason: "fork_gated" });
     const runId = gated?.run_id;
     if (typeof runId !== "string") throw new Error("the fork push stored no gated run");
-    const approve = () =>
-      approveForkRun(env, {
-        installationId: INSTALLATION,
-        runId,
-        headSha: HEAD_SHA,
-        approverGithubId: 7001,
-        approverLogin: LOGIN,
-        via: "slack",
-      });
+    return runId;
+  }
 
-    expect(await approve()).toBe("dispatched");
-    expect(await approve()).toBe("already_used");
+  function approve(testEnv: Env, runId: string): Promise<string> {
+    return approveForkRun(testEnv, {
+      installationId: INSTALLATION,
+      runId,
+      headSha: HEAD_SHA,
+      approverGithubId: 7001,
+      approverLogin: LOGIN,
+      via: "slack",
+    });
+  }
+
+  it("dispatches one trigger for an approval and answers its reuse with already_used", async () => {
+    const runId = await gatedRunId();
+
+    expect(await approve(env, runId)).toBe("dispatched");
+    expect(await approve(env, runId)).toBe("already_used");
     expect(await runs()).toHaveLength(1);
+    expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(1);
+  });
+
+  it("keeps the approval unspent when the AgentDO /trigger fails, so approving again dispatches once", async () => {
+    const runId = await gatedRunId();
+    let failures = 1;
+    const failingOnce = {
+      idFromName: (name: string) => env.AGENT_DO.idFromName(name),
+      get: (id: DurableObjectId) => ({
+        fetch: (input: RequestInfo, init?: RequestInit) => {
+          if (String(input).endsWith("/trigger") && failures-- > 0) return Promise.resolve(new Response("boom", { status: 500 }));
+          return env.AGENT_DO.get(id).fetch(input, init);
+        },
+      }),
+    };
+    const flaky = { ...env, AGENT_DO: failingOnce } as unknown as Env;
+
+    await expect(approve(flaky, runId)).rejects.toMatchObject({ code: "agent_do_failed", status: 502 });
+    expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(0);
+    expect(await approve(flaky, runId)).toBe("dispatched");
+    expect(await approve(flaky, runId)).toBe("already_used");
     expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(1);
   });
 });

@@ -18,6 +18,8 @@ export const QUOTAS = {
 	slackQueueMax: 500,
 	slackMaxAttempts: 5,
 	annotationsPerJob: 500,
+	/** Jobs one run may record; job_planned and job events past it are dropped. */
+	jobsPerRun: 200,
 } as const;
 
 /** The per-installation caps a self-hosted hub lifts, except logBytes, which still protects the operator's R2. */

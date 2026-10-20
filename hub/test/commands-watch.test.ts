@@ -185,6 +185,26 @@ describe("/zeroci status", () => {
     expect(reply.text).toContain("builder: offline");
     expect(permissionCalls(world)).toEqual([]);
   });
+
+  it("lists every agent when one AgentDO fails, the failed one from its D1 state", async () => {
+    await seedAgent(INSTALLATION);
+    const broken = await seedAgent(INSTALLATION);
+    await env.DB.prepare("UPDATE agents SET name = 'broken', last_seen_at = 5000 WHERE agent_id = ?1").bind(broken.agentId).run();
+    const real = env.AGENT_DO;
+    env.AGENT_DO = {
+      idFromName: (name: string) => (name === broken.agentId ? null : real.idFromName(name)),
+      get: (id: DurableObjectId | null) => ({
+        fetch: (input: string, init?: RequestInit) => (id === null ? Promise.reject(new Error("AgentDO down")) : real.get(id).fetch(input, init)),
+      }),
+    } as unknown as typeof env.AGENT_DO;
+    try {
+      const reply = await zeroci(world, "status");
+      expect(reply.text).toContain("builder: offline, last seen never");
+      expect(reply.text).toContain("broken: offline, last seen <!date^5^");
+    } finally {
+      env.AGENT_DO = real;
+    }
+  });
 });
 
 describe("/zeroci help", () => {

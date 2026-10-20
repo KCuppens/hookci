@@ -13,6 +13,7 @@ import worker from "../../src/index";
 import { verifyLogUrl } from "../../src/logs/signing";
 import { escapeHtml } from "../../src/pages/layout";
 import { rotateCredential } from "../../src/pairing/agents";
+import { authenticateAgent } from "../../src/routes/agent-auth";
 import { verifySlackRequest } from "../../src/slack/verify";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
@@ -329,10 +330,11 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       },
       {
         kind: "previous",
-        name: "the credential rotateCredential replaced",
+        name: "the credential a re-pair replaced, once the new one was used",
         request: async (t) => {
           expect(await getAgentByCredentialHash(env.DB, await agentCredentialHash(t.credential))).toMatchObject({ agent_id: t.agentId });
-          await rotateCredential(env, t.agentId);
+          const next = await rotateCredential(env, t.agentId);
+          expect(await authenticateAgent(env, `Bearer ${next}`)).toMatchObject({ agent_id: t.agentId });
           return bearerRequest(method, path, t, `Bearer ${t.credential}`);
         },
         expected: { status: 401, json: "auth_failed" },

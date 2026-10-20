@@ -88,6 +88,28 @@ describe("/zeroci retry", () => {
     expect((await runsOfRepo()).filter((run) => run.sha === SHA).map((run) => run.attempt)).toEqual([3, 4]);
   });
 
+  it("reports the queued attempt when the status lookup fails after the trigger was accepted", async () => {
+    world.roles[LOGIN] = "write";
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks", agent.agentId);
+    await seedRun({ agent_id: agent.agentId });
+    const real = env.AGENT_DO;
+    env.AGENT_DO = {
+      idFromName: (name: string) => real.idFromName(name),
+      get: (id: DurableObjectId) => ({
+        fetch: (input: string, init?: RequestInit) =>
+          new URL(input).pathname === "/status" ? Promise.resolve(new Response("boom", { status: 500 })) : real.get(id).fetch(input, init),
+      }),
+    } as unknown as typeof env.AGENT_DO;
+    try {
+      const reply = await zeroci(world, "retry acme/api");
+      expect(reply.text).toBe(S.slack.retried("acme/api", "abcdef1", 2, "received"));
+    } finally {
+      env.AGENT_DO = real;
+    }
+    expect((await runsOfRepo()).map((run) => run.attempt)).toEqual([1, 2]);
+  });
+
   it("says so when the repo has no run or no bound agent", async () => {
     world.roles[LOGIN] = "write";
     expect((await zeroci(world, "retry acme/api")).text).toBe(S.slack.retryNoRun("acme/api", undefined));

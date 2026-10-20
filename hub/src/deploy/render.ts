@@ -5,7 +5,7 @@
 // agent's event handler never sees it.
 
 import { getRepoByFullName } from "../db/repos";
-import { tenantDb } from "../db/tenant";
+import { type TenantDb, tenantDb } from "../db/tenant";
 import { listWatchesForRepo } from "../db/watches";
 import { systemClock } from "../do/clock";
 import { HubError } from "../errors";
@@ -42,6 +42,7 @@ export type DeployBadgeState = {
 };
 
 export interface DeployRenderRow {
+	installation_id: number;
 	run_id: string;
 	repo: string;
 	env: string;
@@ -117,45 +118,49 @@ export function renderDeployAlert(s: DeployBadgeState, tail: string[], mention: 
 	return { text: S.deploy.alertText(mention, badgeLine({ ...s, logUrl: undefined }, false)), blocks };
 }
 
-export async function getDeployRender(db: D1Database, runId: string): Promise<DeployRenderRow | null> {
-	return db.prepare("SELECT * FROM deploy_renders WHERE run_id = ?1").bind(runId).first<DeployRenderRow>();
+export async function getDeployRender(t: TenantDb, runId: string): Promise<DeployRenderRow | null> {
+	return t.first<DeployRenderRow>("SELECT * FROM deploy_renders WHERE installation_id = ?1 AND run_id = ?2", runId);
 }
 
-export async function upsertDeployRender(db: D1Database, row: DeployRenderRow): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO deploy_renders (run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at)
-			VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-			ON CONFLICT (run_id) DO UPDATE SET slack_channel = excluded.slack_channel, slack_ts = excluded.slack_ts, check_run_id = excluded.check_run_id,
-				state = excluded.state, step = excluded.step, step_index = excluded.step_index, steps_total = excluded.steps_total, updated_at = excluded.updated_at`,
-		)
-		.bind(
-			row.run_id,
-			row.repo,
-			row.env,
-			row.sha,
-			row.slack_channel,
-			row.slack_ts,
-			row.check_run_id,
-			row.state,
-			row.step,
-			row.step_index,
-			row.steps_total,
-			row.started_at,
-			row.updated_at,
-		)
-		.run();
+/** Stores the installation's render of a run; a run_id another installation renders is left alone. */
+export async function upsertDeployRender(t: TenantDb, row: Omit<DeployRenderRow, "installation_id">): Promise<void> {
+	await t.run(
+		`INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+		ON CONFLICT (run_id) DO UPDATE SET slack_channel = excluded.slack_channel, slack_ts = excluded.slack_ts, check_run_id = excluded.check_run_id,
+			state = excluded.state, step = excluded.step, step_index = excluded.step_index, steps_total = excluded.steps_total, updated_at = excluded.updated_at
+		WHERE deploy_renders.installation_id = excluded.installation_id`,
+		row.run_id,
+		row.repo,
+		row.env,
+		row.sha,
+		row.slack_channel,
+		row.slack_ts,
+		row.check_run_id,
+		row.state,
+		row.step,
+		row.step_index,
+		row.steps_total,
+		row.started_at,
+		row.updated_at,
+	);
 }
 
-/** Reopens a finished render as queued from now, without its check run; a retry reuses the run id and gets a new check run. */
-export async function reopenDeployRender(env: Env, runId: string): Promise<void> {
+/**
+ * Reopens the installation's finished render of runId as queued from now,
+ * without its check run; a retry reuses the run id and gets a new check run.
+ * Only a run of agentId in the installation is reopened.
+ */
+export async function reopenDeployRender(env: Env, installationId: number, runId: string, agentId: string): Promise<void> {
 	const at = now(env);
-	await env.DB.prepare(
-		`UPDATE deploy_renders SET state = 'queued', step = NULL, step_index = NULL, steps_total = NULL, check_run_id = NULL, started_at = ?2, updated_at = ?2
-		WHERE run_id = ?1 AND state IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'superseded')`,
-	)
-		.bind(runId, at)
-		.run();
+	await tenantDb(env.DB, installationId).run(
+		`UPDATE deploy_renders SET state = 'queued', step = NULL, step_index = NULL, steps_total = NULL, check_run_id = NULL, started_at = ?3, updated_at = ?3
+		WHERE installation_id = ?1 AND run_id = ?2 AND state IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'superseded')
+			AND run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND agent_id = ?4)`,
+		runId,
+		at,
+		agentId,
+	);
 }
 
 /** The check run conclusion of each state; null while the deploy is not finished. Only a failed deploy fails the check. */
@@ -230,7 +235,7 @@ async function logLinkFor(env: Env, installationId: number, runId: string): Prom
 	return job ? stableLogLink(env, runId, job.name) : undefined;
 }
 
-async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: DeployRenderRow, badge: string): Promise<number> {
+async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: Omit<DeployRenderRow, "installation_id">, badge: string): Promise<number> {
 	const t = tenantDb(env.DB, trigger.installation_id);
 	const repo = await getRepoByFullName(t, trigger.repo);
 	if (!repo) throw new HubError("deploy_repo_unknown", 500, `deploy repo ${trigger.repo} is not known`);
@@ -261,18 +266,23 @@ async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: DeployRend
 }
 
 /**
- * Renders one agent event of a deploy run: the badge, the alert when the
- * deploy ends failed and the check run. Events for runs that are not deploys,
- * and events after the deploy ended, change nothing.
+ * Renders one agent event of a deploy run of installationId: the badge, the
+ * alert when the deploy ends failed and the check run. Events for runs that
+ * are not the installation's deploys, and events after the deploy ended,
+ * change nothing.
  */
-export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
+export async function onDeployEvent(env: Env, installationId: number, ev: AgentEvent): Promise<void> {
 	try {
-		const trigger = await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1 ORDER BY attempt DESC LIMIT 1").bind(ev.run_id).first<DeployTriggerRow>();
+		const t = tenantDb(env.DB, installationId);
+		const trigger = await t.first<DeployTriggerRow>(
+			"SELECT * FROM deploy_triggers WHERE installation_id = ?1 AND run_id = ?2 ORDER BY attempt DESC LIMIT 1",
+			ev.run_id,
+		);
 		if (!trigger) return;
-		const prev = await getDeployRender(env.DB, ev.run_id);
+		const prev = await getDeployRender(t, ev.run_id);
 		if (prev && CONCLUSION[prev.state] !== null) return;
 		const at = now(env);
-		const row: DeployRenderRow = {
+		const row: Omit<DeployRenderRow, "installation_id"> = {
 			run_id: ev.run_id,
 			repo: trigger.repo,
 			env: trigger.env,
@@ -288,7 +298,7 @@ export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 			started_at: prev?.started_at ?? at,
 			updated_at: at,
 		};
-		await upsertDeployRender(env.DB, row);
+		await upsertDeployRender(t, row);
 
 		const terminal = CONCLUSION[row.state] !== null;
 		const badge: DeployBadgeState = {
@@ -318,7 +328,7 @@ export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 					if (typeof res.ts === "string") {
 						row.slack_channel = target.channel;
 						row.slack_ts = res.ts;
-						await upsertDeployRender(env.DB, row);
+						await upsertDeployRender(t, row);
 					}
 				} else {
 					await slackApiFireAndForget(
@@ -346,7 +356,7 @@ export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 			const id = await syncCheckRun(env, trigger, row, renderDeployBadge(badge).text);
 			if (id !== row.check_run_id) {
 				row.check_run_id = id;
-				await upsertDeployRender(env.DB, row);
+				await upsertDeployRender(t, row);
 			}
 		} catch (err) {
 			reportError(err, { op: "deploy_render_check", run_id: row.run_id });

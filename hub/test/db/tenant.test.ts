@@ -77,10 +77,11 @@ describe("tenant isolation", () => {
     await insertRun(two, newRun("two-b"));
     await insertRun(one, newRun("one-c"));
 
-    expect((await listRecentRuns(one)).map((r) => r.run_id)).toEqual(["one-c", "one-b", "one-a"]);
-    expect((await listRecentRuns(two)).map((r) => r.run_id)).toEqual(["two-b", "two-a"]);
-    expect((await listRecentRuns(one, 2)).map((r) => r.run_id)).toEqual(["one-c", "one-b"]);
-    expect((await listRecentRuns(one)).every((r) => r.installation_id === 1)).toBe(true);
+    expect((await listRecentRuns(one, [100], 10)).map((r) => r.run_id)).toEqual(["one-c", "one-b", "one-a"]);
+    expect((await listRecentRuns(two, [100], 10)).map((r) => r.run_id)).toEqual(["two-b", "two-a"]);
+    expect((await listRecentRuns(one, [100], 2)).map((r) => r.run_id)).toEqual(["one-c", "one-b"]);
+    expect((await listRecentRuns(one, [200], 10)).map((r) => r.run_id)).toEqual([]);
+    expect((await listRecentRuns(one, [100], 10)).every((r) => r.installation_id === 1)).toBe(true);
     expect(await getRun(two, "one-a")).toBeNull();
   });
 

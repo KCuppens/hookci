@@ -244,6 +244,36 @@ describe("mapLinearError", () => {
   it("fails other GraphQL errors without disabling", async () => {
     expect(await mapped(Response.json({ errors: [{ message: "bad input", extensions: { code: "INVALID_INPUT" } }] }))).toEqual({ kind: "fail", httpStatus: 200 });
   });
+
+  it("gives each call a timeout and retries one that runs out, before or while reading the body", async () => {
+    const timedOut = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    const signals: unknown[] = [];
+    const noHeaders = await linearGraphql(
+      async (_input, init) => {
+        signals.push(init?.signal);
+        throw timedOut;
+      },
+      API_URL,
+      API_KEY,
+      "query { viewer { id } }",
+      {},
+    );
+    const noBody = await linearGraphql(
+      async (_input, init) => {
+        signals.push(init?.signal);
+        return new Response(new ReadableStream({ start: (controller) => controller.error(timedOut) }));
+      },
+      API_URL,
+      API_KEY,
+      "query { viewer { id } }",
+      {},
+    );
+    expect(signals).toEqual([expect.any(AbortSignal), expect.any(AbortSignal)]);
+    for (const r of [noHeaders, noBody]) {
+      expect(r).toEqual({ ok: false, httpStatus: 0, message: "linear unreachable" });
+      if (!r.ok) expect(mapLinearError(r, Date.now())).toEqual({ kind: "retry" });
+    }
+  });
 });
 
 describe("validateLinearConfig", () => {

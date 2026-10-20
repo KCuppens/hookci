@@ -19,6 +19,7 @@ export const TENANT_TABLES: readonly string[] = [
 	"daily_counters",
 	"fork_approvals",
 	"deploy_triggers",
+	"deploy_renders",
 	"sink_configs",
 	"sink_messages",
 	"sink_deliveries",

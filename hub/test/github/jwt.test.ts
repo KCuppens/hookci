@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appJwt } from "../../src/github/jwt";
 import { generateAppKey } from "./helpers";
 
@@ -44,5 +44,20 @@ describe("appJwt", () => {
       code: "github_key_format",
       status: 500,
     });
+  });
+
+  it("imports the key once and hands out the same JWT for 5 minutes, then signs a fresh one", async () => {
+    const { pem } = await generateAppKey();
+    const imports = vi.spyOn(crypto.subtle, "importKey");
+    const now = 1_700_000_000_000;
+
+    const first = await appJwt("7", pem, now);
+    expect(await appJwt("7", pem, now + 5 * 60_000)).toBe(first);
+    const fresh = await appJwt("7", pem, now + 5 * 60_000 + 1);
+    expect(fresh).not.toBe(first);
+    expect(JSON.parse(new TextDecoder().decode(decodeSegment(fresh.split(".")[1] ?? "")))).toMatchObject({ iat: 1_700_000_300 - 60 });
+    expect(await appJwt("8", pem, now)).not.toBe(first);
+    expect(imports).toHaveBeenCalledTimes(1);
+    imports.mockRestore();
   });
 });

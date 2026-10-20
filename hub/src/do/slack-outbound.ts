@@ -332,7 +332,13 @@ export class SlackOutbound {
 			return this.draining;
 		}
 		this.draining = this.drain()
-			.catch((err: unknown) => reportError(err, { team_id: this.meta("team_id") ?? "" }))
+			.catch(async (err: unknown) => {
+				const teamId = this.meta("team_id") ?? "";
+				reportError(err, { team_id: teamId });
+				// A failed drain may leave no alarm: wake again soon for the calls still queued.
+				if (this.sql.exec("SELECT 1 FROM queue LIMIT 1").toArray().length === 0) return;
+				await this.ctx.storage.setAlarm(this.clock.now() + RETRY_BASE_MS).catch((alarmErr: unknown) => reportError(alarmErr, { team_id: teamId }));
+			})
 			.finally(() => {
 				this.draining = null;
 			});
@@ -425,6 +431,8 @@ export class SlackOutbound {
 			}
 		} finally {
 			this.inFlight.delete(call.id);
+			// No-op once handle finished the call; otherwise a throw left the waiter behind.
+			this.settle(call.id, { ok: false, error: "internal_error" });
 		}
 		return result;
 	}
@@ -471,11 +479,19 @@ export class SlackOutbound {
 					this.dropAll("workspace_inactive");
 					this.finish(call, { ok: false, error: "workspace_inactive" });
 					logEvent("slack_workspace_revoked", { teamId, error: outcome.error });
-					await setWorkspaceStatus(this.env.DB, teamId, "revoked");
+					try {
+						await setWorkspaceStatus(this.env.DB, teamId, "revoked");
+					} catch (err) {
+						reportError(err, { team_id: teamId });
+					}
 					return;
 				}
 				if (Object.hasOwn(CHANNEL_GONE, outcome.error) && Object.hasOwn(CHANNEL_POSTS, call.method) && typeof call.body.channel === "string") {
-					await this.channelGone(teamId, call.body.channel, outcome.error);
+					try {
+						await this.channelGone(teamId, call.body.channel, outcome.error);
+					} catch (err) {
+						reportError(err, { team_id: teamId, channel: call.body.channel });
+					}
 				}
 				if (!this.waiters.has(call.id)) logEvent("slack_call_failed", { teamId, method: call.method, error: outcome.error });
 				this.finish(call, { ok: false, error: outcome.error });

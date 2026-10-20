@@ -7,19 +7,16 @@ import { getLinkedUser, issueLinkUrl } from "../../identity/link";
 import { S } from "../../strings";
 import { actions, linkButton, section } from "../blocks";
 import { registerCommand } from "../registry";
+import { commandArgs, ephemeral } from "./common";
 
 registerCommand("me", async ({ env, teamId, userId, text }) => {
 	const linked = await getLinkedUser(env, teamId, userId);
-	if (text.trim().split(/\s+/)[1]?.toLowerCase() === "unlink") {
-		if (!linked) return { response_type: "ephemeral", text: S.slack.notLinkedNothing };
+	if (commandArgs(text)[0]?.toLowerCase() === "unlink") {
+		if (!linked) return ephemeral(S.slack.notLinkedNothing);
 		await deleteUserLink(env.DB, teamId, userId);
-		return { response_type: "ephemeral", text: S.slack.unlinked(linked.githubLogin) };
+		return ephemeral(S.slack.unlinked(linked.githubLogin));
 	}
-	if (linked) return { response_type: "ephemeral", text: S.slack.linkedAs(linked.githubLogin) };
+	if (linked) return ephemeral(S.slack.linkedAs(linked.githubLogin));
 	const url = await issueLinkUrl(env, teamId, userId, (env.__TEST_CLOCK ?? systemClock).now());
-	return {
-		response_type: "ephemeral",
-		text: S.slack.linkPrompt,
-		blocks: [section(S.slack.linkPrompt), actions(linkButton(S.slack.linkButton, url, "primary"))],
-	};
+	return ephemeral(S.slack.linkPrompt, [section(S.slack.linkPrompt), actions(linkButton(S.slack.linkButton, url, "primary"))]);
 });

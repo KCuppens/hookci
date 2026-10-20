@@ -77,7 +77,7 @@ export async function slackInteractive(c: Context<{ Bindings: Env }>): Promise<R
 	if (payload.type === "view_submission") {
 		const actionId = str(payload.view, "callback_id");
 		if (actionId === undefined) throw new HubError("bad_request", 400);
-		if (actionId === SINK_ADD_CALLBACK_ID) return c.json(await handleSinkAddSubmission(env, teamId, userId, payload.view));
+		if (actionId === SINK_ADD_CALLBACK_ID) return c.json(await handleSinkAddSubmission(env, c.executionCtx, teamId, userId, payload.view));
 		dispatch({ ...base, actionId, value: str(payload.view, "private_metadata") ?? "", responseUrl: null, view: payload.view });
 		return c.json({ response_action: "clear" });
 	}

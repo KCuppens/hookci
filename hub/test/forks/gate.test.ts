@@ -1,8 +1,13 @@
+import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { aggregateFor } from "../../src/checks/map";
+import type { Env } from "../../src/env";
+import { gateForkRun } from "../../src/forks/gate";
+import type { HubTrigger } from "../../src/github/normalize";
 import type { RunView } from "../../src/sinks/types";
 import { renderRunMessage } from "../../src/slack/messages";
-import { deliver, type ForkWorld, forkPush, HEAD_SHA, outbox, POLICY_FILE, runs, setUpForkWorld } from "./world";
+import { INSTALLATION, REPO } from "../commands-helpers";
+import { BASE_SHA, deliver, type ForkWorld, forkPush, HEAD_SHA, outbox, POLICY_FILE, PR, runs, setUpForkWorld } from "./world";
 
 let world: ForkWorld;
 
@@ -51,5 +56,31 @@ describe("fork pull request gate", () => {
     const check = aggregateFor(view, "https://hub.test");
     expect(check).toMatchObject({ status: "completed", conclusion: "action_required" });
     expect("actions" in check).toBe(false);
+  });
+
+  it("throws agent_do_failed 502 when the AgentDO /gate answer has no trigger_id", async () => {
+    const noTriggerId = {
+      idFromName: (name: string) => env.AGENT_DO.idFromName(name),
+      get: () => ({ fetch: () => Promise.resolve(Response.json({}, { status: 202 })) }),
+    };
+    const trigger = {
+      installationId: INSTALLATION,
+      repoId: REPO.repo_id,
+      repo: REPO.full_name,
+      sha: HEAD_SHA,
+      ref: "refs/heads/feature",
+      event: "pull_request",
+      pr: { number: PR, headRef: "feature", headRepoFullName: "mallory/api", fork: true, authorLogin: "mallory" },
+      baseSha: BASE_SHA,
+      authorLogin: "mallory",
+      commitTitle: "Fork change",
+      defaultBranch: "main",
+      target: "checks",
+    } satisfies HubTrigger;
+
+    await expect(gateForkRun({ ...env, AGENT_DO: noTriggerId } as unknown as Env, trigger, world.agent.agentId)).rejects.toMatchObject({
+      code: "agent_do_failed",
+      status: 502,
+    });
   });
 });

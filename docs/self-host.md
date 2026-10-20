@@ -117,10 +117,11 @@ The hub refuses to sign or check log links and sign-in sessions while `LOG_SIGNI
 3. On the server that runs your CI, install the agent from your hub and pair it:
 
 ```sh
-curl -fsSL https://<your-hub>/install | sh
-sudo zeroci connect --hub https://<your-hub> <pair-token>
+curl -fsSL https://<your-hub>/install | sh -s -- <pair-token>
 zeroci doctor
 ```
+
+The installer needs `curl`, and `cosign` to check the release signature. Without cosign it stops; set `ZEROCI_ALLOW_UNSIGNED=1` (`curl -fsSL https://<your-hub>/install | ZEROCI_ALLOW_UNSIGNED=1 sh -s -- <pair-token>`) to install with only the checksum checked. With a pair token it runs `sudo zeroci connect --hub https://<your-hub> <pair-token>` after the install. Without one it only installs, and you pair later with that command.
 
 `zeroci connect` stores the agent credential under `/var/lib/zeroci/<installation_id>` and enables the `zeroci-agent@<installation_id>` systemd unit, so it runs as root. Without `--hub` the agent pairs with `ZEROCI_HUB_URL` if set, else the shared hub. A pair token works once. `zeroci doctor` checks the agent and its hub connection, and prints a fix for each problem.
 

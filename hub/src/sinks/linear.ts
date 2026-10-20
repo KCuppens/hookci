@@ -9,7 +9,7 @@ import { sha256Hex } from "../crypto";
 import { getSinkMessage, putSinkMessage, type SinkMessage } from "../db/sinks";
 import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
-import { defaultFetcher, type Fetcher } from "../http";
+import { defaultFetcher, type Fetcher, jsonOrNull, PROVIDER_TIMEOUT_MS } from "../http";
 import { logEvent, reportError } from "../observability";
 import { formatDuration } from "../slack/badge";
 import { S } from "../strings";
@@ -170,7 +170,7 @@ function field(value: unknown, name: string): unknown {
 	return typeof value === "object" && value !== null ? Reflect.get(value, name) : undefined;
 }
 
-/** POSTs one GraphQL operation; never throws, and no result names the API key. */
+/** POSTs one GraphQL operation, aborted as unreachable after PROVIDER_TIMEOUT_MS; never throws, and no result names the API key. */
 export async function linearGraphql<T>(
 	fetchFn: Fetcher,
 	apiUrl: string,
@@ -179,18 +179,20 @@ export async function linearGraphql<T>(
 	variables: Record<string, unknown>,
 ): Promise<LinearGqlResult<T>> {
 	let res: Response;
+	let raw: unknown;
 	try {
 		res = await fetchFn(apiUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: linearAuthHeader(apiKey) },
 			body: JSON.stringify({ query, variables }),
+			signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
 		});
+		raw = await jsonOrNull(res);
 	} catch {
 		return { ok: false, httpStatus: 0, message: "linear unreachable" };
 	}
 	const reset = Number(res.headers.get("X-RateLimit-Requests-Reset"));
 	const resetAtMs = res.headers.has("X-RateLimit-Requests-Reset") && Number.isFinite(reset) ? reset : undefined;
-	const raw: unknown = await res.json().catch(() => null);
 	const errors = field(raw, "errors");
 	const first: unknown = Array.isArray(errors) ? errors[0] : undefined;
 	const code = field(field(first, "extensions"), "code");

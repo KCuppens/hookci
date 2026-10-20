@@ -152,20 +152,24 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 }
 
 /**
- * Stores the agent's reply to a deploy trigger and posts the badge of a
- * rejected one; trigger ids that are not deploy triggers, and replayed
- * replies, change nothing. An accepted retry reuses its run id, so the run's
- * finished render is reopened as queued with a new check run.
+ * Stores the agent's reply to one of installationId's deploy triggers and
+ * posts the badge of a rejected one; trigger ids that are not the
+ * installation's deploy triggers, and replayed replies, change nothing. An
+ * accepted retry reuses its run id, so the run's finished render is reopened
+ * as queued with a new check run.
  */
-export async function recordDeployReply(env: Env, reply: DeployReply): Promise<void> {
+export async function recordDeployReply(env: Env, installationId: number, reply: DeployReply): Promise<void> {
 	const accepted = reply.type === "accepted";
-	const row = await env.DB.prepare(
-		"UPDATE deploy_triggers SET status = ?1, run_id = ?2, reason = ?3, updated_at = ?4 WHERE trigger_id = ?5 AND status IS NOT ?1 RETURNING *",
-	)
-		.bind(reply.type, accepted ? reply.run_id : null, accepted ? null : reply.reason, Date.now(), reply.trigger_id)
-		.first<DeployTriggerRow>();
+	const row = await tenantDb(env.DB, installationId).first<DeployTriggerRow>(
+		"UPDATE deploy_triggers SET status = ?2, run_id = ?3, reason = ?4, updated_at = ?5 WHERE installation_id = ?1 AND trigger_id = ?6 AND status IS NOT ?2 RETURNING *",
+		reply.type,
+		accepted ? reply.run_id : null,
+		accepted ? null : reply.reason,
+		Date.now(),
+		reply.trigger_id,
+	);
 	if (row && !accepted) await renderRejected(env, row);
-	if (row && accepted) await reopenDeployRender(env, reply.run_id);
+	if (row && accepted) await reopenDeployRender(env, installationId, reply.run_id, row.agent_id);
 }
 
 /** The highest attempt sent for the commit and env; null when none was. */

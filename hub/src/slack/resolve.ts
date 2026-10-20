@@ -43,6 +43,26 @@ export async function resolveRepo(env: Env, teamId: string, fullName: string): P
 	return { installationId: repo.installation_id, repoId: repo.repo_id, fullName: repo.full_name, defaultBranch: repo.default_branch };
 }
 
+/** githubLogin's role on the repo, cached up to 5 minutes. */
+async function repoPermission(env: Env, gh: GitHubClient, installationId: number, repoFullName: string, githubLogin: string): Promise<RepoPermission> {
+	const [owner = "", repo = ""] = repoFullName.split("/");
+	return cachedPermission(installationId, repoFullName, githubLogin, (env.__TEST_CLOCK ?? systemClock).now(), async () =>
+		getCollaboratorPermission(await gh.installation(installationId), owner, repo, githubLogin),
+	);
+}
+
+/** Whether githubLogin's role on the repo, cached up to 5 minutes, is at least need. */
+export async function hasPermission(
+	env: Env,
+	gh: GitHubClient,
+	installationId: number,
+	repoFullName: string,
+	githubLogin: string,
+	need: PermissionLevel,
+): Promise<boolean> {
+	return LEVEL[await repoPermission(env, gh, installationId, repoFullName, githubLogin)] >= LEVEL[need];
+}
+
 /** Throws forbidden (403) unless githubLogin's role on the repo, cached up to 5 minutes, is at least need. */
 export async function requirePermission(
 	env: Env,
@@ -52,10 +72,7 @@ export async function requirePermission(
 	githubLogin: string,
 	need: PermissionLevel,
 ): Promise<void> {
-	const [owner = "", repo = ""] = repoFullName.split("/");
-	const permission = await cachedPermission(installationId, repoFullName, githubLogin, (env.__TEST_CLOCK ?? systemClock).now(), async () =>
-		getCollaboratorPermission(await gh.installation(installationId), owner, repo, githubLogin),
-	);
+	const permission = await repoPermission(env, gh, installationId, repoFullName, githubLogin);
 	if (LEVEL[permission] < LEVEL[need]) {
 		throw new HubError("forbidden", 403, `${githubLogin} has ${permission} on ${repoFullName}, needs ${need}`);
 	}

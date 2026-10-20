@@ -1,13 +1,16 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../../src/db/agents";
+import { insertRun } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
+import { addWatch } from "../../src/db/watches";
+import { resetPermissionCacheForTests } from "../../src/github/permission-cache";
 import type { RunView } from "../../src/sinks/types";
 import "../../src/index";
 import { type HomeAgent, type HomeData, type HomeInstallation, loadHomeData, renderHome, upgradeHint } from "../../src/slack/home";
 import { eventHandlerFor } from "../../src/slack/registry";
 import { S } from "../../src/strings";
-import { type CommandWorld, INSTALLATION, setUpCommandWorld, slackCalls, TEAM, USER } from "../commands-helpers";
+import { type CommandWorld, INSTALLATION, LOGIN, REPO, setUpCommandWorld, slackCalls, TEAM, USER } from "../commands-helpers";
 import { fakeAgentNamespace } from "./agent-do";
 
 function run(i: number, installationId: number): RunView {
@@ -167,5 +170,49 @@ describe("with the database", () => {
     const calls = slackCalls(world, "views.publish");
     expect(calls.length).toBe(1);
     expect(calls[0]?.body).toMatchObject({ user_id: USER });
+  });
+
+  it("shows repos and runs only to linked users who can read the repo", async () => {
+    restoreDo = fakeAgentNamespace({}).restore;
+    const t = tenantDb(env.DB, INSTALLATION);
+    await addWatch(t, { repo_id: REPO.repo_id, team_id: TEAM, channel_id: "C0CHAN", notify: "normal", alert: "channel", created_by: USER });
+    await insertRun(t, {
+      run_id: "run_private",
+      repo_id: REPO.repo_id,
+      sha: "abcdef1234567890abcdef1234567890abcdef12",
+      ref: "refs/heads/secret-branch",
+      event: "push",
+      pr_number: null,
+      env: null,
+      attempt: 1,
+      trigger_id: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+      agent_id: null,
+      state: "success",
+      reason: null,
+      author_login: LOGIN,
+      commit_title: "Secret commit title",
+      started_at: 1,
+      finished_at: 2,
+      duration_ms: 1,
+      log_key: null,
+    });
+    const leaks = (data: HomeData) => {
+      const text = json(data);
+      return ["acme/api", "secret-branch", "Secret commit title"].filter((s) => text.includes(s));
+    };
+
+    const stranger = await loadHomeData(env, TEAM, "U0STRANGER");
+    expect(stranger).toEqual({ linked: false, installations: [] });
+    expect(leaks(stranger)).toEqual([]);
+
+    const noAccess = await loadHomeData(env, TEAM, USER);
+    expect(noAccess.installations[0]).toMatchObject({ id: INSTALLATION, repos: [], recentRuns: [] });
+    expect(leaks(noAccess)).toEqual([]);
+
+    world.roles[LOGIN] = "read";
+    resetPermissionCacheForTests();
+    const reader = await loadHomeData(env, TEAM, USER);
+    expect(reader.installations[0]?.repos).toEqual([{ fullName: "acme/api", channels: ["C0CHAN"] }]);
+    expect(reader.installations[0]?.recentRuns.map((run) => run.runId)).toEqual(["run_private"]);
   });
 });

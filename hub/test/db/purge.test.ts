@@ -13,7 +13,7 @@ import { clearTables, columnsOf, schemaTables } from "./helpers";
 
 // Tables that hold no installation data. Adding a table to the schema that is
 // neither listed here nor keyed by installation_id or run_id fails the test.
-const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states", "cron_state"];
+const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "hook_redeliveries", "oauth_states", "cron_state"];
 
 beforeEach(clearTables);
 
@@ -92,8 +92,8 @@ async function seed(id: number): Promise<void> {
     env.DB.prepare("INSERT INTO slack_messages (run_id, team_id, channel_id, ts, alert_ts) VALUES (?1, 'T1', 'C1', '1.0', NULL)").bind(runId),
     env.DB.prepare("INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES (?1, 'T1', 'C1', 'build', '1.1')").bind(runId),
     env.DB.prepare(
-      "INSERT INTO deploy_renders (run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at) VALUES (?1, 'acme/repo', 'staging', ?2, 'C1', '1.2', 5, 'running', NULL, NULL, NULL, 1, 1)",
-    ).bind(runId, "c".repeat(40)),
+      "INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at) VALUES (?1, ?2, 'acme/repo', 'staging', ?3, 'C1', '1.2', 5, 'running', NULL, NULL, NULL, 1, 1)",
+    ).bind(id, runId, "c".repeat(40)),
     env.DB.prepare(
       "INSERT INTO sink_configs (installation_id, id, kind, repo, target, secret_enc, key_version, created_by, created_at) VALUES (?1, ?2, 'webhook', 'acme/repo', 'https://example.com/hook', NULL, NULL, 'agent:agt', 1)",
     ).bind(id, `snk_${id}`),

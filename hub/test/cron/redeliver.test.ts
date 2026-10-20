@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { redeliverFailed } from "../../src/cron/redeliver";
 import { getRedeliveryCursor, setRedeliveryCursor } from "../../src/db/cron-state";
+import { countRedelivery, PENDING_STALE_MS, redeliveryAttempts } from "../../src/db/deliveries";
 import { GitHubClient, type GitHubRequester } from "../../src/github/client";
 import type { HookDelivery } from "../../src/github/types";
 import { clearTables } from "../db/helpers";
@@ -99,6 +100,35 @@ describe("redeliverFailed", () => {
     serveHookDeliveries(gh, [delivery(1, "g-1", "ok")]);
     await redeliverFailed(env, app, NOW);
     expect(redeliveredIds()).toEqual([1]);
+  });
+
+  it("redelivers a delivery pending past PENDING_STALE_MS, whose handler was cut off, but not one still in flight", async () => {
+    await env.DB.prepare(
+      "INSERT INTO deliveries (delivery_id, received_at, expires_at, event, installation_id, status) VALUES ('g-stale', ?1, ?3, 'push', 42, 'pending'), ('g-fresh', ?2, ?3, 'push', 42, 'pending')",
+    )
+      .bind(NOW - PENDING_STALE_MS - 1, NOW - PENDING_STALE_MS, NOW + HOUR)
+      .run();
+    serveHookDeliveries(gh, [delivery(2, "g-fresh", "ok"), delivery(1, "g-stale", "ok")]);
+    expect(await redeliverFailed(env, app, NOW)).toEqual({ scanned: 2, redelivered: 1 });
+    expect(redeliveredIds()).toEqual([1]);
+  });
+
+  it("counts each redelivery of a guid and gives the guid up after 5", async () => {
+    serveHookDeliveries(gh, [delivery(2, "g-2", "failed"), delivery(1, "g-1", "failed")]);
+    for (let i = 0; i < 4; i++) await countRedelivery(env.DB, "g-1", NOW - HOUR);
+
+    expect(await redeliverFailed(env, app, NOW)).toEqual({ scanned: 2, redelivered: 2 });
+    expect(await redeliveryAttempts(env.DB, ["g-1", "g-2"])).toEqual(
+      new Map([
+        ["g-1", 5],
+        ["g-2", 1],
+      ]),
+    );
+
+    await setRedeliveryCursor(env.DB, 0, NOW);
+    gh.calls.length = 0;
+    expect(await redeliverFailed(env, app, NOW + 5 * 60_000)).toEqual({ scanned: 2, redelivered: 1 });
+    expect(redeliveredIds()).toEqual([2]);
   });
 
   it("skips a guid whose newest attempt succeeded", async () => {

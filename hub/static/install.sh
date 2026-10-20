@@ -3,12 +3,17 @@
 # (hub __HUB_VERSION__).
 #
 #   curl -fsSL __HUB_ORIGIN__/install | sh
+#   curl -fsSL __HUB_ORIGIN__/install | sh -s -- <pair-token>
+#
+# With a pair token the installer also runs `zeroci connect` to pair this
+# machine with the hub.
 #
 # Environment:
 #   ZEROCI_VERSION          release tag to install, "latest" (default) or vX.Y.Z
 #   ZEROCI_INSTALL_DRY_RUN  when set, print the privileged steps instead of running them
 #   ZEROCI_RELEASE_BASE     where release assets live (a file:// base is copied)
 #   ZEROCI_PREFIX           absolute install prefix, the binary goes to $ZEROCI_PREFIX/bin
+#   ZEROCI_ALLOW_UNSIGNED   set to 1 to install without cosign, checking only the checksum
 set -eu
 
 # Releases are cut locally with goreleaser; SHA256SUMS is signed with the
@@ -18,6 +23,7 @@ ZEROCI_COSIGN_ISSUER="https://github.com/login/oauth"
 
 ZEROCI_VERSION="${ZEROCI_VERSION:-latest}"
 ZEROCI_INSTALL_DRY_RUN="${ZEROCI_INSTALL_DRY_RUN:-}"
+ZEROCI_ALLOW_UNSIGNED="${ZEROCI_ALLOW_UNSIGNED:-}"
 ZEROCI_RELEASE_BASE="${ZEROCI_RELEASE_BASE:-https://github.com/KCuppens/zerocideploy/releases/download}"
 ZEROCI_PREFIX="${ZEROCI_PREFIX:-/usr/local}"
 HUB_ORIGIN="__HUB_ORIGIN__"
@@ -33,18 +39,13 @@ run() { if [ -n "$ZEROCI_INSTALL_DRY_RUN" ]; then echo "+ $*"; else "$@"; fi; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# fetch URL DEST copies a file:// URL and downloads an https:// one. The
-# scheme check covers wget, whose --https-only binds only recursive downloads.
+# fetch URL DEST copies a file:// URL and downloads an https:// one with curl,
+# whose --proto '=https' also refuses a redirect to another scheme. wget has no
+# such switch for single downloads, so the installer needs curl.
 fetch() {
 	case $1 in
 	file://*) cp "${1#file://}" "$2" ;;
-	https://*)
-		if have curl; then
-			curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
-		else
-			wget -q -O "$2" "$1"
-		fi
-		;;
+	https://*) curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1" ;;
 	*) die 1 "refusing to download $1: not an https:// or file:// URL" ;;
 	esac
 }
@@ -86,6 +87,16 @@ EOF
 # The whole install runs from main, so a download cut off mid-transfer
 # defines functions but runs nothing.
 main() {
+	[ $# -le 1 ] || die 1 "usage: curl -fsSL $HUB_ORIGIN/install | sh -s -- [pair-token]"
+	token=${1:-}
+	case $token in
+	"" | zc_pair_?*) ;;
+	*) die 1 "the argument must be a pair token: zc_pair_ then letters, digits, _ or -" ;;
+	esac
+	case $token in
+	*[!A-Za-z0-9_-]*) die 1 "the argument must be a pair token: zc_pair_ then letters, digits, _ or -" ;;
+	esac
+
 	[ "$(uname -s)" = Linux ] || die 2 "unsupported OS $(uname -s): the agent runs on Linux"
 	machine="${ZEROCI_TEST_UNAME_M:-$(uname -m)}"
 	case $machine in
@@ -104,7 +115,7 @@ main() {
 	*[!A-Za-z0-9/._-]*) die 1 "ZEROCI_PREFIX may only contain letters, digits and / . _ -, got $ZEROCI_PREFIX" ;;
 	esac
 
-	have curl || have wget || die 1 "need curl or wget"
+	have curl || die 1 "need curl"
 	have tar || die 1 "need tar"
 	if have sha256sum; then
 		sha256() { sha256sum "$1" | cut -d' ' -f1; }
@@ -116,7 +127,6 @@ main() {
 
 	tag=$ZEROCI_VERSION
 	if [ "$tag" = latest ]; then
-		have curl || die 1 "resolving the latest release needs curl: set ZEROCI_VERSION=vX.Y.Z"
 		latest=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${ZEROCI_RELEASE_BASE%/download}/latest") ||
 			die 1 "cannot resolve the latest release"
 		tag=${latest##*/}
@@ -151,8 +161,12 @@ main() {
 			--bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
 			die 4 "signature verification failed for SHA256SUMS"
 		echo "Signature verified"
+	elif [ "$ZEROCI_ALLOW_UNSIGNED" = 1 ]; then
+		echo "cosign not found and ZEROCI_ALLOW_UNSIGNED=1: checksum verified, signature not verified" >&2
 	else
-		echo "cosign not found: checksum verified, signature not verified"
+		# The checksum comes from the same release as the binary, so only the
+		# signature shows who built it.
+		die 4 "cosign not found: install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify the release signature, or set ZEROCI_ALLOW_UNSIGNED=1 to install with only the checksum checked"
 	fi
 
 	tar -xzf "$tmp/$asset" -C "$tmp" zeroci || die 1 "$asset has no zeroci binary"
@@ -191,8 +205,14 @@ main() {
 	run $sudo systemctl daemon-reload
 
 	echo
-	echo "Installed zeroci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
-	echo "  sudo zeroci connect <pair-token>"
+	if [ -n "$token" ]; then
+		echo "Installed zeroci $tag. Pairing this machine with $HUB_ORIGIN"
+		run $sudo "$ZEROCI_PREFIX/bin/zeroci" connect --hub "$HUB_ORIGIN" "$token" ||
+			die 1 "pairing failed: get a new pair token from Slack App Home ($HUB_ORIGIN) and run: sudo zeroci connect --hub $HUB_ORIGIN <pair-token>"
+	else
+		echo "Installed zeroci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
+		echo "  sudo zeroci connect --hub $HUB_ORIGIN <pair-token>"
+	fi
 }
 
 main "$@"

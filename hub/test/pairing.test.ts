@@ -2,11 +2,12 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/crypto";
-import { agentCredentialHash } from "../src/db/agents";
-import { upsertInstallation } from "../src/db/installations";
+import { agentCredentialHash, revokeAgent as markRevoked } from "../src/db/agents";
+import { markSuspended, upsertInstallation } from "../src/db/installations";
 import { upsertRepos } from "../src/db/repos";
 import { tenantDb } from "../src/db/tenant";
 import { revokeAgent } from "../src/pairing/agents";
+import { authenticateAgent } from "../src/routes/agent-auth";
 import { PAIR_TOKEN_TTL_MS, type RedeemResult, createPairToken, redeemPairToken } from "../src/pairing/tokens";
 import { type TriggerRequest, routeTrigger } from "../src/webhook/route";
 import { testClock } from "./clock";
@@ -149,6 +150,26 @@ describe("pairing", () => {
     expect(n).toBe(10);
   });
 
+  it("a token refused for agent_limit redeems once an agent is removed", async () => {
+    const seeded = [];
+    for (let i = 0; i < 10; i++) seeded.push(await seedAgent(INSTALLATION));
+    const token = await newToken();
+    expect((await redeemRequest(token)).status).toBe(409);
+    await markRevoked(tenantDb(env.DB, INSTALLATION), seeded[0]!.agentId, testClock.now());
+    expect(await pair(token)).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+    expect((await redeemRequest(token)).status).toBe(400);
+  });
+
+  it("a token refused while the installation is suspended redeems once it is unsuspended", async () => {
+    const token = await newToken();
+    await markSuspended(env.DB, INSTALLATION, 1);
+    const refused = await redeemRequest(token);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "suspended" });
+    await markSuspended(env.DB, INSTALLATION, null);
+    expect(await pair(token)).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+  });
+
   it("pair token issuance rate limit", async () => {
     for (let i = 0; i < 10; i++) await newToken();
     await expect(newToken()).rejects.toMatchObject({ code: "pair_rate_limited", status: 429 });
@@ -167,7 +188,7 @@ describe("pairing", () => {
     expect(n).toBe(11);
   });
 
-  it("re-pair rotates credential and interrupts runs", async () => {
+  it("re-pair keeps the old credential until the new one connects, then interrupts runs and drops it", async () => {
     const paired = await pair();
     const agent = agentOf(paired);
     const sock = await connect(agent);
@@ -193,11 +214,18 @@ describe("pairing", () => {
     const { trigger_id } = await trig.json<{ trigger_id: string }>();
     expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id });
     expect(await sock.request({ type: "accepted", trigger_id, run_id: "run_a" })).toEqual([]);
+    const runState = () => env.DB.prepare("SELECT state FROM runs WHERE run_id = 'run_a'").first<string>("state");
+    const accepted = await runState();
 
     const repaired = await pair(await newToken(agent.agentId));
     expect(repaired.agent_id).toBe(agent.agentId);
     expect(repaired.credential).not.toBe(agent.credential);
 
+    // Until the agent uses the new credential, a lost redeem response cannot lock it out.
+    expect(await authenticateAgent(env, `Bearer ${agent.credential}`)).toMatchObject({ agent_id: agent.agentId });
+    expect(await runState()).toBe(accepted);
+
+    expect((await connectRequest(repaired.credential)).status).toBe(101);
     expect(await sock.next()).toMatchObject({ type: "interrupt", run_id: "run_a", reason: "repair" });
     expect(await sock.closed).toMatchObject({ code: 4000 });
     const old = await connectRequest(agent.credential);
