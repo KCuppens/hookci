@@ -2,12 +2,12 @@
 // it to the agent's AgentDO.
 
 import type { Context } from "hono";
-import { AGENT_CREDENTIAL_PREFIX, agentCredentialHash, getAgentByCredentialHash } from "../db/agents";
 import { getInstallation } from "../db/installations";
 import { hitIpRate } from "../db/ip-rate";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { QUOTAS } from "../quotas";
+import { authenticateAgent } from "./agent-auth";
 
 export async function agentConnect(c: Context<{ Bindings: Env }>): Promise<Response> {
 	if (c.req.header("upgrade")?.toLowerCase() !== "websocket") throw new HubError("upgrade_required", 426);
@@ -18,11 +18,7 @@ export async function agentConnect(c: Context<{ Bindings: Env }>): Promise<Respo
 		return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(rate.retryAfterSeconds) });
 	}
 
-	const credential = c.req.header("authorization")?.match(/^Bearer (\S+)$/)?.[1];
-	if (!credential?.startsWith(AGENT_CREDENTIAL_PREFIX)) throw new HubError("auth_failed", 401);
-	const agent = await getAgentByCredentialHash(c.env.DB, await agentCredentialHash(credential));
-	if (!agent) throw new HubError("auth_failed", 401);
-	if (agent.revoked_at !== null) throw new HubError("revoked", 401);
+	const agent = await authenticateAgent(c.env.DB, c.req.header("authorization"));
 	const installation = await getInstallation(c.env.DB, agent.installation_id);
 	if (!installation || installation.suspended_at !== null || installation.deleted_at !== null) {
 		throw new HubError("suspended", 403);

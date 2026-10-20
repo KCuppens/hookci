@@ -25,9 +25,18 @@ export type Trust = "trusted" | "untrusted";
 /**
  * Body of the AgentDO `POST https://do/trigger`; the DO defaults attempt to 1.
  * runId releases that gated fork run instead of creating a new one;
- * approvedBy is the GitHub login that approved it.
+ * approvedBy is the GitHub login that approved it. triggerId is the id the
+ * deploy chain already recorded in deploy_triggers; retry sends the agent a
+ * `retry` event instead of the trigger's GitHub event.
  */
-export type TriggerRequest = HubTrigger & { attempt?: number; trust: Trust; runId?: string; approvedBy?: string };
+export type TriggerRequest = HubTrigger & {
+	attempt?: number;
+	trust: Trust;
+	runId?: string;
+	approvedBy?: string;
+	triggerId?: string;
+	retry?: boolean;
+};
 
 export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): Promise<RouteOutcome> {
 	const installation = await getInstallation(env.DB, trig.installationId);

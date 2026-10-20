@@ -161,6 +161,8 @@ export class SlackSink implements Sink {
 
 	/** Posts or updates the run's message in each target channel, or in the one channel `${team}:${channel}` only names, and replies for jobs that finished. */
 	private async update(run: RunView, jobs: JobView[] = [], only?: string): Promise<void> {
+		// Deploy runs have their own badge, alert and check run (deploy/render.ts).
+		if (run.target !== "checks") return;
 		const watches = (await listWatchesForRepo(this.t, run.repoId)).filter((w) => w.status === "active");
 		if (watches.length === 0) return;
 		if (run.runId) await adoptSlackMessages(this.t, run.triggerId, run.runId);

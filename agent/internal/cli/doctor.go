@@ -7,13 +7,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"path/filepath"
 	"strings"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
 )
 
-// cmdDoctor runs the host checks and prints them as a table, or as a JSON
-// array with --json. It exits 1 when any check fails.
+// cmdDoctor runs the host checks, then the deploy checks against the
+// .zeroci.yml of the checkout holding the working directory, and prints them
+// as a table, or as a JSON array with --json. It exits 1 when any check
+// fails.
 func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -44,7 +49,8 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	if env.HubOrigin == "" {
 		env.HubOrigin = defaultHubURL
 	}
-	rs := doctor.Run(ctx, env, doctor.Default())
+	checks := append(doctor.Default(), doctor.DeployChecks(doctor.DeployCheckDeps{Repos: cwdRepos(d)})...)
+	rs := doctor.Run(ctx, env, checks)
 
 	failed := false
 	if *asJSON {
@@ -64,4 +70,34 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		return ExitRunFailed
 	}
 	return ExitOK
+}
+
+// cwdRepos returns the config of the checkout holding the working directory
+// for the deploy checks: none outside a checkout or without a .zeroci.yml,
+// an error when the file does not load or validate.
+func cwdRepos(d Deps) func(context.Context) ([]config.ZeroCIConfig, error) {
+	return func(context.Context) ([]config.ZeroCIConfig, error) {
+		wd, err := d.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("cli: doctor: %w", err)
+		}
+		top, _, err := gitCheckout(wd)
+		if err != nil {
+			return nil, nil
+		}
+		path := filepath.Join(top, ".zeroci.yml")
+		cfg, diags, err := config.Load(path, config.ParseOptions{})
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cli: doctor: %w", err)
+		}
+		for _, dg := range diags {
+			if dg.Severity == config.SeverityError {
+				return nil, fmt.Errorf("cli: doctor: %s: %s", path, config.ValidationError{Path: dg.Path, Msg: dg.Message, Fix: dg.Fix}.Error())
+			}
+		}
+		return []config.ZeroCIConfig{cfg.ZeroCIConfig}, nil
+	}
 }

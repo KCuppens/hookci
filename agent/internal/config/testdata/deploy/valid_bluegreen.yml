@@ -1,0 +1,23 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: pnpm turbo run test
+deployments:
+  production:
+    on: { push: main, after: checks }
+    strategy: compose-bluegreen
+    paths: ["apps/web/**", "packages/**", "pnpm-lock.yaml", "deploy/**"]
+    compose:
+      project: timeuno
+      service: app
+      shared_network: infrauno
+      marker: /opt/infrauno/timeuno/.active-color
+    migrate:
+      run: "pnpm --filter db db:migrate"
+    route:
+      kind: caddy
+      file: /opt/infrauno/shared/routes/timeuno.caddy
+      reload: "docker exec caddy caddy reload --config /etc/caddy/Caddyfile"
+    health: { url: "http://127.0.0.1:{port}/health", expect: 200, retries: 40, interval: 2s }
+    env_file: /etc/zeroci/env/timeuno.env

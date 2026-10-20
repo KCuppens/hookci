@@ -478,6 +478,77 @@ func TestRevoked(t *testing.T) {
 	}
 }
 
+// refusalHandler records the token refusals it is told about and reports
+// claim for them.
+type refusalHandler struct {
+	recordingHandler
+	claim bool
+	asked atomic.Int32
+}
+
+func (h *refusalHandler) TokenRefused(runID, _ string) bool {
+	if runID == "run_7" {
+		h.asked.Add(1)
+	}
+	return h.claim
+}
+
+// TestTokenRefusals: an auth_failed frame with a run_id refuses that one
+// token request and keeps the session, even with no request waiting; an
+// auth_failed without a run_id, or a revoked frame, ends Run with
+// ErrRevoked.
+func TestTokenRefusals(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      string
+		runID     string
+		claim     bool
+		wantAsked int32
+		wantErr   bool
+	}{
+		{name: "refusal of a waiting request", code: "auth_failed", runID: "run_7", claim: true, wantAsked: 1},
+		{name: "refusal with no request waiting", code: "auth_failed", runID: "run_7", wantAsked: 1},
+		{name: "auth_failed without run_id", code: "auth_failed", claim: true, wantErr: true},
+		{name: "revoked never asked", code: "revoked", runID: "run_7", claim: true, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newHarness(t)
+			h := &refusalHandler{claim: tc.claim}
+			x.client = New(x.client.cfg, x.st, h, x.client.log)
+			x.start(t)
+			c := x.hub.next(t)
+			c.handshake(t)
+			waitFor(t, "Connected()", x.client.Connected)
+			runID := ""
+			if tc.runID != "" {
+				runID = `"run_id":"` + tc.runID + `",`
+			}
+			c.send(t, `{"v":1,"type":"error","seq":3,`+runID+`"code":"`+tc.code+`","message":"run not bound"}`)
+			if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 3.0 {
+				t.Fatalf("reply = %v, want ack upto 3", m)
+			}
+			if tc.wantErr {
+				c.drain()
+				if err := x.runErr(t); !errors.Is(err, ErrRevoked) {
+					t.Fatalf("Run = %v, want ErrRevoked", err)
+				}
+			} else {
+				c.send(t, `{"v":1,"type":"token","seq":4,"run_id":"run_1","token":"ghs_x","exp":1700000000}`)
+				if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 4.0 {
+					t.Fatalf("reply = %v, want ack upto 4 on the same session", m)
+				}
+				if n := h.count(); n != 1 {
+					t.Fatalf("HandleFrame called %d times, want 1", n)
+				}
+			}
+			if n := h.asked.Load(); n != tc.wantAsked {
+				t.Errorf("TokenRefused called %d times, want %d", n, tc.wantAsked)
+			}
+		})
+	}
+}
+
 func TestPingTimeout(t *testing.T) {
 	x := newHarness(t)
 	x.start(t)

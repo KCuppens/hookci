@@ -11,6 +11,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/detect"
+	"github.com/KCuppens/zerocideploy/agent/internal/initdeploy"
 )
 
 // initSkeleton is what init writes when detection finds nothing. It is a
@@ -32,10 +33,14 @@ func runInit(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	force := fs.Bool("force", false, "overwrite an existing .zeroci.yml")
+	deploy := fs.Bool("deploy", false, "append a deployments.production block drafted from the compose file")
+	yes := fs.Bool("yes", false, "with --deploy, accept the defaults without prompting")
 	fs.Usage = func() {
 		fmt.Fprintln(stdout, "Usage: zeroci init [dir] [flags]")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Write <dir>/.zeroci.yml (default dir .) from the checks zeroci detect infers.")
+		fmt.Fprintln(stdout, "With --deploy, append deployments.production for the compose service")
+		fmt.Fprintln(stdout, "that has both build and ports, keeping the rest of the file as it is.")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Flags:")
 		fs.SetOutput(stdout)
@@ -44,6 +49,16 @@ func runInit(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	dir, code, ok := parseDirArgs(fs, args, stderr)
 	if !ok {
 		return code
+	}
+	switch {
+	case *yes && !*deploy:
+		fmt.Fprintln(stderr, "zeroci: --yes only applies to --deploy")
+		return ExitUsage
+	case *force && *deploy:
+		fmt.Fprintln(stderr, "zeroci: --force does not apply to --deploy, which never overwrites existing content")
+		return ExitUsage
+	case *deploy:
+		return runInitDeploy(dir, *yes, stdout, stderr)
 	}
 
 	path := filepath.Join(dir, ".zeroci.yml")
@@ -89,5 +104,21 @@ func runInit(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitInternal
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
+	return ExitOK
+}
+
+// runInitDeploy runs zeroci init --deploy on dir, prompting on stdin unless
+// yes is set.
+func runInitDeploy(dir string, yes bool, stdout, stderr io.Writer) int {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitUsage
+	}
+	err = initdeploy.Run(initdeploy.Options{Dir: dir, Repo: filepath.Base(abs), Yes: yes, In: os.Stdin, Out: stdout})
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitUsage
+	}
 	return ExitOK
 }

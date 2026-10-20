@@ -127,5 +127,6 @@ func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
 		FS:        os.DirFS("/"),
 		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
 		DiskFree:  doctor.HostDiskFree,
+		Writable:  doctor.HostWritable,
 	}
 }

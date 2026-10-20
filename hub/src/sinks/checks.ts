@@ -10,11 +10,13 @@ import { tenantDb } from "../db/tenant";
 import { registerAlarmTask } from "../do/agent-hooks";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
+import { onCheckConcluded } from "../deploy/chain";
 import { HubError } from "../errors";
 import { createCheckRun, updateCheckRun } from "../github/api";
 import { GitHubApiError, GitHubClient, type GitHubRequester } from "../github/client";
-import type { UpdateCheckRunBody } from "../github/types";
+import type { CheckRunConclusion, UpdateCheckRunBody } from "../github/types";
 import { defaultFetcher } from "../http";
+import { logEvent, reportError } from "../observability";
 import { QUOTAS } from "../quotas";
 import { S } from "../strings";
 import { registerSinkFactory, type SinkHost } from "./index";
@@ -46,7 +48,26 @@ export class ChecksSink implements Sink {
 
 	async onRunUpdate(run: RunView): Promise<void> {
 		if (!usesChecks(run)) return;
-		await this.inOrder(run.repoId, run.sha, () => this.push(run, AGGREGATE_CHECK, this.body(run, aggregateFor(run, this.env.HUB_ORIGIN))));
+		const view = aggregateFor(run, this.env.HUB_ORIGIN);
+		await this.inOrder(run.repoId, run.sha, () => this.push(run, AGGREGATE_CHECK, this.body(run, view)));
+		if (view.status === "completed") await this.chainDeploys(run, view.conclusion);
+	}
+
+	/** Starts the push-to-deploy chain; its errors are logged and never touch the check. */
+	private async chainDeploys(run: RunView, conclusion: CheckRunConclusion): Promise<void> {
+		try {
+			const sent = await onCheckConcluded(this.env, {
+				installationId: run.installationId,
+				repo: run.repo,
+				sha: run.sha,
+				ref: run.ref ?? "",
+				event: run.event,
+				conclusion,
+			});
+			if (sent > 0) logEvent("deploy_chain_dispatched", { installation_id: run.installationId, repo: run.repo, sha: run.sha, sent });
+		} catch (err) {
+			reportError(err, { installation_id: run.installationId, repo: run.repo, sha: run.sha, op: "deploy_chain" });
+		}
 	}
 
 	/** Creates the aggregate and every job's check run that does not exist yet; updates none. */

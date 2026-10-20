@@ -103,6 +103,10 @@ type Error struct {
 	// Human-readable explanation.
 	Message string `json:"message"`
 
+	// Run or trigger identifier of the token_request an auth_failed refuses. Absent
+	// when the hub refuses the agent credential itself.
+	RunId *string `json:"run_id,omitempty,omitzero"`
+
 	// Hub outbox sequence number, acknowledged by the agent with ack. Absent on
 	// errors sent outside the outbox.
 	Seq *int `json:"seq,omitempty,omitzero"`
@@ -363,6 +367,62 @@ type Rejected struct {
 	V int `json:"v"`
 }
 
+// Body of POST /v1/render: an agent asks the hub to render a deploy badge for a
+// dry-run preview. Not a WebSocket frame.
+type RenderRequest struct {
+	// Elapsed deploy time in milliseconds.
+	DurationMs *int `json:"duration_ms,omitempty,omitzero"`
+
+	// Deployment environment.
+	Env string `json:"env"`
+
+	// What to render.
+	Kind string `json:"kind"`
+
+	// Repository as owner/name.
+	Repo string `json:"repo"`
+
+	// Commit being deployed.
+	Sha string `json:"sha"`
+
+	// Deploy state to render.
+	State RenderRequestState `json:"state"`
+
+	// Current step name.
+	Step *string `json:"step,omitempty,omitzero"`
+
+	// Current step index, starting at 0.
+	StepIndex *int `json:"step_index,omitempty,omitzero"`
+
+	// Number of steps.
+	StepsTotal *int `json:"steps_total,omitempty,omitzero"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type RenderRequestState string
+
+const RenderRequestStateFailed RenderRequestState = "failed"
+const RenderRequestStateQueued RenderRequestState = "queued"
+const RenderRequestStateRollingBack RenderRequestState = "rolling_back"
+const RenderRequestStateRunning RenderRequestState = "running"
+const RenderRequestStateSucceeded RenderRequestState = "succeeded"
+
+// Answer to POST /v1/render: the Slack badge the hub would post.
+type RenderResponse struct {
+	// Slack Block Kit blocks.
+	Blocks []RenderResponseBlocksElem `json:"blocks"`
+
+	// Badge text, the Slack message fallback.
+	Text string `json:"text"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type RenderResponseBlocksElem map[string]interface{}
+
 // Hub answers a token request.
 type Token struct {
 	// Expiry as unix seconds.
@@ -413,6 +473,9 @@ type Trigger struct {
 
 	// Base commit of the pull request.
 	BaseSha *string `json:"base_sha,omitempty,omitzero"`
+
+	// Deployment environment, for deploy triggers.
+	Env *string `json:"env,omitempty,omitzero"`
 
 	// GitHub event behind the trigger.
 	Event TriggerEvent `json:"event"`

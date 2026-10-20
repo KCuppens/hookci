@@ -104,6 +104,7 @@ func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
 	if err != nil {
 		return nil, Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
 	}
+	fillDeploymentDefaults(&cfg.ZeroCIConfig)
 
 	diags := checkSemantics(&cfg.ZeroCIConfig, opts, lines)
 	diags.sort()
@@ -511,14 +512,12 @@ func nameDiagnostic(parent, name string, li lineIndex) Diagnostic {
 
 var egressPathRe = regexp.MustCompile(`^checks\.egress\[[0-9]+\]$`)
 
-// patternProblem explains a failed pattern. Egress entries, env_file, memory
-// and durations get specific wording; anything else names the pattern.
+// patternProblem explains a failed pattern. Egress entries, memory and
+// durations get specific wording; anything else names the pattern.
 func patternProblem(path, got, want string) (msg, fix string) {
 	switch {
 	case egressPathRe.MatchString(path):
 		return egressProblem(got)
-	case strings.HasPrefix(path, "deployments.") && strings.HasSuffix(path, ".env_file"):
-		return fmt.Sprintf("env_file %s must be an absolute path", quote(got)), "use a path that starts with /, for example /etc/zeroci/production.env"
 	case strings.HasSuffix(path, ".memory"):
 		return fmt.Sprintf("%s is not a memory size", quote(got)), "use a number with a K, M or G suffix, for example 4G or 512M"
 	case strings.HasSuffix(path, ".timeout"):

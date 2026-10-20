@@ -1,0 +1,5 @@
+services:
+  app:
+    image: myapp:latest
+    expose:
+      - 3000

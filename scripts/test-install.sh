@@ -74,6 +74,20 @@ left=$(find "$work/tmp" "$work/home" "$work/cwd" -mindepth 1)
 if [ -n "$left" ] || [ -e "$work/prefix" ]; then
 	fail "dry run left files outside its mktemp -d: $left"
 fi
+case $out in
+*"usermod -aG docker zeroci-deploy"*) fail "added zeroci-deploy to a docker group the host lacks: $out" ;;
+esac
+
+# With a docker group, zeroci-deploy joins it; the installer never creates it.
+printf '#!/bin/sh\n[ "$1 $2" = "group docker" ]\n' >"$bin/getent"
+chmod +x "$bin/getent"
+install good
+expect_code 0 "docker group"
+expect_out "usermod -aG docker zeroci-deploy" "deploy user joins the docker group"
+case $out in
+*groupadd*) fail "installer created a group: $out" ;;
+esac
+rm "$bin/getent"
 
 install bad
 expect_code 3 "bad checksums"

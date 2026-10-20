@@ -41,6 +41,10 @@ func commandTable() map[string]command {
 			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
 			run:     cmdConnect,
 		},
+		"deploy": {
+			summary: "preview a deployment without running it: deploy <env> --dry-run [--repo owner/name] [--sha SHA]",
+			run:     cmdDeploy,
+		},
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
 			run:     noDeps(runDetect),
@@ -48,6 +52,10 @@ func commandTable() map[string]command {
 		"doctor": {
 			summary: "diagnose this host and its path to the hub: doctor [--hub URL] [--state-root DIR] [--json]",
 			run:     cmdDoctor,
+		},
+		"gc": {
+			summary: "remove old deploy images, cap the build cache and delete finished run dirs: gc [--dry-run] [--state-dir DIR | --installation ID]",
+			run:     cmdGC,
 		},
 		"help": {
 			summary: "show help for zeroci",
@@ -57,7 +65,7 @@ func commandTable() map[string]command {
 			},
 		},
 		"init": {
-			summary: "scaffold a .zeroci.yml config file for the project",
+			summary: "scaffold a .zeroci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),
 		},
 		"logs": {
@@ -67,6 +75,10 @@ func commandTable() map[string]command {
 		"run": {
 			summary: "run the checks of the current repo's HEAD: run [job]",
 			run:     cmdRun,
+		},
+		"retry": {
+			summary: "retry a Failed or Interrupted deploy run: retry <run_id> [--state-dir DIR | --installation ID]",
+			run:     cmdRetry,
 		},
 		"status": {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",

@@ -1,0 +1,11 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: pnpm turbo run test
+deployments:
+  production:
+    on: { push: main }
+    strategy: compose-inplace
+    compose: { project: app, service: web }
+    health: { url: "http://127.0.0.1:3000/health" }

@@ -1,0 +1,8 @@
+services:
+  web:
+    build: .
+    container_name: myapp-web
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp

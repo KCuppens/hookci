@@ -235,7 +235,7 @@ describe("tenant isolation", () => {
       }),
     ).toEqual([]);
     expect(await sock.request({ type: "token_request", run_id: b.runId, purpose: "fetch" })).toEqual([
-      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound },
+      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: b.runId, message: S.runNotBound },
     ]);
     sock.ws.close();
 

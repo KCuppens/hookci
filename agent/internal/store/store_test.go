@@ -132,8 +132,12 @@ func TestOpenCreatesWAL(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if n != 3 {
-		t.Errorf("schema_migrations rows = %d, want 3", n)
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	if n != len(entries) {
+		t.Errorf("schema_migrations rows = %d, want %d", n, len(entries))
 	}
 }
 

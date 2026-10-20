@@ -127,9 +127,26 @@ export async function supersedeRun(t: TenantDb, triggerId: string, at: number): 
  * Gives the run of triggerId the agent's run_id in place of its provisional
  * one (the trigger_id); a second call with the same ids changes nothing more.
  * A run still waiting (received, queued or pending) becomes queued with no
- * reason; any other state is kept. False when no such run.
+ * reason; any other state is kept. When runId is already an earlier
+ * attempt's run (a deploy retry), that run is reopened as queued for
+ * triggerId and the provisional row is dropped. False when no such run.
  */
 export async function acceptRun(t: TenantDb, triggerId: string, runId: string, agentId: string): Promise<boolean> {
+	const existing = await t.first<{ trigger_id: string }>("SELECT trigger_id FROM runs WHERE installation_id = ?1 AND run_id = ?2", runId);
+	if (existing && runId !== triggerId) {
+		if (existing.trigger_id !== triggerId) {
+			await t.run(
+				`UPDATE runs SET trigger_id = ?3, agent_id = ?4, state = 'queued', reason = NULL, started_at = NULL, finished_at = NULL, duration_ms = NULL,
+					attempt = COALESCE((SELECT attempt FROM runs WHERE installation_id = ?1 AND run_id = ?3), attempt + 1)
+				WHERE installation_id = ?1 AND run_id = ?2`,
+				runId,
+				triggerId,
+				agentId,
+			);
+		}
+		await t.run("DELETE FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND trigger_id = ?2", triggerId);
+		return true;
+	}
 	const res = await t.run(
 		`UPDATE runs SET run_id = ?3, agent_id = ?4,
 			reason = CASE WHEN state IN ('received', 'queued', 'pending') THEN NULL ELSE reason END,

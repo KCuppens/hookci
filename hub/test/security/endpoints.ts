@@ -46,5 +46,6 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/terms", auth: "public" },
   { method: "GET", path: "/support", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
+  { method: "POST", path: "/v1/render", auth: "agent_bearer" },
   { method: "GET", path: "/logs/:runId/:job", auth: "log_sig" },
 ];

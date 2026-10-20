@@ -135,7 +135,7 @@ async function slackRequest(path: string, contentType: string, body: string, sig
   return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body });
 }
 
-/** A request to an agent bearer route (connect or log upload) carrying authorization. */
+/** A request to an agent bearer route (connect, log upload or render) carrying authorization. */
 async function bearerRequest(path: string, tenant: Tenant, authorization: string | null): Promise<Request> {
   const headers = new Headers({ "cf-connecting-ip": "203.0.113.7" });
   if (authorization !== null) headers.set("authorization", authorization);
@@ -149,6 +149,11 @@ async function bearerRequest(path: string, tenant: Tenant, authorization: string
     headers.set("x-zeroci-log-bytes", "11");
     headers.set("x-zeroci-log-truncated", "0");
     return new Request(`${ORIGIN}/v1/logs/${tenant.runId}/${tenant.job}`, { method: "PUT", headers, body: log });
+  }
+  if (path === "/v1/render") {
+    headers.set("content-type", "application/json");
+    const body = { v: 1, kind: "deploy_badge", repo: tenant.fullName, env: "staging", sha: tenant.headSha, state: "running" };
+    return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
   }
   throw new Error(`no bearer request for ${path}`);
 }

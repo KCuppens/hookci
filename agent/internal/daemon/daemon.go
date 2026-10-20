@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,7 +18,12 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/control"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/gc"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
@@ -58,6 +64,16 @@ type Options struct {
 	Source  source.Source
 	JobUser executor.JobUser
 	Slots   int // job slots of a run; <= 0 means scheduler.DefaultSlots()
+	// Deploys decides triggers that name an env; nil checks GitHub with
+	// hub-issued tokens and records accepted runs in the store.
+	Deploys DeployIntake
+	// DeployRunner runs deploy units and proxy reloads; nil: the OS.
+	DeployRunner execx.Runner
+	// DeployUser owns deploy checkouts; "" means deploy.DeployUser, the
+	// account deploy units run as.
+	DeployUser string
+	// HealthClient probes deploy health URLs; nil: the zero http.Client.
+	HealthClient *http.Client
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -77,6 +93,15 @@ type Daemon struct {
 	mu      sync.Mutex
 	queue   []*work // accepted, not started
 	current *work
+
+	deploys     DeployIntake
+	deployWake  chan struct{}
+	deployQ     []protocol.Trigger // guarded by mu
+	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
+	deploySched *deploy.Scheduler  // runs accepted deploy runs
+	// deployConfig loads the trusted .zeroci.yml at a deploy run's sha.
+	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
+	collector    *gc.Collector // removes old deploy images and run dirs
 }
 
 // work is one accepted trigger.
@@ -101,7 +126,10 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
-	d := &Daemon{agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
+	d := &Daemon{
+		agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1),
+		deploys: o.Deploys, deployWake: make(chan struct{}, 1), deploying: map[string]bool{},
+	}
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
@@ -117,6 +145,19 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if d.src == nil {
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
 	}
+	github := &http.Client{Timeout: githubTimeout}
+	if d.deploys == nil {
+		d.deploys = &hubIntake{
+			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
+			http:   github,
+			tokens: d.tokens.Request,
+		}
+	}
+	d.deployConfig = githubConfig("", github, d.tokens.Request)
+	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger})
+	d.collector = newCollector(st, o, conf.AgentConfig)
+	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)
+	d.deploySched.PostRun = func(ctx context.Context, _ store.DeployRun) { d.collector.RunBestEffort(ctx) }
 	return d
 }
 
@@ -134,6 +175,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.recoverTriggers(ctx); err != nil {
 		return err
 	}
+	if err := d.recoverDeploys(ctx); err != nil {
+		return err
+	}
 	reset, err := d.st.BindAgent(ctx, d.agentID)
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
@@ -143,11 +187,27 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	wctx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
+	// A control socket that cannot start only disables the CLI commands
+	// that use it; exiting would keep the unit down (RestartPreventExitStatus).
+	if ctl, err := control.Listen(d.o.StateDir, d.log); err != nil {
+		d.log.Error("control socket unavailable; zeroci gc and retry will not reach this agent", "err", err)
+	} else {
+		ctl.Handle("gc", d.collector.HandleControl)
+		ctl.Handle(deploy.RetryOp, deploy.RetryControl(d.st, d.deploySched))
+		wg.Go(func() {
+			if err := ctl.Serve(wctx); err != nil {
+				d.log.Error("control socket stopped", "err", err)
+			}
+		})
+	}
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
+	wg.Go(func() { d.deployWorker(wctx) })
+	wg.Go(func() { d.deploySched.Run(wctx) })
 	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
+	d.deploySched.Wait()
 	return err
 }
 
@@ -157,6 +217,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 	switch v := f.(type) {
 	case protocol.Trigger:
+		if v.Env != nil && *v.Env != "" {
+			d.queueDeploy(v)
+			return nil
+		}
 		return d.accept(ctx, v)
 	case protocol.Token:
 		d.tokens.Deliver(v)
@@ -164,6 +228,13 @@ func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 		d.interrupt(ctx, v)
 	}
 	return nil
+}
+
+// TokenRefused implements hubclient.TokenRefusals: the hub refused the
+// token for runID, a run or deploy trigger, so the requests waiting on it
+// fail now instead of timing out.
+func (d *Daemon) TokenRefused(runID, message string) bool {
+	return d.tokens.Refuse(runID, message)
 }
 
 // accept records t and queues it. A trigger already recorded is ignored:

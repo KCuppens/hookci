@@ -18,12 +18,46 @@ func (s sender) Send(_ context.Context, f protocol.Frame) (int64, error) {
 }
 
 func request(b *Broker, runID string) <-chan [2]any {
+	return start(b.Request, runID)
+}
+
+func start(req func(context.Context, string) (string, error), id string) <-chan [2]any {
 	done := make(chan [2]any, 1)
 	go func() {
-		tok, err := b.Request(context.Background(), runID)
+		tok, err := req(context.Background(), id)
 		done <- [2]any{tok, err}
 	}()
 	return done
+}
+
+// TestBrokerRefuse: a hub refusal fails only the requests for the run or
+// trigger it names; other requests keep waiting for their tokens.
+func TestBrokerRefuse(t *testing.T) {
+	sent := make(sender, 4)
+	b := New(sent, clock.NewFake(time.Unix(1_700_000_000, 0)))
+	if b.Refuse("run-1", "run not bound") {
+		t.Fatal("Refuse with nothing pending = true, want false")
+	}
+	exp := int(time.Now().Add(time.Hour).Unix())
+
+	run := request(b, "run-1")
+	<-sent
+	trg := request(b, "trg-1")
+	<-sent
+
+	if b.Refuse("trg-2", "run not bound") {
+		t.Fatal("Refuse of an id nobody waits on = true, want false")
+	}
+	if !b.Refuse("run-1", "run not bound") {
+		t.Fatal("Refuse of a pending run request = false, want true")
+	}
+	if r := <-run; r[0] != "" || r[1] == nil || r[1].(error).Error() != "hubtokens: hub refused a token for run-1: run not bound" {
+		t.Fatalf("run request = %q, %v; want refused", r[0], r[1])
+	}
+	b.Deliver(protocol.Token{RunId: "trg-1", Token: "tok-trigger-5e1c", Exp: exp})
+	if r := <-trg; r[0] != "tok-trigger-5e1c" || r[1] != nil {
+		t.Fatalf("trigger request = %q, %v; want its token", r[0], r[1])
+	}
 }
 
 func TestBrokerTimeout(t *testing.T) {

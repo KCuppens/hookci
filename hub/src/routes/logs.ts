@@ -2,7 +2,6 @@
 // GET /logs/:runId/:job?exp=&sig=: the signed link a Slack user opens.
 
 import type { Context } from "hono";
-import { AGENT_CREDENTIAL_PREFIX, agentCredentialHash, getAgentByCredentialHash } from "../db/agents";
 import { getRunOwner, setJobLog } from "../db/runs";
 import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
@@ -12,6 +11,7 @@ import { logKey } from "../logs/keys";
 import { logSigStatus } from "../logs/sign";
 import { logEvent } from "../observability";
 import { QUOTAS } from "../quotas";
+import { authenticateAgent } from "./agent-auth";
 
 type LogContext<Path extends string> = Context<{ Bindings: Env }, Path>;
 
@@ -39,11 +39,7 @@ async function readCapped(body: ReadableStream<Uint8Array> | null): Promise<Uint
 
 export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<Response> {
 	const env = c.env;
-	const credential = c.req.header("authorization")?.match(/^Bearer (\S+)$/)?.[1];
-	if (!credential?.startsWith(AGENT_CREDENTIAL_PREFIX)) throw new HubError("auth_failed", 401);
-	const agent = await getAgentByCredentialHash(env.DB, await agentCredentialHash(credential));
-	if (!agent) throw new HubError("auth_failed", 401);
-	if (agent.revoked_at !== null) throw new HubError("revoked", 401);
+	const agent = await authenticateAgent(env.DB, c.req.header("authorization"));
 
 	const runId = c.req.param("runId");
 	const job = c.req.param("job");

@@ -6,6 +6,7 @@ package hubtokens
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -28,7 +29,19 @@ type Broker struct {
 	send    Sender
 	clk     clock.Clock
 	mu      sync.Mutex
-	waiters map[string][]chan protocol.Token
+	waiters map[string][]*waiter
+}
+
+type waiter struct {
+	id string
+	ch chan answer
+}
+
+// answer is a token frame or the hub's refusal.
+type answer struct {
+	tok     protocol.Token
+	refusal string
+	refused bool
 }
 
 // New returns a Broker that sends through s. A nil clk is the real clock.
@@ -36,33 +49,37 @@ func New(s Sender, clk clock.Clock) *Broker {
 	if clk == nil {
 		clk = clock.Real{}
 	}
-	return &Broker{send: s, clk: clk, waiters: map[string][]chan protocol.Token{}}
+	return &Broker{send: s, clk: clk, waiters: map[string][]*waiter{}}
 }
 
-// Request asks the hub for a fetch token for runID and waits up to Timeout
-// for it. The token is registered with the redactor before it is returned.
-func (b *Broker) Request(ctx context.Context, runID string) (string, error) {
-	ch := make(chan protocol.Token, 1)
+// Request asks the hub for a fetch token for id, a run or deploy trigger
+// ID, and waits up to Timeout for it. The token is registered with the
+// redactor before it is returned.
+func (b *Broker) Request(ctx context.Context, id string) (string, error) {
+	w := &waiter{id: id, ch: make(chan answer, 1)}
 	b.mu.Lock()
-	b.waiters[runID] = append(b.waiters[runID], ch)
+	b.waiters[id] = append(b.waiters[id], w)
 	b.mu.Unlock()
-	defer b.drop(runID, ch)
+	defer b.drop(w)
 
 	timeout := b.clk.After(Timeout)
-	if _, err := b.send.Send(ctx, protocol.TokenRequest{RunId: runID, Purpose: protocol.TokenRequestPurposeFetch}); err != nil {
-		return "", fmt.Errorf("hubtokens: request token for %s: %w", runID, err)
+	if _, err := b.send.Send(ctx, protocol.TokenRequest{RunId: id, Purpose: protocol.TokenRequestPurposeFetch}); err != nil {
+		return "", fmt.Errorf("hubtokens: request token for %s: %w", id, err)
 	}
 	select {
-	case tok := <-ch:
-		if tok.Token == "" {
-			return "", fmt.Errorf("hubtokens: empty token for %s", runID)
+	case a := <-w.ch:
+		if a.refused {
+			return "", fmt.Errorf("hubtokens: hub refused a token for %s: %s", id, a.refusal)
 		}
-		redact.AddSecret(tok.Token, time.Unix(int64(tok.Exp), 0))
-		return tok.Token, nil
+		if a.tok.Token == "" {
+			return "", fmt.Errorf("hubtokens: empty token for %s", id)
+		}
+		redact.AddSecret(a.tok.Token, time.Unix(int64(a.tok.Exp), 0))
+		return a.tok.Token, nil
 	case <-timeout:
-		return "", fmt.Errorf("hubtokens: no token for %s within %s", runID, Timeout)
+		return "", fmt.Errorf("hubtokens: no token for %s within %s", id, Timeout)
 	case <-ctx.Done():
-		return "", fmt.Errorf("hubtokens: token for %s: %w", runID, ctx.Err())
+		return "", fmt.Errorf("hubtokens: token for %s: %w", id, ctx.Err())
 	}
 }
 
@@ -73,24 +90,33 @@ func (b *Broker) Deliver(tok protocol.Token) {
 	ws := b.waiters[tok.RunId]
 	delete(b.waiters, tok.RunId)
 	b.mu.Unlock()
-	for _, ch := range ws {
-		ch <- tok
+	for _, w := range ws {
+		w.ch <- answer{tok: tok}
 	}
 }
 
-func (b *Broker) drop(runID string, ch chan protocol.Token) {
+// Refuse fails every Request waiting on runID with the hub's refusal
+// message and reports whether there was one.
+func (b *Broker) Refuse(runID, message string) bool {
+	b.mu.Lock()
+	ws := b.waiters[runID]
+	delete(b.waiters, runID)
+	b.mu.Unlock()
+	for _, w := range ws {
+		w.ch <- answer{refusal: message, refused: true}
+	}
+	return len(ws) > 0
+}
+
+// drop removes w from the pending requests. Once dropped, w gets no
+// further answer.
+func (b *Broker) drop(w *waiter) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ws := b.waiters[runID]
-	for i, w := range ws {
-		if w == ch {
-			ws = append(ws[:i], ws[i+1:]...)
-			break
-		}
-	}
+	ws := slices.DeleteFunc(b.waiters[w.id], func(x *waiter) bool { return x == w })
 	if len(ws) == 0 {
-		delete(b.waiters, runID)
+		delete(b.waiters, w.id)
 	} else {
-		b.waiters[runID] = ws
+		b.waiters[w.id] = ws
 	}
 }

@@ -23,15 +23,20 @@ const (
 	Pass Status = iota
 	Warn
 	Fail
+	// Skip is a check that does not apply to this host, such as a caddy
+	// check without a caddy route.
+	Skip
 )
 
-// String is "pass", "warn" or "fail".
+// String is "pass", "warn", "fail" or "skip".
 func (s Status) String() string {
 	switch s {
 	case Pass:
 		return "pass"
 	case Warn:
 		return "warn"
+	case Skip:
+		return "skip"
 	default:
 		return "fail"
 	}
@@ -78,6 +83,8 @@ type Env struct {
 	// DiskFree is the bytes available to unprivileged users on the file
 	// system holding path.
 	DiskFree func(path string) (uint64, error)
+	// Writable is nil when the doctor's user may create files in dir.
+	Writable func(dir string) error
 }
 
 // Run runs checks in order and returns their results.
