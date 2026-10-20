@@ -20,7 +20,6 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
@@ -52,7 +51,9 @@ type redeemResponse struct {
 }
 
 // cmdConnect pairs this machine and, unless --no-service, enables and starts
-// the zeroci-agent@<installation_id> unit the installer wrote.
+// the zeroci-agent@<installation_id> unit the installer wrote, restarting it
+// when it already runs so it picks up the new identity. It never opens
+// agent.db: the agent binds its store to the new identity when it starts.
 func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -110,7 +111,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		PairToken:    pairToken,
 		Name:         *name,
 		Hostname:     hostname,
-		AgentVersion: version.String(),
+		AgentVersion: version.Version,
 		OS:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 	})
@@ -148,19 +149,13 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		return ExitRunFailed
 	}
 
-	st, err := store.Open(filepath.Join(dir, "agent.db"))
-	if err != nil {
-		fmt.Fprintf(errw, "zeroci: open store: %v\n", err)
-		return ExitRunFailed
-	}
-	defer st.Close()
 	log := slog.New(slog.NewTextHandler(errw, nil))
 	client := hubclient.New(hubclient.Config{
 		HubURL:     cfg.HubURL,
 		AgentID:    cfg.AgentID,
 		Credential: cfg.Credential,
-		Version:    version.String(),
-	}, st, nil, log)
+		Version:    version.Version,
+	}, nil, nil, log)
 	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	if _, err := client.Handshake(hctx); err != nil {
@@ -171,7 +166,11 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	fmt.Fprintf(stdout, "Connected to %s as %s (agent %s)\n", cfg.HubURL, cfg.Name, cfg.AgentID)
 	unit := systemd.AgentUnit(cfg.InstallationID)
 	if *noService {
-		fmt.Fprintf(stdout, "Next: sudo systemctl enable --now %s\n", unit)
+		if *force {
+			fmt.Fprintf(stdout, "Next: sudo systemctl enable %s && sudo systemctl restart %s\n", unit, unit)
+		} else {
+			fmt.Fprintf(stdout, "Next: sudo systemctl enable --now %s\n", unit)
+		}
 		return ExitOK
 	}
 	exists, err := d.Services.UnitExists(ctx, unit)
@@ -183,12 +182,36 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		fmt.Fprintf(stdout, "No %s unit: run the installer (curl -fsSL %s/install | sh), then sudo systemctl enable --now %s\n", unit, cfg.HubURL, unit)
 		return ExitOK
 	}
+	state, err := d.Services.ActiveState(ctx, unit)
+	if err != nil {
+		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		return ExitRunFailed
+	}
 	if err := d.Services.EnableNow(ctx, unit); err != nil {
 		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
 		return ExitRunFailed
 	}
-	fmt.Fprintf(stdout, "Started %s\n", unit)
+	if !unitRunning(state) {
+		fmt.Fprintf(stdout, "Started %s\n", unit)
+		return ExitOK
+	}
+	// enable --now leaves a running unit alone, still serving the agent it
+	// loaded before agent.json changed.
+	if err := d.Services.TryRestart(ctx, unit); err != nil {
+		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		return ExitRunFailed
+	}
+	fmt.Fprintf(stdout, "Restarted %s\n", unit)
 	return ExitOK
+}
+
+// unitRunning reports whether a unit in ActiveState state runs a process.
+func unitRunning(state string) bool {
+	switch state {
+	case "active", "activating", "reloading":
+		return true
+	}
+	return false
 }
 
 // checkNoAgent refuses a state dir that already holds an agent config.
@@ -218,7 +241,7 @@ func redeemPairToken(ctx context.Context, hubURL string, body redeemRequest) (*r
 		return nil, fmt.Errorf("cli: redeem: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "zeroci-agent/"+version.String())
+	req.Header.Set("User-Agent", "zeroci-agent/"+version.Version)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cli: redeem: %w", err)

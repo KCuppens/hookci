@@ -131,11 +131,16 @@ func (c *hubConn) drain() {
 type recordingHandler struct {
 	mu     sync.Mutex
 	frames []protocol.Frame
+	fail   int // fail this many calls before recording frames
 }
 
 func (h *recordingHandler) HandleFrame(_ context.Context, f protocol.Frame) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.fail > 0 {
+		h.fail--
+		return errors.New("store busy")
+	}
 	h.frames = append(h.frames, f)
 	return nil
 }
@@ -350,6 +355,44 @@ func TestInboundDedupe(t *testing.T) {
 	hwm, err := x.st.GetHWM(context.Background(), store.HWMIn)
 	if err != nil || hwm != 5 {
 		t.Fatalf("inbound hwm = %d, %v; want 5", hwm, err)
+	}
+}
+
+func TestFailedFrameNotAcked(t *testing.T) {
+	x := newHarness(t)
+	x.h.fail = 1
+	x.start(t)
+	c := x.hub.next(t)
+	c.handshake(t)
+
+	token := `{"v":1,"type":"token","seq":5,"run_id":"run_1","token":"ghs_x","exp":1700000000}`
+	c.send(t, token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		_, b, err := c.c.Read(ctx)
+		if err != nil {
+			break
+		}
+		if strings.Contains(string(b), `"ack"`) {
+			t.Fatalf("failed frame acknowledged: %s", b)
+		}
+	}
+	if hwm, err := x.st.GetHWM(context.Background(), store.HWMIn); err != nil || hwm != 0 {
+		t.Fatalf("inbound hwm after failure = %d, %v; want 0", hwm, err)
+	}
+
+	advanceUntil(t, x.clk, "reconnect", func() bool { return x.hub.accepted.Load() >= 2 })
+	c = x.hub.next(t)
+	if hello := c.handshake(t); hello["inbound_hwm"] != 0.0 {
+		t.Fatalf("hello inbound_hwm = %v, want 0", hello["inbound_hwm"])
+	}
+	c.send(t, token)
+	if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 5.0 {
+		t.Fatalf("reply = %v, want ack upto 5", m)
+	}
+	if n := x.h.count(); n != 1 {
+		t.Fatalf("frames handled = %d, want 1", n)
 	}
 }
 

@@ -180,7 +180,8 @@ func (stateDirPermsCheck) Run(_ context.Context, env Env) Result {
 	return pass(title, env.StateRoot+" is 0700 root")
 }
 
-// credentialCheck wants at least one paired installation with a credential.
+// credentialCheck wants at least one paired installation with a credential
+// that only its owner can read.
 type credentialCheck struct{}
 
 func (credentialCheck) ID() string { return "credential_present" }
@@ -193,8 +194,16 @@ func (credentialCheck) Run(_ context.Context, env Env) Result {
 	}
 	var agents []string
 	for _, in := range insts {
+		file := path.Join(in.dir, agentconf.FileName)
 		if in.conf.Credential == "" || in.conf.AgentID == "" {
-			return fail(title, path.Join(in.dir, agentconf.FileName)+" has no credential", connectFix)
+			return fail(title, file+" has no credential", connectFix)
+		}
+		fi, err := fs.Stat(env.FS, fsPath(file))
+		if err != nil {
+			return fail(title, fmt.Sprintf("%s: %v", file, err), connectFix)
+		}
+		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+			return fail(title, fmt.Sprintf("%s has mode %04o, want 0600", file, perm), "sudo chmod 0600 "+file)
 		}
 		agents = append(agents, fmt.Sprintf("%s (installation %d)", in.conf.AgentID, in.conf.InstallationID))
 	}

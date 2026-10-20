@@ -1,0 +1,1 @@
+CREATE TABLE agent (id INTEGER PRIMARY KEY CHECK (id = 1), agent_id TEXT NOT NULL);

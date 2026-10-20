@@ -10,13 +10,21 @@ fixtures="$root/examples/install-fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# bin holds only the tools the installer needs, so a host cosign never leaks in.
+# A bin dir holds only the tools the installer needs, so a host cosign never
+# leaks in. mkbin DIR DOWNLOADER links them and the given curl or wget.
+mkbin() {
+	mkdir -p "$1"
+	for tool in sh uname mktemp cp awk sha256sum cut tar gzip cat rm id "$2"; do
+		ln -s "$(command -v "$tool")" "$1/$tool"
+	done
+}
+mkdir -p "$work/tmp" "$work/home" "$work/cwd"
 bin="$work/bin"
-mkdir -p "$bin" "$work/tmp" "$work/home" "$work/cwd"
-for tool in sh uname mktemp cp awk sha256sum cut tar gzip cat rm id; do
-	ln -s "$(command -v "$tool")" "$bin/$tool"
-done
-ln -s "$(command -v curl || command -v wget)" "$bin/$(basename "$(command -v curl || command -v wget)")"
+if command -v curl >/dev/null 2>&1; then
+	mkbin "$bin" curl
+else
+	mkbin "$bin" wget
+fi
 
 failures=0
 fail() {
@@ -24,15 +32,18 @@ fail() {
 	failures=$((failures + 1))
 }
 
-# install BASE [ENV...] runs the installer and sets $code and $out.
+# install BASE [ENV...] runs $installer with the tools in $path and sets $code
+# and $out.
+path=$bin
+installer=$script
 install() {
 	base=$1
 	shift
 	set +e
-	out=$(cd "$work/cwd" && env -i PATH="$bin" HOME="$work/home" TMPDIR="$work/tmp" \
+	out=$(cd "$work/cwd" && env -i PATH="$path" HOME="$work/home" TMPDIR="$work/tmp" \
 		ZEROCI_INSTALL_DRY_RUN=1 ZEROCI_VERSION=v0.0.0-test ZEROCI_TEST_UNAME_M=x86_64 \
 		ZEROCI_RELEASE_BASE="file://$fixtures/$base" ZEROCI_PREFIX="$work/prefix" \
-		"$@" sh "$script" 2>&1)
+		"$@" sh "$installer" 2>&1)
 	code=$?
 	set -e
 }
@@ -57,6 +68,8 @@ for step in "useradd --system" "zeroci.slice" "zeroci-agent@.service" "systemctl
 done
 expect_out "cosign not found: checksum verified, signature not verified" "no cosign"
 expect_out "+ " "dry-run prefix"
+expect_out "ExecStart=$work/prefix/bin/zeroci agent --installation %i" "unit runs the binary under ZEROCI_PREFIX"
+expect_out "RestartPreventExitStatus=3 4" "unit stays down when revoked or too old"
 left=$(find "$work/tmp" "$work/home" "$work/cwd" -mindepth 1)
 if [ -n "$left" ] || [ -e "$work/prefix" ]; then
 	fail "dry run left files outside its mktemp -d: $left"
@@ -68,6 +81,37 @@ expect_out "checksum mismatch for zeroci_0.0.0-test_linux_amd64.tar.gz" "bad che
 
 install good ZEROCI_TEST_UNAME_M=mips
 expect_code 2 "mips"
+
+for prefix in relative/prefix "/opt/zero ci" '/opt/$HOME' '/opt/%i'; do
+	install good ZEROCI_PREFIX="$prefix"
+	expect_code 1 "ZEROCI_PREFIX=$prefix"
+	expect_out "ZEROCI_PREFIX" "ZEROCI_PREFIX=$prefix"
+done
+
+# Downloads refuse plain http whichever downloader is present.
+for downloader in curl wget; do
+	command -v "$downloader" >/dev/null 2>&1 || continue
+	path="$work/bin-$downloader"
+	mkbin "$path" "$downloader"
+	install good ZEROCI_RELEASE_BASE=http://127.0.0.1:1/download
+	expect_code 1 "$downloader over http"
+	expect_out "refusing to download http://127.0.0.1:1/download/" "$downloader over http"
+	path=$bin
+done
+if command -v curl >/dev/null 2>&1; then
+	install good ZEROCI_VERSION=latest ZEROCI_RELEASE_BASE=http://127.0.0.1:1/download
+	expect_code 1 "latest over http"
+	expect_out 'Protocol "http"' "latest over http"
+fi
+
+# A download cut off inside the script runs none of it.
+awk '{ print } /install -D/ { exit }' "$script" >"$work/partial.sh"
+installer="$work/partial.sh"
+install good
+installer=$script
+case $out in
+*Downloading* | *"+ "*) fail "truncated installer ran: $out" ;;
+esac
 
 printf '#!/bin/sh\nexit 1\n' >"$bin/cosign"
 chmod +x "$bin/cosign"
@@ -85,6 +129,8 @@ EOF
 install good
 expect_code 0 "passing cosign"
 expect_out "Signature verified" "passing cosign"
+install good ZEROCI_COSIGN_IDENTITY=attacker@example.com ZEROCI_COSIGN_ISSUER=https://attacker.example
+expect_code 0 "cosign identity ignores the environment"
 rm "$bin/cosign"
 
 # gen-install.sh --check fails when the embedded unit drifts from packaging/.

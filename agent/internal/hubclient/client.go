@@ -66,8 +66,10 @@ type Config struct {
 
 // Handler receives the hub frames that carry a seq: trigger, token,
 // interrupt and log_subscribe. HandleFrame runs on the session goroutine, so
-// it must return promptly and hand long work to another goroutine. It must be
-// idempotent: a frame is acknowledged even when HandleFrame fails.
+// it must return promptly and hand long work to another goroutine. A frame
+// HandleFrame fails is not acknowledged: the session drops and the hub
+// resends it after the reconnect. HandleFrame must be idempotent, since a
+// crash between handling and acknowledging also brings the frame back.
 type Handler interface {
 	HandleFrame(ctx context.Context, f protocol.Frame) error
 }
@@ -86,7 +88,8 @@ type Client struct {
 }
 
 // New returns a client that persists outbound frames and the inbound
-// high-water mark in st. A nil log discards log output.
+// high-water mark in st. A client with a nil st can only Handshake. A nil
+// log discards log output.
 func New(cfg Config, st *store.Store, h Handler, log *slog.Logger) *Client {
 	if cfg.Protocol == 0 {
 		cfg.Protocol = protocol.Version
@@ -163,8 +166,8 @@ func sendKind(f protocol.Frame) (string, bool) {
 // Run keeps a session open until ctx ends or the hub refuses the agent for
 // good. It returns ErrRevoked, ErrUnsupported, ErrAgentTooOld or ctx.Err().
 func (c *Client) Run(ctx context.Context) error {
-	if c.h == nil {
-		return errors.New("hubclient: run: nil handler")
+	if c.h == nil || c.st == nil {
+		return errors.New("hubclient: run: nil handler or store")
 	}
 	for {
 		connectedFor, err := c.session(ctx)
@@ -189,7 +192,8 @@ func (c *Client) Run(ctx context.Context) error {
 }
 
 // Handshake dials the hub, completes one hello/welcome exchange and closes
-// the connection without handling or acknowledging any hub frame.
+// the connection without handling or acknowledging any hub frame. Without a
+// store the hello claims no hub frame, as a newly paired agent has seen none.
 func (c *Client) Handshake(ctx context.Context) (protocol.Welcome, error) {
 	s, err := c.open(ctx)
 	if err != nil {
@@ -328,7 +332,7 @@ func (c *Client) handle(ctx context.Context, s *conn, b []byte) error {
 	if e, isErr := f.(protocol.Error); isErr {
 		after = c.hubError(e)
 	} else if err := c.h.HandleFrame(ctx, f); err != nil {
-		c.log.Error("handling hub frame failed", "seq", seq, "err", err)
+		return fmt.Errorf("hubclient: handle hub frame seq %d: %w", seq, err)
 	}
 	if err := c.st.SetHWM(ctx, store.HWMIn, seq); err != nil {
 		return fmt.Errorf("hubclient: inbound: %w", err)
@@ -400,12 +404,15 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 	}
 	s := newConn(ctx, wc)
 
-	hwm, err := c.st.GetHWM(ctx, store.HWMIn)
-	if err != nil {
-		s.close(closeGoingAway, "store error")
-		return nil, fmt.Errorf("hubclient: hello: %w", err)
+	in := 0
+	if c.st != nil {
+		hwm, err := c.st.GetHWM(ctx, store.HWMIn)
+		if err != nil {
+			s.close(closeGoingAway, "store error")
+			return nil, fmt.Errorf("hubclient: hello: %w", err)
+		}
+		in = int(hwm)
 	}
-	in := int(hwm)
 	hello := protocol.Hello{AgentVersion: c.cfg.Version, ProtocolVersion: c.cfg.Protocol, InboundHwm: &in}
 	if c.cfg.AgentID != "" {
 		hello.AgentId = &c.cfg.AgentID

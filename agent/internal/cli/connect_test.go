@@ -17,7 +17,9 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
+	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
 
 const (
@@ -88,9 +90,11 @@ func newFakePairHub(t *testing.T, status int, body string) *fakePairHub {
 
 const redeemOK = `{"agent_id":"agt_1","credential":"` + testCredential + `","installation_id":42,"hub_ws_url":"wss://hub/v1/agent/connect","name":"build-1"}`
 
-// fakeServices is a ServiceManager where only the units in exist are installed.
+// fakeServices is a ServiceManager where only the units in exist are
+// installed and every unit is in state, "inactive" when empty.
 type fakeServices struct {
 	exist     map[string]bool
+	state     string
 	enabled   []string
 	restarted []string
 }
@@ -109,7 +113,12 @@ func (f *fakeServices) TryRestart(_ context.Context, unit string) error {
 	return nil
 }
 
-func (f *fakeServices) ActiveState(context.Context, string) (string, error) { return "inactive", nil }
+func (f *fakeServices) ActiveState(context.Context, string) (string, error) {
+	if f.state == "" {
+		return "inactive", nil
+	}
+	return f.state, nil
+}
 
 // runConnectCLI runs zeroci with svc in place of systemctl.
 func runConnectCLI(svc systemd.ServiceManager, args ...string) (int, string, string) {
@@ -269,6 +278,81 @@ func TestConnectRefusesExistingAgent(t *testing.T) {
 	cfg, err := agentconf.Load(dir)
 	if err != nil || cfg.AgentID != "agt_1" {
 		t.Fatalf("after --force agent.json = %+v, %v; want agt_1", cfg, err)
+	}
+}
+
+// A re-paired agent's running unit still serves the replaced agent until it
+// restarts; enable --now alone leaves it running.
+func TestConnectForceRestartsRunningAgent(t *testing.T) {
+	hub := newFakePairHub(t, http.StatusOK, redeemOK)
+	dir := t.TempDir()
+	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	unit := "zeroci-agent@42.service"
+	svc := &fakeServices{exist: map[string]bool{unit: true}, state: "active"}
+	code, stdout, stderr := runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force")
+	if code != ExitOK {
+		t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
+	}
+	if len(svc.restarted) != 1 || svc.restarted[0] != unit {
+		t.Errorf("restarted units = %v, want %s", svc.restarted, unit)
+	}
+	if !strings.HasSuffix(stdout, "Restarted "+unit+"\n") {
+		t.Errorf("stdout = %q, want it to end with Restarted %s", stdout, unit)
+	}
+
+	svc = &fakeServices{exist: map[string]bool{unit: true}}
+	code, stdout, stderr = runConnectCLI(svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force", "--no-service")
+	if code != ExitOK || !strings.Contains(stdout, "sudo systemctl restart "+unit) {
+		t.Errorf("--no-service exit = %d stdout = %q stderr = %q, want a restart hint", code, stdout, stderr)
+	}
+}
+
+// connect --force must not claim the replaced agent's hub frames for the new
+// agent: its hub has never sent them, and the running agent owns agent.db.
+func TestConnectForceClaimsNoHubFrames(t *testing.T) {
+	hub := newFakePairHub(t, http.StatusOK, redeemOK)
+	dir := t.TempDir()
+	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetHWM(context.Background(), store.HWMIn, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--force")
+	if code != ExitOK {
+		t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
+	}
+	hello := hub.hello.Load()
+	if hello == nil || (*hello)["inbound_hwm"] != float64(0) {
+		t.Fatalf("hello = %v, want inbound_hwm 0", hello)
+	}
+}
+
+// The hub compares agent_version to its minimum as a bare semantic version.
+func TestConnectSendsBareVersion(t *testing.T) {
+	oldV, oldC := version.Version, version.Commit
+	version.Version, version.Commit = "1.2.3", "abcdef0"
+	t.Cleanup(func() { version.Version, version.Commit = oldV, oldC })
+	hub := newFakePairHub(t, http.StatusOK, redeemOK)
+	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir())
+	if code != ExitOK {
+		t.Fatalf("exit = %d; stderr:\n%s", code, stderr)
+	}
+	if req := hub.req.Load(); req == nil || req.AgentVersion != "1.2.3" {
+		t.Errorf("redeem request = %+v, want agent_version 1.2.3", req)
+	}
+	if hello := hub.hello.Load(); hello == nil || (*hello)["agent_version"] != "1.2.3" {
+		t.Errorf("hello = %v, want agent_version 1.2.3", hello)
 	}
 }
 

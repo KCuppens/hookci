@@ -489,6 +489,50 @@ func TestDaemonRecoversUnstartedTrigger(t *testing.T) {
 	}
 }
 
+// A store left by a replaced agent holds frames and high-water marks of a hub
+// session the new agent's hub has never seen; the daemon drops them before
+// it dials.
+func TestDaemonDropsReplacedAgentSession(t *testing.T) {
+	stateDir := t.TempDir()
+	st, err := store.Open(filepath.Join(stateDir, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := st.BindAgent(ctx, "agt_old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AcceptTrigger(ctx, "trg_1", "run_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetHWM(ctx, store.HWMIn, 7); err != nil {
+		t.Fatal(err)
+	}
+
+	dialer := &idleDialer{dialed: make(chan struct{})}
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "zc_agent_x"}, st, nil,
+		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}})
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case <-dialer.dialed:
+	case err := <-done:
+		t.Fatalf("Run = %v before dialing", err)
+	}
+	if items, err := st.Pending(ctx, 0, 0); err != nil || len(items) != 0 {
+		t.Errorf("pending = %d items, %v; want none", len(items), err)
+	}
+	if hwm, err := st.GetHWM(ctx, store.HWMIn); err != nil || hwm != 0 {
+		t.Errorf("in hwm = %d, %v; want 0", hwm, err)
+	}
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Errorf("Run = %v, want context.Canceled", err)
+	}
+}
+
 // logHub records the job logs PUT to it and the job's state in the agent
 // store at upload time.
 type logHub struct {

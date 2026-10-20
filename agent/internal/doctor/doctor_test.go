@@ -152,6 +152,9 @@ func TestChecksWarnOrFail(t *testing.T) {
 		{"credential empty", credentialCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"] = &fstest.MapFile{Data: []byte(`{"agent_id":"agt_1","installation_id":42}`)}
 		}, Fail, "has no credential"},
+		{"credential readable by others", credentialCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Mode = 0o644
+		}, Fail, "/var/lib/zeroci/42/agent.json has mode 0644, want 0600"},
 		{"run user missing", runUserCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["etc/passwd"] = &fstest.MapFile{Data: []byte("root:x:0:0::/root:/bin/sh\n")}
 		}, Fail, "no zeroci-run user"},

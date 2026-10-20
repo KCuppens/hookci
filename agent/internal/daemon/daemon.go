@@ -62,15 +62,16 @@ type Options struct {
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
 type Daemon struct {
-	st     *store.Store
-	exec   ExecutorFunc
-	o      Options
-	clk    clock.Clock
-	log    *slog.Logger
-	client *hubclient.Client
-	tokens *hubtokens.Broker
-	src    source.Source
-	logs   *logupload.Uploader
+	agentID string
+	st      *store.Store
+	exec    ExecutorFunc
+	o       Options
+	clk     clock.Clock
+	log     *slog.Logger
+	client  *hubclient.Client
+	tokens  *hubtokens.Broker
+	src     source.Source
+	logs    *logupload.Uploader
 
 	wake    chan struct{}
 	mu      sync.Mutex
@@ -100,7 +101,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
-	d := &Daemon{st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
+	d := &Daemon{agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
@@ -119,10 +120,11 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	return d
 }
 
-// Run settles the triggers an earlier daemon left unfinished, then serves
-// the hub session until ctx ends or the hub refuses the agent. It returns
-// hubclient.ErrRevoked, hubclient.ErrUnsupported or ctx.Err(). A run still
-// going when Run returns is recorded as interrupted.
+// Run settles the triggers an earlier daemon left unfinished, drops the hub
+// session state of a replaced agent, then serves the hub session until ctx
+// ends or the hub refuses the agent. It returns hubclient.ErrRevoked,
+// hubclient.ErrUnsupported or ctx.Err(). A run still going when Run returns
+// is recorded as interrupted.
 func (d *Daemon) Run(ctx context.Context) error {
 	if hs, ok := d.src.(*source.HubSource); ok {
 		if err := os.MkdirAll(hs.WorkRoot, 0o700); err != nil {
@@ -132,11 +134,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.recoverTriggers(ctx); err != nil {
 		return err
 	}
+	reset, err := d.st.BindAgent(ctx, d.agentID)
+	if err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
+	if reset {
+		d.log.Info("agent re-paired: dropped the previous agent's unsent frames", "agent", d.agentID)
+	}
 	wctx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
-	err := d.client.Run(ctx)
+	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
 	return err
