@@ -47,7 +47,7 @@ crons = ["*/5 * * * *"]
 
 [[rules]]
 type = "Text"
-globs = ["**/*.sh"]
+globs = ["**/*.sh", "**/*.css"]
 fallthrough = true
 
 [env.staging]

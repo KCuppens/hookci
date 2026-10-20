@@ -14,7 +14,7 @@ import { createCheckRun, updateCheckRun } from "../github/api";
 import { GitHubClient } from "../github/client";
 import type { CheckRunConclusion } from "../github/types";
 import { defaultFetcher } from "../http";
-import { signLogUrl } from "../logs/sign";
+import { signLogUrl } from "../logs/signing";
 import { reportError } from "../observability";
 import type { Event as AgentEvent } from "../protocol";
 import { escapeMrkdwn } from "../slack/badge";
@@ -229,7 +229,7 @@ async function logUrlFor(env: Env, installationId: number, runId: string): Promi
 	);
 	if (!job) return undefined;
 	try {
-		return await signLogUrl(env, runId, job.name);
+		return await signLogUrl(env, { installationId, runId, job: job.name }, new Date(now(env)));
 	} catch (err) {
 		reportError(err, { op: "deploy_log_url", run_id: runId });
 		return undefined;

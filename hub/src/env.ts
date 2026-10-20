@@ -37,8 +37,9 @@ export interface Env {
 	/** JSON `{"current":<version>,"keys":{"<version>":"<base64 32-byte key>"}}`; see parseEncKeys. */
 	TOKEN_ENC_KEYS: string;
 	STATE_SIGNING_KEY: string;
-	/** JSON `{"<version>":"<base64 key>"}`; the highest version is current. */
-	LOG_SIGNING_KEYS: string;
+	/** HMAC key of signed log links, kid=c; LOG_SIGNING_KEY_PREVIOUS (kid=p) still verifies during a rotation. */
+	LOG_SIGNING_KEY: string;
+	LOG_SIGNING_KEY_PREVIOUS?: string;
 	ROTATION_IN_PROGRESS?: string;
 	/** Tests only: replaces the wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;

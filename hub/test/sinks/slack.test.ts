@@ -8,7 +8,7 @@ import { getSlackMessage } from "../../src/db/slack-messages";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watches";
 import { clearOfflineDm } from "../../src/do/agent-hooks";
-import { verifyLogSig } from "../../src/logs/sign";
+import { verifyLogUrl } from "../../src/logs/signing";
 import { slackApi, slackApiFireAndForget } from "../../src/slack/api";
 import { resetChannelCacheForTests } from "../../src/slack/channels";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
@@ -321,8 +321,11 @@ describe("SlackSink", () => {
     expect(fenced).toEqual(Array.from({ length: 40 }, (_, i) => `line ${61 + i}`));
     expect(blocks).not.toContain("agent tail");
     const url = new URL(/<(https:[^|>]+\/logs\/[^|>]+)\|/.exec(blocks)?.[1] ?? "");
-    expect(`${url.origin}${url.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/run_1/build`);
-    expect(await verifyLogSig(env, "run_1", "build", Number(url.searchParams.get("exp")), url.searchParams.get("sig") ?? "", world.clock.now())).toBe(true);
+    expect(`${url.origin}${url.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/view`);
+    expect(await verifyLogUrl(env, url.searchParams, new Date(world.clock.now()))).toEqual({
+      ok: true,
+      ref: { installationId: INSTALLATION, runId: "run_1", job: "build" },
+    });
     expect(JSON.parse(blocks)).toContainEqual({
       type: "actions",
       elements: [expect.objectContaining({ type: "button", action_id: "log:view", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLog }) })],

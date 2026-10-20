@@ -26,7 +26,7 @@ import { systemClock } from "../do/clock";
 import type { SlackCallResult } from "../do/slack-queue";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { signLogUrl } from "../logs/sign";
+import { signLogUrl } from "../logs/signing";
 import { getLogTail } from "../logs/tail";
 import { logEvent, reportError } from "../observability";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
@@ -359,7 +359,8 @@ export class SlackSink implements Sink {
 		if (job.logs === "local" || !run.runId) return fallback;
 		const tail = await getLogTail(this.env, run.runId, job.name, TAIL_LINES);
 		if (!tail) return fallback;
-		return { job, tail, logUrl: await signLogUrl(this.env, run.runId, job.name, this.now()) };
+		const ref = { installationId: this.t.installationId, runId: run.runId, job: job.name };
+		return { job, tail, logUrl: await signLogUrl(this.env, ref, new Date(this.now())) };
 	}
 
 	/**

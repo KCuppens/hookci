@@ -241,6 +241,18 @@ export const S = {
 		approved: "Approved; the run is queued.",
 		approvedBy: (login: string) => `Approved by ${login}`,
 	},
+	logViewer: {
+		linkExpiredTitle: "Log link expired",
+		linkExpired: "This log link has expired. Open the run again from Slack or GitHub to get a fresh link.",
+		notFoundTitle: "Log not found",
+		notFound: (days: number) => `Log expired (${days}-day retention) or kept local on the agent.`,
+		repoRemoved: "Repository no longer installed",
+		run: "Run",
+		job: "Job",
+		raw: "Raw log",
+		truncated: (mib: number) => `Truncated: this page shows the first ${mib} MiB.`,
+		downloadRaw: "Download the raw log",
+	},
 	pages: {
 		startTitle: "Install ZeroCI",
 		startIntro: "ZeroCI runs your CI on your own machine and reports results to GitHub Checks and Slack.",

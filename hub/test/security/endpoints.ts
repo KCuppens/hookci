@@ -9,7 +9,7 @@ export type EndpointAuth =
   | "slack_sig"
   /** An agent's `zc_agent_` credential, or a pair token on /v1/pair/redeem. */
   | "agent_bearer"
-  /** The exp and sig query parameters of a signed log URL. */
+  /** The i, r, j, exp, kid and sig query parameters of a signed log URL. */
   | "log_sig"
   /** A single-use OAuth state, or the browser state cookie it belongs to. */
   | "oauth_state"
@@ -49,5 +49,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/security", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
   { method: "POST", path: "/v1/render", auth: "agent_bearer" },
-  { method: "GET", path: "/logs/:runId/:job", auth: "log_sig" },
+  { method: "GET", path: "/logs/view", auth: "log_sig" },
+  { method: "GET", path: "/logs/raw", auth: "log_sig" },
+  { method: "GET", path: "/logs/viewer.css", auth: "public" },
 ];

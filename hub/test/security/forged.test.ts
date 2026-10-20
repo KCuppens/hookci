@@ -10,7 +10,7 @@ import { base64url, hex, hmacSha256 } from "../../src/crypto";
 import { agentCredentialHash, getAgentByCredentialHash } from "../../src/db/agents";
 import { verifyGithubSignature } from "../../src/github/verify";
 import worker from "../../src/index";
-import { logSigStatus, signLogUrl } from "../../src/logs/sign";
+import { verifyLogUrl } from "../../src/logs/signing";
 import { escapeHtml } from "../../src/pages/layout";
 import { rotateCredential } from "../../src/pairing/agents";
 import { verifySlackRequest } from "../../src/slack/verify";
@@ -27,9 +27,6 @@ const INSTALLATION = 701;
 const TEAM = "T0FORGED";
 const ROTATED_SECRET = "rotated-secret-the-attacker-never-saw";
 const WRONG_SECRET = "attacker-made-this-up";
-// A 32-byte key no LOG_SIGNING_KEYS version holds.
-const OTHER_LOG_KEY_BYTES = new Uint8Array(32).fill(9);
-const OTHER_LOG_KEY = btoa(String.fromCharCode(...OTHER_LOG_KEY_BYTES));
 const STALE_SECONDS = 301;
 
 const original = {
@@ -37,7 +34,7 @@ const original = {
   GITHUB_WEBHOOK_SECRET_PREVIOUS: env.GITHUB_WEBHOOK_SECRET_PREVIOUS,
   SLACK_SIGNING_SECRET: env.SLACK_SIGNING_SECRET,
   SLACK_SIGNING_SECRET_PREVIOUS: env.SLACK_SIGNING_SECRET_PREVIOUS,
-  LOG_SIGNING_KEYS: env.LOG_SIGNING_KEYS,
+  LOG_SIGNING_KEY_PREVIOUS: env.LOG_SIGNING_KEY_PREVIOUS,
   DB: env.DB,
 };
 
@@ -49,7 +46,9 @@ type Expected =
   /** An HTML errorPage, which shows the message S.pages.errors holds for the code. */
   | { status: number; page: "oauth_state_invalid" | "github_no_access" }
   /** /slack/install's start-from-GitHub page, which carries no error code and issues no state. */
-  | { status: 403; slackStartPage: true };
+  | { status: 403; slackStartPage: true }
+  /** The log viewer's link-expired page, which says to open the run again for a fresh link. */
+  | { status: 403; logLinkPage: true };
 
 interface Case {
   kind: CaseKind;
@@ -330,36 +329,41 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
     ];
   },
 
-  log_sig: () => [
-    {
-      kind: "missing",
-      name: "no exp or sig",
-      request: async (t) => new Request(`${ORIGIN}/logs/${t.runId}/${t.job}`),
-      expected: { status: 403, json: "log_sig_invalid" },
-    },
-    {
-      kind: "wrong",
-      name: "signed with a key LOG_SIGNING_KEYS does not hold",
-      request: async (t) => {
-        const exp = nowSeconds() + 600;
-        const sig = base64url(await hmacSha256(OTHER_LOG_KEY_BYTES, `${t.runId}|${t.job}|${exp}`));
-        return new Request(`${ORIGIN}/logs/${t.runId}/${t.job}?exp=${exp}&sig=${sig}`);
+  log_sig: ({ path }) => {
+    /** A link to the tenant's job log with kid and a signature over the v1 message made with secret. */
+    const logRequest = async (t: Tenant, secret: string, kid: "c" | "p"): Promise<Request> => {
+      const exp = String(nowSeconds() + 600);
+      const i = String(t.installationId);
+      const sig = base64url(await hmacSha256(secret, `v1\n${i}\n${t.runId}\n${t.job}\n${exp}`));
+      return new Request(`${ORIGIN}${path}?${new URLSearchParams({ i, r: t.runId, j: t.job, exp, kid, sig })}`);
+    };
+    return [
+      {
+        kind: "missing",
+        name: "no exp, kid or sig",
+        request: async (t) => new Request(`${ORIGIN}${path}?${new URLSearchParams({ i: String(t.installationId), r: t.runId, j: t.job })}`),
+        expected: { status: 403, logLinkPage: true },
       },
-      expected: { status: 403, json: "log_sig_invalid" },
-    },
-    {
-      kind: "previous",
-      name: "signed with a key version that was removed",
-      request: async (t) => {
-        const url = new URL(await signLogUrl(env, t.runId, t.job));
-        const exp = Number(url.searchParams.get("exp"));
-        expect(await logSigStatus(env, t.runId, t.job, exp, url.searchParams.get("sig") ?? "", testClock.now())).toBe("ok");
-        env.LOG_SIGNING_KEYS = JSON.stringify({ "2": OTHER_LOG_KEY });
-        return new Request(`${ORIGIN}${url.pathname}${url.search}`);
+      {
+        kind: "wrong",
+        name: "signed with a key the hub never had",
+        request: async (t) => logRequest(t, WRONG_SECRET, "c"),
+        expected: { status: 403, logLinkPage: true },
       },
-      expected: { status: 403, json: "log_sig_invalid" },
-    },
-  ],
+      {
+        kind: "previous",
+        name: "signed with the previous key once LOG_SIGNING_KEY_PREVIOUS is removed",
+        request: async (t) => {
+          env.LOG_SIGNING_KEY_PREVIOUS = ROTATED_SECRET;
+          const req = await logRequest(t, ROTATED_SECRET, "p");
+          expect(await verifyLogUrl(env, new URL(req.url).searchParams, new Date(testClock.now()))).toMatchObject({ ok: true });
+          delete env.LOG_SIGNING_KEY_PREVIOUS;
+          return req;
+        },
+        expected: { status: 403, logLinkPage: true },
+      },
+    ];
+  },
 
   oauth_state: ({ method, path }) => {
     const route = OAUTH_ROUTES[path];
@@ -425,7 +429,8 @@ afterEach(() => {
   env.DB = original.DB;
   env.GITHUB_WEBHOOK_SECRET = original.GITHUB_WEBHOOK_SECRET;
   env.SLACK_SIGNING_SECRET = original.SLACK_SIGNING_SECRET;
-  env.LOG_SIGNING_KEYS = original.LOG_SIGNING_KEYS;
+  if (original.LOG_SIGNING_KEY_PREVIOUS === undefined) delete env.LOG_SIGNING_KEY_PREVIOUS;
+  else env.LOG_SIGNING_KEY_PREVIOUS = original.LOG_SIGNING_KEY_PREVIOUS;
   if (original.GITHUB_WEBHOOK_SECRET_PREVIOUS === undefined) delete env.GITHUB_WEBHOOK_SECRET_PREVIOUS;
   else env.GITHUB_WEBHOOK_SECRET_PREVIOUS = original.GITHUB_WEBHOOK_SECRET_PREVIOUS;
   if (original.SLACK_SIGNING_SECRET_PREVIOUS === undefined) delete env.SLACK_SIGNING_SECRET_PREVIOUS;
@@ -448,6 +453,9 @@ describe.each(ATTACKED)("$method $path ($auth)", (endpoint) => {
     } else if ("page" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(await res.text()).toContain(escapeHtml(S.pages.errors[expected.page]));
+    } else if ("logLinkPage" in expected) {
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(await res.text()).toContain(escapeHtml(S.logViewer.linkExpired));
     } else {
       expect(res.headers.get("set-cookie")).toBeNull();
       expect(await res.text()).toContain(escapeHtml(S.pages.slackStartBody));

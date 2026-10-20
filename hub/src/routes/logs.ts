@@ -1,14 +1,12 @@
 // PUT /v1/logs/:runId/:job: an agent uploads one job's gzipped log to R2.
-// GET /logs/:runId/:job?exp=&sig=: the signed link a Slack user opens.
+// Users read it through the signed links of routes/log-viewer.ts.
 
 import type { Context } from "hono";
 import { getRunOwner, setJobLog } from "../db/runs";
 import { tenantDb } from "../db/tenant";
-import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { logKey } from "../logs/keys";
-import { logSigStatus } from "../logs/sign";
 import { logEvent } from "../observability";
 import { QUOTAS } from "../quotas";
 import { authenticateAgent } from "./agent-auth";
@@ -64,31 +62,4 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	await setJobLog(tenantDb(env.DB, agent.installation_id), runId, job, { key, bytes, truncated: truncated === "1" });
 	logEvent("log_uploaded", { installation_id: agent.installation_id, run_id: runId, job, bytes, gzip_bytes: body.byteLength });
 	return c.body(null, 204);
-}
-
-export async function viewLog(c: LogContext<"/logs/:runId/:job">): Promise<Response> {
-	const env = c.env;
-	const runId = c.req.param("runId");
-	const job = c.req.param("job");
-	const now = (env.__TEST_CLOCK ?? systemClock).now();
-	const status = await logSigStatus(env, runId, job, Number(c.req.query("exp")), c.req.query("sig") ?? "", now);
-	if (status === "invalid") throw new HubError("log_sig_invalid", 403);
-	if (status === "expired") throw new HubError("log_expired", 410);
-
-	const owner = await getRunOwner(env.DB, runId);
-	const object = owner && (await env.LOGS.get(logKey(owner.installation_id, runId, job)));
-	if (!object) throw new HubError("log_not_found", 404);
-	return new Response(object.body, {
-		headers: {
-			"Content-Type": TEXT,
-			"Content-Encoding": "gzip",
-			"Cache-Control": "private, no-store",
-			"X-Robots-Tag": "noindex",
-			// The log holds output a fork pull request controls: never render it as a document on the hub origin.
-			"X-Content-Type-Options": "nosniff",
-			"Content-Security-Policy": "sandbox",
-			"Content-Disposition": "inline",
-		},
-		encodeBody: "manual",
-	});
 }

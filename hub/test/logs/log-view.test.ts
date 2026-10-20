@@ -5,7 +5,7 @@ import { hex, hmacSha256 } from "../../src/crypto";
 import { upsertRepos } from "../../src/db/repos";
 import { tenantDb } from "../../src/db/tenant";
 import worker from "../../src/index";
-import { LOG_URL_TTL_SECONDS, verifyLogSig } from "../../src/logs/sign";
+import { LOG_URL_TTL_SEC, verifyLogUrl } from "../../src/logs/signing";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { type CommandWorld, INSTALLATION, LOGIN, OTHER_INSTALLATION, REPO, setUpCommandWorld, TEAM, USER } from "../commands-helpers";
@@ -65,10 +65,12 @@ describe("log:view action", () => {
     const url = reply.text?.match(/<([^|>]+)\|/)?.[1] ?? "";
     expect(reply.text).toBe(S.slack.logLink(url));
     const link = new URL(url);
-    expect(`${link.origin}${link.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/${RUN}/test`);
-    const exp = Number(link.searchParams.get("exp"));
-    expect(exp).toBe(Math.floor(testClock.now() / 1000) + LOG_URL_TTL_SECONDS);
-    expect(await verifyLogSig(env, RUN, "test", exp, link.searchParams.get("sig") ?? "")).toBe(true);
+    expect(`${link.origin}${link.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/view`);
+    expect(Number(link.searchParams.get("exp"))).toBe(Math.floor(testClock.now() / 1000) + LOG_URL_TTL_SEC);
+    expect(await verifyLogUrl(env, link.searchParams, new Date(testClock.now()))).toEqual({
+      ok: true,
+      ref: { installationId: INSTALLATION, runId: RUN, job: "test" },
+    });
   });
 
   it("answers an unlinked Slack user with the /zeroci me prompt", async () => {

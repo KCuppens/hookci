@@ -16,7 +16,7 @@ const testSecrets = {
   SLACK_SIGNING_SECRET: "test-slack-signing-secret",
   TOKEN_ENC_KEYS: JSON.stringify({ current: 1, keys: { "1": testKey } }),
   STATE_SIGNING_KEY: "test-state-signing-key",
-  LOG_SIGNING_KEYS: JSON.stringify({ "1": testKey }),
+  LOG_SIGNING_KEY: "test-log-signing-key",
 };
 
 // Miniflare keeps D1 and Durable Object storage in a directory under
