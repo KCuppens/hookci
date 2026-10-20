@@ -120,6 +120,10 @@ main() {
 		latest=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${ZEROCI_RELEASE_BASE%/download}/latest") ||
 			die 1 "cannot resolve the latest release"
 		tag=${latest##*/}
+		case $tag in
+		v*) ;;
+		*) die 1 "no published release found at ${ZEROCI_RELEASE_BASE%/download}/latest: set ZEROCI_VERSION=vX.Y.Z" ;;
+		esac
 	fi
 	case $tag in
 	v*) ;;
