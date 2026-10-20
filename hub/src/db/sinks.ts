@@ -15,6 +15,8 @@ export interface SinkConfigRow {
 	kind: SinkKind;
 	repo: string;
 	target: string;
+	/** The name the user gave the config; null when none. */
+	label: string | null;
 	/** `slack:<team>:<user>` or `agent:<agent_id>`. */
 	createdBy: string;
 	createdAt: number;
@@ -31,6 +33,7 @@ export interface NewSinkConfig {
 	repo: string;
 	target: string;
 	secret: string | null;
+	label?: string | null;
 	createdBy: string;
 }
 
@@ -56,6 +59,7 @@ interface StoredSinkConfig {
 	kind: SinkKind;
 	repo: string;
 	target: string;
+	label: string | null;
 	// D1 returns BLOB columns as arrays of byte values.
 	secret_enc: number[] | null;
 	key_version: number | null;
@@ -65,7 +69,7 @@ interface StoredSinkConfig {
 	disabled_reason: string | null;
 }
 
-const ROW_COLUMNS = "id, kind, repo, target, created_by, created_at, disabled_at, disabled_reason";
+const ROW_COLUMNS = "id, kind, repo, target, label, created_by, created_at, disabled_at, disabled_reason";
 
 function fromStored(row: Omit<StoredSinkConfig, "secret_enc" | "key_version">): SinkConfigRow {
 	return {
@@ -73,6 +77,7 @@ function fromStored(row: Omit<StoredSinkConfig, "secret_enc" | "key_version">): 
 		kind: row.kind,
 		repo: row.repo,
 		target: row.target,
+		label: row.label,
 		createdBy: row.created_by,
 		createdAt: row.created_at,
 		disabledAt: row.disabled_at,
@@ -91,8 +96,8 @@ export async function createSinkConfig(env: Env, t: TenantDb, input: NewSinkConf
 	const id = `snk_${ulid(now)}`;
 	const sealed = input.secret === null ? null : await encryptToken(parseEncKeys(env.TOKEN_ENC_KEYS), input.secret, sinkAad(t.installationId, id));
 	await t.run(
-		`INSERT INTO sink_configs (installation_id, id, kind, repo, target, secret_enc, key_version, created_by, created_at)
-		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+		`INSERT INTO sink_configs (installation_id, id, kind, repo, target, secret_enc, key_version, created_by, created_at, label)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
 		id,
 		input.kind,
 		input.repo,
@@ -101,12 +106,14 @@ export async function createSinkConfig(env: Env, t: TenantDb, input: NewSinkConf
 		sealed?.keyVersion ?? null,
 		input.createdBy,
 		now,
+		input.label ?? null,
 	);
 	return {
 		id,
 		kind: input.kind,
 		repo: input.repo,
 		target: input.target,
+		label: input.label ?? null,
 		createdBy: input.createdBy,
 		createdAt: now,
 		disabledAt: null,
@@ -126,6 +133,23 @@ export async function listSinkConfigs(t: TenantDb, repo?: string): Promise<SinkC
 					repo,
 				);
 	return rows.map(fromStored);
+}
+
+/** Every config of the repo, disabled ones too, oldest first. */
+export async function listRepoSinkConfigs(t: TenantDb, repo: string): Promise<SinkConfigRow[]> {
+	const rows = await t.all<StoredSinkConfig>(
+		`SELECT ${ROW_COLUMNS} FROM sink_configs WHERE installation_id = ?1 AND repo = ?2 ORDER BY created_at, id`,
+		repo,
+	);
+	return rows.map(fromStored);
+}
+
+/** Deletes the config and its per-run messages; the deleted config, or null when there was none. */
+export async function deleteSinkConfig(t: TenantDb, id: string): Promise<SinkConfigRow | null> {
+	const row = await t.first<StoredSinkConfig>(`DELETE FROM sink_configs WHERE installation_id = ?1 AND id = ?2 RETURNING ${ROW_COLUMNS}`, id);
+	if (!row) return null;
+	await t.run("DELETE FROM sink_messages WHERE installation_id = ?1 AND sink_id = ?2", id);
+	return fromStored(row);
 }
 
 /** The config with its secret decrypted, disabled or not; null when there is none. Throws token_decrypt_failed when the ciphertext does not open. */

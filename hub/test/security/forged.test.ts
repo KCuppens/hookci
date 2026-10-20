@@ -134,8 +134,8 @@ async function slackRequest(path: string, contentType: string, body: string, sig
   return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body });
 }
 
-/** A request to an agent bearer route (connect, log upload or render) carrying authorization. */
-async function bearerRequest(path: string, tenant: Tenant, authorization: string | null): Promise<Request> {
+/** A request to an agent bearer route (connect, log upload, render or sink config) carrying authorization. */
+async function bearerRequest(method: string, path: string, tenant: Tenant, authorization: string | null): Promise<Request> {
   const headers = new Headers({ "cf-connecting-ip": "203.0.113.7" });
   if (authorization !== null) headers.set("authorization", authorization);
   if (path === "/v1/agent/connect") {
@@ -154,7 +154,17 @@ async function bearerRequest(path: string, tenant: Tenant, authorization: string
     const body = { v: 1, kind: "deploy_badge", repo: tenant.fullName, env: "staging", sha: tenant.headSha, state: "running" };
     return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
   }
-  throw new Error(`no bearer request for ${path}`);
+  if (path === "/v1/agent/sinks" && method === "GET") {
+    return new Request(`${ORIGIN}${path}?repo=${tenant.fullName}`, { headers });
+  }
+  if (path === "/v1/agent/sinks") {
+    headers.set("content-type", "application/json");
+    const body = { kind: "webhook", repo: tenant.fullName, url: "https://example.com/zeroci" };
+    return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  }
+  if (path === "/v1/agent/sinks/:id") return new Request(`${ORIGIN}/v1/agent/sinks/snk_forged`, { method: "DELETE", headers });
+  if (path === "/v1/agent/sinks/:id/test") return new Request(`${ORIGIN}/v1/agent/sinks/snk_forged/test`, { method: "POST", headers });
+  throw new Error(`no bearer request for ${method} ${path}`);
 }
 
 function redeemRequest(pairToken: string | undefined): Request {
@@ -279,7 +289,7 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
     ];
   },
 
-  agent_bearer: ({ path }) => {
+  agent_bearer: ({ method, path }) => {
     if (path === "/v1/pair/redeem") {
       return [
         { kind: "missing", name: "no pair_token", request: async () => redeemRequest(undefined), expected: { status: 400, json: "bad_request" } },
@@ -298,23 +308,23 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       ];
     }
     return [
-      { kind: "missing", name: "no Authorization", request: (t) => bearerRequest(path, t, null), expected: { status: 401, json: "auth_failed" } },
+      { kind: "missing", name: "no Authorization", request: (t) => bearerRequest(method, path, t, null), expected: { status: 401, json: "auth_failed" } },
       {
         kind: "wrong",
         name: "an agent credential the hub never issued",
-        request: (t) => bearerRequest(path, t, `Bearer zc_agent_${crypto.randomUUID().replaceAll("-", "")}`),
+        request: (t) => bearerRequest(method, path, t, `Bearer zc_agent_${crypto.randomUUID().replaceAll("-", "")}`),
         expected: { status: 401, json: "auth_failed" },
       },
       {
         kind: "wrong_bearer",
         name: "the tenant's pair token as the bearer",
-        request: (t) => bearerRequest(path, t, `Bearer ${t.pairToken}`),
+        request: (t) => bearerRequest(method, path, t, `Bearer ${t.pairToken}`),
         expected: { status: 401, json: "auth_failed" },
       },
       {
         kind: "wrong_bearer",
         name: "the agent credential under the Basic scheme",
-        request: (t) => bearerRequest(path, t, `Basic ${t.credential}`),
+        request: (t) => bearerRequest(method, path, t, `Basic ${t.credential}`),
         expected: { status: 401, json: "auth_failed" },
       },
       {
@@ -323,7 +333,7 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
         request: async (t) => {
           expect(await getAgentByCredentialHash(env.DB, await agentCredentialHash(t.credential))).toMatchObject({ agent_id: t.agentId });
           await rotateCredential(env, t.agentId);
-          return bearerRequest(path, t, `Bearer ${t.credential}`);
+          return bearerRequest(method, path, t, `Bearer ${t.credential}`);
         },
         expected: { status: 401, json: "auth_failed" },
       },

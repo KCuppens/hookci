@@ -211,6 +211,25 @@ export const S = {
 		moreJobs: (n: number) => `... and ${n} more jobs`,
 		viewLogs: "View logs",
 	},
+	sinks: {
+		/** The message of each SinkConfigError code, as the agent CLI and Slack show it. */
+		errors: {
+			invalid_repo: "The repo must be written as owner/name.",
+			repo_not_bound: "That repo is not bound to an agent of this installation.",
+			bad_token: "Telegram did not accept the bot token.",
+			chat_unreachable: "The bot cannot reach that chat. Add the bot to the chat, then try again.",
+			not_https: "The webhook URL must start with https://.",
+			private_host: "The webhook URL must point to a public host.",
+			self: "The webhook URL cannot point to the hub itself.",
+			invalid: "The sink config is not valid.",
+			limit_reached: (max: number) => `This repo already has ${max} sinks. Remove one before adding another.`,
+		},
+		/** Why a body was refused: the field and what is wrong with it. */
+		invalidField: (field: string, reason: string) => `${field}: ${reason}`,
+		/** The redacted target of a Telegram sink. */
+		telegramTarget: (chatId: string) => `chat ${chatId}`,
+		testCommitTitle: "ZeroCI test delivery",
+	},
 	deploy: {
 		queued: "queued",
 		healthOk: "health ok",

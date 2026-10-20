@@ -18,7 +18,7 @@ export type EndpointAuth =
   | "public";
 
 export interface Endpoint {
-  method: "GET" | "POST" | "PUT";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   auth: EndpointAuth;
 }
@@ -49,6 +49,10 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/security", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
   { method: "POST", path: "/v1/render", auth: "agent_bearer" },
+  { method: "GET", path: "/v1/agent/sinks", auth: "agent_bearer" },
+  { method: "POST", path: "/v1/agent/sinks", auth: "agent_bearer" },
+  { method: "DELETE", path: "/v1/agent/sinks/:id", auth: "agent_bearer" },
+  { method: "POST", path: "/v1/agent/sinks/:id/test", auth: "agent_bearer" },
   { method: "GET", path: "/logs/view", auth: "log_sig" },
   { method: "GET", path: "/logs/raw", auth: "log_sig" },
   { method: "GET", path: "/logs/stream", auth: "log_sig" },

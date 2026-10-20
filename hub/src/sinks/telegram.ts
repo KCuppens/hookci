@@ -230,11 +230,13 @@ export const telegramDeliverer: Deliverer = {
 		const t = tenantDb(env.DB, item.installationId);
 		const { text, parseMode } = renderTelegram(await withTail(env, item.payload));
 		const hash = await sha256Hex(text);
-		const stored = await getSinkMessage(t, item.sinkId, item.runId);
+		const stored = item.test ? null : await getSinkMessage(t, item.sinkId, item.runId);
 		const messageId = stored?.externalId ?? null;
 		if (stored?.lastHash === hash) return messageId ? { kind: "ok", externalId: messageId } : { kind: "ok" };
 
-		const save = (msg: SinkMessage) => putSinkMessage(t, item.sinkId, item.runId, msg, (env.__TEST_CLOCK ?? systemClock).now());
+		const save = async (msg: SinkMessage): Promise<void> => {
+			if (!item.test) await putSinkMessage(t, item.sinkId, item.runId, msg, (env.__TEST_CLOCK ?? systemClock).now());
+		};
 		const body = {
 			chat_id: cfg.target,
 			...(messageId ? { message_id: Number(messageId) } : {}),

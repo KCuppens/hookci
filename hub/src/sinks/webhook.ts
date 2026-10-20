@@ -174,7 +174,7 @@ export const webhookDeliverer: Deliverer = {
 	async deliver(env, cfg, item) {
 		const t = tenantDb(env.DB, item.installationId);
 		const state = item.payload.state;
-		const last = await getSinkMessage(t, cfg.id, item.runId);
+		const last = item.test ? null : await getSinkMessage(t, cfg.id, item.runId);
 		if (last?.lastHash === state) return { kind: "ok" };
 		if (!cfg.secret) return { kind: "fail", disable: "webhook_no_secret" };
 		const check = validateWebhookUrl(cfg.target, new URL(env.HUB_ORIGIN).hostname);
@@ -205,7 +205,7 @@ export const webhookDeliverer: Deliverer = {
 		}
 		await res.body?.cancel();
 		const result = classify(res);
-		if (result.kind === "ok") await putSinkMessage(t, cfg.id, item.runId, { externalId: null, lastHash: state }, now);
+		if (result.kind === "ok" && !item.test) await putSinkMessage(t, cfg.id, item.runId, { externalId: null, lastHash: state }, now);
 		return result;
 	},
 };

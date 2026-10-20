@@ -8,6 +8,8 @@ export const QUOTAS = {
 	logBytes: 10_485_760,
 	retentionDays: 14,
 	slackCmdsPerMin: 60,
+	/** Sink configs added or removed per installation per hour, whoever asks. */
+	sinkConfigWritesPerHour: 30,
 	webhooksPerInstallationPerMin: 600,
 	agentConnectsPerMinPerIp: 30,
 	oauthCallbacksPer10MinPerIp: 20,
@@ -19,7 +21,7 @@ export const QUOTAS = {
 } as const;
 
 /** The per-installation caps a self-hosted hub lifts, except logBytes, which still protects the operator's R2. */
-export type TenantQuota = "runsPerDay" | "agentsPerInstallation" | "pairTokensPerHour" | "slackCmdsPerMin" | "logBytes";
+export type TenantQuota = "runsPerDay" | "agentsPerInstallation" | "pairTokensPerHour" | "slackCmdsPerMin" | "sinkConfigWritesPerHour" | "logBytes";
 
 /** quota's limit on this hub: Infinity when a self-hosted hub lifts it. */
 export function quotaLimit(env: Env, quota: TenantQuota): number {

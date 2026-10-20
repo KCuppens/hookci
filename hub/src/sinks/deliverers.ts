@@ -24,6 +24,8 @@ export interface OutboxItem {
 /** An OutboxItem as handed to a deliverer: deliveryId stays the same across the retries of one enqueued update. */
 export interface OutboxDelivery extends OutboxItem {
 	deliveryId: string;
+	/** A test delivery from sendTestDelivery: sent as a first delivery, and no sink_messages record is read or kept. */
+	test?: true;
 }
 
 export interface Deliverer {

@@ -17,6 +17,7 @@ import { rawLog, streamLog, viewerScript, viewerStylesheet, viewLogPage } from "
 import { uploadLog } from "./routes/logs";
 import { pairRedeem } from "./routes/pair";
 import { renderPreview } from "./routes/render";
+import { addSink, listSinks, removeSink, testSink } from "./routes/sink-config";
 import { slackCommands } from "./routes/slack-commands";
 import { slackEvents } from "./routes/slack-events";
 import { slackInstall, slackOAuthCallback } from "./routes/slack-install";
@@ -56,6 +57,10 @@ app.get("/v1/export", exportData);
 for (const path of WELL_KNOWN_PATHS) app.get(path, (c) => handleWellKnown(c.req.raw, c.env) ?? c.notFound());
 app.put("/v1/logs/:runId/:job", uploadLog);
 app.post("/v1/render", renderPreview);
+app.get("/v1/agent/sinks", listSinks);
+app.post("/v1/agent/sinks", addSink);
+app.delete("/v1/agent/sinks/:id", removeSink);
+app.post("/v1/agent/sinks/:id/test", testSink);
 app.get("/logs/view", viewLogPage);
 app.get("/logs/raw", rawLog);
 app.get("/logs/stream", streamLog);
