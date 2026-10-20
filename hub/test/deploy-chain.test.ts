@@ -46,7 +46,7 @@ async function deployRows(): Promise<Row[]> {
 describe("deploy chain", () => {
   beforeEach(async () => {
     await clearTables();
-    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     await upsertRepos(tenantDb(env.DB, INSTALLATION), [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "main" }]);
   });
 

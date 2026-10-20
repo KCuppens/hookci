@@ -20,7 +20,7 @@ let stranger: string;
 beforeEach(async () => {
   await clearTables();
   for (const id of [INSTALLATION, OTHER]) {
-    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
   }
   const t = tenantDb(env.DB, INSTALLATION);
   await upsertRepos(t, [

@@ -77,7 +77,7 @@ describe("deploy rendering through the agent", () => {
   beforeEach(async () => {
     pem ??= (await generateAppKey()).pem;
     env.GITHUB_APP_PRIVATE_KEY = pem;
-    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     await upsertRepos(t, [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "main" }]);
     await addWatch(t, { repo_id: REPO, team_id: world.team, channel_id: CHANNEL, notify: "normal", alert: "channel", created_by: "U0CREATOR" });
     nextTs = 1;
@@ -113,6 +113,14 @@ describe("deploy rendering through the agent", () => {
   async function drain(): Promise<void> {
     for (let i = 0; i < 30 && (await queueStats(world)).depth > 0; i++) await after(world, 1000);
     expect((await queueStats(world)).depth).toBe(0);
+  }
+
+  /** Runs the queue's alarm a second at a time until pending settles, so waited Slack calls retry and time out. */
+  async function pumped<T>(pending: Promise<T>): Promise<T> {
+    let settled = false;
+    void pending.finally(() => (settled = true)).catch(() => {});
+    for (let i = 0; i < 120 && !settled; i++) await after(world, 1000);
+    return pending;
   }
 
   /** Connects a staging deploy agent, sends it the push's deploy trigger and returns the trigger frame. */
@@ -226,11 +234,20 @@ describe("deploy rendering through the agent", () => {
     expect(calls("/repos/acme/widgets/check-runs")).toEqual([]);
   });
 
-  it("sink failure isolated", { timeout: 30_000 }, async () => {
+  it("a replayed rejection posts its badge once", async () => {
+    const { socket, triggerId } = await deployTrigger();
+    const frame = { type: "rejected", trigger_id: triggerId, reason: "deployments.staging: not configured" } as const;
+    await socket.request(frame);
+    await socket.request(frame);
+    await drain();
+    expect(calls("/api/chat.postMessage")).toHaveLength(1);
+  });
+
+  it("sink failure isolated", async () => {
     world.slack.respond("POST", "/api/chat.postMessage", () => new Response("down", { status: 500 }));
-    const socket = await acceptedDeploy();
-    await event(socket, { state: "running" });
-    await event(socket, { state: "failed" });
+    const socket = await pumped(acceptedDeploy());
+    await pumped(event(socket, { state: "running" }));
+    await pumped(event(socket, { state: "failed" }));
     const run = await env.DB.prepare("SELECT state FROM runs WHERE run_id = ?1").bind(RUN).first<{ state: string }>();
     expect(run?.state).toBe("failed");
     expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state: "failed", slack_ts: null });

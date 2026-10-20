@@ -151,10 +151,12 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 	return { triggerId, duplicate: false };
 }
 
-/** Stores the agent's reply to a deploy trigger and posts the badge of a rejected one; trigger ids that are not deploy triggers change nothing. */
+/** Stores the agent's reply to a deploy trigger and posts the badge of a rejected one; trigger ids that are not deploy triggers, and replayed replies, change nothing. */
 export async function recordDeployReply(env: Env, reply: DeployReply): Promise<void> {
 	const accepted = reply.type === "accepted";
-	const row = await env.DB.prepare("UPDATE deploy_triggers SET status = ?1, run_id = ?2, reason = ?3, updated_at = ?4 WHERE trigger_id = ?5 RETURNING *")
+	const row = await env.DB.prepare(
+		"UPDATE deploy_triggers SET status = ?1, run_id = ?2, reason = ?3, updated_at = ?4 WHERE trigger_id = ?5 AND status IS NOT ?1 RETURNING *",
+	)
 		.bind(reply.type, accepted ? reply.run_id : null, accepted ? null : reply.reason, Date.now(), reply.trigger_id)
 		.first<DeployTriggerRow>();
 	if (row && !accepted) await renderRejected(env, row);
