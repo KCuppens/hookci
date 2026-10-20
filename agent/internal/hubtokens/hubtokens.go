@@ -26,11 +26,10 @@ type Sender interface {
 // Broker pairs token requests with the hub's answers by run ID. It is safe
 // for concurrent use.
 type Broker struct {
-	send      Sender
-	clk       clock.Clock
-	mu        sync.Mutex
-	waiters   map[string][]*waiter
-	refusable []*waiter // pending RequestTrigger waiters, oldest first
+	send    Sender
+	clk     clock.Clock
+	mu      sync.Mutex
+	waiters map[string][]*waiter
 }
 
 type waiter struct {
@@ -53,26 +52,13 @@ func New(s Sender, clk clock.Clock) *Broker {
 	return &Broker{send: s, clk: clk, waiters: map[string][]*waiter{}}
 }
 
-// Request asks the hub for a fetch token for runID and waits up to Timeout
-// for it. The token is registered with the redactor before it is returned.
-func (b *Broker) Request(ctx context.Context, runID string) (string, error) {
-	return b.request(ctx, runID, false)
-}
-
-// RequestTrigger is Request for a deploy trigger the agent has not answered
-// yet, keyed by its trigger ID. Unlike Request, the hub may refuse it: see
-// Refuse.
-func (b *Broker) RequestTrigger(ctx context.Context, triggerID string) (string, error) {
-	return b.request(ctx, triggerID, true)
-}
-
-func (b *Broker) request(ctx context.Context, id string, refusable bool) (string, error) {
+// Request asks the hub for a fetch token for id, a run or deploy trigger
+// ID, and waits up to Timeout for it. The token is registered with the
+// redactor before it is returned.
+func (b *Broker) Request(ctx context.Context, id string) (string, error) {
 	w := &waiter{id: id, ch: make(chan answer, 1)}
 	b.mu.Lock()
 	b.waiters[id] = append(b.waiters[id], w)
-	if refusable {
-		b.refusable = append(b.refusable, w)
-	}
 	b.mu.Unlock()
 	defer b.drop(w)
 
@@ -103,44 +89,34 @@ func (b *Broker) Deliver(tok protocol.Token) {
 	b.mu.Lock()
 	ws := b.waiters[tok.RunId]
 	delete(b.waiters, tok.RunId)
-	b.refusable = slices.DeleteFunc(b.refusable, func(x *waiter) bool { return slices.Contains(ws, x) })
 	b.mu.Unlock()
 	for _, w := range ws {
 		w.ch <- answer{tok: tok}
 	}
 }
 
-// Refuse fails the oldest pending RequestTrigger with the hub's refusal
-// message and reports whether there was one. The hub's auth_failed frame
-// names no request, so a refusal that arrives while a trigger request is
-// pending is charged to that request rather than to the agent credential.
-func (b *Broker) Refuse(message string) bool {
+// Refuse fails every Request waiting on runID with the hub's refusal
+// message and reports whether there was one.
+func (b *Broker) Refuse(runID, message string) bool {
 	b.mu.Lock()
-	if len(b.refusable) == 0 {
-		b.mu.Unlock()
-		return false
-	}
-	w := b.refusable[0]
-	b.unlist(w)
+	ws := b.waiters[runID]
+	delete(b.waiters, runID)
 	b.mu.Unlock()
-	w.ch <- answer{refusal: message, refused: true}
-	return true
+	for _, w := range ws {
+		w.ch <- answer{refusal: message, refused: true}
+	}
+	return len(ws) > 0
 }
 
+// drop removes w from the pending requests. Once dropped, w gets no
+// further answer.
 func (b *Broker) drop(w *waiter) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.unlist(w)
-}
-
-// unlist removes w from the pending requests; b.mu must be held. Once
-// unlisted, w gets no further answer.
-func (b *Broker) unlist(w *waiter) {
 	ws := slices.DeleteFunc(b.waiters[w.id], func(x *waiter) bool { return x == w })
 	if len(ws) == 0 {
 		delete(b.waiters, w.id)
 	} else {
 		b.waiters[w.id] = ws
 	}
-	b.refusable = slices.DeleteFunc(b.refusable, func(x *waiter) bool { return x == w })
 }

@@ -37,6 +37,11 @@ const (
 	MinRetain     = 2
 )
 
+// liveSuccesses is how many of an env's latest Success runs GC keeps the
+// images and the deploy-work checkout of: the live one and the one a
+// rollback returns to. A compose app may bind-mount files from its checkout.
+const liveSuccesses = 2
+
 // Build cache prune flags, newest first.
 const (
 	FlagMaxUsedSpace = "--max-used-space"
@@ -166,7 +171,7 @@ func (c *Collector) planImages(ctx context.Context, envs []RepoEnv, p *Plan) err
 				locked = true
 			}
 			retain = max(retain, normRetain(e.Retain))
-			last, err := c.Store.LastSucceededRuns(ctx, e.Repo, e.Env, 2)
+			last, err := c.Store.LastSucceededRuns(ctx, e.Repo, e.Env, liveSuccesses)
 			if err != nil {
 				return fmt.Errorf("gc: %w", err)
 			}
@@ -313,6 +318,7 @@ func (c *Collector) planRunDirs(ctx context.Context) ([]string, error) {
 	if entries, err = c.readDir(root); err != nil {
 		return nil, err
 	}
+	live := map[string]map[string]bool{} // "<repo>/<env>" -> run ids of its liveSuccesses
 	for _, e := range entries {
 		dir := filepath.Join(root, e.Name())
 		r, err := c.Store.GetDeployRun(ctx, strings.TrimSuffix(e.Name(), ".partial"))
@@ -328,7 +334,20 @@ func (c *Collector) planRunDirs(ctx context.Context) ([]string, error) {
 		case err != nil:
 			return nil, fmt.Errorf("gc: %w", err)
 		case r.Finished():
-			dirs = append(dirs, dir)
+			key := r.Repo + "/" + r.Env
+			if live[key] == nil {
+				last, err := c.Store.LastSucceededRuns(ctx, r.Repo, r.Env, liveSuccesses)
+				if err != nil {
+					return nil, fmt.Errorf("gc: %w", err)
+				}
+				live[key] = map[string]bool{}
+				for _, s := range last {
+					live[key][s.RunID] = true
+				}
+			}
+			if !live[key][r.RunID] || strings.HasSuffix(e.Name(), ".partial") {
+				dirs = append(dirs, dir)
+			}
 		}
 	}
 	slices.Sort(dirs)

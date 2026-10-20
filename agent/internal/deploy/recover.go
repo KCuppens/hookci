@@ -26,13 +26,18 @@ type Recoverer struct {
 	Logger *slog.Logger     // nil means slog.Default()
 }
 
-// Recover stops the leftover deploy units, then moves every Running,
-// Verifying or RollingBack deploy run to Interrupted with an error naming
-// the step it stopped in and `zeroci retry`, releases its env lock and emits
-// its interrupted event. It enqueues nothing and returns the interrupted
-// run ids. Only store errors fail it.
+// Recover stops the leftover deploy units, frees every env lock (a lock
+// outlives its deploy goroutine only when the agent stopped, including one
+// taken by a run still Queued), then moves every Running, Verifying or
+// RollingBack deploy run to Interrupted with an error naming the step it
+// stopped in and `zeroci retry` and emits its interrupted event. It
+// enqueues nothing and returns the interrupted run ids. Only store errors
+// fail it.
 func (r *Recoverer) Recover(ctx context.Context) ([]string, error) {
 	r.stopUnits(ctx)
+	if err := r.Store.ReleaseAllEnvLocks(ctx); err != nil {
+		return nil, fmt.Errorf("deploy: recover: %w", err)
+	}
 	runs, err := r.Store.ListDeployRunsInStates(ctx, store.DeployRunning, store.DeployVerifying, store.DeployRollingBack)
 	if err != nil {
 		return nil, fmt.Errorf("deploy: recover: %w", err)
@@ -45,9 +50,6 @@ func (r *Recoverer) Recover(ctx context.Context) ([]string, error) {
 		}
 		msg := interruptedReason(run.RunID, steps)
 		if err := r.Store.SetDeployRunState(ctx, run.RunID, store.DeployInterrupted, msg, r.now()); err != nil {
-			return interrupted, fmt.Errorf("deploy: recover: %w", err)
-		}
-		if err := r.Store.ReleaseEnvLock(ctx, run.Repo, run.Env, run.RunID); err != nil {
 			return interrupted, fmt.Errorf("deploy: recover: %w", err)
 		}
 		job := JobName

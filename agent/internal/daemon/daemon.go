@@ -99,7 +99,9 @@ type Daemon struct {
 	deployQ     []protocol.Trigger // guarded by mu
 	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
 	deploySched *deploy.Scheduler  // runs accepted deploy runs
-	collector   *gc.Collector      // removes old deploy images and run dirs
+	// deployConfig loads the trusted .zeroci.yml at a deploy run's sha.
+	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
+	collector    *gc.Collector // removes old deploy images and run dirs
 }
 
 // work is one accepted trigger.
@@ -148,10 +150,11 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		d.deploys = &hubIntake{
 			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
 			http:   github,
-			tokens: d.tokens.RequestTrigger,
+			tokens: d.tokens.Request,
 		}
 	}
-	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
+	d.deployConfig = githubConfig("", github, d.tokens.Request)
+	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger})
 	d.collector = newCollector(st, o, conf.AgentConfig)
 	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)
 	d.deploySched.PostRun = func(ctx context.Context, _ store.DeployRun) { d.collector.RunBestEffort(ctx) }
@@ -227,11 +230,11 @@ func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 	return nil
 }
 
-// TokenRefused implements hubclient.TokenRefusals: a refusal that arrives
-// while a deploy trigger's checks wait for their token fails those checks,
-// and the trigger is rejected, instead of ending the session as revoked.
-func (d *Daemon) TokenRefused(e protocol.Error) bool {
-	return d.tokens.Refuse(e.Message)
+// TokenRefused implements hubclient.TokenRefusals: the hub refused the
+// token for runID, a run or deploy trigger, so the requests waiting on it
+// fail now instead of timing out.
+func (d *Daemon) TokenRefused(runID, message string) bool {
+	return d.tokens.Refuse(runID, message)
 }
 
 // accept records t and queues it. A trigger already recorded is ignored:

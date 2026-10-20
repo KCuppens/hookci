@@ -202,6 +202,7 @@ export const S = {
 		failedAt: (position: string) => `failed at ${position}`,
 		rolledBack: "rolled back",
 		rollingBack: "rolling back",
+		stopped: { cancelled: "cancelled", interrupted: "interrupted", superseded: "superseded by a newer deploy" },
 		notStarted: (reason: string) => `not started: ${reason}`,
 		retry: "Retry",
 		retryForbidden: (repo: string) => `You need write access to ${repo} to retry deploys`,
@@ -209,7 +210,14 @@ export const S = {
 		retryNoRun: "No deploy run to retry here.",
 		alertText: (mention: string, badge: string) => `${mention ? `${mention} ` : ""}Deploy failed: ${badge}`,
 		checkName: (env: string) => `zeroci/deploy:${env}`,
-		checkTitle: { running: "Deploying", succeeded: "Deployed", failed: "Deploy failed" },
+		checkTitle: {
+			running: "Deploying",
+			succeeded: "Deployed",
+			failed: "Deploy failed",
+			cancelled: "Deploy cancelled",
+			interrupted: "Deploy interrupted",
+			superseded: "Deploy superseded",
+		},
 	},
 	agentProtocolUnsupported: (version: string, min: number, max: number) =>
 		`Agent protocol ${version} is not supported; this hub accepts ${min} to ${max}.`,

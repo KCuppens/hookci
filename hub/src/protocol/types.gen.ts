@@ -675,6 +675,10 @@ export interface ProtocolErrorFrame {
    */
   message: string;
   /**
+   * Run or trigger identifier of the token_request an auth_failed refuses. Absent when the hub refuses the agent credential itself.
+   */
+  run_id?: string;
+  /**
    * How to upgrade the agent, sent with protocol_unsupported.
    */
   upgrade_hint?: string;

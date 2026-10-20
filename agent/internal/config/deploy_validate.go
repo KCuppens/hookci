@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +115,11 @@ func validateDeployment(env string, d Deployment) []ValidationError {
 	}
 	if d.Compose != nil {
 		absolute("compose.marker", d.Compose.Marker, "/var/lib/zeroci/"+env+".color")
+		if slices.Contains(strings.Split(d.Compose.File, "/"), "..") {
+			errs = append(errs, ValidationError{Path: base + ".compose.file",
+				Msg: fmt.Sprintf("compose.file %s must not contain ..", quote(d.Compose.File)),
+				Fix: "name a compose file inside the repository, for example compose.yml"})
+		}
 	}
 
 	duration := func(key, value string) (time.Duration, bool) {

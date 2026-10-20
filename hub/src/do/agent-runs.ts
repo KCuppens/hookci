@@ -121,9 +121,9 @@ function triggerById(dob: AgentDO, triggerId: string): TriggerRow {
 	return row;
 }
 
-/** The trigger the agent accepted as runId; null when this agent never ran it. */
+/** The newest trigger the agent accepted as runId (a deploy retry reuses the run id); null when this agent never ran it. */
 function triggerByRun(dob: AgentDO, runId: string): TriggerRow | null {
-	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ?", runId).toArray()[0] ?? null;
+	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", runId).toArray()[0] ?? null;
 }
 
 /**
@@ -175,15 +175,22 @@ const runUpdate = (sink: Sink, run: RunView) => sink.onRunUpdate(run);
  * the interrupts to send. Checks work on the same pull request (or, for a
  * push, the same branch) is replaced whether sent or running. Deploys are
  * only replaced while the agent has not received them; a running deploy is
- * never interrupted.
+ * never interrupted. A retry (attempt > 1) replaces only earlier attempts of
+ * its own commit: retrying an older commit must not drop a newer one.
  */
-function supersede(dob: AgentDO, own: TriggerRow): { replaced: TriggerRow[]; interrupts: OutboundFrame[] } {
+function supersede(dob: AgentDO, own: TriggerRow, attempt: number): { replaced: TriggerRow[]; interrupts: OutboundFrame[] } {
 	const scope = own.pr_number === null ? "pr_number IS NULL AND ref = ?" : "pr_number = ?";
 	const older = dob.sql
 		.exec<TriggerRow>(
 			`SELECT * FROM triggers WHERE trigger_id != ? AND repo_id = ? AND target = ? AND state IN ('sent', 'gated', 'accepted')
-			${own.target === "checks" ? `AND ${scope}` : ""} ORDER BY created_at`,
-			...[own.trigger_id, own.repo_id, own.target, ...(own.target === "checks" ? [own.pr_number ?? own.ref] : [])],
+			${own.target === "checks" ? `AND ${scope}` : ""} ${attempt > 1 ? "AND sha = ?" : ""} ORDER BY created_at`,
+			...[
+				own.trigger_id,
+				own.repo_id,
+				own.target,
+				...(own.target === "checks" ? [own.pr_number ?? own.ref] : []),
+				...(attempt > 1 ? [own.sha] : []),
+			],
 		)
 		.toArray();
 	const replaced: TriggerRow[] = [];
@@ -270,7 +277,7 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 		throw err;
 	}
 
-	const { replaced, interrupts } = supersede(dob, own);
+	const { replaced, interrupts } = supersede(dob, own, 1);
 	for (const interrupt of interrupts) await dob.send(interrupt);
 	for (const row of replaced) await supersedeRun(t, row.trigger_id, now);
 	await Promise.all([
@@ -340,7 +347,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 
 	// A newer trigger may have replaced this one while D1 was awaited.
 	const stillSent = triggerById(dob, triggerId).state === "sent";
-	const { replaced, interrupts } = stillSent ? supersede(dob, own) : { replaced: [], interrupts: [] };
+	const { replaced, interrupts } = stillSent ? supersede(dob, own, attempt) : { replaced: [], interrupts: [] };
 	if (stillSent) {
 		const env = deployEnv(trig.target);
 		const seq = await dob.send({
@@ -552,7 +559,7 @@ export function registerRunLifecycle(): () => void {
 			const binding = row && (await getBinding(dob.tenant(), row.repo_id, row.target));
 			if (!row || binding?.agent_id !== dob.agentId) {
 				logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, reason: "run_not_bound" });
-				await dob.send({ v: 1, type: "error", code: "auth_failed", message: S.runNotBound });
+				await dob.send({ v: 1, type: "error", code: "auth_failed", run_id: frame.run_id, message: S.runNotBound });
 				return;
 			}
 			const github = new GitHubClient(dob.bindings, dob.bindings.__TEST_FETCHER ?? defaultFetcher, () => dob.clock.now());

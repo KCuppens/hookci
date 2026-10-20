@@ -50,11 +50,13 @@ type execCall struct {
 }
 
 // recExecutor records commands. docker image inspect succeeds only when
-// imageExists is set; every command fails once ctx is done.
+// imageExists is set; docker compose down of project failDown fails; every
+// command fails once ctx is done.
 type recExecutor struct {
 	mu          sync.Mutex
 	calls       []execCall
 	imageExists bool
+	failDown    string
 }
 
 func (e *recExecutor) Run(ctx context.Context, _ string, argv []string, opts deploy.ExecOpts) error {
@@ -66,6 +68,9 @@ func (e *recExecutor) Run(ctx context.Context, _ string, argv []string, opts dep
 	e.calls = append(e.calls, execCall{argv: slices.Clone(argv), opts: opts})
 	if slices.Equal(argv[:3], []string{"docker", "image", "inspect"}) && !e.imageExists {
 		return fmt.Errorf("deploy: step build: exit status 1")
+	}
+	if e.failDown != "" && slices.Contains(argv, "down") && argv[3] == e.failDown {
+		return fmt.Errorf("deploy: step finalize: exit status 1")
 	}
 	return nil
 }
@@ -87,11 +92,16 @@ func (e *recExecutor) reset() {
 }
 
 // fakeProxy renders "<color> <port>", writes the route file for real and
-// counts reloads.
+// counts reloads. served is the route file content at the last reload that
+// went through; onApply, when set, sees every applied content after the
+// write.
 type fakeProxy struct {
 	mu      sync.Mutex
 	applies []string
 	reloads int
+	file    string
+	served  string
+	onApply func(content string)
 }
 
 func (p *fakeProxy) Render(r proxy.RouteSpec) ([]byte, error) {
@@ -110,8 +120,13 @@ func (p *fakeProxy) Apply(ctx context.Context, file string, content []byte) ([]b
 		return nil, err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.applies = append(p.applies, string(content))
+	p.file = file
+	onApply := p.onApply
+	p.mu.Unlock()
+	if onApply != nil {
+		onApply(string(content))
+	}
 	return prev, nil
 }
 
@@ -119,7 +134,21 @@ func (p *fakeProxy) Reload(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reloads++
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(p.file)
+	if err != nil {
+		b = nil
+	}
+	p.served = string(b)
+	return nil
+}
+
+func (p *fakeProxy) servedRoute() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.served
 }
 
 func (p *fakeProxy) applied() []string {
@@ -281,7 +310,7 @@ func wantSuccess(t *testing.T, run store.DeployRun) {
 func downs(cmds []string) []string {
 	var out []string
 	for _, c := range cmds {
-		if f := strings.Fields(c); len(f) == 5 && f[1] == "compose" && f[4] == "down" {
+		if f := strings.Fields(c); len(f) > 3 && f[1] == "compose" && slices.Contains(f, "down") {
 			out = append(out, f[3])
 		}
 	}
@@ -381,8 +410,10 @@ func TestBlueGreen_HappyPath_Alternates(t *testing.T) {
 	if got := downs(cmds); !slices.Equal(got, []string{"myapp-blue"}) {
 		t.Fatalf("down projects = %v, want [myapp-blue] in finalize", got)
 	}
-	if last := cmds[len(cmds)-1]; last != "docker compose -p myapp-blue down" {
-		t.Fatalf("last command = %q, want the finalize down of myapp-blue", last)
+	wantDown := "docker compose -p myapp-blue -f " + filepath.Join(r.strat.WorkDir(store.DeployRun{}), "compose.yml") +
+		" -f " + filepath.Join(r.stateDir, "deploy", bgRepo, bgEnv, "blue.override.yml") + " down --remove-orphans"
+	if last := cmds[len(cmds)-1]; last != wantDown {
+		t.Fatalf("last command = %q, want the finalize down %q", last, wantDown)
 	}
 
 	r.exec.reset()
@@ -444,8 +475,11 @@ func TestBlueGreen_VerifyFailure_AfterSwap(t *testing.T) {
 	if run.State != store.DeployFailed {
 		t.Fatalf("state = %s, want Failed", run.State)
 	}
-	if !strings.Contains(run.Error, "deployments.production.verify: 503 at 15s of 30s; previous color restored") {
+	if !strings.Contains(run.Error, "deployments.production.verify: 503 at 15s of 30s") {
 		t.Fatalf("error = %q, want the verify failure at the 3rd interval", run.Error)
+	}
+	if strings.Contains(run.Error, "previous color restored") {
+		t.Fatalf("error = %q claims the restore the verify step did not do", run.Error)
 	}
 	applies := r.proxy.applied()[appliesBefore:]
 	want := []string{
@@ -469,7 +503,7 @@ func TestBlueGreen_VerifyFailure_AfterSwap(t *testing.T) {
 	}
 }
 
-func TestBlueGreen_FirstDeployVerifyFailure_RemovesRoute(t *testing.T) {
+func TestBlueGreen_FirstDeployVerifyFailure_EmptiesRoute(t *testing.T) {
 	r := newBGRig(t)
 	r.status = func(n int64) int {
 		if n == 2 {
@@ -481,11 +515,14 @@ func TestBlueGreen_FirstDeployVerifyFailure_RemovesRoute(t *testing.T) {
 	if run.State != store.DeployFailed {
 		t.Fatalf("state = %s, want Failed", run.State)
 	}
-	if _, err := os.Stat(r.route); !os.IsNotExist(err) {
-		t.Fatalf("route file stat err = %v, want removed", err)
+	if got, want := r.routeFile(t), "# zerocideploy: no active route for "+bgRepo+" production\n"; got != want {
+		t.Fatalf("route = %q, want the empty route %q", got, want)
+	}
+	if got := r.proxy.servedRoute(); got != r.routeFile(t) {
+		t.Fatalf("proxy serves %q, want the empty route", got)
 	}
 	if r.proxy.reloads != 2 {
-		t.Fatalf("reloads = %d, want 2 (swap and removal)", r.proxy.reloads)
+		t.Fatalf("reloads = %d, want 2 (swap and empty route)", r.proxy.reloads)
 	}
 	if got := downs(r.exec.commands()); !slices.Equal(got, []string{"myapp-blue"}) {
 		t.Fatalf("down projects = %v, want [myapp-blue]", got)
@@ -549,6 +586,155 @@ func TestBlueGreen_ResumeAfterEachStep(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A crash after the swap wrote the route file but before the reload left the
+// proxy on the old color; the resumed swap must reload even though the file
+// already holds the new route.
+func TestBlueGreen_ResumeAfterCrashBeforeSwapReload_Reloads(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	blue := fmt.Sprintf("blue %d\n", store.DefaultPortLo)
+	green := fmt.Sprintf("green %d\n", store.DefaultPortLo+1)
+
+	id := r.newRun(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.proxy.onApply = func(content string) {
+		if content == green {
+			cancel()
+		}
+	}
+	if err := r.engine.Start(ctx, id); err == nil {
+		t.Fatal("Start survived a crash between the route write and the reload")
+	}
+	r.proxy.onApply = nil
+	if got := r.routeFile(t); got != green {
+		t.Fatalf("route file after crash = %q, want %q", got, green)
+	}
+	if got := r.proxy.servedRoute(); got != blue {
+		t.Fatalf("proxy after crash serves %q, want the old %q", got, blue)
+	}
+	if err := r.store.SetDeployRunState(context.Background(), id, store.DeployInterrupted, "agent restarted", bgT0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.engine.Resume(context.Background(), id); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	wantSuccess(t, r.run(t, id))
+	if got := r.proxy.servedRoute(); got != green {
+		t.Fatalf("proxy serves %q, want the new %q", got, green)
+	}
+}
+
+// A crash during the rollback's route restore, after the write and before
+// the reload, left the proxy on the failed color; the rollback a retry
+// finishes must reload even though the file already holds the old route.
+func TestBlueGreen_RetryAfterCrashBeforeRestoreReload_Reloads(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	blue := fmt.Sprintf("blue %d\n", store.DefaultPortLo)
+	green := fmt.Sprintf("green %d\n", store.DefaultPortLo+1)
+	base := r.requests.Load()
+	r.status = func(n int64) int {
+		if n-base == 2 {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusOK
+	}
+
+	id := r.newRun(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.proxy.onApply = func(content string) {
+		if content == blue {
+			cancel()
+		}
+	}
+	if err := r.engine.Start(ctx, id); err == nil {
+		t.Fatal("Start survived a crash during the route restore")
+	}
+	r.proxy.onApply = nil
+	if got := r.routeFile(t); got != blue {
+		t.Fatalf("route file after crash = %q, want %q", got, blue)
+	}
+	if got := r.proxy.servedRoute(); got != green {
+		t.Fatalf("proxy after crash serves %q, want the failed %q", got, green)
+	}
+	bg := context.Background()
+	if err := r.store.SetDeployRunState(bg, id, store.DeployInterrupted, "agent restarted", bgT0); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.MarkRetryRequested(bg, id, store.DeployInterrupted); err != nil {
+		t.Fatal(err)
+	}
+	// The deploy the retry starts after the rollback fails its health gate,
+	// before any swap, so the route stays where the rollback left it.
+	r.status = func(int64) int { return http.StatusBadGateway }
+
+	if err := r.engine.Retry(bg, id); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if got := r.proxy.servedRoute(); got != blue {
+		t.Fatalf("proxy serves %q, want the restored %q", got, blue)
+	}
+}
+
+// Once finalize wrote the marker the deploy is committed: a failed stop of
+// the previous color must not roll the live color back.
+func TestBlueGreen_FinalizeDownFailure_KeepsCommittedColor(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	r.exec.reset()
+	r.exec.failDown = "myapp-blue"
+	green := fmt.Sprintf("green %d\n", store.DefaultPortLo+1)
+
+	wantSuccess(t, r.deploy(t))
+	if got := r.marker(t); got != "green" {
+		t.Fatalf("marker = %q, want green", got)
+	}
+	if got := r.routeFile(t); got != green {
+		t.Fatalf("route = %q, want %q", got, green)
+	}
+	if got := r.proxy.servedRoute(); got != green {
+		t.Fatalf("proxy serves %q, want %q", got, green)
+	}
+	if got := downs(r.exec.commands()); !slices.Equal(got, []string{"myapp-blue"}) {
+		t.Fatalf("down projects = %v, want only the failed stop of myapp-blue", got)
+	}
+}
+
+// A rollback of a step whose outputs name the color the marker already
+// holds, as the rollback a retry finishes after a failed finalize, must not
+// revert the committed color.
+func TestBlueGreen_RollbackOfCommittedColor_DoesNothing(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	run := r.deploy(t)
+	wantSuccess(t, run)
+	steps, err := r.store.ListSteps(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalize := steps[len(steps)-1]
+	r.exec.reset()
+	appliesBefore := len(r.proxy.applied())
+	var log strings.Builder
+
+	sc := &deploy.StepContext{Run: run, Cfg: r.cfg, Outputs: finalize.Outputs, Exec: r.exec, Log: &log, Clock: clock.NewFake(bgT0)}
+	if err := r.strat.Rollback(context.Background(), sc, finalize.Index); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if got := r.proxy.applied()[appliesBefore:]; len(got) != 0 {
+		t.Fatalf("proxy applies = %q, want none", got)
+	}
+	if got := r.exec.commands(); len(got) != 0 {
+		t.Fatalf("commands = %q, want none", got)
+	}
+	if !strings.Contains(log.String(), "nothing to roll back") {
+		t.Fatalf("log = %q, want why nothing was rolled back", log.String())
 	}
 }
 

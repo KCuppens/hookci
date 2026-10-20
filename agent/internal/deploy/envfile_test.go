@@ -25,9 +25,9 @@ func (f fakeInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
 
 func stubStat(t *testing.T, info fakeInfo) {
 	t.Helper()
-	orig := statFunc
-	statFunc = func(string) (fs.FileInfo, error) { return info, nil }
-	t.Cleanup(func() { statFunc = orig })
+	orig := fstatFunc
+	fstatFunc = func(*os.File) (fs.FileInfo, error) { return info, nil }
+	t.Cleanup(func() { fstatFunc = orig })
 }
 
 func writeEnvFile(t *testing.T, body string) string {
@@ -72,11 +72,36 @@ func TestLoadEnvFile_Modes(t *testing.T) {
 	for _, tc := range []struct {
 		mode fs.FileMode
 		ok   bool
-	}{{0o600, true}, {0o640, true}, {0o400, true}, {0o660, false}, {0o644, false}, {0o602, false}} {
+	}{{0o600, true}, {0o400, true}, {0o640, false}, {0o660, false}, {0o644, false}, {0o602, false}} {
 		stubStat(t, fakeInfo{mode: tc.mode, uid: 0})
 		_, err := LoadEnvFile(path, true)
 		if (err == nil) != tc.ok {
 			t.Errorf("mode %04o: err = %v, want ok=%v", tc.mode, err, tc.ok)
 		}
+	}
+}
+
+func TestLoadEnvFile_RejectsSymlink(t *testing.T) {
+	target := writeEnvFile(t, "TOKEN=secret\n")
+	link := filepath.Join(t.TempDir(), "app.env")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	stubStat(t, fakeInfo{mode: 0o600, uid: 0})
+	_, err := LoadEnvFile(link, true)
+	if err == nil || !strings.Contains(err.Error(), link+" is a symlink") {
+		t.Errorf("err = %v, want the symlink refused", err)
+	}
+}
+
+func TestLoadEnvFile_ExportAndSingleQuotes(t *testing.T) {
+	path := writeEnvFile(t, "export API_TOKEN=tok-123456\nSINGLE='it is #not a comment'\n")
+	got, err := LoadEnvFile(path, false)
+	if err != nil {
+		t.Fatalf("LoadEnvFile: %v", err)
+	}
+	want := map[string]string{"API_TOKEN": "tok-123456", "SINGLE": "it is #not a comment"}
+	if !maps.Equal(got, want) {
+		t.Errorf("env = %q, want %q", got, want)
 	}
 }

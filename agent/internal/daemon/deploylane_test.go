@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
@@ -62,5 +64,19 @@ func TestDeployRunQueuedAfterAcceptedFrame(t *testing.T) {
 	}
 	if accepted < 0 || accepted > tokenReq {
 		t.Errorf("accepted frame at %d, token request at %d; want the accepted frame first", accepted, tokenReq)
+	}
+}
+
+// TestDeployRedactorMasksRepoPatterns checks that deploy output is masked
+// with the repo's redact: patterns as well as the agent credential.
+func TestDeployRedactorMasksRepoPatterns(t *testing.T) {
+	cfg, diags := config.Parse([]byte(unitOnly+"redact:\n  - 'ACME-[0-9]{6}'\n"), config.ParseOptions{})
+	if diags.HasErrors() {
+		t.Fatalf("Parse: %v", diags)
+	}
+	const cred = "zc_agent_deploy_credential"
+	got := deployRedactor(cred, cfg).Line("key ACME-123456 cred " + cred)
+	if strings.Contains(got, "ACME-123456") || strings.Contains(got, cred) {
+		t.Errorf("line = %q, want the redact: match and the credential masked", got)
 	}
 }

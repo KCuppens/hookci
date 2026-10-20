@@ -56,3 +56,17 @@ SPACED = spaced-value
 		t.Errorf("missing file err = %v, want os.ErrNotExist", err)
 	}
 }
+
+func TestParseEnv(t *testing.T) {
+	entries, bad, err := ParseEnv(strings.NewReader("export A=1\n=nokey\nB='two #x'\nnoeq\n# c\nC=\"3\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []EnvEntry{{"A", "1"}, {"B", "two #x"}, {"C", "3"}}
+	if !slices.Equal(entries, want) {
+		t.Errorf("entries = %q, want %q", entries, want)
+	}
+	if !slices.Equal(bad, []int{2, 4}) {
+		t.Errorf("bad = %v, want [2 4]", bad)
+	}
+}

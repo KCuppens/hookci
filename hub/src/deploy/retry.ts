@@ -31,7 +31,7 @@ export async function handleDeployRetry(env: Env, payload: SlackBlockActionPaylo
 	const runId = value.slice(0, Math.max(sep, 0));
 	const attempt = Number(value.slice(sep + 1));
 	const render = runId ? await getDeployRender(env.DB, runId) : null;
-	const trigger = render && (await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1").bind(runId).first<DeployTriggerRow>());
+	const trigger = render && (await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1 ORDER BY attempt DESC LIMIT 1").bind(runId).first<DeployTriggerRow>());
 	if (!render || !trigger || trigger.attempt !== attempt || !(await listLinkedInstallationIds(env.DB, teamId)).includes(trigger.installation_id)) {
 		logEvent("tenant_denied", { team_id: teamId, slack_user_id: userId, run_id: runId, reason: "deploy_run_not_linked" });
 		return ephemeral(S.deploy.retryNoRun);

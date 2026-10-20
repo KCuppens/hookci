@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -380,6 +381,30 @@ func TestScheduler_NeedsTimeout(t *testing.T) {
 	}
 }
 
+// The needs wait of a retry counts from the retry, not from the run's
+// creation.
+func TestScheduler_NeedsTimeoutCountsFromRetry(t *testing.T) {
+	ctx := context.Background()
+	r := newTestQueue(t)
+	r.needs["production"] = []string{"staging"}
+	r.insert(t, "p", "production", t0, store.DeployFailed)
+	r.clock.Advance(2 * time.Hour)
+	if err := r.store.MarkRetryRequested(ctx, "p", store.DeployFailed); err != nil {
+		t.Fatalf("MarkRetryRequested: %v", err)
+	}
+	r.sched.Enqueue(ctx, "p", true)
+	r.tick(t, ctx, 0)
+	r.wantState(t, "p", store.DeployQueued)
+
+	r.clock.Advance(time.Hour)
+	r.tick(t, ctx, 0)
+	r.wantState(t, "p", store.DeployQueued)
+
+	r.clock.Advance(time.Second)
+	r.tick(t, ctx, 0)
+	r.wantState(t, "p", store.DeployFailed)
+}
+
 func TestScheduler_ReleasesLockOnError(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -438,6 +463,32 @@ func TestScheduler_ReleasesLockOnPanic(t *testing.T) {
 	r.step("b", succeed)
 	r.sched.Wait()
 	r.wantState(t, "b", store.DeploySuccess)
+}
+
+// A store error while recording a step stops the engine with the run still
+// Running; the scheduler fails it instead of leaving it active.
+func TestScheduler_FailsRunStoppedByStoreError(t *testing.T) {
+	ctx := context.Background()
+	r := newTestQueue(t)
+	r.insert(t, "a", "production", t0, store.DeployQueued)
+	r.sched.Enqueue(ctx, "a", false)
+	r.tick(t, ctx, 1)
+	r.awaitStart(t)
+	// Deleting the step row makes the engine's FinishStep fail.
+	r.step("a", func() error { return r.store.ResetSteps(ctx, "a") })
+	r.sched.Wait()
+
+	run := r.wantState(t, "a", store.DeployFailed)
+	if !strings.HasPrefix(run.Error, "deployments.production: deploy stopped: ") {
+		t.Errorf("error = %q, want the deploy stopped reason", run.Error)
+	}
+	evs := r.eventsFor("a")
+	if last := evs[len(evs)-1]; last.State != protocol.EventStateFailed {
+		t.Errorf("last event state = %s, want failed", last.State)
+	}
+	if got := r.lockHolder(t, "production"); got != "" {
+		t.Errorf("lock still held by %q", got)
+	}
 }
 
 func TestScheduler_RetryFlagCallsEngineRetry(t *testing.T) {

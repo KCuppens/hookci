@@ -1,7 +1,6 @@
 package compose
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -243,8 +242,7 @@ func (b *BlueGreen) health(ctx context.Context, sc *deploy.StepContext) error {
 	return b.Health.Wait(ctx, spec)
 }
 
-// swap points the route at the target color and reloads the proxy, unless
-// the route file already holds that route.
+// swap points the route at the target color and reloads the proxy.
 func (b *BlueGreen) swap(ctx context.Context, sc *deploy.StepContext) error {
 	port, err := outputPort(sc)
 	if err != nil {
@@ -283,7 +281,7 @@ func (b *BlueGreen) verify(ctx context.Context, sc *deploy.StepContext) error {
 			if err != nil {
 				outcome = err.Error()
 			}
-			return fmt.Errorf("deployments.%s.verify: %s at %s of %s; previous color restored",
+			return fmt.Errorf("deployments.%s.verify: %s at %s of %s",
 				sc.Run.Env, outcome, elapsed, window)
 		}
 		if elapsed >= window {
@@ -292,7 +290,10 @@ func (b *BlueGreen) verify(ctx context.Context, sc *deploy.StepContext) error {
 	}
 }
 
-// finalize writes the marker, then stops the previous color.
+// finalize writes the marker, then stops the previous color. Once the marker
+// names the target the deploy is committed, so a failure to stop the
+// previous color is logged and does not fail the step: failing it would roll
+// back a live, committed color.
 func (b *BlueGreen) finalize(ctx context.Context, sc *deploy.StepContext) error {
 	color := sc.Outputs[outColor]
 	if err := WriteMarker(b.markerPath(sc.Run, sc.Cfg), color); err != nil {
@@ -300,22 +301,34 @@ func (b *BlueGreen) finalize(ctx context.Context, sc *deploy.StepContext) error 
 	}
 	if prev := sc.Outputs[outPrevColor]; prev != "" {
 		if err := b.down(ctx, sc, "finalize", prev); err != nil {
-			return err
+			if ctx.Err() != nil {
+				return err
+			}
+			fmt.Fprintf(sc.Log, "stopping the previous color %s failed, it keeps running: %v\n", prev, err)
 		}
 	}
 	return nil
 }
 
 // Rollback restores the previous color. Before the swap it only stops the
-// target color; after it, it routes back to the previous color (or removes
-// the route on a first deploy), reloads, and stops the target color. It
-// never touches the marker.
+// target color; after it, it routes back to the previous color (or to an
+// empty route on a first deploy), reloads, and stops the target color. It
+// never touches the marker, and does nothing when the marker already names
+// the target: that color is committed and serving.
 func (b *BlueGreen) Rollback(ctx context.Context, sc *deploy.StepContext, failedIndex int) error {
 	if failedIndex >= migrateIndex && sc.Cfg.Migrate != nil && sc.Cfg.Migrate.Run != "" {
 		fmt.Fprintln(sc.Log, "migrations are forward-only and were not reverted")
 	}
 	target := sc.Outputs[outColor]
 	if target == "" {
+		return nil
+	}
+	active, err := ReadMarker(b.markerPath(sc.Run, sc.Cfg))
+	if err != nil {
+		return err
+	}
+	if active == target {
+		fmt.Fprintf(sc.Log, "marker already names %s, the deploy is committed; nothing to roll back\n", target)
 		return nil
 	}
 	if sc.Outputs[outSwapped] == "true" {
@@ -326,8 +339,9 @@ func (b *BlueGreen) Rollback(ctx context.Context, sc *deploy.StepContext, failed
 	return b.down(ctx, sc, "rollback", target)
 }
 
-// restoreRoute routes back to the previous color, or removes the route when
-// there was none.
+// restoreRoute routes back to the previous color, or applies an empty route
+// when there was none, so a proxy config that imports the route file still
+// loads.
 func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) error {
 	run := sc.Run
 	prev := sc.Outputs[outPrevColor]
@@ -336,14 +350,8 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 		if err != nil {
 			return err
 		}
-		file := sc.Cfg.Route.File
-		if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("compose: removing route %s: %w", file, err)
-		}
-		if err := px.Reload(ctx); err != nil {
-			return fmt.Errorf("compose: reload after removing route %s: %w", file, err)
-		}
-		return nil
+		empty := fmt.Appendf(nil, "# zerocideploy: no active route for %s %s\n", run.Repo, run.Env)
+		return proxy.ApplyAndReload(ctx, px, sc.Cfg.Route.File, empty)
 	}
 	port, err := b.Store.AllocatePort(ctx, run.Repo, run.Env, prev, store.DefaultPortLo, store.DefaultPortHi)
 	if err != nil {
@@ -352,27 +360,20 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 	return b.applyRoute(ctx, sc, prev, port)
 }
 
-// applyRoute renders the route to color on port and applies it, skipping
-// the write and reload when the route file already holds it.
+// applyRoute renders the route to color on port, applies it and reloads the
+// proxy. It reloads even when the file already holds the route: a run that
+// stopped between the write and the reload left the proxy serving the old
+// route.
 func (b *BlueGreen) applyRoute(ctx context.Context, sc *deploy.StepContext, color string, port int) error {
 	px, err := b.proxy(sc)
 	if err != nil {
 		return err
 	}
-	r := sc.Cfg.Route
 	content, err := b.renderRoute(sc.Run, sc.Cfg, color, port)
 	if err != nil {
 		return err
 	}
-	current, err := os.ReadFile(r.File)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("compose: reading route %s: %w", r.File, err)
-	}
-	if err == nil && bytes.Equal(current, content) {
-		fmt.Fprintf(sc.Log, "route %s already points at %s, skipping reload\n", r.File, color)
-		return nil
-	}
-	return proxy.ApplyAndReload(ctx, px, r.File, content)
+	return proxy.ApplyAndReload(ctx, px, sc.Cfg.Route.File, content)
 }
 
 // proxy returns the adapter of the run's route block.
@@ -384,13 +385,20 @@ func (b *BlueGreen) proxy(sc *deploy.StepContext) (proxy.ProxyAdapter, error) {
 	return px, nil
 }
 
-// down stops the compose project of color, keeping its images.
+// down stops the compose project of color, keeping its images, with the
+// compose file and the color's override that started it. --remove-orphans
+// also stops services the current compose file no longer defines.
 func (b *BlueGreen) down(ctx context.Context, sc *deploy.StepContext, step, color string) error {
 	project, err := ProjectName(sc.Cfg.Compose.Project, color)
 	if err != nil {
 		return err
 	}
-	return sc.Exec.Run(ctx, step, []string{"docker", "compose", "-p", project, "down"},
+	argv := []string{"docker", "compose", "-p", project, "-f", composeFile(b.WorkDir(sc.Run), sc.Cfg)}
+	override := filepath.Join(envDir(b.StateDir, sc.Run), color+".override.yml")
+	if _, err := os.Stat(override); err == nil {
+		argv = append(argv, "-f", override)
+	}
+	return sc.Exec.Run(ctx, step, append(argv, "down", "--remove-orphans"),
 		deploy.ExecOpts{Dir: b.WorkDir(sc.Run), Stdout: sc.Log, Stderr: sc.Log})
 }
 

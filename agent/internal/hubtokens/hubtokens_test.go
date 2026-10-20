@@ -30,42 +30,33 @@ func start(req func(context.Context, string) (string, error), id string) <-chan 
 	return done
 }
 
-// TestBrokerRefuse: a hub refusal fails the oldest pending trigger request
-// and never a run request, which keeps waiting for its token.
+// TestBrokerRefuse: a hub refusal fails only the requests for the run or
+// trigger it names; other requests keep waiting for their tokens.
 func TestBrokerRefuse(t *testing.T) {
 	sent := make(sender, 4)
 	b := New(sent, clock.NewFake(time.Unix(1_700_000_000, 0)))
-	if b.Refuse("run not bound") {
+	if b.Refuse("run-1", "run not bound") {
 		t.Fatal("Refuse with nothing pending = true, want false")
 	}
 	exp := int(time.Now().Add(time.Hour).Unix())
 
 	run := request(b, "run-1")
 	<-sent
-	if b.Refuse("run not bound") {
-		t.Fatal("Refuse with only a run request pending = true, want false")
-	}
-	first := start(b.RequestTrigger, "trg-1")
-	<-sent
-	second := start(b.RequestTrigger, "trg-2")
+	trg := request(b, "trg-1")
 	<-sent
 
-	if !b.Refuse("run not bound") {
-		t.Fatal("Refuse with trigger requests pending = false, want true")
+	if b.Refuse("trg-2", "run not bound") {
+		t.Fatal("Refuse of an id nobody waits on = true, want false")
 	}
-	if r := <-first; r[0] != "" || r[1] == nil || r[1].(error).Error() != "hubtokens: hub refused a token for trg-1: run not bound" {
-		t.Fatalf("first trigger request = %q, %v; want refused", r[0], r[1])
+	if !b.Refuse("run-1", "run not bound") {
+		t.Fatal("Refuse of a pending run request = false, want true")
 	}
-	b.Deliver(protocol.Token{RunId: "trg-2", Token: "tok-trigger-5e1c", Exp: exp})
-	if r := <-second; r[0] != "tok-trigger-5e1c" || r[1] != nil {
-		t.Fatalf("second trigger request = %q, %v; want its token", r[0], r[1])
+	if r := <-run; r[0] != "" || r[1] == nil || r[1].(error).Error() != "hubtokens: hub refused a token for run-1: run not bound" {
+		t.Fatalf("run request = %q, %v; want refused", r[0], r[1])
 	}
-	if b.Refuse("run not bound") {
-		t.Fatal("Refuse after every trigger request was answered = true, want false")
-	}
-	b.Deliver(protocol.Token{RunId: "run-1", Token: "tok-run-77ad", Exp: exp})
-	if r := <-run; r[0] != "tok-run-77ad" || r[1] != nil {
-		t.Fatalf("run request = %q, %v; want its token", r[0], r[1])
+	b.Deliver(protocol.Token{RunId: "trg-1", Token: "tok-trigger-5e1c", Exp: exp})
+	if r := <-trg; r[0] != "tok-trigger-5e1c" || r[1] != nil {
+		t.Fatalf("trigger request = %q, %v; want its token", r[0], r[1])
 	}
 }
 

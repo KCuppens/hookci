@@ -12,6 +12,7 @@ import { HubError } from "../errors";
 import type { Env } from "../env";
 import { createCheckRun, updateCheckRun } from "../github/api";
 import { GitHubClient } from "../github/client";
+import type { CheckRunConclusion } from "../github/types";
 import { defaultFetcher } from "../http";
 import { signLogUrl } from "../logs/sign";
 import { reportError } from "../observability";
@@ -23,7 +24,7 @@ import { tailBlock } from "../slack/messages";
 import { S } from "../strings";
 import type { DeployTriggerRow } from "./chain";
 
-export type DeployState = "queued" | "running" | "rolling_back" | "succeeded" | "failed";
+export type DeployState = "queued" | "running" | "rolling_back" | "succeeded" | "failed" | "cancelled" | "interrupted" | "superseded";
 
 export type DeployBadgeState = {
 	env: string;
@@ -84,6 +85,10 @@ function statusParts(s: DeployBadgeState): string[] {
 			return [...(s.durationMs !== undefined ? [deployDuration(s.durationMs)] : []), S.deploy.healthOk];
 		case "failed":
 			return [S.deploy.failedAt(position(s) || S.slack.state.failed.toLowerCase()), ...(s.rolledBack ? [S.deploy.rolledBack] : [])];
+		case "cancelled":
+		case "interrupted":
+		case "superseded":
+			return [S.deploy.stopped[s.state]];
 	}
 }
 
@@ -142,7 +147,28 @@ export async function upsertDeployRender(db: D1Database, row: DeployRenderRow): 
 		.run();
 }
 
-const TERMINAL: Record<DeployState, boolean> = { queued: false, running: false, rolling_back: false, succeeded: true, failed: true };
+/** Reopens a finished render as queued from now, without its check run; a retry reuses the run id and gets a new check run. */
+export async function reopenDeployRender(env: Env, runId: string): Promise<void> {
+	const at = now(env);
+	await env.DB.prepare(
+		`UPDATE deploy_renders SET state = 'queued', step = NULL, step_index = NULL, steps_total = NULL, check_run_id = NULL, started_at = ?2, updated_at = ?2
+		WHERE run_id = ?1 AND state IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'superseded')`,
+	)
+		.bind(runId, at)
+		.run();
+}
+
+/** The check run conclusion of each state; null while the deploy is not finished. Only a failed deploy fails the check. */
+const CONCLUSION: Record<DeployState, CheckRunConclusion | null> = {
+	queued: null,
+	running: null,
+	rolling_back: null,
+	succeeded: "success",
+	failed: "failure",
+	cancelled: "cancelled",
+	interrupted: "cancelled",
+	superseded: "neutral",
+};
 
 function deployState(state: AgentEvent["state"]): DeployState {
 	switch (state) {
@@ -155,8 +181,15 @@ function deployState(state: AgentEvent["state"]): DeployState {
 			return "rolling_back";
 		case "success":
 			return "succeeded";
-		default:
+		case "failed":
 			return "failed";
+		case "cancelled":
+		case "skipped":
+			return "cancelled";
+		case "interrupted":
+			return "interrupted";
+		case "superseded":
+			return "superseded";
 	}
 }
 
@@ -212,11 +245,11 @@ async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: DeployRend
 	const slash = repo.full_name.indexOf("/");
 	const owner = repo.full_name.slice(0, slash);
 	const name = repo.full_name.slice(slash + 1);
-	const done = TERMINAL[row.state];
-	const title = row.state === "succeeded" ? S.deploy.checkTitle.succeeded : row.state === "failed" ? S.deploy.checkTitle.failed : S.deploy.checkTitle.running;
+	const conclusion = CONCLUSION[row.state];
+	const title = S.deploy.checkTitle[row.state === "queued" || row.state === "rolling_back" ? "running" : row.state];
 	const body = {
-		status: done ? ("completed" as const) : ("in_progress" as const),
-		...(done ? { conclusion: row.state === "succeeded" ? ("success" as const) : ("failure" as const), completed_at: new Date(now(env)).toISOString() } : {}),
+		status: conclusion ? ("completed" as const) : ("in_progress" as const),
+		...(conclusion ? { conclusion, completed_at: new Date(now(env)).toISOString() } : {}),
 		output: { title, summary: badge },
 	};
 	if (row.check_run_id !== null) {
@@ -240,10 +273,10 @@ async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: DeployRend
  */
 export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 	try {
-		const trigger = await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1").bind(ev.run_id).first<DeployTriggerRow>();
+		const trigger = await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1 ORDER BY attempt DESC LIMIT 1").bind(ev.run_id).first<DeployTriggerRow>();
 		if (!trigger) return;
 		const prev = await getDeployRender(env.DB, ev.run_id);
-		if (prev && TERMINAL[prev.state]) return;
+		if (prev && CONCLUSION[prev.state] !== null) return;
 		const at = now(env);
 		const row: DeployRenderRow = {
 			run_id: ev.run_id,
@@ -263,7 +296,7 @@ export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 		};
 		await upsertDeployRender(env.DB, row);
 
-		const terminal = TERMINAL[row.state];
+		const terminal = CONCLUSION[row.state] !== null;
 		const badge: DeployBadgeState = {
 			env: row.env,
 			sha: row.sha,

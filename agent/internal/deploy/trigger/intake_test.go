@@ -113,12 +113,12 @@ func TestIntake_AcceptsProtectedPushOnRef(t *testing.T) {
 	}
 	want := store.DeployRun{
 		RunID: "run-1", Repo: "acme/web", Env: "prod", SHA: testSHA, Ref: "refs/heads/main",
-		Strategy: "compose-bluegreen", Attempt: 1, State: store.DeployQueued, CreatedAt: t0,
+		Strategy: "compose-bluegreen", Attempt: 1, State: store.DeployQueued, CreatedAt: t0, QueuedAt: t0,
 	}
-	if !run.CreatedAt.Equal(want.CreatedAt) {
-		t.Errorf("CreatedAt = %v, want %v", run.CreatedAt, want.CreatedAt)
+	if !run.CreatedAt.Equal(want.CreatedAt) || !run.QueuedAt.Equal(want.QueuedAt) {
+		t.Errorf("CreatedAt, QueuedAt = %v, %v, want %v", run.CreatedAt, run.QueuedAt, want.CreatedAt)
 	}
-	run.CreatedAt = want.CreatedAt
+	run.CreatedAt, run.QueuedAt = want.CreatedAt, want.QueuedAt
 	if run != want {
 		t.Errorf("deploy run = %+v\nwant %+v", run, want)
 	}
@@ -329,9 +329,13 @@ func TestIntake_RetryAttemptRules(t *testing.T) {
 		{name: "running run", state: store.DeployRunning, attempt: 2,
 			want: unchanged(store.DeployRunning, "nothing to retry for prod at 0123456 (attempt 2)")},
 		{name: "attempt skips ahead", state: store.DeployFailed, attempt: 3,
-			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 3)")},
-		{name: "failed run at the same attempt", state: store.DeployFailed, attempt: 1,
-			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 1)")},
+			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},
+		// zeroci retry on the host moved the agent's attempt past the hub's
+		// count, so the hub's next retry carries the run's own attempt.
+		{name: "failed run at the same attempt after a host retry", state: store.DeployFailed, attempt: 1,
+			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},
+		{name: "trigger behind the run", state: store.DeployFailed, attempt: 0,
+			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 0)")},
 		{name: "branch no longer protected", state: store.DeployFailed, attempt: 2,
 			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.unprotected = true },
 			want: unchanged(store.DeployFailed,
@@ -390,7 +394,9 @@ func TestIntake_RetryAttemptRules(t *testing.T) {
 				t.Errorf("a retry minted %d new run ids", f.n)
 			}
 
-			if !tc.want.retry {
+			// A redelivery matches the run only at the attempt it re-queued;
+			// the daemon drops any other repeat by trigger id.
+			if !tc.want.retry || tc.attempt != tc.want.attempt {
 				return
 			}
 			again, err := f.in.Handle(ctx, tr)

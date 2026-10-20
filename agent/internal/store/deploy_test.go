@@ -315,6 +315,7 @@ func TestDeployRun_RoundTripAndStateTimes(t *testing.T) {
 		t.Fatalf("GetDeployRun: %v", err)
 	}
 	in.CreatedAt = in.CreatedAt.Truncate(time.Millisecond)
+	in.QueuedAt = in.CreatedAt
 	if got != in {
 		t.Errorf("GetDeployRun = %+v, want %+v", got, in)
 	}
@@ -389,6 +390,9 @@ func TestMarkRetryRequested(t *testing.T) {
 	}
 	if got.State != DeployQueued || got.RetryOfState != DeployFailed || got.Error != "" || got.Attempt != 2 || !got.FinishedAt.IsZero() {
 		t.Errorf("after MarkRetryRequested = %+v, want Queued retry of Failed, attempt 2, error and finished_at cleared", got)
+	}
+	if !got.QueuedAt.After(got.CreatedAt) {
+		t.Errorf("QueuedAt after MarkRetryRequested = %v, want later than CreatedAt %v", got.QueuedAt, got.CreatedAt)
 	}
 	if err := s.MarkRetryRequested(ctx, "r1", DeployFailed); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkRetryRequested on a Queued run err = %v, want ErrNotFound", err)

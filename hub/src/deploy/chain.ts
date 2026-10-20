@@ -10,7 +10,7 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import type { CheckRunConclusion } from "../github/types";
-import { renderRejected } from "./render";
+import { renderRejected, reopenDeployRender } from "./render";
 import type { TriggerRequest } from "../webhook/route";
 
 export interface CheckConclusion {
@@ -151,7 +151,12 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 	return { triggerId, duplicate: false };
 }
 
-/** Stores the agent's reply to a deploy trigger and posts the badge of a rejected one; trigger ids that are not deploy triggers, and replayed replies, change nothing. */
+/**
+ * Stores the agent's reply to a deploy trigger and posts the badge of a
+ * rejected one; trigger ids that are not deploy triggers, and replayed
+ * replies, change nothing. An accepted retry reuses its run id, so the run's
+ * finished render is reopened as queued with a new check run.
+ */
 export async function recordDeployReply(env: Env, reply: DeployReply): Promise<void> {
 	const accepted = reply.type === "accepted";
 	const row = await env.DB.prepare(
@@ -160,6 +165,7 @@ export async function recordDeployReply(env: Env, reply: DeployReply): Promise<v
 		.bind(reply.type, accepted ? reply.run_id : null, accepted ? null : reply.reason, Date.now(), reply.trigger_id)
 		.first<DeployTriggerRow>();
 	if (row && !accepted) await renderRejected(env, row);
+	if (row && accepted) await reopenDeployRender(env, reply.run_id);
 }
 
 /** The highest attempt sent for the commit and env; null when none was. */

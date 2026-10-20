@@ -114,6 +114,28 @@ func TestRenderOverride_UnusablePort(t *testing.T) {
 	}
 }
 
+func TestRenderOverride_ClearsOtherServicesPortsAndNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.yml")
+	body := "services:\n  web:\n    image: x\n    ports: [\"3000:8080\"]\n" +
+		"  db:\n    image: postgres:16\n    container_name: app-db\n    ports: [\"5432:5432\"]\n" +
+		"  worker:\n    image: x\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RenderOverride(OverrideInput{
+		Env: "production", ComposeFile: path, Service: "web",
+		Image: "myapp:abc1234", HostPort: 3101, Color: "blue",
+	})
+	if err != nil {
+		t.Fatalf("RenderOverride: %v", err)
+	}
+	want := "services:\n  db:\n    container_name: !reset null\n    ports: !reset []\n" +
+		"  web:\n    image: myapp:abc1234\n    ports: !override\n      - \"127.0.0.1:3101:8080\"\n"
+	if string(got) != want {
+		t.Errorf("override =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func writeCompose(t *testing.T, service string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "compose.yml")

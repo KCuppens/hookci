@@ -18,7 +18,7 @@ import (
 func TestUnitExecutor_Argv(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("systemd-run", nil, execx.FakeResponse{})
-	u := &UnitExecutor{Runner: fake, RunID: "r1", User: DeployUser, EnvFile: map[string]string{"DB_URL": "postgres://db", "TOKEN": "s3cret"}}
+	u := &UnitExecutor{Runner: fake, RunID: "r1", User: DeployUser, EnvFile: "/etc/zeroci/production.env"}
 	err := u.Run(context.Background(), "build", []string{"docker", "compose", "build"}, ExecOpts{
 		Dir: "/srv/app", Env: map[string]string{"IMAGE": "web:abc", "TOKEN": "override"}, Timeout: 90500 * time.Millisecond,
 	})
@@ -35,7 +35,8 @@ func TestUnitExecutor_Argv(t *testing.T) {
 	want := []string{
 		"--unit=zeroci-run-r1-deploy", "--uid=zeroci-deploy", "--gid=zeroci-deploy",
 		"--pipe", "--wait", "--collect", "--quiet", "--property=RuntimeMaxSec=91",
-		"--setenv=DB_URL=postgres://db", "--setenv=IMAGE=web:abc", "--setenv=TOKEN=override",
+		"--property=EnvironmentFile=/etc/zeroci/production.env",
+		"--setenv=IMAGE=web:abc", "--setenv=TOKEN=override",
 		"--working-directory=/srv/app", "--", "docker", "compose", "build",
 	}
 	if !slices.Equal(c.Args, want) {
@@ -75,7 +76,7 @@ func TestUnitExecutor_RedactsEnvValues(t *testing.T) {
 		Stderr: "auth " + secret + " failed\n",
 	})
 	base, _ := redact.New(nil, nil)
-	u := &UnitExecutor{Runner: fake, RunID: "r1", EnvFile: map[string]string{"DB_PASSWORD": secret, "SHORT": "abc"}, Redactor: base}
+	u := &UnitExecutor{Runner: fake, RunID: "r1", Secrets: []string{secret, "abc"}, Redactor: base}
 	var log bytes.Buffer
 	if err := u.Run(context.Background(), "migrate", []string{"sh", "-c", "echo $DB_PASSWORD"}, ExecOpts{Stdout: &log, Stderr: &log}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -97,7 +98,7 @@ func TestUnitExecutor_ErrorNamesStepAndCode(t *testing.T) {
 	const secret = "hunter2-db-password"
 	fake := &execx.Fake{}
 	fake.On("systemd-run", nil, execx.FakeResponse{Stderr: "bad " + secret, Code: 3})
-	u := &UnitExecutor{Runner: fake, RunID: "r1", EnvFile: map[string]string{"P": secret}}
+	u := &UnitExecutor{Runner: fake, RunID: "r1", Secrets: []string{secret}}
 	err := u.Run(context.Background(), "migrate", []string{"false"}, ExecOpts{})
 	if err == nil || err.Error() != "deploy: step migrate: exit code 3" {
 		t.Errorf("err = %v, want step and exit code without output", err)
@@ -130,22 +131,32 @@ func TestNewExecutor_UntrustedRefused(t *testing.T) {
 	}
 }
 
-func TestNewExecutor_TrustedLoadsEnvFile(t *testing.T) {
-	envFile := writeEnvFile(t, "TOKEN=secret-value\n")
+func TestNewExecutor_EnvFileByPathNotArgv(t *testing.T) {
+	const secret = "secret-value"
+	envFile := writeEnvFile(t, "TOKEN="+secret+"\n")
 	stubStat(t, fakeInfo{mode: 0o600, uid: 0})
 	fake := &execx.Fake{}
-	fake.On("systemd-run", nil, execx.FakeResponse{})
+	fake.On("systemd-run", nil, execx.FakeResponse{Stdout: "token " + secret + "\n"})
 	ex, err := NewExecutorForRun(store.DeployRun{RunID: "r1", Env: "production"}, true,
 		config.Deployment{EnvFile: &envFile}, ExecutorDeps{Runner: fake})
 	if err != nil {
 		t.Fatalf("NewExecutorForRun: %v", err)
 	}
-	if err := ex.Run(context.Background(), "build", []string{"true"}, ExecOpts{}); err != nil {
+	var log bytes.Buffer
+	if err := ex.Run(context.Background(), "build", []string{"true"}, ExecOpts{Stdout: &log}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	args := fake.Calls[0].Args
-	if !slices.Contains(args, "--setenv=TOKEN=secret-value") || !slices.Contains(args, "--uid=zeroci-deploy") {
-		t.Errorf("args = %q, want the env_file value and the deploy user", args)
+	if !slices.Contains(args, "--property=EnvironmentFile="+envFile) || !slices.Contains(args, "--uid=zeroci-deploy") {
+		t.Errorf("args = %q, want the env_file path and the deploy user", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, secret) {
+			t.Errorf("argv carries the env_file value: %q", a)
+		}
+	}
+	if got := log.String(); strings.Contains(got, secret) {
+		t.Errorf("log %q leaks the env_file value", got)
 	}
 }
 
@@ -154,7 +165,7 @@ func TestNewExecutor_NonRootEnvFileNamesDeployment(t *testing.T) {
 	stubStat(t, fakeInfo{mode: 0o600, uid: 1000})
 	_, err := NewExecutorForRun(store.DeployRun{RunID: "r1", Env: "production"}, true,
 		config.Deployment{EnvFile: &envFile}, ExecutorDeps{Runner: &execx.Fake{}})
-	want := "deployments.production.env_file: " + envFile + " must be owned by root with mode 0600 or 0640"
+	want := "deployments.production.env_file: " + envFile + " must be owned by root with mode 0600"
 	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}

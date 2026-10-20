@@ -120,10 +120,12 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 
 // handleRetry answers a retry trigger for the newest run of env at t.Sha.
 // A trigger at that run's attempt is a redelivery and gets the run while it
-// is not Failed or Interrupted. A trigger at the next attempt re-queues a
-// Failed or Interrupted run as a retry under the same run id, once the run's
-// branch is still protected, holds the commit and the trigger is trusted.
-// The paths filter does not apply to a retry.
+// is not Failed or Interrupted. A trigger at the run's attempt or later
+// re-queues a Failed or Interrupted run as a retry under the same run id,
+// once the run's branch is still protected, holds the commit and the
+// trigger is trusted: the hub counts only its own triggers, so a host-side
+// `zeroci retry` leaves the agent's attempt ahead of it. The daemon drops a
+// trigger id it already answered. The paths filter does not apply to a retry.
 func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env string) (Decision, error) {
 	run, err := in.Store.LatestDeployRunFor(ctx, t.Repo, env, t.Sha)
 	if errors.Is(err, store.ErrNotFound) {
@@ -137,7 +139,7 @@ func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env strin
 	if run.Attempt == t.Attempt && !retryable {
 		return Decision{Accepted: true, RunID: run.RunID, Retry: run.RetryOfState != ""}, nil
 	}
-	if run.Attempt != t.Attempt-1 || !retryable {
+	if t.Attempt < run.Attempt || !retryable {
 		return stale, nil
 	}
 	branch := strings.TrimPrefix(run.Ref, "refs/heads/")

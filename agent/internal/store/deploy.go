@@ -46,13 +46,16 @@ var (
 )
 
 // DeployRun is one deploy of a sha to an environment. Zero times are stored
-// as NULL (CreatedAt defaults to the store clock).
+// as NULL (CreatedAt defaults to the store clock, QueuedAt to CreatedAt).
 type DeployRun struct {
 	RunID, Repo, Env, SHA, Ref, Strategy string
 	Attempt                              int
 	State                                string
 	PrevColor, TargetColor, Error        string
 	CreatedAt, StartedAt, FinishedAt     time.Time
+	// QueuedAt is when the run last entered Queued: its creation, or the
+	// latest retry.
+	QueuedAt time.Time
 	// RetryOfState is the state a Queued run was retried from (Failed or
 	// Interrupted), until the engine takes up the retry; "" otherwise.
 	RetryOfState string
@@ -79,7 +82,7 @@ type DeployState struct {
 	UpdatedAt                                              time.Time
 }
 
-const deployRunColumns = `run_id, repo, env, sha, ref, strategy, attempt, state, prev_color, target_color, error, created_at, started_at, finished_at, retry_of_state`
+const deployRunColumns = `run_id, repo, env, sha, ref, strategy, attempt, state, prev_color, target_color, error, created_at, started_at, finished_at, retry_of_state, queued_at`
 
 // InsertDeployRun stores a new deploy run. Attempt defaults to 1.
 func (s *Store) InsertDeployRun(ctx context.Context, r DeployRun) error {
@@ -92,11 +95,14 @@ func (s *Store) InsertDeployRun(ctx context.Context, r DeployRun) error {
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = s.now()
 	}
+	if r.QueuedAt.IsZero() {
+		r.QueuedAt = r.CreatedAt
+	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO deploy_runs (`+deployRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO deploy_runs (`+deployRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.Repo, r.Env, r.SHA, r.Ref, r.Strategy, r.Attempt, r.State,
 		nullText(r.PrevColor), nullText(r.TargetColor), nullText(r.Error),
-		r.CreatedAt.UnixMilli(), nullMillis(r.StartedAt), nullMillis(r.FinishedAt), r.RetryOfState); err != nil {
+		r.CreatedAt.UnixMilli(), nullMillis(r.StartedAt), nullMillis(r.FinishedAt), r.RetryOfState, r.QueuedAt.UnixMilli()); err != nil {
 		return fmt.Errorf("store: insert deploy run %s: %w", r.RunID, err)
 	}
 	return nil
@@ -183,14 +189,14 @@ func (s *Store) IncrementDeployAttempt(ctx context.Context, runID string) (int, 
 }
 
 // MarkRetryRequested re-queues runID, which must still be in priorState: it
-// sets state Queued, retry_of_state priorState, clears the error and
-// finished_at, and adds one to attempt. A run that is missing or no longer in
-// priorState yields ErrNotFound.
+// sets state Queued, retry_of_state priorState and queued_at now, clears the
+// error and finished_at, and adds one to attempt. A run that is missing or no
+// longer in priorState yields ErrNotFound.
 func (s *Store) MarkRetryRequested(ctx context.Context, runID, priorState string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE deploy_runs SET state = ?, retry_of_state = ?, error = NULL, finished_at = NULL, attempt = attempt + 1
+		`UPDATE deploy_runs SET state = ?, retry_of_state = ?, queued_at = ?, error = NULL, finished_at = NULL, attempt = attempt + 1
 		 WHERE run_id = ? AND state = ?`,
-		DeployQueued, priorState, runID, priorState)
+		DeployQueued, priorState, s.now().UnixMilli(), runID, priorState)
 	if err != nil {
 		return fmt.Errorf("store: mark retry of deploy run %s: %w", runID, err)
 	}
@@ -570,6 +576,15 @@ func (s *Store) ReleaseEnvLock(ctx context.Context, repo, env, runID string) err
 	return nil
 }
 
+// ReleaseAllEnvLocks frees every env lock. Locks live only while a deploy
+// goroutine runs, so none survive an agent restart.
+func (s *Store) ReleaseAllEnvLocks(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM env_locks`); err != nil {
+		return fmt.Errorf("store: release all env locks: %w", err)
+	}
+	return nil
+}
+
 // EnvLockHolder returns the run holding the (repo, env) lock; false when it
 // is free.
 func (s *Store) EnvLockHolder(ctx context.Context, repo, env string) (string, bool, error) {
@@ -612,15 +627,15 @@ func scanDeployRun(row interface{ Scan(...any) error }) (DeployRun, error) {
 	var (
 		r                     DeployRun
 		prev, target, errText sql.NullString
-		created               int64
+		created, queued       int64
 		started, finished     sql.NullInt64
 	)
 	if err := row.Scan(&r.RunID, &r.Repo, &r.Env, &r.SHA, &r.Ref, &r.Strategy, &r.Attempt, &r.State,
-		&prev, &target, &errText, &created, &started, &finished, &r.RetryOfState); err != nil {
+		&prev, &target, &errText, &created, &started, &finished, &r.RetryOfState, &queued); err != nil {
 		return DeployRun{}, err
 	}
 	r.PrevColor, r.TargetColor, r.Error = prev.String, target.String, errText.String
-	r.CreatedAt = time.UnixMilli(created).UTC()
+	r.CreatedAt, r.QueuedAt = time.UnixMilli(created).UTC(), time.UnixMilli(queued).UTC()
 	r.StartedAt, r.FinishedAt = fromMillis(started), fromMillis(finished)
 	return r, nil
 }

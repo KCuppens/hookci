@@ -279,7 +279,7 @@ func (s *Scheduler) checkNeeds(ctx context.Context, run store.DeployRun) (wait b
 		case store.DeployFailed, store.DeploySuperseded, store.DeployInterrupted:
 			return false, fmt.Sprintf("deployments.%s.needs: %s failed for %s", run.Env, other, shortSHA(run.SHA)), nil
 		}
-		if s.now().Sub(run.CreatedAt) > timeout {
+		if s.now().Sub(run.QueuedAt) > timeout {
 			return false, fmt.Sprintf("deployments.%s.needs: no successful %s deploy of %s within %s; bind %s to this agent or remove needs",
 				run.Env, other, shortSHA(run.SHA), shortDuration(timeout), other), nil
 		}
@@ -299,8 +299,33 @@ func (s *Scheduler) deploy(ctx context.Context, p pending) {
 	} else {
 		err = s.Engine.Start(ctx, p.run.RunID)
 	}
-	if err != nil {
-		s.logger().Error("deploy run stopped before it finished", "run_id", p.run.RunID, "err", err)
+	if err == nil {
+		return
+	}
+	s.logger().Error("deploy run stopped before it finished", "run_id", p.run.RunID, "err", err)
+	if ctx.Err() == nil {
+		s.failStopped(context.WithoutCancel(ctx), p.run, err)
+	}
+}
+
+// failStopped fails run when the engine returned err with the run still
+// Running, Verifying or RollingBack, for example after a store error while
+// recording a step: nothing else would end it before the next restart. A run
+// the engine never started stays as it is.
+func (s *Scheduler) failStopped(ctx context.Context, run store.DeployRun, err error) {
+	cur, getErr := s.Store.GetDeployRun(ctx, run.RunID)
+	if getErr != nil {
+		s.logger().Error("load stopped deploy run", "run_id", run.RunID, "err", getErr)
+		return
+	}
+	switch cur.State {
+	case store.DeployRunning, store.DeployVerifying, store.DeployRollingBack:
+	default:
+		return
+	}
+	msg := fmt.Sprintf("deployments.%s: deploy stopped: %v", run.Env, err)
+	if err := s.finish(ctx, run.RunID, store.DeployFailed, protocol.EventStateFailed, msg); err != nil {
+		s.logger().Error("record stopped deploy run", "run_id", run.RunID, "err", err)
 	}
 }
 

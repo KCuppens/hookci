@@ -71,20 +71,42 @@ type baseService struct {
 
 // RenderOverride reads the user compose file and returns the override YAML
 // that pins in.Image, binds the service to 127.0.0.1:<HostPort> on its
-// container port, resets container_name if the base file sets one, and joins
-// the shared network when given. With HostPort 0 (compose-inplace, one
-// project) it keeps the user's ports and container_name. Keys are sorted so
-// the output is stable.
+// container port, and joins the shared network when given. Two colors run
+// side by side, so with a HostPort it also clears the host ports and
+// container_name of every other service in the file, and the container_name
+// of the service itself. With HostPort 0 (compose-inplace, one project) it
+// keeps the user's ports and container_name. Keys are sorted so the output
+// is stable.
 func RenderOverride(in OverrideInput) ([]byte, error) {
-	svc, err := readService(in.Env, in.ComposeFile, in.Service)
+	services, err := readServices(in.ComposeFile)
 	if err != nil {
 		return nil, err
 	}
+	svc, err := lookupService(services, in.Env, in.ComposeFile, in.Service)
+	if err != nil {
+		return nil, err
+	}
+	overrides := map[string]*yaml.Node{}
 	service := map[string]*yaml.Node{"image": scalar("!!str", in.Image)}
 	if in.HostPort != 0 {
 		containerPort, err := firstContainerPort(svc)
 		if err != nil {
 			return nil, fmt.Errorf("deployments.%s.compose.service: service %s %w", in.Env, in.Service, err)
+		}
+		for name, other := range services {
+			if name == in.Service {
+				continue
+			}
+			cleared := map[string]*yaml.Node{}
+			if len(other.Ports) > 0 {
+				cleared["ports"] = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!reset", Style: yaml.FlowStyle}
+			}
+			if other.ContainerName.Kind != 0 {
+				cleared["container_name"] = scalar("!reset", "null")
+			}
+			if len(cleared) > 0 {
+				overrides[name] = mapping(cleared)
+			}
 		}
 		service["ports"] = &yaml.Node{
 			Kind:    yaml.SequenceNode,
@@ -95,7 +117,6 @@ func RenderOverride(in OverrideInput) ([]byte, error) {
 			service["container_name"] = scalar("!reset", "null")
 		}
 	}
-
 	top := map[string]*yaml.Node{}
 	if in.SharedNetwork != "" {
 		service["networks"] = mapping(map[string]*yaml.Node{
@@ -106,7 +127,8 @@ func RenderOverride(in OverrideInput) ([]byte, error) {
 			in.SharedNetwork: mapping(map[string]*yaml.Node{"external": scalar("!!bool", "true")}),
 		})
 	}
-	top["services"] = mapping(map[string]*yaml.Node{in.Service: mapping(service)})
+	overrides[in.Service] = mapping(service)
+	top["services"] = mapping(overrides)
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -120,19 +142,25 @@ func RenderOverride(in OverrideInput) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// readService returns service of the user compose file at path.
-func readService(env, path, service string) (baseService, error) {
+// readServices returns the services of the user compose file at path.
+func readServices(path string) (map[string]baseService, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return baseService{}, fmt.Errorf("compose: reading %s: %w", path, err)
+		return nil, fmt.Errorf("compose: reading %s: %w", path, err)
 	}
 	var base struct {
 		Services map[string]baseService `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(raw, &base); err != nil {
-		return baseService{}, fmt.Errorf("compose: parsing %s: %w", path, err)
+		return nil, fmt.Errorf("compose: parsing %s: %w", path, err)
 	}
-	svc, ok := base.Services[service]
+	return base.Services, nil
+}
+
+// lookupService returns service from services, read from the compose file at
+// path, with an error naming deployments.<env>.compose.service when missing.
+func lookupService(services map[string]baseService, env, path, service string) (baseService, error) {
+	svc, ok := services[service]
 	if !ok {
 		return baseService{}, fmt.Errorf("deployments.%s.compose.service: service %s not found in %s; set compose.service to a service in that file",
 			env, service, path)
@@ -145,7 +173,11 @@ func readService(env, path, service string) (baseService, error) {
 // or "127.0.0.1:3000:8080/tcp", or the published field of a long-syntax
 // entry.
 func PublishedPort(env, path, service string) (int, error) {
-	svc, err := readService(env, path, service)
+	services, err := readServices(path)
+	if err != nil {
+		return 0, err
+	}
+	svc, err := lookupService(services, env, path, service)
 	if err != nil {
 		return 0, err
 	}

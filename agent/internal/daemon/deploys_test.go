@@ -218,7 +218,7 @@ func (h *refusingHub) Write(_ context.Context, b []byte) error {
 		h.in <- h.trigger
 	case "token_request":
 		h.asked = append(h.asked, f.RunID)
-		h.in <- []byte(`{"v":1,"type":"error","seq":2,"code":"auth_failed","message":"run not bound"}`)
+		h.in <- []byte(`{"v":1,"type":"error","seq":2,"run_id":"` + f.RunID + `","code":"auth_failed","message":"run not bound"}`)
 	case "rejected":
 		h.reasons = append(h.reasons, f.Reason)
 	}

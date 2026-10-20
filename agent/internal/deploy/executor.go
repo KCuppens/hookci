@@ -35,27 +35,28 @@ type ExecutorDeps struct {
 }
 
 // NewExecutorForRun returns the executor for a deploy run: a UnitExecutor
-// running as DeployUser with the deployment's root-owned env_file loaded.
-// It returns ErrUntrustedDeploy unless trusted is true (a push to a
-// protected ref).
+// running as DeployUser with the deployment's root-owned env_file. It
+// returns ErrUntrustedDeploy unless trusted is true (a push to a protected
+// ref).
 func NewExecutorForRun(run store.DeployRun, trusted bool, cfg config.Deployment, deps ExecutorDeps) (Executor, error) {
 	if !trusted {
 		return nil, ErrUntrustedDeploy
 	}
-	var env map[string]string
-	if cfg.EnvFile != nil {
-		var err error
-		if env, err = LoadEnvFile(*cfg.EnvFile, true); err != nil {
-			return nil, fmt.Errorf("deployments.%s.%w", run.Env, err)
-		}
-	}
-	return &UnitExecutor{
+	u := &UnitExecutor{
 		Runner:   deps.Runner,
 		RunID:    run.RunID,
 		User:     DeployUser,
-		EnvFile:  env,
 		Redactor: deps.Redactor,
-	}, nil
+	}
+	if cfg.EnvFile != nil {
+		env, err := LoadEnvFile(*cfg.EnvFile, true)
+		if err != nil {
+			return nil, fmt.Errorf("deployments.%s.%w", run.Env, err)
+		}
+		u.EnvFile = *cfg.EnvFile
+		u.Secrets = slices.Collect(maps.Values(env))
+	}
+	return u, nil
 }
 
 // UnitName returns the transient unit name of a run's deploy commands,
@@ -66,18 +67,20 @@ func UnitName(runID string) string {
 
 // UnitExecutor runs deploy commands as transient systemd units outside the
 // PR sandbox: no private network, no address deny list, so the command can
-// reach docker and localhost. EnvFile and the step env reach the unit only
-// through --setenv, never through a file.
+// reach docker and localhost. systemd reads EnvFile itself, so its values
+// never appear on a command line or in the unit's properties; the step env
+// goes through --setenv, and an EnvFile key overrides a step env key.
 type UnitExecutor struct {
 	Runner   execx.Runner
 	RunID    string
-	User     string // DeployUser
-	EnvFile  map[string]string
+	User     string           // DeployUser
+	EnvFile  string           // absolute path of the root-only env_file; empty for none
+	Secrets  []string         // the EnvFile values, masked in the output
 	Redactor *redact.Redactor // nil masks only the built-in patterns
 }
 
 // Run runs argv in the run's deploy unit. Stdout and stderr pass through the
-// redactor, with every EnvFile value masked, before reaching opts.Stdout and
+// redactor, with every Secrets value masked, before reaching opts.Stdout and
 // opts.Stderr. A failure names the step and, for a non-zero exit, the code;
 // it never carries command output.
 func (u *UnitExecutor) Run(ctx context.Context, step string, argv []string, opts ExecOpts) error {
@@ -106,13 +109,13 @@ func (u *UnitExecutor) Run(ctx context.Context, step string, argv []string, opts
 	return fmt.Errorf("deploy: step %s: %w", step, err)
 }
 
-// redactor returns u.Redactor extended with every EnvFile value.
+// redactor returns u.Redactor extended with every Secrets value.
 func (u *UnitExecutor) redactor() *redact.Redactor {
 	base := u.Redactor
 	if base == nil {
 		base, _ = redact.New(nil, nil)
 	}
-	return base.With(slices.Collect(maps.Values(u.EnvFile)))
+	return base.With(u.Secrets)
 }
 
 // args builds the systemd-run arguments (after the binary name).
@@ -132,13 +135,11 @@ func (u *UnitExecutor) args(unit string, argv []string, opts ExecOpts) []string 
 		"--pipe", "--wait", "--collect", "--quiet",
 		"--property=RuntimeMaxSec=" + maxSec,
 	}
-	env := maps.Clone(u.EnvFile)
-	if env == nil {
-		env = make(map[string]string, len(opts.Env))
+	if u.EnvFile != "" {
+		args = append(args, "--property=EnvironmentFile="+u.EnvFile)
 	}
-	maps.Copy(env, opts.Env)
-	for _, k := range slices.Sorted(maps.Keys(env)) {
-		args = append(args, "--setenv="+k+"="+env[k])
+	for _, k := range slices.Sorted(maps.Keys(opts.Env)) {
+		args = append(args, "--setenv="+k+"="+opts.Env[k])
 	}
 	if opts.Dir != "" {
 		args = append(args, "--working-directory="+opts.Dir)

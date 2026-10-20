@@ -152,6 +152,22 @@ func TestValidateDeployments_RelativePaths(t *testing.T) {
 	}
 }
 
+func TestValidateDeployments_ComposeFileStaysInRepo(t *testing.T) {
+	for file, wantErr := range map[string]bool{
+		"../compose.yml": true, "deploy/../../compose.yml": true, "deploy/..": true,
+		"compose.yml": false, "deploy/compose..yml": false,
+	} {
+		cfg := decodeDeployFixture(t, "valid_bluegreen.yml")
+		d := cfg.Deployments["production"]
+		d.Compose.File = file
+		cfg.Deployments["production"] = d
+		got := errorStrings(ValidateDeployments(cfg))
+		if hasErr := strings.Contains(got, "deployments.production.compose.file: "); hasErr != wantErr {
+			t.Errorf("compose.file %q: errors =\n%s\nwant a compose.file error: %v", file, got, wantErr)
+		}
+	}
+}
+
 func TestValidateDeployments_Durations(t *testing.T) {
 	cfg := decodeDeployFixture(t, "valid_bluegreen.yml")
 	d := cfg.Deployments["production"]

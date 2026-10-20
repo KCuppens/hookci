@@ -1237,6 +1237,10 @@
               "description": "Human-readable explanation.",
               "type": "string"
             },
+            "run_id": {
+              "description": "Run or trigger identifier of the token_request an auth_failed refuses. Absent when the hub refuses the agent credential itself.",
+              "type": "string"
+            },
             "upgrade_hint": {
               "description": "How to upgrade the agent, sent with protocol_unsupported.",
               "type": "string"

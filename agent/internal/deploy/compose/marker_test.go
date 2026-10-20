@@ -56,6 +56,18 @@ func TestMarker_WriteFailureKeepsOldColor(t *testing.T) {
 	}
 }
 
+func TestMarker_CorruptContentIsError(t *testing.T) {
+	for _, body := range []string{"", "\n", "blu\n", "GREEN\n", "green\x00"} {
+		path := filepath.Join(t.TempDir(), "active-color")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ReadMarker(path); err == nil {
+			t.Errorf("ReadMarker(%q) = %q, nil; want an error", body, got)
+		}
+	}
+}
+
 func TestOtherColor(t *testing.T) {
 	for in, want := range map[string]string{"": "blue", "green": "blue", "blue": "green"} {
 		if got := OtherColor(in); got != want {

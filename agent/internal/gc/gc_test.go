@@ -320,21 +320,27 @@ func TestPlan_DeployWorkDirs(t *testing.T) {
 	// An interrupted checkout of a finished run goes; one of a running run stays.
 	h.fs.tree["deploy-work/failed.partial"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
 	h.fs.tree["deploy-work/running.partial"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
-	// Finished runs are removed right away; orphans only past RunDirMaxAge.
+	// Finished runs other than the live Success runs are removed right away;
+	// orphans only past RunDirMaxAge.
 	h.clk.Advance(RunDirMaxAge + time.Hour)
 
 	want := []string{"/state/deploy-work/failed", "/state/deploy-work/failed.partial", "/state/deploy-work/interrupted",
-		"/state/deploy-work/orphan-old", "/state/deploy-work/success", "/state/deploy-work/superseded"}
+		"/state/deploy-work/orphan-old", "/state/deploy-work/superseded"}
 	if got := h.plan(t).RemoveRunDirs; !slices.Equal(got, want) {
 		t.Errorf("RemoveRunDirs = %v, want %v", got, want)
 	}
 }
 
-func TestPlan_DeployWorkOfFreshFinishedRun(t *testing.T) {
+func TestPlan_DeployWorkKeepsLiveSuccessRuns(t *testing.T) {
 	h := newHarness(t)
-	h.deployRun(t, "done", "prod", store.DeploySuccess, 1, start)
-	h.fs.tree["deploy-work/done"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
-	if got, want := h.plan(t).RemoveRunDirs, []string{"/state/deploy-work/done"}; !slices.Equal(got, want) {
+	for i, id := range []string{"oldest", "previous", "live"} {
+		h.deployRun(t, id, "prod", store.DeploySuccess, i+1, start.Add(time.Duration(i)*time.Minute))
+		h.fs.tree["deploy-work/"+id] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
+	}
+	h.deployRun(t, "staging-live", "staging", store.DeploySuccess, 4, start)
+	h.fs.tree["deploy-work/staging-live"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
+	h.fs.tree["deploy-work/live.partial"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, ModTime: start}
+	if got, want := h.plan(t).RemoveRunDirs, []string{"/state/deploy-work/live.partial", "/state/deploy-work/oldest"}; !slices.Equal(got, want) {
 		t.Errorf("RemoveRunDirs = %v, want %v", got, want)
 	}
 }

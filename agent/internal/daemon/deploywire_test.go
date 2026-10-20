@@ -144,9 +144,7 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 	})
 	intake := d.deploys.(*hubIntake)
 	intake.githubURL, intake.http = gh.URL, gh.Client()
-	load := githubDeployment(gh.URL, gh.Client(), d.tokens.Request)
-	d.deploySched.LoadDeployment = load
-	d.deploySched.Engine.LoadDeployment = load
+	d.deployConfig = githubConfig(gh.URL, gh.Client(), d.tokens.Request)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w.harness = &harness{t: t, ctx: ctx, st: st, d: d}
@@ -233,22 +231,15 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 		t.Fatalf("run = %s %q, want %s", run.State, run.Error, store.DeploySuccess)
 	}
 
-	// PostRun GC removes the finished run's checkout.
+	// GC keeps the live run's checkout, which a rollback redeploys from.
 	workDir := filepath.Join(w.stateDir, "deploy-work", run.RunID)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(workDir); errors.Is(err, os.ErrNotExist) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("GC never removed %s", workDir)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, err := os.Stat(workDir); err != nil {
+		t.Errorf("live checkout removed: %v", err)
 	}
 	if _, err := os.Stat(workDir + ".partial"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("partial checkout left behind: %v", err)
 	}
-	// A checkout lands in deploy-work, and a resumed run reuses it.
+	// The kept checkout is reused by a resumed run.
 	for range 2 {
 		if err := w.d.checkoutDeploy(w.ctx, run); err != nil {
 			t.Fatalf("checkout: %v", err)
@@ -259,8 +250,8 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 	}
 	me, _ := user.Current()
 	reqs := src.requests()
-	if len(reqs) != 2 {
-		t.Errorf("checkout requests = %d, want 2 (deploy, then one re-checkout reused by the resume)", len(reqs))
+	if len(reqs) != 1 {
+		t.Errorf("checkout requests = %d, want 1 (the deploy; the resume reuses its checkout)", len(reqs))
 	}
 	for _, r := range reqs {
 		if r.RunID != run.RunID || r.SHA != headSHA || r.Repo != "acme/app" || r.RunAs == nil || fmt.Sprint(r.RunAs.Uid) != me.Uid {

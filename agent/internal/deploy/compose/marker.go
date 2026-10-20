@@ -10,7 +10,8 @@ import (
 )
 
 // ReadMarker returns the color recorded in the marker file at path, or ""
-// when the file does not exist.
+// when the file does not exist. A marker holding anything but "blue" or
+// "green" is an error: guessing a color could deploy over the live one.
 func ReadMarker(path string) (string, error) {
 	return readMarker(os.ReadFile, path)
 }
@@ -24,7 +25,11 @@ func readMarker(read func(string) ([]byte, error), path string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("compose: reading marker %s: %w", path, err)
 	}
-	return strings.TrimSpace(string(raw)), nil
+	color := strings.TrimSpace(string(raw))
+	if color != "blue" && color != "green" {
+		return "", fmt.Errorf("compose: marker %s holds %q, want blue or green; write the live color into it or remove it if nothing serves", path, color)
+	}
+	return color, nil
 }
 
 // WriteMarker records color in the marker file at path atomically: it writes

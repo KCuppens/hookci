@@ -74,14 +74,13 @@ type Handler interface {
 	HandleFrame(ctx context.Context, f protocol.Frame) error
 }
 
-// TokenRefusals is implemented by a Handler with token requests the hub may
-// refuse without the agent credential being at fault. The hub answers such a
-// refusal with an auth_failed error frame that names no request.
+// TokenRefusals is implemented by a Handler whose token requests the hub may
+// refuse. The hub answers such a refusal with an auth_failed error frame
+// that carries the request's run_id; it never ends the session.
 type TokenRefusals interface {
-	// TokenRefused reports whether e is charged to one of the handler's
-	// pending requests; then the session goes on instead of ending with
-	// ErrRevoked.
-	TokenRefused(e protocol.Error) bool
+	// TokenRefused fails the pending requests for runID with message and
+	// reports whether there were any.
+	TokenRefused(runID, message string) bool
 }
 
 // Client is a reconnecting hub session.
@@ -385,8 +384,12 @@ func (c *Client) hubError(e protocol.Error) error {
 		c.log.Error("hub does not support this agent's protocol", "message", e.Message, "upgrade_hint", hint)
 		return ErrUnsupported
 	case protocol.ErrorCodeAuthFailed, protocol.ErrorCodeRevoked:
-		if r, ok := c.h.(TokenRefusals); ok && e.Code == protocol.ErrorCodeAuthFailed && r.TokenRefused(e) {
-			c.log.Warn("hub refused a token request", "message", e.Message)
+		if e.Code == protocol.ErrorCodeAuthFailed && e.RunId != nil {
+			claimed := false
+			if r, ok := c.h.(TokenRefusals); ok {
+				claimed = r.TokenRefused(*e.RunId, e.Message)
+			}
+			c.log.Warn("hub refused a token request", "run_id", *e.RunId, "message", e.Message, "pending", claimed)
 			return nil
 		}
 		c.log.Error("hub refused the agent credential", "code", string(e.Code), "message", e.Message)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"syscall"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
@@ -33,10 +34,21 @@ import (
 
 // newDeployScheduler builds the deploy lane: the engine that runs one
 // deploy and the scheduler that orders deploys per env. Each run is checked
-// out into deployWorkDir and runs in deploy units as deploy.DeployUser. A
-// run starts only while the docker root dir and the state dir have
-// gc.min_free_bytes of agentCfg free.
-func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConfig, events deploy.EventSink, load func(context.Context, store.DeployRun) (config.Deployment, error)) *deploy.Scheduler {
+// out into deployWorkDir and runs in deploy units as deploy.DeployUser, with
+// its output masked by deployRedactor. A run starts only while the docker
+// root dir and the state dir have gc.min_free_bytes of agentCfg free.
+func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConfig, events deploy.EventSink) *deploy.Scheduler {
+	load := func(ctx context.Context, run store.DeployRun) (config.Deployment, error) {
+		cfg, err := d.deployConfig(ctx, run)
+		if err != nil {
+			return config.Deployment{}, err
+		}
+		dep, ok := cfg.Deployments[run.Env]
+		if !ok {
+			return config.Deployment{}, fmt.Errorf("daemon: .zeroci.yml at %s has no deployments.%s", run.SHA, run.Env)
+		}
+		return dep, nil
+	}
 	o := d.o
 	runner := o.DeployRunner
 	if runner == nil {
@@ -61,7 +73,14 @@ func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConf
 			if err != nil {
 				return nil, fmt.Errorf("daemon: %w", err)
 			}
-			red, _ := redact.New([]string{credential}, nil)
+			var red *redact.Redactor
+			if trusted {
+				repoCfg, err := d.deployConfig(ctx, run)
+				if err != nil {
+					return nil, err
+				}
+				red = deployRedactor(credential, repoCfg)
+			}
 			return deploy.NewExecutorForRun(run, trusted, cfg, deploy.ExecutorDeps{Runner: runner, Redactor: red})
 		},
 		Checkout:  d.checkoutDeploy,
@@ -130,23 +149,29 @@ func (d *Daemon) checkoutDeploy(ctx context.Context, run store.DeployRun) error 
 	return nil
 }
 
-// githubDeployment returns a loader of a run's deployments.<env> block from
-// the .zeroci.yml at the run's sha, fetched from GitHub with a token the hub
-// issues for the run.
-func githubDeployment(githubURL string, hc *http.Client, tokens func(ctx context.Context, runID string) (string, error)) func(context.Context, store.DeployRun) (config.Deployment, error) {
-	return func(ctx context.Context, run store.DeployRun) (config.Deployment, error) {
+// deployRedactor masks the agent credential, the built-in secret patterns
+// and the repo's redact: patterns in a deploy run's output.
+func deployRedactor(credential string, repoCfg *config.Config) *redact.Redactor {
+	var patterns []*regexp.Regexp
+	if rc := repoCfg.Checks(); rc != nil {
+		patterns = rc.Redact
+	}
+	red, _ := redact.New([]string{credential}, patterns)
+	return red
+}
+
+// githubConfig returns a loader of the .zeroci.yml at a run's sha, fetched
+// from GitHub with a token the hub issues for the run.
+func githubConfig(githubURL string, hc *http.Client, tokens func(ctx context.Context, runID string) (string, error)) func(context.Context, store.DeployRun) (*config.Config, error) {
+	return func(ctx context.Context, run store.DeployRun) (*config.Config, error) {
 		refs := &trigger.GitHubRefChecker{BaseURL: githubURL, HTTP: hc, Token: func(ctx context.Context, _ string) (string, error) {
 			return tokens(ctx, run.RunID)
 		}}
 		cfg, err := refs.LoadConfig(ctx, run.Repo, run.SHA)
 		if err != nil {
-			return config.Deployment{}, fmt.Errorf("daemon: %w", err)
+			return nil, fmt.Errorf("daemon: %w", err)
 		}
-		dep, ok := cfg.Deployments[run.Env]
-		if !ok {
-			return config.Deployment{}, fmt.Errorf("daemon: .zeroci.yml at %s has no deployments.%s", run.SHA, run.Env)
-		}
-		return dep, nil
+		return cfg, nil
 	}
 }
 

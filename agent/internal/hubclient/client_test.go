@@ -478,33 +478,38 @@ func TestRevoked(t *testing.T) {
 	}
 }
 
-// refusalHandler charges auth_failed frames to its own pending requests
-// while claim is set.
+// refusalHandler records the token refusals it is told about and reports
+// claim for them.
 type refusalHandler struct {
 	recordingHandler
 	claim bool
 	asked atomic.Int32
 }
 
-func (h *refusalHandler) TokenRefused(protocol.Error) bool {
-	h.asked.Add(1)
+func (h *refusalHandler) TokenRefused(runID, _ string) bool {
+	if runID == "run_7" {
+		h.asked.Add(1)
+	}
 	return h.claim
 }
 
-// TestTokenRefusals: an auth_failed frame the handler charges to one of its
-// requests keeps the session; any other auth_failed or revoked frame still
-// ends Run with ErrRevoked.
+// TestTokenRefusals: an auth_failed frame with a run_id refuses that one
+// token request and keeps the session, even with no request waiting; an
+// auth_failed without a run_id, or a revoked frame, ends Run with
+// ErrRevoked.
 func TestTokenRefusals(t *testing.T) {
 	tests := []struct {
 		name      string
 		code      string
+		runID     string
 		claim     bool
 		wantAsked int32
 		wantErr   bool
 	}{
-		{name: "auth_failed claimed", code: "auth_failed", claim: true, wantAsked: 1},
-		{name: "auth_failed unclaimed", code: "auth_failed", wantAsked: 1, wantErr: true},
-		{name: "revoked never asked", code: "revoked", claim: true, wantErr: true},
+		{name: "refusal of a waiting request", code: "auth_failed", runID: "run_7", claim: true, wantAsked: 1},
+		{name: "refusal with no request waiting", code: "auth_failed", runID: "run_7", wantAsked: 1},
+		{name: "auth_failed without run_id", code: "auth_failed", claim: true, wantErr: true},
+		{name: "revoked never asked", code: "revoked", runID: "run_7", claim: true, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -515,7 +520,11 @@ func TestTokenRefusals(t *testing.T) {
 			c := x.hub.next(t)
 			c.handshake(t)
 			waitFor(t, "Connected()", x.client.Connected)
-			c.send(t, `{"v":1,"type":"error","seq":3,"code":"`+tc.code+`","message":"run not bound"}`)
+			runID := ""
+			if tc.runID != "" {
+				runID = `"run_id":"` + tc.runID + `",`
+			}
+			c.send(t, `{"v":1,"type":"error","seq":3,`+runID+`"code":"`+tc.code+`","message":"run not bound"}`)
 			if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 3.0 {
 				t.Fatalf("reply = %v, want ack upto 3", m)
 			}

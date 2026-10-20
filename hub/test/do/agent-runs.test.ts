@@ -202,6 +202,23 @@ describe("AgentDO run lifecycle", () => {
     expect(await triggerState(agent, unaccepted)).toBe("superseded");
   });
 
+  it("a retry of an older commit does not supersede a newer waiting deploy", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const a = await trigger(agent, DEPLOY_TRIGGER);
+    const b = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_2 });
+    expect(await triggerState(agent, a)).toBe("superseded");
+
+    const retry = await trigger(agent, { ...DEPLOY_TRIGGER, attempt: 2 });
+    expect((await outbox(agent)).map((f) => f.trigger_id)).toEqual([b, retry]);
+    expect(await triggerState(agent, b)).toBe("sent");
+    expect(await run(b)).toMatchObject({ state: "queued" });
+
+    // A newer push still replaces the waiting retry.
+    const c = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_3 });
+    expect((await outbox(agent)).map((f) => f.trigger_id)).toEqual([c]);
+    expect(await triggerState(agent, retry)).toBe("superseded");
+  });
+
   it("daily cap", async () => {
     const day = new Date(testClock.now()).toISOString().slice(0, 10);
     await env.DB.prepare("INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, ?2, 500)").bind(INSTALLATION, day).run();
@@ -337,7 +354,7 @@ describe("AgentDO run lifecycle", () => {
     await acceptedRun(agent, sock, "run_a");
 
     const sent = await sock.request({ type: "token_request", run_id: "run_a", purpose: "fetch" });
-    expect(sent).toEqual([{ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound }]);
+    expect(sent).toEqual([{ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: "run_a", message: S.runNotBound }]);
     expect(sock.ws.readyState).toBe(WebSocket.OPEN);
     expect(gh.calls).toEqual([]);
   });
@@ -393,7 +410,7 @@ describe("AgentDO run lifecycle", () => {
     expect(await triggerState(agent, triggerId)).toBe("rejected");
     const log = vi.spyOn(console, "log");
     expect(await sock.request({ type: "token_request", run_id: triggerId, purpose: "fetch" })).toEqual([
-      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound },
+      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: triggerId, message: S.runNotBound },
     ]);
     expect(denials(log)).toEqual([expect.objectContaining({ agent_id: agent.agentId, run_id: triggerId, reason: "run_not_bound" })]);
     expect(gh.calls).toHaveLength(1);
@@ -417,7 +434,7 @@ describe("AgentDO run lifecycle", () => {
     ]);
 
     // Still only for the bound agent.
-    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound };
+    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: older, message: S.runNotBound };
     const log = vi.spyOn(console, "log");
     const other = await seedAgent(INSTALLATION);
     const otherSock = await online(other);
@@ -453,17 +470,17 @@ describe("AgentDO run lifecycle", () => {
     await upsertInstallation(env.DB, { id: OTHER_INSTALLATION, account_login: "evil", account_type: "Organization", account_id: OTHER_INSTALLATION * 10, created_at: 1 });
     const sameTenant = await seedAgent(INSTALLATION);
     const otherTenant = await seedAgent(OTHER_INSTALLATION);
-    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound };
+    const refused = (runId: string) => ({ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: runId, message: S.runNotBound });
 
     const log = vi.spyOn(console, "log");
     for (const agent of [sameTenant, otherTenant]) {
       const sock = await online(agent);
-      expect(await sock.request({ type: "token_request", run_id: deployId, purpose: "fetch" })).toEqual([refused]);
+      expect(await sock.request({ type: "token_request", run_id: deployId, purpose: "fetch" })).toEqual([refused(deployId)]);
       expect(sock.ws.readyState).toBe(WebSocket.OPEN);
       sock.ws.close();
     }
     for (const runId of ["trg_unknown", checksId]) {
-      expect(await ownerSock.request({ type: "token_request", run_id: runId, purpose: "fetch" })).toEqual([refused]);
+      expect(await ownerSock.request({ type: "token_request", run_id: runId, purpose: "fetch" })).toEqual([refused(runId)]);
     }
 
     expect(denials(log)).toEqual([

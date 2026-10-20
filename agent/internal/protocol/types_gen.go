@@ -103,6 +103,10 @@ type Error struct {
 	// Human-readable explanation.
 	Message string `json:"message"`
 
+	// Run or trigger identifier of the token_request an auth_failed refuses. Absent
+	// when the hub refuses the agent credential itself.
+	RunId *string `json:"run_id,omitempty,omitzero"`
+
 	// Hub outbox sequence number, acknowledged by the agent with ack. Absent on
 	// errors sent outside the outbox.
 	Seq *int `json:"seq,omitempty,omitzero"`

@@ -135,3 +135,24 @@ func TestRecoverer_ListUnitsErrorStillInterrupts(t *testing.T) {
 		t.Errorf("run = %s %q, want Interrupted %q", run.State, run.Error, want)
 	}
 }
+
+// A crash after the scheduler took the env lock but before the engine moved
+// the run out of Queued leaves the lock held by a Queued run; Recover frees
+// it so the run can deploy again.
+func TestRecoverer_ReleasesLockOfQueuedRun(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t, store.DeployQueued, fourSteps)
+	if ok, err := r.store.TryAcquireEnvLock(ctx, "acme/web", "production", "r1", t0); err != nil || !ok {
+		t.Fatalf("TryAcquireEnvLock = %t, %v", ok, err)
+	}
+	rec := &Recoverer{Store: r.store, Runner: &execx.Fake{}, Events: r.events, Clock: r.clock.Now, Logger: slog.New(slog.DiscardHandler)}
+	if _, err := rec.Recover(ctx); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if holder, held, err := r.store.EnvLockHolder(ctx, "acme/web", "production"); err != nil || held {
+		t.Fatalf("lock holder = %q, %t, %v; want free", holder, held, err)
+	}
+	if run := r.run(t); run.State != store.DeployQueued {
+		t.Errorf("r1 = %s, want untouched Queued", run.State)
+	}
+}
