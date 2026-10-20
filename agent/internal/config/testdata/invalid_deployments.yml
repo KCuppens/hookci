@@ -5,21 +5,33 @@ checks:
       run: go test ./...
 deployments:
   production:
-    strategy: restart
+    on:
+      push: main
+    strategy: compose-bluegreen
     env_file: /etc/zeroci/production.env
+    compose:
+      project: app
+      service: web
+      marker: .active-color
+    route:
+      kind: caddy
+      file: routes/app.caddy
     health:
       url: https://example.com/health
+    verify:
+      window: 10s
+      interval: 30s
+    needs: [staging]
   staging:
     on:
-      push:
-        branch: develop
-    health:
-      url: http://127.0.0.1/health
+      push: develop
+    strategy: compose-inplace
+    needs: [production, qa]
+    rollback: ./undo.sh
   preview:
     on:
-      push:
-        branch: preview
-    strategy: restart
+      push: preview
+    strategy: script
     env_file: /etc/zeroci/missing.env
     health:
       url: http://127.0.0.1:{port}/health

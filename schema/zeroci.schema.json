@@ -287,92 +287,226 @@
       }
     },
     "Deployment": {
-      "description": "A deployment to one environment. Validated in M0, executed in M2.",
+      "description": "A deployment to one environment. The agent checks the strategy-dependent rules (required sections, {port}, absolute paths, durations, needs) after schema validation.",
       "type": "object",
       "additionalProperties": false,
+      "required": ["on", "strategy"],
       "properties": {
         "on": {
           "description": "Event that starts the deployment.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["push"],
           "properties": {
             "push": {
-              "description": "Deploy on pushes.",
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "branch": {
-                  "description": "Branch whose pushes deploy.",
-                  "type": "string"
-                }
-              }
+              "description": "Branch whose pushes deploy.",
+              "type": "string",
+              "minLength": 1
+            },
+            "after": {
+              "description": "What must pass before the deployment starts.",
+              "type": "string",
+              "enum": ["checks"],
+              "default": "checks"
             }
           }
         },
         "strategy": {
-          "description": "How the new version replaces the old one.",
+          "description": "How the new version replaces the old one. compose-bluegreen starts the other color and switches the route, compose-inplace recreates the service, script runs the run command.",
           "type": "string",
-          "enum": ["restart", "compose-bluegreen"]
+          "enum": ["compose-bluegreen", "compose-inplace", "script"]
         },
-        "target": {
-          "description": "Where the application lives on the host.",
+        "compose": {
+          "description": "Docker Compose project to deploy. Required for the compose strategies.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["project", "service"],
           "properties": {
-            "path": {
-              "description": "Application directory.",
-              "type": "string"
+            "project": {
+              "description": "Compose project name.",
+              "type": "string",
+              "minLength": 1
             },
-            "unit": {
-              "description": "systemd unit to restart.",
+            "file": {
+              "description": "Compose file, relative to the repository root.",
+              "type": "string",
+              "minLength": 1,
+              "default": "docker-compose.yml"
+            },
+            "service": {
+              "description": "Service that serves the application.",
+              "type": "string",
+              "minLength": 1
+            },
+            "shared_network": {
+              "description": "External Docker network the service joins, for example the reverse proxy network.",
+              "type": "string",
+              "minLength": 1
+            },
+            "marker": {
+              "description": "Absolute path of the file that records the active color.",
               "type": "string"
             }
           }
         },
-        "build": {
-          "description": "Build command.",
-          "type": "string"
-        },
         "migrate": {
-          "description": "Database migration command.",
-          "type": "string"
-        },
-        "env_file": {
-          "description": "Absolute path of the environment file on the host.",
-          "type": "string",
-          "pattern": "^/"
-        },
-        "health": {
-          "description": "Health check run after the switch.",
+          "description": "Database migration run before the switch.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["run"],
           "properties": {
-            "url": {
-              "description": "Local URL to probe.",
+            "run": {
+              "description": "Migration command, run in the new image.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "route": {
+          "description": "Reverse proxy route switched between colors. Required for compose-bluegreen.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "file"],
+          "properties": {
+            "kind": {
+              "description": "Reverse proxy.",
+              "type": "string",
+              "enum": ["caddy"]
+            },
+            "file": {
+              "description": "Absolute path of the route file zeroci writes.",
               "type": "string"
             },
-            "timeout": {
-              "description": "How long to wait for a healthy answer, with an s, m or h suffix.",
+            "reload": {
+              "description": "Command that reloads the proxy after the route file changes.",
               "type": "string",
-              "pattern": "^[0-9]+(s|m|h)$"
+              "minLength": 1,
+              "default": "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile"
             },
-            "expect_status": {
+            "upstream_host": {
+              "description": "Host the proxy reaches the service on.",
+              "type": "string",
+              "minLength": 1,
+              "default": "127.0.0.1"
+            }
+          }
+        },
+        "health": {
+          "description": "Health check of the new version. Required for the compose strategies.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": {
+              "description": "Local URL to probe. The compose strategies fill in {port}, which the URL must contain.",
+              "type": "string"
+            },
+            "expect": {
               "description": "Expected HTTP status code.",
               "type": "integer",
               "default": 200
+            },
+            "retries": {
+              "description": "Probes before the deployment counts as unhealthy.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600,
+              "default": 40
+            },
+            "interval": {
+              "description": "Time between probes, as a Go duration such as 2s or 500ms.",
+              "type": "string",
+              "default": "2s"
             }
           }
         },
-        "rollback": {
-          "description": "Roll back automatically or manually when the health check fails.",
-          "type": "string",
-          "enum": ["auto", "manual"],
-          "default": "auto"
+        "verify": {
+          "description": "Watch window after the switch, during which a failed probe rolls back.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "window": {
+              "description": "How long to watch, as a Go duration such as 60s.",
+              "type": "string",
+              "default": "60s"
+            },
+            "interval": {
+              "description": "Time between probes, as a Go duration. At most window.",
+              "type": "string",
+              "default": "5s"
+            }
+          }
         },
-        "approve": {
-          "description": "Require a human approval before deploying.",
-          "type": "boolean",
-          "default": false
+        "env_file": {
+          "description": "Absolute path of the environment file on the host.",
+          "type": "string"
+        },
+        "retain": {
+          "description": "What to keep for rollback.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "images": {
+              "description": "Number of images to keep, counting the running one.",
+              "type": "integer",
+              "minimum": 2,
+              "default": 5
+            }
+          }
+        },
+        "paths": {
+          "description": "Globs relative to the repository root. When set, a push deploys only if it changes a matching file.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "needs": {
+          "description": "Environments whose deployment of the same commit must succeed first.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          }
+        },
+        "run": {
+          "description": "Deploy command. Required for strategy: script.",
+          "type": "string",
+          "minLength": 1
+        },
+        "rollback": {
+          "description": "Command that restores the previous version. Optional, strategy: script only.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AgentConfig": {
+      "title": "AgentConfig",
+      "description": "Settings of the agent host (agent.json), not part of .zeroci.yml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gc": {
+          "description": "Disk cleanup limits.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "build_cache_max_bytes": {
+              "description": "Docker build cache size above which the agent prunes it.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 10737418240
+            },
+            "min_free_bytes": {
+              "description": "Free disk space below which the agent prunes images and build cache.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 5368709120
+            }
+          }
         }
       }
     },

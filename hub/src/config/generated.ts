@@ -209,75 +209,142 @@ export interface Limits1 {
   tasks?: number;
 }
 /**
- * A deployment to one environment. Validated in M0, executed in M2.
+ * A deployment to one environment. The agent checks the strategy-dependent rules (required sections, {port}, absolute paths, durations, needs) after schema validation.
  */
 export interface Deployment {
   /**
    * Event that starts the deployment.
    */
-  on?: {
+  on: {
     /**
-     * Deploy on pushes.
+     * Branch whose pushes deploy.
      */
-    push?: {
-      /**
-       * Branch whose pushes deploy.
-       */
-      branch?: string;
-    };
+    push: string;
+    /**
+     * What must pass before the deployment starts.
+     */
+    after?: "checks";
   };
   /**
-   * How the new version replaces the old one.
+   * How the new version replaces the old one. compose-bluegreen starts the other color and switches the route, compose-inplace recreates the service, script runs the run command.
    */
-  strategy?: "restart" | "compose-bluegreen";
+  strategy: "compose-bluegreen" | "compose-inplace" | "script";
   /**
-   * Where the application lives on the host.
+   * Docker Compose project to deploy. Required for the compose strategies.
    */
-  target?: {
+  compose?: {
     /**
-     * Application directory.
+     * Compose project name.
      */
-    path?: string;
+    project: string;
     /**
-     * systemd unit to restart.
+     * Compose file, relative to the repository root.
      */
-    unit?: string;
+    file?: string;
+    /**
+     * Service that serves the application.
+     */
+    service: string;
+    /**
+     * External Docker network the service joins, for example the reverse proxy network.
+     */
+    shared_network?: string;
+    /**
+     * Absolute path of the file that records the active color.
+     */
+    marker?: string;
   };
   /**
-   * Build command.
+   * Database migration run before the switch.
    */
-  build?: string;
+  migrate?: {
+    /**
+     * Migration command, run in the new image.
+     */
+    run: string;
+  };
   /**
-   * Database migration command.
+   * Reverse proxy route switched between colors. Required for compose-bluegreen.
    */
-  migrate?: string;
+  route?: {
+    /**
+     * Reverse proxy.
+     */
+    kind: "caddy";
+    /**
+     * Absolute path of the route file zeroci writes.
+     */
+    file: string;
+    /**
+     * Command that reloads the proxy after the route file changes.
+     */
+    reload?: string;
+    /**
+     * Host the proxy reaches the service on.
+     */
+    upstream_host?: string;
+  };
+  /**
+   * Health check of the new version. Required for the compose strategies.
+   */
+  health?: {
+    /**
+     * Local URL to probe. The compose strategies fill in {port}, which the URL must contain.
+     */
+    url: string;
+    /**
+     * Expected HTTP status code.
+     */
+    expect?: number;
+    /**
+     * Probes before the deployment counts as unhealthy.
+     */
+    retries?: number;
+    /**
+     * Time between probes, as a Go duration such as 2s or 500ms.
+     */
+    interval?: string;
+  };
+  /**
+   * Watch window after the switch, during which a failed probe rolls back.
+   */
+  verify?: {
+    /**
+     * How long to watch, as a Go duration such as 60s.
+     */
+    window?: string;
+    /**
+     * Time between probes, as a Go duration. At most window.
+     */
+    interval?: string;
+  };
   /**
    * Absolute path of the environment file on the host.
    */
   env_file?: string;
   /**
-   * Health check run after the switch.
+   * What to keep for rollback.
    */
-  health?: {
+  retain?: {
     /**
-     * Local URL to probe.
+     * Number of images to keep, counting the running one.
      */
-    url?: string;
-    /**
-     * How long to wait for a healthy answer, with an s, m or h suffix.
-     */
-    timeout?: string;
-    /**
-     * Expected HTTP status code.
-     */
-    expect_status?: number;
+    images?: number;
   };
   /**
-   * Roll back automatically or manually when the health check fails.
+   * Globs relative to the repository root. When set, a push deploys only if it changes a matching file.
    */
-  rollback?: "auto" | "manual";
+  paths?: string[];
   /**
-   * Require a human approval before deploying.
+   * Environments whose deployment of the same commit must succeed first.
    */
-  approve?: boolean;
+  needs?: string[];
+  /**
+   * Deploy command. Required for strategy: script.
+   */
+  run?: string;
+  /**
+   * Command that restores the previous version. Optional, strategy: script only.
+   */
+  rollback?: string;
 }

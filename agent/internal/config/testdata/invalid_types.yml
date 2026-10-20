@@ -16,6 +16,9 @@ checks:
       needs: lint
 deployments:
   production:
-    env_file: etc/production.env
+    on: {push: main, after: deploy}
+    strategy: kubernetes
+    retain: {images: 1}
     health:
-      timeout: 1d
+      url: http://127.0.0.1:{port}/
+      retries: 0

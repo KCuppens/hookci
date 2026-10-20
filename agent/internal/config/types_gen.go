@@ -8,6 +8,48 @@ import "reflect"
 import "regexp"
 import "unicode/utf8"
 
+// Settings of the agent host (agent.json), not part of .zeroci.yml.
+type AgentConfig struct {
+	// Disk cleanup limits.
+	Gc *AgentConfigGc `json:"gc,omitempty,omitzero" yaml:"gc,omitempty"`
+}
+
+// Disk cleanup limits.
+type AgentConfigGc struct {
+	// Docker build cache size above which the agent prunes it.
+	BuildCacheMaxBytes int `json:"build_cache_max_bytes,omitempty,omitzero" yaml:"build_cache_max_bytes,omitempty"`
+
+	// Free disk space below which the agent prunes images and build cache.
+	MinFreeBytes int `json:"min_free_bytes,omitempty,omitzero" yaml:"min_free_bytes,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AgentConfigGc) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AgentConfigGc
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["build_cache_max_bytes"]; !ok || v == nil {
+		plain.BuildCacheMaxBytes = 10737418240
+	}
+	if 0 > plain.BuildCacheMaxBytes {
+		return fmt.Errorf("field %s: must be >= %v", "build_cache_max_bytes", 0)
+	}
+	if v, ok := raw["min_free_bytes"]; !ok || v == nil {
+		plain.MinFreeBytes = 5368709120
+	}
+	if 0 > plain.MinFreeBytes {
+		return fmt.Errorf("field %s: must be >= %v", "min_free_bytes", 0)
+	}
+	*j = AgentConfigGc(plain)
+	return nil
+}
+
 // Check configuration: triggers, trust policy, limits, setup, jobs, services and
 // egress.
 type Checks struct {
@@ -215,46 +257,122 @@ func (j *Checks) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// A deployment to one environment. Validated in M0, executed in M2.
+// A deployment to one environment. The agent checks the strategy-dependent rules
+// (required sections, {port}, absolute paths, durations, needs) after schema
+// validation.
 type Deployment struct {
-	// Require a human approval before deploying.
-	Approve bool `json:"approve,omitempty,omitzero" yaml:"approve,omitempty"`
-
-	// Build command.
-	Build *string `json:"build,omitempty,omitzero" yaml:"build,omitempty"`
+	// Docker Compose project to deploy. Required for the compose strategies.
+	Compose *DeploymentCompose `json:"compose,omitempty,omitzero" yaml:"compose,omitempty"`
 
 	// Absolute path of the environment file on the host.
 	EnvFile *string `json:"env_file,omitempty,omitzero" yaml:"env_file,omitempty"`
 
-	// Health check run after the switch.
+	// Health check of the new version. Required for the compose strategies.
 	Health *DeploymentHealth `json:"health,omitempty,omitzero" yaml:"health,omitempty"`
 
-	// Database migration command.
-	Migrate *string `json:"migrate,omitempty,omitzero" yaml:"migrate,omitempty"`
+	// Database migration run before the switch.
+	Migrate *DeploymentMigrate `json:"migrate,omitempty,omitzero" yaml:"migrate,omitempty"`
+
+	// Environments whose deployment of the same commit must succeed first.
+	Needs []string `json:"needs,omitempty,omitzero" yaml:"needs,omitempty"`
 
 	// Event that starts the deployment.
-	On *DeploymentOn `json:"on,omitempty,omitzero" yaml:"on,omitempty"`
+	On DeploymentOn `json:"on" yaml:"on"`
 
-	// Roll back automatically or manually when the health check fails.
-	Rollback DeploymentRollback `json:"rollback,omitempty,omitzero" yaml:"rollback,omitempty"`
+	// Globs relative to the repository root. When set, a push deploys only if it
+	// changes a matching file.
+	Paths []string `json:"paths,omitempty,omitzero" yaml:"paths,omitempty"`
 
-	// How the new version replaces the old one.
-	Strategy *DeploymentStrategy `json:"strategy,omitempty,omitzero" yaml:"strategy,omitempty"`
+	// What to keep for rollback.
+	Retain *DeploymentRetain `json:"retain,omitempty,omitzero" yaml:"retain,omitempty"`
 
-	// Where the application lives on the host.
-	Target *DeploymentTarget `json:"target,omitempty,omitzero" yaml:"target,omitempty"`
+	// Command that restores the previous version. Optional, strategy: script only.
+	Rollback *string `json:"rollback,omitempty,omitzero" yaml:"rollback,omitempty"`
+
+	// Reverse proxy route switched between colors. Required for compose-bluegreen.
+	Route *DeploymentRoute `json:"route,omitempty,omitzero" yaml:"route,omitempty"`
+
+	// Deploy command. Required for strategy: script.
+	Run *string `json:"run,omitempty,omitzero" yaml:"run,omitempty"`
+
+	// How the new version replaces the old one. compose-bluegreen starts the other
+	// color and switches the route, compose-inplace recreates the service, script
+	// runs the run command.
+	Strategy DeploymentStrategy `json:"strategy" yaml:"strategy"`
+
+	// Watch window after the switch, during which a failed probe rolls back.
+	Verify *DeploymentVerify `json:"verify,omitempty,omitzero" yaml:"verify,omitempty"`
 }
 
-// Health check run after the switch.
+// Docker Compose project to deploy. Required for the compose strategies.
+type DeploymentCompose struct {
+	// Compose file, relative to the repository root.
+	File string `json:"file,omitempty,omitzero" yaml:"file,omitempty"`
+
+	// Absolute path of the file that records the active color.
+	Marker *string `json:"marker,omitempty,omitzero" yaml:"marker,omitempty"`
+
+	// Compose project name.
+	Project string `json:"project" yaml:"project"`
+
+	// Service that serves the application.
+	Service string `json:"service" yaml:"service"`
+
+	// External Docker network the service joins, for example the reverse proxy
+	// network.
+	SharedNetwork *string `json:"shared_network,omitempty,omitzero" yaml:"shared_network,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentCompose) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["project"]; raw != nil && !ok {
+		return fmt.Errorf("field project in DeploymentCompose: required")
+	}
+	if _, ok := raw["service"]; raw != nil && !ok {
+		return fmt.Errorf("field service in DeploymentCompose: required")
+	}
+	type Plain DeploymentCompose
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["file"]; !ok || v == nil {
+		plain.File = "docker-compose.yml"
+	}
+	if utf8.RuneCountInString(string(plain.File)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "file", 1)
+	}
+	if utf8.RuneCountInString(string(plain.Project)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "project", 1)
+	}
+	if utf8.RuneCountInString(string(plain.Service)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "service", 1)
+	}
+	if plain.SharedNetwork != nil && utf8.RuneCountInString(string(*plain.SharedNetwork)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "shared_network", 1)
+	}
+	*j = DeploymentCompose(plain)
+	return nil
+}
+
+// Health check of the new version. Required for the compose strategies.
 type DeploymentHealth struct {
 	// Expected HTTP status code.
-	ExpectStatus int `json:"expect_status,omitempty,omitzero" yaml:"expect_status,omitempty"`
+	Expect int `json:"expect,omitempty,omitzero" yaml:"expect,omitempty"`
 
-	// How long to wait for a healthy answer, with an s, m or h suffix.
-	Timeout *string `json:"timeout,omitempty,omitzero" yaml:"timeout,omitempty"`
+	// Time between probes, as a Go duration such as 2s or 500ms.
+	Interval string `json:"interval,omitempty,omitzero" yaml:"interval,omitempty"`
 
-	// Local URL to probe.
-	Url *string `json:"url,omitempty,omitzero" yaml:"url,omitempty"`
+	// Probes before the deployment counts as unhealthy.
+	Retries int `json:"retries,omitempty,omitzero" yaml:"retries,omitempty"`
+
+	// Local URL to probe. The compose strategies fill in {port}, which the URL must
+	// contain.
+	Url string `json:"url" yaml:"url"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -263,73 +381,234 @@ func (j *DeploymentHealth) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return err
 	}
+	if _, ok := raw["url"]; raw != nil && !ok {
+		return fmt.Errorf("field url in DeploymentHealth: required")
+	}
 	type Plain DeploymentHealth
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
-	if v, ok := raw["expect_status"]; !ok || v == nil {
-		plain.ExpectStatus = 200
+	if v, ok := raw["expect"]; !ok || v == nil {
+		plain.Expect = 200
 	}
-	if plain.Timeout != nil {
-		if matched, _ := regexp.MatchString(`^[0-9]+(s|m|h)$`, string(*plain.Timeout)); !matched {
-			return fmt.Errorf("field %s pattern match: must match %s", "Timeout", `^[0-9]+(s|m|h)$`)
-		}
+	if v, ok := raw["interval"]; !ok || v == nil {
+		plain.Interval = "2s"
+	}
+	if v, ok := raw["retries"]; !ok || v == nil {
+		plain.Retries = 40
+	}
+	if 600 < plain.Retries {
+		return fmt.Errorf("field %s: must be <= %v", "retries", 600)
+	}
+	if 1 > plain.Retries {
+		return fmt.Errorf("field %s: must be >= %v", "retries", 1)
 	}
 	*j = DeploymentHealth(plain)
 	return nil
 }
 
-// Event that starts the deployment.
-type DeploymentOn struct {
-	// Deploy on pushes.
-	Push *DeploymentOnPush `json:"push,omitempty,omitzero" yaml:"push,omitempty"`
-}
-
-// Deploy on pushes.
-type DeploymentOnPush struct {
-	// Branch whose pushes deploy.
-	Branch *string `json:"branch,omitempty,omitzero" yaml:"branch,omitempty"`
-}
-
-type DeploymentRollback string
-
-const DeploymentRollbackAuto DeploymentRollback = "auto"
-const DeploymentRollbackManual DeploymentRollback = "manual"
-
-var enumValues_DeploymentRollback = []interface{}{
-	"auto",
-	"manual",
+// Database migration run before the switch.
+type DeploymentMigrate struct {
+	// Migration command, run in the new image.
+	Run string `json:"run" yaml:"run"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *DeploymentRollback) UnmarshalJSON(value []byte) error {
+func (j *DeploymentMigrate) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["run"]; raw != nil && !ok {
+		return fmt.Errorf("field run in DeploymentMigrate: required")
+	}
+	type Plain DeploymentMigrate
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(string(plain.Run)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "run", 1)
+	}
+	*j = DeploymentMigrate(plain)
+	return nil
+}
+
+// Event that starts the deployment.
+type DeploymentOn struct {
+	// What must pass before the deployment starts.
+	After DeploymentOnAfter `json:"after,omitempty,omitzero" yaml:"after,omitempty"`
+
+	// Branch whose pushes deploy.
+	Push string `json:"push" yaml:"push"`
+}
+
+type DeploymentOnAfter string
+
+const DeploymentOnAfterChecks DeploymentOnAfter = "checks"
+
+var enumValues_DeploymentOnAfter = []interface{}{
+	"checks",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentOnAfter) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_DeploymentRollback {
+	for _, expected := range enumValues_DeploymentOnAfter {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_DeploymentRollback, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_DeploymentOnAfter, v)
 	}
-	*j = DeploymentRollback(v)
+	*j = DeploymentOnAfter(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentOn) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["push"]; raw != nil && !ok {
+		return fmt.Errorf("field push in DeploymentOn: required")
+	}
+	type Plain DeploymentOn
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["after"]; !ok || v == nil {
+		plain.After = "checks"
+	}
+	if utf8.RuneCountInString(string(plain.Push)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "push", 1)
+	}
+	*j = DeploymentOn(plain)
+	return nil
+}
+
+// What to keep for rollback.
+type DeploymentRetain struct {
+	// Number of images to keep, counting the running one.
+	Images int `json:"images,omitempty,omitzero" yaml:"images,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentRetain) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain DeploymentRetain
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["images"]; !ok || v == nil {
+		plain.Images = 5
+	}
+	if 2 > plain.Images {
+		return fmt.Errorf("field %s: must be >= %v", "images", 2)
+	}
+	*j = DeploymentRetain(plain)
+	return nil
+}
+
+// Reverse proxy route switched between colors. Required for compose-bluegreen.
+type DeploymentRoute struct {
+	// Absolute path of the route file zeroci writes.
+	File string `json:"file" yaml:"file"`
+
+	// Reverse proxy.
+	Kind DeploymentRouteKind `json:"kind" yaml:"kind"`
+
+	// Command that reloads the proxy after the route file changes.
+	Reload string `json:"reload,omitempty,omitzero" yaml:"reload,omitempty"`
+
+	// Host the proxy reaches the service on.
+	UpstreamHost string `json:"upstream_host,omitempty,omitzero" yaml:"upstream_host,omitempty"`
+}
+
+type DeploymentRouteKind string
+
+const DeploymentRouteKindCaddy DeploymentRouteKind = "caddy"
+
+var enumValues_DeploymentRouteKind = []interface{}{
+	"caddy",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentRouteKind) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_DeploymentRouteKind {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_DeploymentRouteKind, v)
+	}
+	*j = DeploymentRouteKind(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentRoute) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["file"]; raw != nil && !ok {
+		return fmt.Errorf("field file in DeploymentRoute: required")
+	}
+	if _, ok := raw["kind"]; raw != nil && !ok {
+		return fmt.Errorf("field kind in DeploymentRoute: required")
+	}
+	type Plain DeploymentRoute
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["reload"]; !ok || v == nil {
+		plain.Reload = "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile"
+	}
+	if utf8.RuneCountInString(string(plain.Reload)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "reload", 1)
+	}
+	if v, ok := raw["upstream_host"]; !ok || v == nil {
+		plain.UpstreamHost = "127.0.0.1"
+	}
+	if utf8.RuneCountInString(string(plain.UpstreamHost)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "upstream_host", 1)
+	}
+	*j = DeploymentRoute(plain)
 	return nil
 }
 
 type DeploymentStrategy string
 
 const DeploymentStrategyComposeBluegreen DeploymentStrategy = "compose-bluegreen"
-const DeploymentStrategyRestart DeploymentStrategy = "restart"
+const DeploymentStrategyComposeInplace DeploymentStrategy = "compose-inplace"
+const DeploymentStrategyScript DeploymentStrategy = "script"
 
 var enumValues_DeploymentStrategy = []interface{}{
-	"restart",
 	"compose-bluegreen",
+	"compose-inplace",
+	"script",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -352,13 +631,34 @@ func (j *DeploymentStrategy) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Where the application lives on the host.
-type DeploymentTarget struct {
-	// Application directory.
-	Path *string `json:"path,omitempty,omitzero" yaml:"path,omitempty"`
+// Watch window after the switch, during which a failed probe rolls back.
+type DeploymentVerify struct {
+	// Time between probes, as a Go duration. At most window.
+	Interval string `json:"interval,omitempty,omitzero" yaml:"interval,omitempty"`
 
-	// systemd unit to restart.
-	Unit *string `json:"unit,omitempty,omitzero" yaml:"unit,omitempty"`
+	// How long to watch, as a Go duration such as 60s.
+	Window string `json:"window,omitempty,omitzero" yaml:"window,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentVerify) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain DeploymentVerify
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["interval"]; !ok || v == nil {
+		plain.Interval = "5s"
+	}
+	if v, ok := raw["window"]; !ok || v == nil {
+		plain.Window = "60s"
+	}
+	*j = DeploymentVerify(plain)
+	return nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -367,21 +667,22 @@ func (j *Deployment) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return err
 	}
+	if _, ok := raw["on"]; raw != nil && !ok {
+		return fmt.Errorf("field on in Deployment: required")
+	}
+	if _, ok := raw["strategy"]; raw != nil && !ok {
+		return fmt.Errorf("field strategy in Deployment: required")
+	}
 	type Plain Deployment
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
-	if v, ok := raw["approve"]; !ok || v == nil {
-		plain.Approve = false
+	if plain.Rollback != nil && utf8.RuneCountInString(string(*plain.Rollback)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "rollback", 1)
 	}
-	if plain.EnvFile != nil {
-		if matched, _ := regexp.MatchString(`^/`, string(*plain.EnvFile)); !matched {
-			return fmt.Errorf("field %s pattern match: must match %s", "EnvFile", `^/`)
-		}
-	}
-	if v, ok := raw["rollback"]; !ok || v == nil {
-		plain.Rollback = "auto"
+	if plain.Run != nil && utf8.RuneCountInString(string(*plain.Run)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "run", 1)
 	}
 	*j = Deployment(plain)
 	return nil

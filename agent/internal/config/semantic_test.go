@@ -57,7 +57,10 @@ func TestNeedsCycle(t *testing.T) {
 
 const trustAll = "version: 1\nchecks:\n  trust: all\n  jobs:\n    test:\n      run: go test ./...\n"
 
-const trustAllWithDeploy = trustAll + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n"
+// scriptDeploy is a minimal valid deployments section.
+const scriptDeploy = "deployments:\n  production:\n    on:\n      push: main\n    strategy: script\n    run: ./deploy.sh\n"
+
+const trustAllWithDeploy = trustAll + scriptDeploy
 
 func TestTrustAllRefusedShared(t *testing.T) {
 	_, diags := parseString(t, trustAll, ParseOptions{})
@@ -116,55 +119,9 @@ func TestRedactInvalidRegex(t *testing.T) {
 	}
 }
 
-func deployment(strategy, url string) string {
-	s := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n"
-	if strategy != "" {
-		s += "    strategy: " + strategy + "\n"
-	}
-	return s + "    health:\n      url: " + url + "\n"
-}
-
-func TestHealthURLMustBeLocal(t *testing.T) {
-	for url, want := range map[string]string{
-		"http://example.com:8000/health":   "must point at 127.0.0.1 or localhost",
-		"http://10.0.0.5:8000/health":      "must point at 127.0.0.1 or localhost",
-		"https://127.0.0.1:8000/health":    "must use http",
-		"http://127.0.0.1/health":          "needs an explicit port",
-		"http://localhost:0/health":        "out of range",
-		"http://127.0.0.1:8000/{port}":     "may only stand for the port",
-		"127.0.0.1:8000/health":            "not a valid URL",
-		"http://127.0.0.1:8000/health":     "",
-		"http://localhost:8000/health?x=1": "",
-	} {
-		_, diags := parseString(t, deployment("restart", url), ParseOptions{})
-		if want == "" {
-			if len(diags) > 0 {
-				t.Errorf("%s: unexpected diagnostics:\n%s", url, diags.Format("test.yml"))
-			}
-			continue
-		}
-		if d := findDiag(t, diags, "deployments.production.health.url"); !strings.Contains(d.Message, want) {
-			t.Errorf("%s: message %q, want %q", url, d.Message, want)
-		}
-	}
-}
-
-func TestHealthPortPlaceholderOnlyBluegreen(t *testing.T) {
-	const url = "http://127.0.0.1:{port}/health"
-	if _, diags := parseString(t, deployment("compose-bluegreen", url), ParseOptions{}); len(diags) > 0 {
-		t.Errorf("compose-bluegreen: unexpected diagnostics:\n%s", diags.Format("test.yml"))
-	}
-	for _, strategy := range []string{"restart", ""} {
-		_, diags := parseString(t, deployment(strategy, url), ParseOptions{})
-		if d := findDiag(t, diags, "deployments.production.health.url"); !strings.Contains(d.Message, "only filled in by strategy: compose-bluegreen") {
-			t.Errorf("strategy %q: diagnostic = %+v", strategy, d)
-		}
-	}
-}
-
 func TestEnvFileWritableWarns(t *testing.T) {
 	const file = "/etc/zeroci/production.env"
-	src := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n    env_file: " + file + "\n"
+	src := oneJob + scriptDeploy + "    env_file: " + file + "\n"
 	for _, tc := range []struct {
 		name string
 		info fs.FileInfo
@@ -204,7 +161,7 @@ func TestEnvFileWritableWarns(t *testing.T) {
 }
 
 func TestEnvFileLookedUpInFS(t *testing.T) {
-	src := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n    env_file: /etc/app.env\n"
+	src := oneJob + scriptDeploy + "    env_file: /etc/app.env\n"
 	fsys := fstest.MapFS{"etc/app.env": {Mode: 0o666}}
 	_, diags := Parse([]byte(src), ParseOptions{FS: fsys})
 	if len(diags) != 1 || !strings.Contains(diags[0].Message, "writable by group or others (mode 0666)") {

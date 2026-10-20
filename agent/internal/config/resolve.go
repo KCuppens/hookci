@@ -125,7 +125,7 @@ func resolveChecks(cfg *ZeroCIConfig, raw any) *ResolvedChecks {
 			rj.Annotate = string(*job.Annotate)
 		}
 		if job.Timeout != nil {
-			rj.Limits.Timeout, _ = ParseDuration(*job.Timeout) // checkLimits parsed it already
+			rj.Limits.Timeout, _ = ParseDuration("checks.jobs."+name+".timeout", *job.Timeout) // checkLimits parsed it already
 		}
 		rc.Jobs = append(rc.Jobs, rj)
 	}
@@ -148,7 +148,7 @@ func mergeLimits(base ResolvedLimits, l *Limits, set map[string]any) ResolvedLim
 		base.Tasks = l.Tasks
 	}
 	if _, ok := set["timeout"]; ok {
-		base.Timeout, _ = ParseDuration(l.Timeout)
+		base.Timeout, _ = ParseDuration("limits.timeout", l.Timeout)
 	}
 	return base
 }

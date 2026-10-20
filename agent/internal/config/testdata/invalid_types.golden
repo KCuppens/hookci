@@ -10,7 +10,7 @@ invalid_types.yml:11: error: checks.jobs.Build: invalid job name "Build": job na
 invalid_types.yml:15: error: checks.jobs.test.annotate: must be one of "eslint", "tsc", got "eslnt"
   fix: did you mean "eslint"?
 invalid_types.yml:16: error: checks.jobs.test.needs: must be a list, got a string
-invalid_types.yml:19: error: deployments.production.env_file: env_file "etc/production.env" must be an absolute path
-  fix: use a path that starts with /, for example /etc/zeroci/production.env
-invalid_types.yml:21: error: deployments.production.health.timeout: "1d" is not a duration
-  fix: use a whole number with an s, m or h suffix, for example 90s, 10m or 1h
+invalid_types.yml:19: error: deployments.production.on.after: must be one of "checks", got "deploy"
+invalid_types.yml:20: error: deployments.production.strategy: must be one of "compose-bluegreen", "compose-inplace", "script", got "kubernetes"
+invalid_types.yml:21: error: deployments.production.retain.images: must be at least 2, got 1
+invalid_types.yml:24: error: deployments.production.health.retries: must be at least 1, got 0

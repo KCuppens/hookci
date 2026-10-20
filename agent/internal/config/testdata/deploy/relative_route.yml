@@ -1,0 +1,12 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: pnpm turbo run test
+deployments:
+  production:
+    on: { push: main }
+    strategy: compose-bluegreen
+    compose: { project: app, service: web }
+    route: { kind: caddy, file: routes/app.caddy }
+    health: { url: "http://127.0.0.1:{port}/health" }
