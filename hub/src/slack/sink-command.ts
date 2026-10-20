@@ -2,8 +2,8 @@
 // add opens the Add sink modal, whose submission /slack/interactive hands to
 // handleSinkAddSubmission. Every command and every submission asks GitHub
 // afresh whether the caller is admin or maintain on the repo. Secrets travel
-// only through the modal: a command holding a bot token or URL is refused
-// before anything reads, stores or logs it.
+// only through the modal: a command holding a bot token, URL or Linear API
+// key is refused before anything reads, stores or logs it.
 
 import { getSinkConfig, type SinkKind } from "../db/sinks";
 import { type TenantDb, tenantDb } from "../db/tenant";
@@ -15,6 +15,7 @@ import { reportError } from "../observability";
 import {
 	addSinkConfig,
 	listSinkConfigsForRepo,
+	type PublicSinkConfig,
 	removeSinkConfig,
 	type SinkActor,
 	SinkConfigError,
@@ -31,10 +32,15 @@ import { requireSinkManager, resolveRepo } from "./resolve";
 import { buildSinkAddedModal, buildSinkAddModal, isSlackViewSubmission, parseSinkAddSubmission, SINK_ADD_CALLBACK_ID, type SinkField } from "./sink-modal";
 import type { SlackView } from "./views";
 
-/** A Telegram bot token, or a URL such as a webhook's: secrets that must not travel in command text. */
-const SECRET_ARGS = [/^\d+:[A-Za-z0-9_-]{30,}$/, /^https:\/\//i];
+/** A Telegram bot token, a URL such as a webhook's, or a Linear API or OAuth key: secrets that must not travel in command text. */
+const SECRET_ARGS = [/^\d+:[A-Za-z0-9_-]{30,}$/, /^https:\/\//i, /^lin_api_[A-Za-z0-9]+/, /^lin_oauth_/];
 
-/** The modal field each refusal of the config service is shown on; invalid is the URL's for a webhook and the label's for Telegram. */
+/**
+ * The modal field each refusal of the config service is shown on. invalid is
+ * the URL's for a webhook, the label's for Telegram and the kind's for
+ * Linear, where it is mostly Linear limiting or not answering; bad_token is
+ * the API key's for Linear.
+ */
 const ERROR_FIELD: Record<Exclude<SinkConfigErrorCode, "invalid">, SinkField> = {
 	invalid_repo: "kind",
 	repo_not_bound: "kind",
@@ -44,7 +50,16 @@ const ERROR_FIELD: Record<Exclude<SinkConfigErrorCode, "invalid">, SinkField> = 
 	not_https: "webhook_url",
 	private_host: "webhook_url",
 	self: "webhook_url",
+	team_not_found: "linear_team",
+	assignee_not_found: "linear_assignee_email",
 };
+
+const INVALID_FIELD: Record<SinkKind, SinkField> = { telegram: "label", webhook: "webhook_url", linear: "kind" };
+
+/** A sink's redacted target as Slack text. */
+function targetText(target: PublicSinkConfig["target"]): string {
+	return typeof target === "string" ? target : S.sinks.linearTarget(target.teamKey, target.assigneeName);
+}
 
 /** The expected refusals of a submission, shown on the kind field instead of a reported failure. */
 const SUBMIT_REFUSALS: Record<string, string> = {
@@ -92,7 +107,7 @@ export async function handleSinkCommand(env: Env, ctx: SlackCommandRequest, args
 		}
 		const sinks = await listSinkConfigsForRepo(tenantDb(env.DB, repo.installationId), repo.fullName);
 		if (sinks.length === 0) return ephemeral(S.slack.sinkNone(repo.fullName));
-		const lines = sinks.map((sink) => S.slack.sinkListItem(sink.id, S.slack.sinkKind[sink.kind], sink.target, sink.label, sink.last_error));
+		const lines = sinks.map((sink) => S.slack.sinkListItem(sink.id, S.slack.sinkKind[sink.kind], targetText(sink.target), sink.label, sink.last_error));
 		return ephemeral([S.slack.sinkListHeader(repo.fullName), ...lines].join("\n"));
 	}
 
@@ -118,7 +133,8 @@ export async function handleSinkCommand(env: Env, ctx: SlackCommandRequest, args
 /** The field errors of a refused submission; an unexpected failure is reported and shown on the kind field. */
 function submitErrors(err: unknown, teamId: string, kind: SinkKind | undefined): Record<string, string> {
 	if (err instanceof SinkConfigError) {
-		const field = err.code === "invalid" ? (kind === "telegram" ? "label" : "webhook_url") : ERROR_FIELD[err.code];
+		const field =
+			err.code === "invalid" ? INVALID_FIELD[kind ?? "webhook"] : err.code === "bad_token" && kind === "linear" ? "linear_api_key" : ERROR_FIELD[err.code];
 		return { [field]: err.message };
 	}
 	if (err instanceof SinkQuotaError) return { kind: S.slack.sinkQuota(Math.ceil(err.retryAfterSeconds / 60)) };
@@ -149,7 +165,7 @@ export async function handleSinkAddSubmission(env: Env, teamId: string, userId: 
 		await requireSinkManager(env, repo.installationId, repo.fullName, user.githubLogin);
 		const actor: SinkActor = { type: "slack_user", id: `${teamId}:${userId}` };
 		const { sink, generatedSecret } = await addSinkConfig(env, tenantDb(env.DB, repo.installationId), actor, parsed.input);
-		const added = S.slack.sinkAdded(S.slack.sinkKind[sink.kind], sink.id, sink.repo, sink.target);
+		const added = S.slack.sinkAdded(S.slack.sinkKind[sink.kind], sink.id, sink.repo, targetText(sink.target));
 		text = generatedSecret === undefined ? added : [added, S.slack.sinkSecret(generatedSecret), S.slack.sinkSecretOnce].join("\n");
 	} catch (err) {
 		return { response_action: "errors", errors: submitErrors(err, teamId, kind) };

@@ -26,6 +26,8 @@ export interface Env {
 	HUB_MODE?: string;
 	/** The Telegram Bot API origin, https://api.telegram.org; tests point it at a fake. */
 	TELEGRAM_API_BASE: string;
+	/** The Linear GraphQL endpoint, https://api.linear.app/graphql; tests point it at a fake. */
+	LINEAR_API_URL: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;

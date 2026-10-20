@@ -32,24 +32,77 @@ type Sink struct {
 	Repo  string  `json:"repo"`
 	Label *string `json:"label"`
 	// Target is "chat <id>" for Telegram, the URL's origin and start of its
-	// path for a webhook.
-	Target     string  `json:"target"`
-	CreatedAt  string  `json:"created_at"`
-	DisabledAt *string `json:"disabled_at"`
+	// path for a webhook, and the team key and assignee name for Linear.
+	Target     SinkTarget `json:"target"`
+	CreatedAt  string     `json:"created_at"`
+	DisabledAt *string    `json:"disabled_at"`
 	// LastError is why the hub disabled the sink; nil while enabled.
 	LastError *string `json:"last_error"`
 }
 
+// SinkTarget is a sink's redacted target. The hub sends a string for
+// Telegram ("chat <id>") and webhooks (the URL's origin and start of its
+// path), and an object for Linear: the team key and, if set, the assignee's
+// name.
+type SinkTarget struct {
+	Text         string
+	TeamKey      string
+	AssigneeName string
+}
+
+type linearTarget struct {
+	TeamKey      string `json:"teamKey"`
+	AssigneeName string `json:"assigneeName,omitempty"`
+}
+
+// String is the target as one line: Text, or "team=<KEY>" and
+// " assignee=<name>" for Linear.
+func (t SinkTarget) String() string {
+	if t.TeamKey == "" {
+		return t.Text
+	}
+	if t.AssigneeName == "" {
+		return "team=" + t.TeamKey
+	}
+	return "team=" + t.TeamKey + " assignee=" + t.AssigneeName
+}
+
+// UnmarshalJSON takes the string or the Linear object the hub sends.
+func (t *SinkTarget) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '{' {
+		var lt linearTarget
+		if err := json.Unmarshal(b, &lt); err != nil {
+			return err
+		}
+		*t = SinkTarget{TeamKey: lt.TeamKey, AssigneeName: lt.AssigneeName}
+		return nil
+	}
+	*t = SinkTarget{}
+	return json.Unmarshal(b, &t.Text)
+}
+
+// MarshalJSON writes the target back in the hub's form.
+func (t SinkTarget) MarshalJSON() ([]byte, error) {
+	if t.TeamKey != "" {
+		return json.Marshal(linearTarget{TeamKey: t.TeamKey, AssigneeName: t.AssigneeName})
+	}
+	return json.Marshal(t.Text)
+}
+
 // AddSinkRequest is the body of POST /v1/agent/sinks. Telegram needs
-// BotToken and ChatID, a webhook needs URL; the hub refuses the fields of
-// the other kind, so empty ones are left out.
+// BotToken and ChatID, a webhook needs URL, Linear needs LinearAPIKey and
+// TeamKey; the hub refuses the fields of the other kinds, so empty ones are
+// left out.
 type AddSinkRequest struct {
-	Kind     string `json:"kind,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	BotToken string `json:"bot_token,omitempty"`
-	ChatID   string `json:"chat_id,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Label    string `json:"label,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Repo          string `json:"repo,omitempty"`
+	BotToken      string `json:"bot_token,omitempty"`
+	ChatID        string `json:"chat_id,omitempty"`
+	URL           string `json:"url,omitempty"`
+	LinearAPIKey  string `json:"api_key,omitempty"`
+	TeamKey       string `json:"team_key,omitempty"`
+	AssigneeEmail string `json:"assignee_email,omitempty"`
+	Label         string `json:"label,omitempty"`
 }
 
 // AddSinkResponse is the hub's answer to an add. GeneratedSecret is the

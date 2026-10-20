@@ -4,7 +4,7 @@
 // names the missing ones, and the config service checks what was given.
 
 import type { SinkKind } from "../db/sinks";
-import type { SinkConfigInput } from "../sinks/config-service";
+import { LINEAR_TEAM_KEY, type SinkConfigInput } from "../sinks/config-service";
 import { S } from "../strings";
 import { section } from "./blocks";
 import type { SlackView } from "./views";
@@ -12,9 +12,9 @@ import type { SlackView } from "./views";
 export const SINK_ADD_CALLBACK_ID = "zeroci_sink_add";
 
 /** Each field's block_id and action_id, so the errors of a submission are keyed by field. */
-export type SinkField = "kind" | "bot_token" | "chat_id" | "webhook_url" | "label";
+export type SinkField = "kind" | "bot_token" | "chat_id" | "webhook_url" | "linear_api_key" | "linear_team" | "linear_assignee_email" | "label";
 
-const KINDS: readonly SinkKind[] = ["telegram", "webhook"];
+const KINDS: readonly SinkKind[] = ["telegram", "webhook", "linear"];
 
 interface SlackInputState {
 	value?: string | null;
@@ -63,6 +63,9 @@ export function buildSinkAddModal(repo: string, channel: string): SlackView {
 			textInput("bot_token", S.slack.sinkModal.botToken, S.slack.sinkModal.botTokenHint, 200),
 			textInput("chat_id", S.slack.sinkModal.chatId, S.slack.sinkModal.chatIdHint, 100),
 			textInput("webhook_url", S.slack.sinkModal.webhookUrl, S.slack.sinkModal.webhookUrlHint, 2000),
+			textInput("linear_api_key", S.slack.sinkModal.linearApiKey, S.slack.sinkModal.linearApiKeyHint, 200),
+			textInput("linear_team", S.slack.sinkModal.linearTeam, S.slack.sinkModal.linearTeamHint, 10),
+			textInput("linear_assignee_email", S.slack.sinkModal.linearAssigneeEmail, S.slack.sinkModal.linearAssigneeEmailHint, 320),
 			textInput("label", S.slack.sinkModal.label, S.slack.sinkModal.labelHint, 100),
 		],
 	};
@@ -124,6 +127,17 @@ export function parseSinkAddSubmission(view: SlackViewSubmission): SinkAddSubmis
 		const url = text("webhook_url");
 		if (url === "") return { errors: { webhook_url: S.slack.sinkModal.needWebhookUrl } };
 		return { ...meta, input: { kind, repo: meta.repo, url, ...named } };
+	}
+	if (kind === "linear") {
+		const apiKey = text("linear_api_key");
+		const teamKey = text("linear_team");
+		const assigneeEmail = text("linear_assignee_email");
+		const errors: Record<string, string> = {};
+		if (apiKey === "") errors.linear_api_key = S.slack.sinkModal.needLinearApiKey;
+		if (teamKey === "") errors.linear_team = S.slack.sinkModal.needLinearTeam;
+		else if (!LINEAR_TEAM_KEY.test(teamKey)) errors.linear_team = S.slack.sinkModal.badLinearTeam;
+		if (Object.keys(errors).length > 0) return { errors };
+		return { ...meta, input: { kind, repo: meta.repo, apiKey, teamKey, ...(assigneeEmail === "" ? {} : { assigneeEmail }), ...named } };
 	}
 	return { errors: { kind: S.slack.sinkModal.chooseKind } };
 }

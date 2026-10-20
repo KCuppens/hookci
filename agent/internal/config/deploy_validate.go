@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // ValidationError is one problem in a configuration: the dotted path of the
@@ -66,8 +68,9 @@ func fillDeploymentDefaults(cfg *ZeroCIConfig) {
 
 // ValidateDeployments checks the deployment rules the schema cannot express:
 // the sections each strategy requires, the health URL, absolute host paths,
-// durations, and needs between environments. cfg must have passed the
-// schema. Every problem is returned, in environment name order.
+// durations, the migrate.before hook, and needs between environments. cfg
+// must have passed the schema. Every problem is returned, in environment
+// name order.
 func ValidateDeployments(cfg *ZeroCIConfig) []ValidationError {
 	var errs []ValidationError
 	names := sortedKeys(cfg.Deployments)
@@ -142,6 +145,43 @@ func validateDeployment(env string, d Deployment) []ValidationError {
 				Msg: fmt.Sprintf("interval %s is longer than window %s", v.Interval, v.Window),
 				Fix: "make verify.interval at most verify.window"})
 		}
+	}
+	if m := d.Migrate; m != nil {
+		errs = append(errs, validateMigrate(base+".migrate", d.Strategy, *m)...)
+	}
+	return errs
+}
+
+// validateMigrate checks the migration globs and the migrate.before hook:
+// the hook needs the migration it guards, runs only for the compose
+// strategies, and writes to an absolute host directory other than /.
+func validateMigrate(base string, strategy DeploymentStrategy, m DeploymentMigrate) []ValidationError {
+	var errs []ValidationError
+	for i, glob := range m.Paths {
+		if !doublestar.ValidatePattern(glob) {
+			errs = append(errs, ValidationError{Path: fmt.Sprintf("%s.paths[%d]", base, i),
+				Msg: fmt.Sprintf("glob %s is not a valid pattern", quote(glob)),
+				Fix: "use a glob such as db/migrations/**"})
+		}
+	}
+	b := m.Before
+	if b == nil {
+		return errs
+	}
+	if m.Run == "" {
+		errs = append(errs, ValidationError{Path: base + ".run", Msg: "required by migrate.before", Fix: "add run: <migration command>"})
+	}
+	if strategy == DeploymentStrategyScript {
+		errs = append(errs, ValidationError{Path: base + ".before", Msg: "not supported by strategy: script", Fix: "use run/needs steps for script deployments"})
+	}
+	var dir string
+	if b.OutputDir != nil {
+		dir = *b.OutputDir
+	}
+	if !path.IsAbs(dir) || path.Clean(dir) == "/" {
+		errs = append(errs, ValidationError{Path: base + ".before.output_dir",
+			Msg: fmt.Sprintf("output_dir %s must be an absolute path other than /", quote(dir)),
+			Fix: "use a backup directory such as /var/backups/zeroci/app"})
 	}
 	return errs
 }

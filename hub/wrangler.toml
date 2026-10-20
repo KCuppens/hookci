@@ -18,6 +18,7 @@ GITHUB_APP_SLUG = "zeroci"
 HUB_MODE = "shared"
 SLACK_APP_ID = "A0000000000"
 TELEGRAM_API_BASE = "https://api.telegram.org"
+LINEAR_API_URL = "https://api.linear.app/graphql"
 
 [observability]
 enabled = true
@@ -73,6 +74,7 @@ GITHUB_APP_SLUG = "zeroci-staging"
 HUB_MODE = "shared"
 SLACK_APP_ID = "A0000000001"
 TELEGRAM_API_BASE = "https://api.telegram.org"
+LINEAR_API_URL = "https://api.linear.app/graphql"
 
 [env.staging.observability]
 enabled = true

@@ -7,7 +7,7 @@ import type { Env } from "../env";
 import { ulid } from "../ulid";
 import type { TenantDb } from "./tenant";
 
-export type SinkKind = "telegram" | "webhook";
+export type SinkKind = "telegram" | "webhook" | "linear";
 
 /** A sink config as listed; the secret never leaves getSinkConfigWithSecret. */
 export interface SinkConfigRow {

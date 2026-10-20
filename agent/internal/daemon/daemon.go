@@ -108,6 +108,8 @@ type Daemon struct {
 	deployQ     []protocol.Trigger // guarded by mu
 	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
 	deploySched *deploy.Scheduler  // runs accepted deploy runs
+	// deployRefs returns the GitHub client of a deploy run.
+	deployRefs func(run store.DeployRun) *trigger.GitHubRefChecker
 	// deployConfig loads the trusted .zeroci.yml at a deploy run's sha.
 	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
 	collector    *gc.Collector // removes old deploy images and run dirs
@@ -171,7 +173,8 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 			tokens: d.tokens.Request,
 		}
 	}
-	d.deployConfig = githubConfig("", github, d.tokens.Request)
+	d.deployRefs = githubRefs("", github, d.tokens.Request)
+	d.deployConfig = githubConfig(d.deployRefs)
 	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger})
 	d.collector = newCollector(st, o, conf.AgentConfig)
 	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)

@@ -1,4 +1,4 @@
-package trigger
+package deploy
 
 import "github.com/bmatcuk/doublestar/v4"
 

@@ -39,8 +39,18 @@ const (
 	defaultExpect         = 200
 )
 
-// migrateIndex is the plan index of the migrate step.
-const migrateIndex = 2
+// migrateIndex returns the plan index of the migrate step.
+func migrateIndex(cfg config.Deployment) int {
+	if hasMigrateBefore(cfg) {
+		return 3
+	}
+	return 2
+}
+
+// hasMigrateBefore reports whether cfg sets a migrate.before hook.
+func hasMigrateBefore(cfg config.Deployment) bool {
+	return cfg.Migrate != nil && cfg.Migrate.Before != nil
+}
 
 // BlueGreen is the compose-bluegreen strategy: it starts the idle color in
 // its own compose project, gates on health, swaps the proxy route to it,
@@ -53,12 +63,15 @@ type BlueGreen struct {
 	StateDir string                           // agent state dir; overrides and marker default under <StateDir>/deploy/<repo>/<env>
 	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
 	Access   *UnitAccess                      // nil leaves the overrides to the agent only
+	// Changes returns the change lister migrate.before diffs a run's SHA
+	// with; nil, or a nil lister, backs up on every deploy that has paths.
+	Changes func(run store.DeployRun) deploy.ChangeLister
 }
 
 // Name returns the strategy name of deployments.<env>.strategy.
 func (b *BlueGreen) Name() string { return "compose-bluegreen" }
 
-// Plan returns the eight compose-bluegreen steps.
+// Plan returns the compose-bluegreen steps: eight, nine with migrate.before.
 func (b *BlueGreen) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Step, error) {
 	if cfg.Compose == nil {
 		return nil, fmt.Errorf("deployments.%s.compose: required for compose-bluegreen; add compose.project and compose.service", run.Env)
@@ -75,16 +88,21 @@ func (b *BlueGreen) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.S
 	if _, _, err := verifyTiming(run.Env, cfg); err != nil {
 		return nil, err
 	}
-	return []deploy.Step{
+	steps := []deploy.Step{
 		{Name: "build", Phase: deploy.PhaseApply, Run: b.build},
 		{Name: "prepare", Phase: deploy.PhaseApply, Run: b.prepare},
-		{Name: "migrate", Phase: deploy.PhaseApply, Run: b.migrate},
-		{Name: "start", Phase: deploy.PhaseApply, Run: b.start},
-		{Name: "health", Phase: deploy.PhaseApply, Run: b.health},
-		{Name: "swap", Phase: deploy.PhaseApply, Run: b.swap},
-		{Name: "verify", Phase: deploy.PhaseVerify, Run: b.verify},
-		{Name: "finalize", Phase: deploy.PhaseVerify, Run: b.finalize},
-	}, nil
+	}
+	if hasMigrateBefore(cfg) {
+		steps = append(steps, deploy.Step{Name: "migrate-before", Phase: deploy.PhaseApply, Run: b.migrateBefore})
+	}
+	return append(steps,
+		deploy.Step{Name: "migrate", Phase: deploy.PhaseApply, Run: b.migrate},
+		deploy.Step{Name: "start", Phase: deploy.PhaseApply, Run: b.start},
+		deploy.Step{Name: "health", Phase: deploy.PhaseApply, Run: b.health},
+		deploy.Step{Name: "swap", Phase: deploy.PhaseApply, Run: b.swap},
+		deploy.Step{Name: "verify", Phase: deploy.PhaseVerify, Run: b.verify},
+		deploy.Step{Name: "finalize", Phase: deploy.PhaseVerify, Run: b.finalize},
+	), nil
 }
 
 // Preview shows the plan of a deploy of pc.SHA: the color it would target,
@@ -211,6 +229,29 @@ func (b *BlueGreen) prepare(ctx context.Context, sc *deploy.StepContext) error {
 	return nil
 }
 
+// migrateBefore runs the migrate.before backup in the new image.
+func (b *BlueGreen) migrateBefore(ctx context.Context, sc *deploy.StepContext) error {
+	_, err := deploy.RunBeforeHook(ctx, sc, beforeDeps(b.Store, b.Changes, sc), sc.Outputs[outImage], sharedNetwork(sc.Cfg))
+	return err
+}
+
+// beforeDeps builds the migrate.before dependencies of sc's run.
+func beforeDeps(st *store.Store, changes func(store.DeployRun) deploy.ChangeLister, sc *deploy.StepContext) deploy.MigrateBeforeDeps {
+	deps := deploy.MigrateBeforeDeps{Store: st, Now: sc.Clock.Now}
+	if changes != nil {
+		deps.Changes = changes(sc.Run)
+	}
+	return deps
+}
+
+// sharedNetwork returns compose.shared_network, or "" when unset.
+func sharedNetwork(cfg config.Deployment) string {
+	if cfg.Compose == nil || cfg.Compose.SharedNetwork == nil {
+		return ""
+	}
+	return *cfg.Compose.SharedNetwork
+}
+
 // migrate runs migrate.run in the new image, when set.
 func (b *BlueGreen) migrate(ctx context.Context, sc *deploy.StepContext) error {
 	if sc.Cfg.Migrate == nil || sc.Cfg.Migrate.Run == "" {
@@ -316,7 +357,7 @@ func (b *BlueGreen) finalize(ctx context.Context, sc *deploy.StepContext) error 
 // never touches the marker, and does nothing when the marker already names
 // the target: that color is committed and serving.
 func (b *BlueGreen) Rollback(ctx context.Context, sc *deploy.StepContext, failedIndex int) error {
-	if failedIndex >= migrateIndex && sc.Cfg.Migrate != nil && sc.Cfg.Migrate.Run != "" {
+	if failedIndex >= migrateIndex(sc.Cfg) && sc.Cfg.Migrate != nil && sc.Cfg.Migrate.Run != "" {
 		fmt.Fprintln(sc.Log, "migrations are forward-only and were not reverted")
 	}
 	target := sc.Outputs[outColor]
