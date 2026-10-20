@@ -57,7 +57,7 @@ func commandTable() map[string]command {
 			},
 		},
 		"init": {
-			summary: "scaffold a .zeroci.yml config file for the project",
+			summary: "scaffold a .zeroci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),
 		},
 		"logs": {
