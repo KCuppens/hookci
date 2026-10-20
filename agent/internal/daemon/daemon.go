@@ -151,7 +151,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 			tokens: d.tokens.RequestTrigger,
 		}
 	}
-	d.deploySched = d.newDeployScheduler(credential, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
+	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
 	d.collector = newCollector(st, o, conf.AgentConfig)
 	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)
 	d.deploySched.PostRun = func(ctx context.Context, _ store.DeployRun) { d.collector.RunBestEffort(ctx) }

@@ -236,6 +236,7 @@ func TestRenderTable(t *testing.T) {
 		{ID: "git_present", Title: "git", Status: Pass, Detail: "git version 2.39.2"},
 		{ID: "disk_space", Title: "disk space", Status: Warn, Detail: "1.0 GiB free", Fix: "free space"},
 		{ID: "hub_reachable", Title: "hub reachable", Status: Fail, Detail: "refused", Fix: "check DNS"},
+		{ID: "deploy.caddy", Title: "caddy", Status: Skip, Detail: "no deployment routes through caddy"},
 	})
 	if !failed {
 		t.Error("Render = false with a failed check")
@@ -245,11 +246,12 @@ func TestRenderTable(t *testing.T) {
 		"warn    disk space     1.0 GiB free\n" +
 		"                       fix: free space\n" +
 		"fail    hub reachable  refused\n" +
-		"                       fix: check DNS\n"
+		"                       fix: check DNS\n" +
+		"skip    caddy          no deployment routes through caddy\n"
 	if out.String() != want {
 		t.Errorf("table =\n%s\nwant\n%s", out.String(), want)
 	}
-	if Render(&bytes.Buffer{}, []Result{{Status: Warn}}) {
-		t.Error("Render = true with only a warning")
+	if Render(&bytes.Buffer{}, []Result{{Status: Warn}, {Status: Skip}}) {
+		t.Error("Render = true with only a warning and a skip")
 	}
 }

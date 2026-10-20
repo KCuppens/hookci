@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
@@ -385,6 +386,52 @@ func TestEngine_FailsBeforeSteps(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEngine_PreflightFailure_NoStepsNoRollback(t *testing.T) {
+	r := newRig(t, store.DeployQueued, fourSteps)
+	checkedOut := false
+	r.engine.Checkout = func(context.Context, store.DeployRun) error { checkedOut = true; return nil }
+	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/zeroci", 5*gib,
+		statfsMap(map[string]uint64{"/var/lib/docker": 1 * gib, "/var/lib/zeroci": 50 * gib}))}
+	if err := r.engine.Start(context.Background(), "r1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	wantErr := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run zeroci gc or raise the limit"
+	if run := r.run(t); run.State != store.DeployFailed || run.Error != wantErr || run.FinishedAt.IsZero() {
+		t.Errorf("run = %s %q finished %v, want Failed %q", run.State, run.Error, run.FinishedAt, wantErr)
+	}
+	if steps := r.steps(t); len(steps) != 0 {
+		t.Errorf("deploy_steps rows = %d, want 0", len(steps))
+	}
+	if len(r.strat.rollbacks) != 0 || len(r.strat.ran) != 0 || checkedOut {
+		t.Errorf("rolled back %v, ran %v, checked out %v; want nothing", r.strat.rollbacks, r.strat.ranIndexes(), checkedOut)
+	}
+	if last := r.events.last(); last.State != protocol.EventStateFailed || last.Reason == nil || *last.Reason != wantErr || last.Step != nil {
+		t.Errorf("last event = %+v, want failed with reason %q and no step", last, wantErr)
+	}
+}
+
+func TestEngine_PreflightPasses(t *testing.T) {
+	r := newRig(t, store.DeployQueued, fourSteps)
+	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/zeroci", 5*gib,
+		statfsMap(map[string]uint64{"/var/lib/docker": 6 * gib, "/var/lib/zeroci": 50 * gib}))}
+	if err := r.engine.Start(context.Background(), "r1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if run := r.run(t); run.State != store.DeploySuccess {
+		t.Errorf("run state = %s %q, want success", run.State, run.Error)
+	}
+	if got := r.strat.ranIndexes(); !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Errorf("ran steps %v, want 0-3", got)
+	}
+}
+
+func fakeDockerInfo(root string) *execx.Fake {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"info", "--format", "{{.DockerRootDir}}"}, execx.FakeResponse{Stdout: root + "\n"})
+	return fake
 }
 
 func TestEngine_LogRedacted(t *testing.T) {

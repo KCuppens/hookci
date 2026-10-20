@@ -10,8 +10,35 @@ import "unicode/utf8"
 
 // Settings of the agent host (agent.json), not part of .zeroci.yml.
 type AgentConfig struct {
+	// zeroci doctor settings.
+	Doctor *AgentConfigDoctor `json:"doctor,omitempty,omitzero" yaml:"doctor,omitempty"`
+
 	// Disk cleanup limits.
 	Gc *AgentConfigGc `json:"gc,omitempty,omitzero" yaml:"gc,omitempty"`
+}
+
+// zeroci doctor settings.
+type AgentConfigDoctor struct {
+	// Report a Caddy admin API that answers on TCP as a warning instead of a failure.
+	AllowCaddyTcpAdmin bool `json:"allow_caddy_tcp_admin,omitempty,omitzero" yaml:"allow_caddy_tcp_admin,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AgentConfigDoctor) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AgentConfigDoctor
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["allow_caddy_tcp_admin"]; !ok || v == nil {
+		plain.AllowCaddyTcpAdmin = false
+	}
+	*j = AgentConfigDoctor(plain)
+	return nil
 }
 
 // Disk cleanup limits.
@@ -19,7 +46,8 @@ type AgentConfigGc struct {
 	// Docker build cache size above which the agent prunes it.
 	BuildCacheMaxBytes int `json:"build_cache_max_bytes,omitempty,omitzero" yaml:"build_cache_max_bytes,omitempty"`
 
-	// Free disk space below which the agent prunes images and build cache.
+	// Free disk space below which the agent prunes images and build cache. A deploy
+	// does not start while the docker root dir or the state dir has less free.
 	MinFreeBytes int `json:"min_free_bytes,omitempty,omitzero" yaml:"min_free_bytes,omitempty"`
 }
 

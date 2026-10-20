@@ -49,6 +49,10 @@ type Engine struct {
 	// LoadDeployment returns the deployments.<env> block of the trusted
 	// config at run.SHA.
 	LoadDeployment func(ctx context.Context, run store.DeployRun) (config.Deployment, error)
+	// Preflight runs in order when Start begins a run, before step 0. An
+	// error fails the run with the error text as the run error, with no step
+	// recorded and no rollback.
+	Preflight []PreflightFunc
 }
 
 // Start runs runID from step 0. The run must be Queued or Interrupted. It
@@ -65,6 +69,9 @@ func (e *Engine) Start(ctx context.Context, runID string) error {
 		return err
 	}
 	x.planned()
+	if failed, err := x.preflight(ctx); failed {
+		return err
+	}
 	return x.execute(ctx, 0, map[string]string{})
 }
 
@@ -133,6 +140,9 @@ func (e *Engine) Retry(ctx context.Context, runID string) error {
 		return err
 	}
 	x.planned()
+	if failed, err := x.preflight(ctx); failed {
+		return err
+	}
 	return x.execute(ctx, 0, map[string]string{})
 }
 
@@ -205,6 +215,21 @@ func (x *execution) planned() {
 		Env:   &env,
 		Jobs:  []protocol.JobPlannedJobsElem{{Name: JobName, Needs: []string{}}},
 	})
+}
+
+// preflight runs the Engine's Preflight checks. When one fails it fails the
+// run with the check's error text and no step, and reports failed with the
+// error of recording that; an error after ctx ended keeps the run as it is.
+func (x *execution) preflight(ctx context.Context) (failed bool, err error) {
+	for _, check := range x.e.Preflight {
+		if err := check(ctx, x.run); err != nil {
+			if ctx.Err() != nil {
+				return true, fmt.Errorf("deploy: run %s: preflight: %w", x.run.RunID, err)
+			}
+			return true, x.fail(ctx, err.Error(), -1)
+		}
+	}
+	return false, nil
 }
 
 // finishRollback rolls back from failed, the step whose rollback a restart

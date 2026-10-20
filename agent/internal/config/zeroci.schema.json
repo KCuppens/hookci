@@ -501,10 +501,22 @@
               "default": 10737418240
             },
             "min_free_bytes": {
-              "description": "Free disk space below which the agent prunes images and build cache.",
+              "description": "Free disk space below which the agent prunes images and build cache. A deploy does not start while the docker root dir or the state dir has less free.",
               "type": "integer",
               "minimum": 0,
               "default": 5368709120
+            }
+          }
+        },
+        "doctor": {
+          "description": "zeroci doctor settings.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_caddy_tcp_admin": {
+              "description": "Report a Caddy admin API that answers on TCP as a warning instead of a failure.",
+              "type": "boolean",
+              "default": false
             }
           }
         }

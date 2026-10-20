@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
@@ -132,8 +133,10 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 		return nil
 	}})
 	w.runner.On("caddy", []string{"reload"}, execx.FakeResponse{})
+	w.runner.On("docker", []string{"info", "--format", "{{.DockerRootDir}}"}, execx.FakeResponse{Stdout: stateDir + "\n"})
 
 	conf := &agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}
+	conf.Gc = &config.AgentConfigGc{MinFreeBytes: 1}
 	dialer := &idleDialer{dialed: make(chan struct{})}
 	d := New(conf, st, nil, Options{
 		StateDir: stateDir, Dialer: dialer, Source: src,
@@ -304,6 +307,9 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 	}
 	if !w.runner.Called("caddy", "reload") {
 		t.Error("proxy never reloaded")
+	}
+	if !w.runner.Called("docker", "info") {
+		t.Error("disk headroom preflight never asked docker for its root dir")
 	}
 	var runTokens int
 	for _, f := range w.frames("token_request") {

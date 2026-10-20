@@ -18,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
+	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
@@ -32,8 +33,10 @@ import (
 
 // newDeployScheduler builds the deploy lane: the engine that runs one
 // deploy and the scheduler that orders deploys per env. Each run is checked
-// out into deployWorkDir and runs in deploy units as deploy.DeployUser.
-func (d *Daemon) newDeployScheduler(credential string, events deploy.EventSink, load func(context.Context, store.DeployRun) (config.Deployment, error)) *deploy.Scheduler {
+// out into deployWorkDir and runs in deploy units as deploy.DeployUser. A
+// run starts only while the docker root dir and the state dir have
+// gc.min_free_bytes of agentCfg free.
+func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConfig, events deploy.EventSink, load func(context.Context, store.DeployRun) (config.Deployment, error)) *deploy.Scheduler {
 	o := d.o
 	runner := o.DeployRunner
 	if runner == nil {
@@ -61,7 +64,8 @@ func (d *Daemon) newDeployScheduler(credential string, events deploy.EventSink, 
 			red, _ := redact.New([]string{credential}, nil)
 			return deploy.NewExecutorForRun(run, trusted, cfg, deploy.ExecutorDeps{Runner: runner, Redactor: red})
 		},
-		Checkout: d.checkoutDeploy,
+		Checkout:  d.checkoutDeploy,
+		Preflight: []deploy.PreflightFunc{deploy.DiskPreflight(runner, o.StateDir, deploy.MinFreeBytes(agentCfg), doctor.HostDiskFree)},
 	}
 	return &deploy.Scheduler{Store: d.st, Engine: eng, Events: events, Clock: o.Clock.Now, Logger: o.Logger, LoadDeployment: load}
 }

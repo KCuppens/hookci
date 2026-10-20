@@ -173,6 +173,10 @@ main() {
 	if ! id zeroci-deploy >/dev/null 2>&1; then
 		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-deploy
 	fi
+	# Deploys run docker compose as zeroci-deploy (zeroci doctor check deploy.user).
+	if getent group docker >/dev/null 2>&1; then
+		run $sudo usermod -aG docker zeroci-deploy
+	fi
 	run $sudo install -m 0644 -o root -g root "$tmp/zeroci.slice" /etc/systemd/system/zeroci.slice
 	run $sudo install -m 0644 -o root -g root "$tmp/agent.service" /etc/systemd/system/zeroci-agent@.service
 	if [ -n "$ZEROCI_INSTALL_DRY_RUN" ]; then
