@@ -287,6 +287,26 @@ func TestDeployRun_RoundTripAndStateTimes(t *testing.T) {
 	}
 }
 
+func TestIncrementDeployAttempt(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.InsertDeployRun(ctx, testDeployRun("r1", "prod", DeployInterrupted)); err != nil {
+		t.Fatalf("InsertDeployRun: %v", err)
+	}
+	for want := 2; want <= 3; want++ {
+		got, err := s.IncrementDeployAttempt(ctx, "r1")
+		if err != nil || got != want {
+			t.Fatalf("IncrementDeployAttempt = %d, %v; want %d", got, err, want)
+		}
+	}
+	if run, _ := s.GetDeployRun(ctx, "r1"); run.Attempt != 3 || run.State != DeployInterrupted {
+		t.Errorf("after two increments = attempt %d state %s, want 3 %s", run.Attempt, run.State, DeployInterrupted)
+	}
+	if _, err := s.IncrementDeployAttempt(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("IncrementDeployAttempt(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeployState_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "agent.db")

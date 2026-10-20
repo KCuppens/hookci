@@ -128,6 +128,21 @@ func (s *Store) SetDeployRunState(ctx context.Context, runID, state, errMsg stri
 	return requireRow(res, "deploy run "+runID)
 }
 
+// IncrementDeployAttempt adds one to the attempt of runID and returns the new
+// attempt, or ErrNotFound.
+func (s *Store) IncrementDeployAttempt(ctx context.Context, runID string) (int, error) {
+	var attempt int
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE deploy_runs SET attempt = attempt + 1 WHERE run_id = ? RETURNING attempt`, runID).Scan(&attempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("store: deploy run %s: %w", runID, ErrNotFound)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: increment deploy run %s attempt: %w", runID, err)
+	}
+	return attempt, nil
+}
+
 // ListDeployRunsInStates returns the deploy runs whose state is one of
 // states, oldest first.
 func (s *Store) ListDeployRunsInStates(ctx context.Context, states ...string) ([]DeployRun, error) {
