@@ -35,7 +35,9 @@ func TestUnitExecutor_Argv(t *testing.T) {
 	want := []string{
 		"--unit=zeroci-run-r1-deploy", "--uid=zeroci-deploy", "--gid=zeroci-deploy",
 		"--pipe", "--wait", "--collect", "--quiet", "--property=RuntimeMaxSec=91",
+		"--property=StateDirectory=zeroci-deploy", "--property=StateDirectoryMode=0700",
 		"--property=EnvironmentFile=/etc/zeroci/production.env",
+		"--setenv=HOME=/var/lib/zeroci-deploy",
 		"--setenv=IMAGE=web:abc", "--setenv=TOKEN=override",
 		"--working-directory=/srv/app", "--", "docker", "compose", "build",
 	}

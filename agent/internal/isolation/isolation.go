@@ -20,7 +20,7 @@ const UnitPrefix = "zeroci-run-"
 // the corresponding systemd property is omitted.
 type Limits struct {
 	CPUs        float64       // 2 -> CPUQuota=200%
-	MemoryBytes int64         // MemoryMax=<bytes>
+	MemoryBytes int64         // MemoryMax=<bytes> MemorySwapMax=0
 	Tasks       int           // TasksMax=<n>
 	Timeout     time.Duration // RuntimeMaxSec=<seconds, rounded up>
 	IOReadBps   int64         // IOReadBandwidthMax=<rundir> <bytes>
