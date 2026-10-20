@@ -74,6 +74,16 @@ type Handler interface {
 	HandleFrame(ctx context.Context, f protocol.Frame) error
 }
 
+// TokenRefusals is implemented by a Handler with token requests the hub may
+// refuse without the agent credential being at fault. The hub answers such a
+// refusal with an auth_failed error frame that names no request.
+type TokenRefusals interface {
+	// TokenRefused reports whether e is charged to one of the handler's
+	// pending requests; then the session goes on instead of ending with
+	// ErrRevoked.
+	TokenRefused(e protocol.Error) bool
+}
+
 // Client is a reconnecting hub session.
 type Client struct {
 	cfg       Config
@@ -375,6 +385,10 @@ func (c *Client) hubError(e protocol.Error) error {
 		c.log.Error("hub does not support this agent's protocol", "message", e.Message, "upgrade_hint", hint)
 		return ErrUnsupported
 	case protocol.ErrorCodeAuthFailed, protocol.ErrorCodeRevoked:
+		if r, ok := c.h.(TokenRefusals); ok && e.Code == protocol.ErrorCodeAuthFailed && r.TokenRefused(e) {
+			c.log.Warn("hub refused a token request", "message", e.Message)
+			return nil
+		}
 		c.log.Error("hub refused the agent credential", "code", string(e.Code), "message", e.Message)
 		return ErrRevoked
 	case protocol.ErrorCodeRateLimited:

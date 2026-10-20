@@ -134,7 +134,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		d.deploys = &hubIntake{
 			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
 			http:   &http.Client{Timeout: githubTimeout},
-			tokens: d.tokens.Request,
+			tokens: d.tokens.RequestTrigger,
 		}
 	}
 	return d
@@ -189,6 +189,13 @@ func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 		d.interrupt(ctx, v)
 	}
 	return nil
+}
+
+// TokenRefused implements hubclient.TokenRefusals: a refusal that arrives
+// while a deploy trigger's checks wait for their token fails those checks,
+// and the trigger is rejected, instead of ending the session as revoked.
+func (d *Daemon) TokenRefused(e protocol.Error) bool {
+	return d.tokens.Refuse(e.Message)
 }
 
 // accept records t and queues it. A trigger already recorded is ignored:

@@ -2,16 +2,20 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
+	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
@@ -160,5 +164,137 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 	run, err := st.FindDeployRun(context.Background(), "acme/app", "prod", headSHA, 1)
 	if err != nil || run.RunID != "run_d" || run.State != store.DeployQueued {
 		t.Errorf("stored run = %+v, %v; want run_d queued", run, err)
+	}
+}
+
+// refusingHub is one hub session: it welcomes the agent, sends it a deploy
+// trigger and answers every token_request with the auth_failed error frame
+// the hub sends for a trigger it no longer holds open.
+type refusingHub struct {
+	t       *testing.T
+	trigger []byte
+	in      chan []byte
+	closed  chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	asked   []string
+	reasons []string
+}
+
+func (h *refusingHub) Dial(context.Context, string, http.Header) (hubclient.Conn, error) {
+	return h, nil
+}
+
+func (h *refusingHub) Read(ctx context.Context) ([]byte, error) {
+	select {
+	case b := <-h.in:
+		return b, nil
+	case <-h.closed:
+		return nil, errors.New("closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (h *refusingHub) Write(_ context.Context, b []byte) error {
+	if string(b) == "ping" {
+		return nil
+	}
+	var f struct {
+		Type   string `json:"type"`
+		RunID  string `json:"run_id"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		h.t.Errorf("agent wrote %q: %v", b, err)
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch f.Type {
+	case "hello":
+		h.in <- []byte(`{"v":1,"type":"welcome","hub_version":"test","protocol_min":1,"protocol_max":1,"agent_id":"agt_1","installation_id":42}`)
+		h.in <- h.trigger
+	case "token_request":
+		h.asked = append(h.asked, f.RunID)
+		h.in <- []byte(`{"v":1,"type":"error","seq":2,"code":"auth_failed","message":"run not bound"}`)
+	case "rejected":
+		h.reasons = append(h.reasons, f.Reason)
+	}
+	return nil
+}
+
+func (h *refusingHub) Close(int, string) error {
+	h.once.Do(func() { close(h.closed) })
+	return nil
+}
+
+func (h *refusingHub) state() (asked, reasons []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.asked), slices.Clone(h.reasons)
+}
+
+// TestDaemonRefusedTriggerTokenRejects: the hub refusing the token of a
+// deploy trigger's checks rejects the trigger and keeps the daemon serving;
+// it is not taken as a revoked credential.
+func TestDaemonRefusedTriggerTokenRejects(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("GitHub called without a token: %s", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(gh.Close)
+	stateDir := t.TempDir()
+	st, err := store.Open(filepath.Join(stateDir, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	env, seq := "prod", 1
+	frame, err := protocol.Marshal("trigger", protocol.Trigger{
+		Attempt: 1, Env: &env, Event: protocol.TriggerEventPush, Ref: "refs/heads/main", Repo: "acme/app",
+		Sha: headSHA, TriggerId: "trg_dep", Trust: protocol.TriggerTrustTrusted, Seq: &seq, HubSeq: seq,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := &refusingHub{t: t, trigger: frame, in: make(chan []byte, 16), closed: make(chan struct{})}
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}, st, nil,
+		Options{StateDir: stateDir, Dialer: hub, Source: &fakeSource{}})
+	intake := d.deploys.(*hubIntake)
+	intake.githubURL, intake.http = gh.URL, gh.Client()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	var asked, reasons []string
+	for deadline := time.Now().Add(10 * time.Second); len(reasons) == 0; time.Sleep(5 * time.Millisecond) {
+		select {
+		case err := <-done:
+			t.Fatalf("Run = %v before the trigger was answered", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("trigger never rejected")
+		}
+		asked, reasons = hub.state()
+	}
+	if !slices.Equal(asked, []string{"trg_dep"}) {
+		t.Errorf("token requests = %v, want one for trg_dep", asked)
+	}
+	const prefix, suffix = "deployments.prod: github check failed: ", "; the hub may redeliver"
+	if r := reasons[0]; len(reasons) != 1 || !strings.HasPrefix(r, prefix) || !strings.HasSuffix(r, suffix) ||
+		!strings.Contains(r, "hubtokens: hub refused a token for trg_dep: run not bound") {
+		t.Errorf("rejected reasons = %q, want one github check failure naming the refusal", reasons)
+	}
+	if !d.client.Connected() {
+		t.Error("session closed after the refusal, want it kept")
+	}
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Errorf("Run = %v, want context.Canceled, not ErrRevoked", err)
 	}
 }

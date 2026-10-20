@@ -19,12 +19,14 @@ type DeployIntake interface {
 const githubTimeout = 30 * time.Second
 
 // hubIntake is the default DeployIntake: it checks GitHub with a fetch
-// token the hub issues for the trigger, before any run exists.
+// token the hub issues for the trigger, before any run exists. The hub
+// refuses that token for a trigger it no longer holds open; the checks then
+// fail and the trigger is rejected.
 type hubIntake struct {
 	base      trigger.Intake
 	githubURL string // "" means trigger.DefaultGitHubURL
 	http      *http.Client
-	tokens    func(ctx context.Context, runID string) (string, error)
+	tokens    func(ctx context.Context, triggerID string) (string, error)
 }
 
 // Handle decides t with one token for all of its GitHub calls.

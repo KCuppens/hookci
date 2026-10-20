@@ -478,6 +478,68 @@ func TestRevoked(t *testing.T) {
 	}
 }
 
+// refusalHandler charges auth_failed frames to its own pending requests
+// while claim is set.
+type refusalHandler struct {
+	recordingHandler
+	claim bool
+	asked atomic.Int32
+}
+
+func (h *refusalHandler) TokenRefused(protocol.Error) bool {
+	h.asked.Add(1)
+	return h.claim
+}
+
+// TestTokenRefusals: an auth_failed frame the handler charges to one of its
+// requests keeps the session; any other auth_failed or revoked frame still
+// ends Run with ErrRevoked.
+func TestTokenRefusals(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      string
+		claim     bool
+		wantAsked int32
+		wantErr   bool
+	}{
+		{name: "auth_failed claimed", code: "auth_failed", claim: true, wantAsked: 1},
+		{name: "auth_failed unclaimed", code: "auth_failed", wantAsked: 1, wantErr: true},
+		{name: "revoked never asked", code: "revoked", claim: true, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newHarness(t)
+			h := &refusalHandler{claim: tc.claim}
+			x.client = New(x.client.cfg, x.st, h, x.client.log)
+			x.start(t)
+			c := x.hub.next(t)
+			c.handshake(t)
+			waitFor(t, "Connected()", x.client.Connected)
+			c.send(t, `{"v":1,"type":"error","seq":3,"code":"`+tc.code+`","message":"run not bound"}`)
+			if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 3.0 {
+				t.Fatalf("reply = %v, want ack upto 3", m)
+			}
+			if tc.wantErr {
+				c.drain()
+				if err := x.runErr(t); !errors.Is(err, ErrRevoked) {
+					t.Fatalf("Run = %v, want ErrRevoked", err)
+				}
+			} else {
+				c.send(t, `{"v":1,"type":"token","seq":4,"run_id":"run_1","token":"ghs_x","exp":1700000000}`)
+				if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 4.0 {
+					t.Fatalf("reply = %v, want ack upto 4 on the same session", m)
+				}
+				if n := h.count(); n != 1 {
+					t.Fatalf("HandleFrame called %d times, want 1", n)
+				}
+			}
+			if n := h.asked.Load(); n != tc.wantAsked {
+				t.Errorf("TokenRefused called %d times, want %d", n, tc.wantAsked)
+			}
+		})
+	}
+}
+
 func TestPingTimeout(t *testing.T) {
 	x := newHarness(t)
 	x.start(t)

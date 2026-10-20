@@ -399,6 +399,45 @@ describe("AgentDO run lifecycle", () => {
     expect(gh.calls).toHaveLength(1);
   });
 
+  it("token_request by trigger id serves a deploy trigger superseded before its ack until it is answered", async () => {
+    const gh = await fakeTokenMint();
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const older = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: older });
+
+    // A newer deploy replaces it before the agent's ack lands, while the agent may already be checking it.
+    const newer = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_2 });
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: newer });
+    expect(await triggerState(agent, older)).toBe("superseded");
+    const tokenRequest = { type: "token_request", run_id: older, purpose: "fetch" };
+    expect(await sock.request(tokenRequest)).toEqual([
+      { v: 1, type: "token", seq: expect.any(Number), run_id: older, token: "ghs_fetch", exp: Math.floor(Date.parse("2030-01-01T00:00:00Z") / 1000) },
+    ]);
+
+    // Still only for the bound agent.
+    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound };
+    const log = vi.spyOn(console, "log");
+    const other = await seedAgent(INSTALLATION);
+    const otherSock = await online(other);
+    expect(await otherSock.request(tokenRequest)).toEqual([refused]);
+    otherSock.ws.close();
+
+    // Once accepted it has a run id, which the agent asks by; the trigger id is refused.
+    expect(await sock.request({ type: "accepted", trigger_id: older, run_id: "run_old" })).toEqual([
+      { v: 1, type: "interrupt", seq: expect.any(Number), run_id: "run_old", reason: "superseded" },
+    ]);
+    expect(await sock.request(tokenRequest)).toEqual([refused]);
+    expect(await sock.request({ ...tokenRequest, run_id: "run_old" })).toEqual([expect.objectContaining({ type: "token", run_id: "run_old" })]);
+
+    expect(denials(log)).toEqual([
+      expect.objectContaining({ agent_id: other.agentId, run_id: older, reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: agent.agentId, run_id: older, reason: "run_not_bound" }),
+    ]);
+    expect(gh.calls).toHaveLength(2);
+  });
+
   it("token_request by trigger id is refused to other agents and for unknown or checks triggers", async () => {
     const gh = await fakeTokenMint();
     const owner = await seedAgent(INSTALLATION);

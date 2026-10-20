@@ -126,9 +126,15 @@ function triggerByRun(dob: AgentDO, runId: string): TriggerRow | null {
 	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ?", runId).toArray()[0] ?? null;
 }
 
-/** A deploy trigger still waiting for this agent's answer; its checks read GitHub before the agent accepts it, so the agent asks for a token by trigger id. */
+/**
+ * A deploy trigger this agent has not answered yet; its checks read GitHub before the agent accepts it, so the agent asks for a
+ * token by trigger id. A trigger superseded before its ack arrived still counts: the agent may already be checking it, and a
+ * refusal is an auth_failed frame. Once accepted it has a run_id and the agent asks by that instead.
+ */
 function sentDeployTrigger(dob: AgentDO, triggerId: string): TriggerRow | null {
-	const row = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ? AND state = 'sent'", triggerId).toArray()[0];
+	const row = dob.sql
+		.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ? AND (state = 'sent' OR (state = 'superseded' AND run_id IS NULL))", triggerId)
+		.toArray()[0];
 	return row !== undefined && deployEnv(row.target) != null ? row : null;
 }
 
