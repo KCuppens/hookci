@@ -91,11 +91,15 @@ describe("purge_installations cron", () => {
     await markDeleted(env.DB, GONE, now - 86_400_001, now - 1);
     await markDeleted(env.DB, GRACE, now - 1000, now + 86_399_000);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const events = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runCron(env, "*/5 * * * *");
 
     expect(errors.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("purge_installations"))).toEqual([]);
     expect(await tenantRows(GONE)).toBe(0);
+    expect(events.mock.calls.map(([line]) => JSON.parse(String(line))).filter((e) => e.event === "installation.purged")).toEqual([
+      { level: "info", event: "installation.purged", installation_id: GONE },
+    ]);
     for (const id of [KEPT, GRACE, 420]) expect(await tenantRows(id)).toBe(5);
     expect(await logKeys()).toEqual(
       [KEPT, GRACE, 420].flatMap((id) => [`logs/${id}/run_${id}/build.log`, `logs/${id}/run_${id}/test.log`]).sort(),

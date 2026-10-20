@@ -51,7 +51,7 @@ tag = "v2"
 new_sqlite_classes = ["SinkOutboxDO"]
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "17 3 * * *"]
 
 [[rules]]
 type = "Text"

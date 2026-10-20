@@ -1,6 +1,30 @@
 import { HubError } from "../errors";
 
 /**
+ * Every table with an installation_id column; purgeInstallation empties each.
+ * test/db/tenant-tables.test.ts fails when a migration adds one not listed here.
+ */
+export const TENANT_TABLES: readonly string[] = [
+	"runs",
+	"repos",
+	"workspace_links",
+	"agents",
+	"pair_tokens",
+	"repo_bindings",
+	"watches",
+	"check_runs",
+	"deliveries",
+	"author_cache",
+	"author_map",
+	"daily_counters",
+	"fork_approvals",
+	"deploy_triggers",
+	"sink_configs",
+	"sink_messages",
+	"sink_deliveries",
+];
+
+/**
  * D1 access bound to one GitHub installation. Every statement must be scoped
  * to `?1`, which is always the installation id; callers' binds start at `?2`.
  */

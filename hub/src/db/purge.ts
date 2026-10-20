@@ -69,6 +69,7 @@ async function purgeRuns(db: D1Database, cutoffPrefix: string): Promise<number> 
 /** Deletes rows past their retention window from the global and run tables; returns the row count. */
 export async function purgeExpired(db: D1Database, now: number): Promise<number> {
 	const oldestDay = new Date(now - DAILY_COUNTER_DAYS * DAY_MS).toISOString().slice(0, 10);
+	const runCutoff = now - QUOTAS.retentionDays * DAY_MS;
 	const purges: [table: string, where: string, bind: number | string][] = [
 		["deliveries", "received_at < ?1", now - DELIVERY_RETENTION_MS],
 		// slack_events has no received_at; expires_at is received_at plus a day.
@@ -78,10 +79,12 @@ export async function purgeExpired(db: D1Database, now: number): Promise<number>
 		["author_cache", "expires_at < ?1", now],
 		["ip_rate", "window_start < ?1", now - IP_RATE_RETENTION_MS],
 		["daily_counters", "day < ?1", oldestDay],
+		["sink_messages", "updated_at < ?1", runCutoff],
+		["sink_deliveries", "at < ?1", runCutoff],
 	];
 	let deleted = 0;
 	for (const [table, where, bind] of purges) {
 		deleted += (await deleteBatched(db, table, `SELECT rowid FROM ${table} WHERE ${where}`, bind)).deleted;
 	}
-	return deleted + (await purgeRuns(db, ulidTimePrefix(now - QUOTAS.retentionDays * DAY_MS)));
+	return deleted + (await purgeRuns(db, ulidTimePrefix(runCutoff)));
 }

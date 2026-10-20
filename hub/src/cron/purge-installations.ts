@@ -4,7 +4,7 @@
 
 import { listPurgeDue, purgeInstallation } from "../db/installations";
 import type { Env } from "../env";
-import { reportError } from "../observability";
+import { logEvent, reportError } from "../observability";
 
 const INSTALLATIONS_PER_TICK = 5;
 
@@ -31,6 +31,7 @@ export async function purgeDeletedInstallations(env: Env, now: number): Promise<
 		try {
 			await deleteLogs(env.LOGS, id);
 			await purgeInstallation(env.DB, id);
+			logEvent("installation.purged", { installation_id: id });
 			purged.push(id);
 		} catch (err) {
 			reportError(err, { task: "purge_installations", installation_id: id });
