@@ -679,3 +679,73 @@ export interface ProtocolErrorFrame {
    */
   upgrade_hint?: string;
 }
+/**
+ * Body of POST /v1/render: an agent asks the hub to render a deploy badge for a dry-run preview. Not a WebSocket frame.
+ *
+ * This interface was referenced by `Protocol`'s JSON-Schema
+ * via the `definition` "RenderRequest".
+ */
+export interface RenderRequest {
+  /**
+   * Protocol version.
+   */
+  v: 1;
+  /**
+   * What to render.
+   */
+  kind: "deploy_badge";
+  /**
+   * Repository as owner/name.
+   */
+  repo: string;
+  /**
+   * Deployment environment.
+   */
+  env: string;
+  /**
+   * Commit being deployed.
+   */
+  sha: string;
+  /**
+   * Deploy state to render.
+   */
+  state: "queued" | "running" | "rolling_back" | "succeeded" | "failed";
+  /**
+   * Current step name.
+   */
+  step?: string;
+  /**
+   * Current step index, starting at 0.
+   */
+  step_index?: number;
+  /**
+   * Number of steps.
+   */
+  steps_total?: number;
+  /**
+   * Elapsed deploy time in milliseconds.
+   */
+  duration_ms?: number;
+}
+/**
+ * Answer to POST /v1/render: the Slack badge the hub would post.
+ *
+ * This interface was referenced by `Protocol`'s JSON-Schema
+ * via the `definition` "RenderResponse".
+ */
+export interface RenderResponse {
+  /**
+   * Protocol version.
+   */
+  v: 1;
+  /**
+   * Badge text, the Slack message fallback.
+   */
+  text: string;
+  /**
+   * Slack Block Kit blocks.
+   */
+  blocks: {
+    [k: string]: unknown;
+  }[];
+}

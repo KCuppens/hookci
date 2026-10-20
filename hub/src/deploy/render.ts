@@ -57,7 +57,7 @@ export interface DeployRenderRow {
 }
 
 const SEP = " · ";
-const RETRY_ACTION = "zeroci_deploy_retry";
+export const RETRY_ACTION = "zeroci_deploy_retry";
 
 /** 2m04s from a minute on, 41s below. */
 function deployDuration(ms: number): string {

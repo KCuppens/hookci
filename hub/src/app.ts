@@ -14,6 +14,7 @@ import { install } from "./routes/install";
 import { uploadLog, viewLog } from "./routes/logs";
 import { pairRedeem } from "./routes/pair";
 import { publicRoutes } from "./routes/public";
+import { renderPreview } from "./routes/render";
 import { securityTxt } from "./routes/security-txt";
 import { slackCommands } from "./routes/slack-commands";
 import { slackEvents } from "./routes/slack-events";
@@ -52,6 +53,7 @@ app.get("/v1/export", exportData);
 app.get("/.well-known/security.txt", securityTxt);
 app.route("/", publicRoutes);
 app.put("/v1/logs/:runId/:job", uploadLog);
+app.post("/v1/render", renderPreview);
 app.get("/logs/:runId/:job", viewLog);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));

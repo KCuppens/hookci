@@ -1231,6 +1231,86 @@
             }
           }
         },
+        "RenderRequest": {
+          "description": "Body of POST /v1/render: an agent asks the hub to render a deploy badge for a dry-run preview. Not a WebSocket frame.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "kind", "repo", "env", "sha", "state"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "kind": {
+              "description": "What to render.",
+              "type": "string",
+              "const": "deploy_badge"
+            },
+            "repo": {
+              "description": "Repository as owner/name.",
+              "type": "string"
+            },
+            "env": {
+              "description": "Deployment environment.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,31}$"
+            },
+            "sha": {
+              "description": "Commit being deployed.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "state": {
+              "description": "Deploy state to render.",
+              "type": "string",
+              "enum": ["queued", "running", "rolling_back", "succeeded", "failed"]
+            },
+            "step": {
+              "description": "Current step name.",
+              "type": "string"
+            },
+            "step_index": {
+              "description": "Current step index, starting at 0.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "steps_total": {
+              "description": "Number of steps.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "duration_ms": {
+              "description": "Elapsed deploy time in milliseconds.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "RenderResponse": {
+          "description": "Answer to POST /v1/render: the Slack badge the hub would post.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "text", "blocks"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "text": {
+              "description": "Badge text, the Slack message fallback.",
+              "type": "string"
+            },
+            "blocks": {
+              "description": "Slack Block Kit blocks.",
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        },
         "Frame": {
           "description": "Any protocol frame, selected by its type.",
           "oneOf": [
