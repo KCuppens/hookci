@@ -5,6 +5,7 @@ import { packageVersion } from "./package.js";
 import { scriptedPrompter, ttyPrompter } from "./prompts.js";
 import { renderStateDir } from "./render.js";
 import { SetupError, runSetup } from "./setup.js";
+import { runUpgrade } from "./upgrade.js";
 import { nodeExec } from "./wrangler.js";
 
 export const USAGE = `Usage: zeroci-hub <command> [options]
@@ -19,6 +20,7 @@ Options:
   --dir <path>     State directory (default: ./zeroci-hub)
   --yes            Answer yes to every confirmation and take the defaults
   --force-render   setup: render wrangler.toml and deploy again even if done
+  --dry-run        upgrade: print the plan and change nothing
   --org <login>    setup: create the GitHub App under this organization
   -h, --help       Show this help
 `;
@@ -33,6 +35,7 @@ export interface ParsedArgs {
 	dir: string;
 	yes: boolean;
 	forceRender: boolean;
+	dryRun: boolean;
 	/** GitHub organization to own the hub's GitHub App. */
 	org?: string;
 }
@@ -44,6 +47,7 @@ export function parseArgs(argv: string[]): ParseResult {
 	let dir = DEFAULT_DIR;
 	let yes = false;
 	let forceRender = false;
+	let dryRun = false;
 	let org: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i] as string;
@@ -52,6 +56,8 @@ export function parseArgs(argv: string[]): ParseResult {
 			yes = true;
 		} else if (arg === "--force-render") {
 			forceRender = true;
+		} else if (arg === "--dry-run") {
+			dryRun = true;
 		} else if (arg === "--dir" || arg.startsWith("--dir=")) {
 			const value = arg === "--dir" ? argv[++i] : arg.slice("--dir=".length);
 			if (!value) return { kind: "usage-error", message: "--dir needs a path" };
@@ -71,7 +77,7 @@ export function parseArgs(argv: string[]): ParseResult {
 		}
 	}
 	if (command === undefined) return { kind: "usage-error", message: "no command given" };
-	return { kind: "run", args: { command, dir, yes, forceRender, ...(org ? { org } : {}) } };
+	return { kind: "run", args: { command, dir, yes, forceRender, dryRun, ...(org ? { org } : {}) } };
 }
 
 export interface Io {
@@ -95,7 +101,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 		io.err(`zeroci-hub: ${parsed.message}\n\n${USAGE}`);
 		return 2;
 	}
-	const { command, dir, yes, forceRender, org } = parsed.args;
+	const { command, dir, yes, forceRender, dryRun, org } = parsed.args;
 	try {
 		switch (command) {
 			case "version":
@@ -121,8 +127,16 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 				return 0;
 			}
 			case "upgrade":
-				io.err(`zeroci-hub: ${command} is not implemented in this version\n`);
-				return 1;
+				await runUpgrade({
+					dir,
+					yes,
+					dryRun,
+					exec: nodeExec(),
+					prompter: ttyPrompter(),
+					fetchFn: fetch,
+					log: (line) => io.out(`${line}\n`),
+				});
+				return 0;
 		}
 	} catch (err) {
 		if (err instanceof SetupError) {

@@ -64,6 +64,10 @@ func commandTable() map[string]command {
 				return ExitOK
 			},
 		},
+		"hub": {
+			summary: "set up or upgrade a self-hosted hub on Cloudflare through npx zeroci-hub: hub setup|upgrade [zeroci-hub options]",
+			run:     cmdHub,
+		},
 		"init": {
 			summary: "scaffold a .zeroci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),

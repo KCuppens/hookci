@@ -11,6 +11,9 @@ const R2_NAME_LINE = /^name:\s*(.*)$/;
 const R2_BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const WORKERS_DEV_URL = /https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.workers\.dev\b/i;
 const CUSTOM_DOMAIN_LINE = /^\s*([a-z0-9-]+(?:\.[a-z0-9-]+)+)\s+\(custom domain\)\s*$/i;
+const NO_MIGRATIONS = /No migrations to apply/;
+const MIGRATIONS_HEADER = "Migrations to be applied:";
+const TABLE_CELL = /^[│|]\s*(.*?)\s*[│|]$/;
 
 function lines(stdout: string): string[] {
 	return stripVTControlCharacters(stdout)
@@ -77,4 +80,19 @@ export function parseDeployUrl(stdout: string): string | null {
 		if (domain) return `https://${domain}`;
 	}
 	return null;
+}
+
+/** The names in the table `wrangler d1 migrations list` prints; empty when it has no migrations to apply. */
+export function parseMigrationsList(stdout: string): string[] {
+	const all = lines(stdout);
+	if (all.some((l) => NO_MIGRATIONS.test(l))) return [];
+	const start = all.indexOf(MIGRATIONS_HEADER);
+	if (start < 0) throw new SetupError("parse_failed", 'wrangler d1 migrations list printed neither a migration table nor "No migrations to apply"');
+	const names: string[] = [];
+	for (const line of all.slice(start + 1)) {
+		const name = TABLE_CELL.exec(line)?.[1];
+		if (name && name !== "Name") names.push(name);
+	}
+	if (names.length === 0) throw new SetupError("parse_failed", "wrangler d1 migrations list printed an empty migration table");
+	return names;
 }

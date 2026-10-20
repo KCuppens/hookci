@@ -38,10 +38,15 @@ describe("zeroci-hub CLI", () => {
 		expect(await run(["--help"])).toEqual({ code: 0, out: USAGE, err: "" });
 	});
 
-	it("reports upgrade as not implemented", async () => {
-		const r = await run(["upgrade"]);
-		expect(r.code).toBe(1);
-		expect(r.err).toBe("zeroci-hub: upgrade is not implemented in this version\n");
+	it("refuses upgrade without a setup state, with the setup hint", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "zeroci-hub-cli-"));
+		try {
+			const r = await run(["upgrade", "--dir", dir, "--dry-run"]);
+			expect(r.code).toBe(1);
+			expect(r.err).toBe(`zeroci-hub: no zeroci-hub setup state in ${dir}\nhint: run zeroci-hub setup first\n`);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("prints a setup error as one line and a hint, without a stack", async () => {
@@ -58,11 +63,12 @@ describe("zeroci-hub CLI", () => {
 		}
 	});
 
-	it("parses --dir, --yes and --force-render", () => {
-		expect(parseArgs(["render"])).toEqual({ kind: "run", args: { command: "render", dir: DEFAULT_DIR, yes: false, forceRender: false } });
-		expect(parseArgs(["render", "--dir", "/tmp/x", "--yes"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/x", yes: true, forceRender: false } });
-		expect(parseArgs(["--dir=/tmp/y", "render"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/y", yes: false, forceRender: false } });
-		expect(parseArgs(["setup", "--force-render"])).toEqual({ kind: "run", args: { command: "setup", dir: DEFAULT_DIR, yes: false, forceRender: true } });
+	it("parses --dir, --yes, --force-render and --dry-run", () => {
+		expect(parseArgs(["render"])).toEqual({ kind: "run", args: { command: "render", dir: DEFAULT_DIR, yes: false, forceRender: false, dryRun: false } });
+		expect(parseArgs(["render", "--dir", "/tmp/x", "--yes"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/x", yes: true, forceRender: false, dryRun: false } });
+		expect(parseArgs(["--dir=/tmp/y", "render"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/y", yes: false, forceRender: false, dryRun: false } });
+		expect(parseArgs(["setup", "--force-render"])).toEqual({ kind: "run", args: { command: "setup", dir: DEFAULT_DIR, yes: false, forceRender: true, dryRun: false } });
+		expect(parseArgs(["upgrade", "--dry-run"])).toEqual({ kind: "run", args: { command: "upgrade", dir: DEFAULT_DIR, yes: false, forceRender: false, dryRun: true } });
 		expect(parseArgs(["render", "--dir"])).toEqual({ kind: "usage-error", message: "--dir needs a path" });
 	});
 });

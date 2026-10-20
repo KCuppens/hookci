@@ -43,7 +43,10 @@ export type SetupErrorCode =
 	| "bad_name"
 	| "manifest_timeout"
 	| "manifest_conversion_failed"
-	| "github_app_verify_failed";
+	| "github_app_verify_failed"
+	| "not_set_up"
+	| "downgrade"
+	| "version_mismatch";
 
 const HINTS: Record<SetupErrorCode, string> = {
 	node_too_old: "Install Node.js 20 or newer, then run zeroci-hub setup again.",
@@ -55,6 +58,9 @@ const HINTS: Record<SetupErrorCode, string> = {
 	manifest_timeout: "Run zeroci-hub setup again and finish creating the GitHub App in the browser within 10 minutes.",
 	manifest_conversion_failed: "The manifest code is single-use and expires after an hour; run zeroci-hub setup again.",
 	github_app_verify_failed: "Delete the new app in GitHub settings, then run zeroci-hub setup again.",
+	not_set_up: "run zeroci-hub setup first",
+	downgrade: "Run a zeroci-hub as new as the hub or newer; D1 migrations only move forward.",
+	version_mismatch: "Check npx wrangler deployments list in the state dir, then run zeroci-hub upgrade again.",
 };
 
 export class SetupError extends Error {
@@ -99,7 +105,7 @@ const GENERATED_SECRETS: { name: string; value: (key: string) => string }[] = [
 	{ name: "LOG_SIGNING_KEY", value: (key) => key },
 ];
 
-function wranglerFailed(args: string[], r: ExecResult): SetupError {
+export function wranglerFailed(args: string[], r: ExecResult): SetupError {
 	const stderrTail = stripVTControlCharacters(r.stderr).trimEnd().split("\n").slice(-STDERR_TAIL_LINES).join("\n");
 	return new SetupError("wrangler_failed", `wrangler ${args.join(" ")} exited with code ${r.code}`, stderrTail);
 }
@@ -198,8 +204,9 @@ function renderedBaseUrl(s: HubState): string {
 	return s.base_url ?? (s.custom_domain ? `https://${s.custom_domain}` : "");
 }
 
-async function writeWranglerToml(o: SetupOptions, s: HubState, baseUrl: string): Promise<void> {
-	const toml = renderWranglerToml(await readTemplate(o.root ?? packageRoot()), {
+/** The wrangler.toml for `s`, rendered from the template under `root` with this package's version. */
+export async function wranglerTomlFor(s: HubState, root = packageRoot(), baseUrl = renderedBaseUrl(s)): Promise<string> {
+	return renderWranglerToml(await readTemplate(root), {
 		name: hubName(s),
 		accountId: s.account_id,
 		d1DatabaseId: need(s.d1_database_id, "D1 database id"),
@@ -209,7 +216,10 @@ async function writeWranglerToml(o: SetupOptions, s: HubState, baseUrl: string):
 		...(s.github_app_slug ? { githubAppSlug: s.github_app_slug } : {}),
 		...(s.custom_domain ? { customDomain: s.custom_domain } : {}),
 	});
-	await writeFile(join(o.dir, "wrangler.toml"), toml);
+}
+
+async function writeWranglerToml(o: SetupOptions, s: HubState, baseUrl: string): Promise<void> {
+	await writeFile(join(o.dir, "wrangler.toml"), await wranglerTomlFor(s, o.root, baseUrl));
 }
 
 export async function renderConfig(o: SetupOptions, s: HubState): Promise<HubState> {

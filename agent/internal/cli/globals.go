@@ -99,6 +99,8 @@ type Deps struct {
 	// Stdin is where sink add telegram reads the bot token. When it is a
 	// terminal *os.File the token is read without echo.
 	Stdin io.Reader
+	// Hub runs the zeroci-hub CLI for `zeroci hub`.
+	Hub HubDeps
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -119,6 +121,7 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		Doctor:   hostDoctorEnv,
 		Releases: defaultReleases(),
 		Stdin:    os.Stdin,
+		Hub:      defaultHubDeps(),
 	}
 }
 

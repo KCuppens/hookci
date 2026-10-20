@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseD1Create, parseD1List, parseDeployUrl, parseR2List, parseWhoami } from "../../cli/parse.js";
+import { parseD1Create, parseD1List, parseDeployUrl, parseMigrationsList, parseR2List, parseWhoami } from "../../cli/parse.js";
 import { SetupError } from "../../cli/setup.js";
 
 const fixture = (name: string) => readFile(join(import.meta.dirname, "fixtures", name), "utf8");
@@ -95,5 +95,20 @@ describe("parseDeployUrl", () => {
 
 	it("returns null when wrangler lists no URL", () => {
 		expect(parseDeployUrl("No targets deployed for zeroci-hub (0.20 sec)\n")).toBeNull();
+	});
+});
+
+describe("parseMigrationsList", () => {
+	it("reads every name in the table of migrations to apply", async () => {
+		expect(parseMigrationsList(await fixture("d1-migrations-list-pending.txt"))).toEqual(["0015_sink_retries.sql", "0016_agent_versions.sql"]);
+	});
+
+	it("returns no names when there is nothing to apply", async () => {
+		expect(parseMigrationsList(await fixture("d1-migrations-list-none.txt"))).toEqual([]);
+	});
+
+	it("rejects output with neither a table nor the nothing-to-apply line", () => {
+		parseFailure(() => parseMigrationsList("✘ [ERROR] Couldn't find a D1 DB with the name or binding 'zeroci-hub-db'\n"));
+		parseFailure(() => parseMigrationsList("Migrations to be applied:\n┌──────┐\n│ Name │\n└──────┘\n"));
 	});
 });
