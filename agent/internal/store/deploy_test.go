@@ -20,7 +20,7 @@ func testDeployRun(id, env, state string) DeployRun {
 
 func TestMigration_DeployTablesExist(t *testing.T) {
 	s := openTestStore(t)
-	for _, table := range []string{"deploy_runs", "deploy_steps", "deploy_state", "port_allocations", "env_locks"} {
+	for _, table := range []string{"deploy_runs", "deploy_steps", "deploy_state", "port_allocations", "env_locks", "deploy_gc_targets"} {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {
 			t.Fatalf("inspect %s: %v", table, err)
@@ -473,6 +473,113 @@ func TestListQueuedDeployRuns(t *testing.T) {
 	}
 	if want := []string{"early", "late"}; !slices.Equal(got, want) {
 		t.Errorf("ListQueuedDeployRuns = %v, want %v", got, want)
+	}
+}
+
+func TestListTerminalDeployRunsBefore(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	cutoff := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		id, state string
+		finished  time.Time
+	}{
+		{"ok-old", DeploySuccess, t0.Add(2 * time.Minute)},
+		{"failed-old", DeployFailed, t0.Add(time.Minute)},
+		{"interrupted-old", DeployInterrupted, t0.Add(3 * time.Minute)},
+		{"superseded-old", DeploySuperseded, t0.Add(4 * time.Minute)},
+		{"ok-new", DeploySuccess, cutoff.Add(time.Minute)},
+		{"ok-at-cutoff", DeploySuccess, cutoff},
+		{"running", DeployRunning, time.Time{}},
+		{"queued", DeployQueued, time.Time{}},
+	} {
+		r := testDeployRun(tc.id, "prod", tc.state)
+		r.FinishedAt = tc.finished
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", tc.id, err)
+		}
+	}
+	runs, err := s.ListTerminalDeployRunsBefore(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ListTerminalDeployRunsBefore: %v", err)
+	}
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.RunID)
+	}
+	if want := []string{"failed-old", "ok-old", "interrupted-old", "superseded-old"}; !slices.Equal(got, want) {
+		t.Errorf("ListTerminalDeployRunsBefore = %v, want %v", got, want)
+	}
+}
+
+func TestLastSucceededRuns(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, tc := range []struct {
+		id, env, state string
+		finished       time.Duration
+	}{
+		{"first", "prod", DeploySuccess, time.Minute},
+		{"second", "prod", DeploySuccess, 2 * time.Minute},
+		{"failed", "prod", DeployFailed, 3 * time.Minute},
+		{"third", "prod", DeploySuccess, 4 * time.Minute},
+		{"staging", "staging", DeploySuccess, 5 * time.Minute},
+	} {
+		r := testDeployRun(tc.id, tc.env, tc.state)
+		r.FinishedAt = t0.Add(tc.finished)
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", tc.id, err)
+		}
+	}
+	for _, tc := range []struct {
+		env  string
+		n    int
+		want []string
+	}{
+		{"prod", 2, []string{"third", "second"}},
+		{"prod", 5, []string{"third", "second", "first"}},
+		{"staging", 2, []string{"staging"}},
+		{"dev", 2, nil},
+		{"prod", 0, nil},
+	} {
+		runs, err := s.LastSucceededRuns(ctx, "acme/web", tc.env, tc.n)
+		if err != nil {
+			t.Fatalf("LastSucceededRuns(%s, %d): %v", tc.env, tc.n, err)
+		}
+		var got []string
+		for _, r := range runs {
+			got = append(got, r.RunID)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("LastSucceededRuns(%s, %d) = %v, want %v", tc.env, tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestGCTargets_Upsert(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, tg := range []GCTarget{
+		{Repo: "acme/web", Env: "prod", Project: "web", RetainImages: 5, UpdatedAt: t0},
+		{Repo: "acme/api", Env: "prod", Project: "api", RetainImages: 3, UpdatedAt: t0},
+		{Repo: "acme/web", Env: "prod", Project: "web2", RetainImages: 4, UpdatedAt: t0.Add(time.Minute)},
+	} {
+		if err := s.SetGCTarget(ctx, tg); err != nil {
+			t.Fatalf("SetGCTarget(%+v): %v", tg, err)
+		}
+	}
+	got, err := s.ListGCTargets(ctx)
+	if err != nil {
+		t.Fatalf("ListGCTargets: %v", err)
+	}
+	want := []GCTarget{
+		{Repo: "acme/api", Env: "prod", Project: "api", RetainImages: 3, UpdatedAt: t0},
+		{Repo: "acme/web", Env: "prod", Project: "web2", RetainImages: 4, UpdatedAt: t0.Add(time.Minute)},
+	}
+	if !slices.EqualFunc(got, want, func(a, b GCTarget) bool {
+		return a.Repo == b.Repo && a.Env == b.Env && a.Project == b.Project && a.RetainImages == b.RetainImages && a.UpdatedAt.Equal(b.UpdatedAt)
+	}) {
+		t.Errorf("ListGCTargets = %+v, want %+v", got, want)
 	}
 }
 

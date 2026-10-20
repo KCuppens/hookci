@@ -18,10 +18,12 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/control"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/gc"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
@@ -97,6 +99,7 @@ type Daemon struct {
 	deployQ     []protocol.Trigger // guarded by mu
 	deploying   map[string]bool    // trigger ids queued or being decided; guarded by mu
 	deploySched *deploy.Scheduler  // runs accepted deploy runs
+	collector   *gc.Collector      // removes old deploy images and run dirs
 }
 
 // work is one accepted trigger.
@@ -149,6 +152,9 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		}
 	}
 	d.deploySched = d.newDeployScheduler(credential, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
+	d.collector = newCollector(st, o, conf.AgentConfig)
+	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)
+	d.deploySched.PostRun = func(ctx context.Context, _ store.DeployRun) { d.collector.RunBestEffort(ctx) }
 	return d
 }
 
@@ -178,6 +184,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	wctx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
+	// A control socket that cannot start only disables the CLI commands
+	// that use it; exiting would keep the unit down (RestartPreventExitStatus).
+	if ctl, err := control.Listen(d.o.StateDir, d.log); err != nil {
+		d.log.Error("control socket unavailable; zeroci gc and retry will not reach this agent", "err", err)
+	} else {
+		ctl.Handle("gc", d.collector.HandleControl)
+		wg.Go(func() {
+			if err := ctl.Serve(wctx); err != nil {
+				d.log.Error("control socket stopped", "err", err)
+			}
+		})
+	}
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
 	wg.Go(func() { d.deployWorker(wctx) })

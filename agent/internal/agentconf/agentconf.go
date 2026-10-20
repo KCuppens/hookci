@@ -7,18 +7,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 )
 
 // FileName is the config file name inside the agent state directory.
 const FileName = "agent.json"
 
-// AgentConfig is the content of agent.json.
+// AgentConfig is the content of agent.json: the agent's identity and the
+// host settings of the agent config schema (gc limits).
 type AgentConfig struct {
 	HubURL         string `json:"hub_url"`
 	AgentID        string `json:"agent_id"`
 	Credential     string `json:"credential"`
 	Name           string `json:"name"`
 	InstallationID int64  `json:"installation_id"`
+	config.AgentConfig
 }
 
 // Load reads dir/agent.json. It refuses a file readable or writable by group

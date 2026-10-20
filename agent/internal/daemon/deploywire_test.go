@@ -229,22 +229,39 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 		t.Fatalf("run = %s %q, want %s", run.State, run.Error, store.DeploySuccess)
 	}
 
+	// PostRun GC removes the finished run's checkout.
 	workDir := filepath.Join(w.stateDir, "deploy-work", run.RunID)
-	if _, err := os.Stat(filepath.Join(workDir, "compose.yml")); err != nil {
-		t.Errorf("checkout: %v", err)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(workDir); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GC never removed %s", workDir)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := os.Stat(workDir + ".partial"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("partial checkout left behind: %v", err)
 	}
-	// A resumed run reuses the finished checkout.
-	if err := w.d.checkoutDeploy(w.ctx, run); err != nil {
-		t.Errorf("second checkout: %v", err)
+	// A checkout lands in deploy-work, and a resumed run reuses it.
+	for range 2 {
+		if err := w.d.checkoutDeploy(w.ctx, run); err != nil {
+			t.Fatalf("checkout: %v", err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "compose.yml")); err != nil {
+		t.Errorf("checkout: %v", err)
 	}
 	me, _ := user.Current()
 	reqs := src.requests()
-	if len(reqs) != 1 || reqs[0].RunID != run.RunID || reqs[0].SHA != headSHA || reqs[0].Repo != "acme/app" ||
-		reqs[0].RunAs == nil || fmt.Sprint(reqs[0].RunAs.Uid) != me.Uid {
-		t.Errorf("checkout requests = %+v, want one for %s at %s as uid %s", reqs, run.RunID, headSHA, me.Uid)
+	if len(reqs) != 2 {
+		t.Errorf("checkout requests = %d, want 2 (deploy, then one re-checkout reused by the resume)", len(reqs))
+	}
+	for _, r := range reqs {
+		if r.RunID != run.RunID || r.SHA != headSHA || r.Repo != "acme/app" || r.RunAs == nil || fmt.Sprint(r.RunAs.Uid) != me.Uid {
+			t.Errorf("checkout request = %+v, want %s at %s as uid %s", r, run.RunID, headSHA, me.Uid)
+		}
 	}
 
 	units := w.unitCalls()

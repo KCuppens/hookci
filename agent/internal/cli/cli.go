@@ -53,6 +53,10 @@ func commandTable() map[string]command {
 			summary: "diagnose this host and its path to the hub: doctor [--hub URL] [--state-root DIR] [--json]",
 			run:     cmdDoctor,
 		},
+		"gc": {
+			summary: "remove old deploy images, cap the build cache and delete finished run dirs: gc [--dry-run] [--state-dir DIR | --installation ID]",
+			run:     cmdGC,
+		},
 		"help": {
 			summary: "show help for zeroci",
 			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {

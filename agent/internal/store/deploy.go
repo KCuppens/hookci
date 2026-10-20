@@ -55,6 +55,12 @@ type DeployRun struct {
 	CreatedAt, StartedAt, FinishedAt     time.Time
 }
 
+// Finished reports whether r is in a final state: Success, Failed,
+// Interrupted or Superseded.
+func (r DeployRun) Finished() bool {
+	return slices.Contains(finishedDeployStates, r.State)
+}
+
 // DeployStep is the persisted progress of one strategy step.
 type DeployStep struct {
 	RunID                 string
@@ -183,23 +189,51 @@ func (s *Store) ListDeployRunsInStates(ctx context.Context, states ...string) ([
 	for i, st := range states {
 		args[i] = st
 	}
-	rows, err := s.db.QueryContext(ctx,
+	return s.queryDeployRuns(ctx, "list deploy runs",
 		`SELECT `+deployRunColumns+` FROM deploy_runs WHERE state IN (`+placeholders(len(states))+`) ORDER BY created_at, run_id`,
 		args...)
+}
+
+// ListTerminalDeployRunsBefore returns the deploy runs in a final state
+// (Success, Failed, Interrupted, Superseded) that finished before before,
+// oldest first.
+func (s *Store) ListTerminalDeployRunsBefore(ctx context.Context, before time.Time) ([]DeployRun, error) {
+	args := []any{before.UnixMilli()}
+	for _, st := range finishedDeployStates {
+		args = append(args, st)
+	}
+	return s.queryDeployRuns(ctx, "list terminal deploy runs",
+		`SELECT `+deployRunColumns+` FROM deploy_runs WHERE finished_at < ? AND state IN (`+placeholders(len(finishedDeployStates))+`)
+		 ORDER BY finished_at, run_id`, args...)
+}
+
+// LastSucceededRuns returns the n most recently finished Success runs of
+// (repo, env), newest first: the active color's run, then the previous one.
+func (s *Store) LastSucceededRuns(ctx context.Context, repo, env string, n int) ([]DeployRun, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	return s.queryDeployRuns(ctx, fmt.Sprintf("last succeeded deploy runs %s/%s", repo, env),
+		`SELECT `+deployRunColumns+` FROM deploy_runs WHERE repo = ? AND env = ? AND state = ?
+		 ORDER BY finished_at DESC, created_at DESC, run_id DESC LIMIT ?`, repo, env, DeploySuccess, n)
+}
+
+func (s *Store) queryDeployRuns(ctx context.Context, what, query string, args ...any) ([]DeployRun, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("store: list deploy runs: %w", err)
+		return nil, fmt.Errorf("store: %s: %w", what, err)
 	}
 	defer rows.Close()
 	var out []DeployRun
 	for rows.Next() {
 		r, err := scanDeployRun(rows)
 		if err != nil {
-			return nil, fmt.Errorf("store: list deploy runs: %w", err)
+			return nil, fmt.Errorf("store: %s: %w", what, err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: list deploy runs: %w", err)
+		return nil, fmt.Errorf("store: %s: %w", what, err)
 	}
 	return out, nil
 }
@@ -319,6 +353,58 @@ func (s *Store) SetDeployState(ctx context.Context, st DeployState) error {
 		return fmt.Errorf("store: set deploy state %s/%s: %w", st.Repo, st.Env, err)
 	}
 	return nil
+}
+
+// GCTarget is the image GC setting of (Repo, Env): its compose project and
+// how many images to keep, as last read from the env's deploy config.
+type GCTarget struct {
+	Repo, Env    string
+	Project      string
+	RetainImages int
+	UpdatedAt    time.Time
+}
+
+// SetGCTarget replaces the GC target of (t.Repo, t.Env). A zero UpdatedAt
+// uses the store clock.
+func (s *Store) SetGCTarget(ctx context.Context, t GCTarget) error {
+	if t.UpdatedAt.IsZero() {
+		t.UpdatedAt = s.now()
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO deploy_gc_targets (repo, env, project, retain_images, updated_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (repo, env) DO UPDATE SET
+		   project = excluded.project, retain_images = excluded.retain_images, updated_at = excluded.updated_at`,
+		t.Repo, t.Env, t.Project, t.RetainImages, t.UpdatedAt.UnixMilli()); err != nil {
+		return fmt.Errorf("store: set gc target %s/%s: %w", t.Repo, t.Env, err)
+	}
+	return nil
+}
+
+// ListGCTargets returns every GC target ordered by repo and env.
+func (s *Store) ListGCTargets(ctx context.Context) ([]GCTarget, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT repo, env, project, retain_images, updated_at FROM deploy_gc_targets ORDER BY repo, env`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list gc targets: %w", err)
+	}
+	defer rows.Close()
+	var out []GCTarget
+	for rows.Next() {
+		var (
+			t       GCTarget
+			updated int64
+		)
+		if err := rows.Scan(&t.Repo, &t.Env, &t.Project, &t.RetainImages, &updated); err != nil {
+			return nil, fmt.Errorf("store: list gc targets: %w", err)
+		}
+		t.UpdatedAt = time.UnixMilli(updated).UTC()
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list gc targets: %w", err)
+	}
+	return out, nil
 }
 
 // AllocatePort returns the host port of (repo, env, color), allocating the

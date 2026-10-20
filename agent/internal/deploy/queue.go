@@ -48,6 +48,10 @@ type Scheduler struct {
 	// LoadDeployment returns the deployments.<env> block of the trusted
 	// config at run.SHA. It is called once per queued run.
 	LoadDeployment func(ctx context.Context, run store.DeployRun) (config.Deployment, error)
+	// PostRun, when set, runs after a deploy ends Success or Failed and its
+	// env lock is released, on the deploy goroutine. Its failures and panics
+	// never change the run.
+	PostRun func(ctx context.Context, run store.DeployRun)
 
 	tickMu sync.Mutex
 	needs  map[string][]string // run ID -> needs of a queued run; guarded by tickMu
@@ -275,6 +279,7 @@ func (s *Scheduler) checkNeeds(ctx context.Context, run store.DeployRun) (wait b
 // deploy runs p on the deploy lane while holding its env lock.
 func (s *Scheduler) deploy(ctx context.Context, p pending) {
 	defer s.wg.Done()
+	defer s.postRun(ctx, p.run.RunID)
 	defer s.release(ctx, p.run)
 	var err error
 	if p.entry.Retry {
@@ -305,6 +310,26 @@ func (s *Scheduler) release(ctx context.Context, run store.DeployRun) {
 	delete(s.active, run.RunID)
 	s.mu.Unlock()
 	s.signal()
+}
+
+// postRun calls PostRun when runID ended Success or Failed.
+func (s *Scheduler) postRun(ctx context.Context, runID string) {
+	if s.PostRun == nil || ctx.Err() != nil {
+		return
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			s.logger().Error("deploy post-run hook panicked", "run_id", runID, "panic", v, "stack", string(debug.Stack()))
+		}
+	}()
+	run, err := s.Store.GetDeployRun(ctx, runID)
+	if err != nil {
+		s.logger().Warn("deploy post-run hook skipped", "run_id", runID, "err", err)
+		return
+	}
+	if run.State == store.DeploySuccess || run.State == store.DeployFailed {
+		s.PostRun(ctx, run)
+	}
 }
 
 // finish moves runID to the final state with error msg and emits its event.
