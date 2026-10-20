@@ -13,6 +13,7 @@ scripts/test-install.sh
 node scripts/gen-manifests.mjs --check
 node scripts/check-marketplace.mjs
 node --test scripts/check-marketplace.test.mjs
+scripts/check-docs.sh
 
 (
 	cd hub

@@ -25,6 +25,20 @@ zeroci run                 # run the checks locally
 
 Commands available now: `version`, `detect`, `validate`, `init`, `run`, `status` and `logs`. Run `zeroci help` for the full list.
 
+## Self-host the hub
+
+The shared hub at `ci.webuno.io` is the quickest start. Self-host the hub when you want webhooks, tokens and run reports to stay in your own Cloudflare account, with your own GitHub App and Slack App and no per-installation quotas. The `zeroci-hub` CLI creates the Worker, D1 database, R2 bucket and both apps, and it can resume a setup that stopped.
+
+You need Node.js 20+, a Cloudflare account, and a GitHub user or organization where you can create apps. A Slack workspace is optional.
+
+```sh
+npx wrangler login
+npx zeroci-hub setup
+sudo zeroci connect --hub <url> <pair-token>    # on your CI server, after installing the agent from <url>/install
+```
+
+Setup prints the GitHub App install link and the hub URL at the end. See [docs/self-host.md](docs/self-host.md) for each step, custom domains, upgrades, the trust policy, log retention, troubleshooting and uninstall.
+
 ## Repository layout
 
 - `agent/`: Go agent and the `zeroci` CLI.
