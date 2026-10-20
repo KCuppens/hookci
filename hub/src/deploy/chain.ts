@@ -10,6 +10,7 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import type { CheckRunConclusion } from "../github/types";
+import { renderRejected } from "./render";
 import type { TriggerRequest } from "../webhook/route";
 
 export interface CheckConclusion {
@@ -150,12 +151,13 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 	return { triggerId, duplicate: false };
 }
 
-/** Stores the agent's reply to a deploy trigger; trigger ids that are not deploy triggers change nothing. */
+/** Stores the agent's reply to a deploy trigger and posts the badge of a rejected one; trigger ids that are not deploy triggers change nothing. */
 export async function recordDeployReply(env: Env, reply: DeployReply): Promise<void> {
 	const accepted = reply.type === "accepted";
-	await env.DB.prepare("UPDATE deploy_triggers SET status = ?1, run_id = ?2, reason = ?3, updated_at = ?4 WHERE trigger_id = ?5")
+	const row = await env.DB.prepare("UPDATE deploy_triggers SET status = ?1, run_id = ?2, reason = ?3, updated_at = ?4 WHERE trigger_id = ?5 RETURNING *")
 		.bind(reply.type, accepted ? reply.run_id : null, accepted ? null : reply.reason, Date.now(), reply.trigger_id)
-		.run();
+		.first<DeployTriggerRow>();
+	if (row && !accepted) await renderRejected(env, row);
 }
 
 /** The highest attempt sent for the commit and env; null when none was. */

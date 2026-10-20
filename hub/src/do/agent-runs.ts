@@ -10,6 +10,7 @@ import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
 import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
 import { recordDeployReply } from "../deploy/chain";
+import { onDeployEvent } from "../deploy/render";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
@@ -505,6 +506,7 @@ export function registerRunLifecycle(): () => void {
 					const job = run.jobs.find((j) => j.name === name);
 					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
 				});
+				await onDeployEvent(dob.bindings, frame);
 				return;
 			}
 			const now = dob.clock.now();
@@ -517,6 +519,7 @@ export function registerRunLifecycle(): () => void {
 			if (TERMINAL[frame.state]) dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
 			await updateRunState(t, frame.run_id, frame.state, patch);
 			await fanOutRun(dob, frame.run_id, runUpdate);
+			await onDeployEvent(dob.bindings, frame);
 		}),
 
 		registerFrameHandler("annotations", async (dob, frame) => {

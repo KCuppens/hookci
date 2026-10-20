@@ -196,6 +196,18 @@ export const S = {
 		jobsPassed: (passed: number, total: number) => `${passed}/${total} jobs passed`,
 		jobsFailed: (names: string) => `failed: ${names}`,
 	},
+	deploy: {
+		queued: "queued",
+		healthOk: "health ok",
+		failedAt: (position: string) => `failed at ${position}`,
+		rolledBack: "rolled back",
+		rollingBack: "rolling back",
+		notStarted: (reason: string) => `not started: ${reason}`,
+		retry: "Retry",
+		alertText: (mention: string, badge: string) => `${mention ? `${mention} ` : ""}Deploy failed: ${badge}`,
+		checkName: (env: string) => `zeroci/deploy:${env}`,
+		checkTitle: { running: "Deploying", succeeded: "Deployed", failed: "Deploy failed" },
+	},
 	agentProtocolUnsupported: (version: string, min: number, max: number) =>
 		`Agent protocol ${version} is not supported; this hub accepts ${min} to ${max}.`,
 	agentUpgradeHint: "run: sudo zeroci upgrade",

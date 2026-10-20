@@ -91,6 +91,9 @@ async function seed(id: number): Promise<void> {
     ).bind(id, `acme/repo-${id}`, "c".repeat(40), `dt-${id}`),
     env.DB.prepare("INSERT INTO slack_messages (run_id, team_id, channel_id, ts, alert_ts) VALUES (?1, 'T1', 'C1', '1.0', NULL)").bind(runId),
     env.DB.prepare("INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES (?1, 'T1', 'C1', 'build', '1.1')").bind(runId),
+    env.DB.prepare(
+      "INSERT INTO deploy_renders (run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at) VALUES (?1, 'acme/repo', 'staging', ?2, 'C1', '1.2', 5, 'running', NULL, NULL, NULL, 1, 1)",
+    ).bind(runId, "c".repeat(40)),
   ]);
 }
 
