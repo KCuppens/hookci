@@ -92,7 +92,7 @@ func (s *Store) CreateRetry(ctx context.Context, of string) (Run, error) {
 		return Run{}, fmt.Errorf("store: create retry: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	created, err := s.createRetry(ctx, tx, of)
+	created, err := s.createRetry(ctx, tx, of, ids.NewRunIDAt(s.now(), rand.Reader))
 	if err != nil {
 		return Run{}, err
 	}
@@ -102,8 +102,9 @@ func (s *Store) CreateRetry(ctx context.Context, of string) (Run, error) {
 	return created, nil
 }
 
-// createRetry is CreateRetry inside the caller's transaction.
-func (s *Store) createRetry(ctx context.Context, tx *sql.Tx, of string) (Run, error) {
+// createRetry is CreateRetry inside the caller's transaction, creating the
+// retry as run id.
+func (s *Store) createRetry(ctx context.Context, tx *sql.Tx, of, id string) (Run, error) {
 	orig, err := scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, of))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, fmt.Errorf("%w: run %s", ErrNotFound, of)
@@ -118,15 +119,14 @@ func (s *Store) createRetry(ctx context.Context, tx *sql.Tx, of string) (Run, er
 	if err != nil {
 		return Run{}, err
 	}
-	var last int
-	if err := tx.QueryRowContext(ctx, `SELECT max(attempt) FROM runs WHERE repo = ? AND sha = ? AND event = ? AND env = ?`,
-		orig.Repo, orig.SHA, orig.Event, orig.Env).Scan(&last); err != nil {
+	last, err := lastAttempt(ctx, tx, orig.Repo, orig.SHA, orig.Event, orig.Env)
+	if err != nil {
 		return Run{}, fmt.Errorf("store: create retry of %s: %w", of, err)
 	}
 
 	now := s.now()
 	retry := orig
-	retry.ID = ids.NewRunIDAt(now, rand.Reader)
+	retry.ID = id
 	retry.Attempt = last + 1
 	retry.State = RunQueued
 	retry.RetryOf = &orig.ID
@@ -138,6 +138,25 @@ func (s *Store) createRetry(ctx context.Context, tx *sql.Tx, of string) (Run, er
 		return Run{}, err
 	}
 	return scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, retry.ID))
+}
+
+// LastAttempt returns the highest attempt of the runs keyed (repo, sha,
+// event, env), or 0 when there are none.
+func (s *Store) LastAttempt(ctx context.Context, repo, sha, event, env string) (int, error) {
+	last, err := lastAttempt(ctx, s.db, repo, sha, event, env)
+	if err != nil {
+		return 0, fmt.Errorf("store: last attempt of %s@%s: %w", repo, sha, err)
+	}
+	return last, nil
+}
+
+func lastAttempt(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, repo, sha, event, env string) (int, error) {
+	var last int
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(max(attempt), 0) FROM runs WHERE repo = ? AND sha = ? AND event = ? AND env = ?`,
+		repo, sha, event, env).Scan(&last)
+	return last, err
 }
 
 func (s *Store) insertRun(ctx context.Context, tx *sql.Tx, r Run, jobs []Job) error {
@@ -226,6 +245,24 @@ func (s *Store) ListRuns(ctx context.Context, f RunFilter) ([]Run, error) {
 	return runs, rows.Err()
 }
 
+// RunIDs returns the set of every stored run ID, without the rest of the row.
+func (s *Store) RunIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM runs`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list run ids: %w", err)
+	}
+	defer rows.Close()
+	ids := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: list run ids: %w", err)
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 // Transition moves a run from one of `from` to `to`, validates against the
 // lifecycle table, sets started_at/finished_at, writes reason, and appends an
 // outbox "event" row in the same transaction. Every from -> to pair must be
@@ -286,15 +323,26 @@ func (s *Store) transition(ctx context.Context, tx *sql.Tx, runID string, from [
 
 // InterruptRun moves the active run runID (running, verifying or
 // rolling_back) and its queued and running jobs to interrupted with reason.
-// With retry set it also creates the next attempt as CreateRetry does. All of
-// it happens in one transaction, so a crash never leaves an interrupted run
-// without its retry. The retry is returned; it is the zero Run without retry.
+// With retry set it also creates the next attempt as CreateRetry does and
+// points runID's trigger at it, reporting the retry to the hub as the
+// trigger's run. All of it happens in one transaction, so a crash never
+// leaves an interrupted run without its retry. The retry is returned; it is
+// the zero Run without retry.
 func (s *Store) InterruptRun(ctx context.Context, runID, reason string, retry bool) (Run, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Run{}, fmt.Errorf("store: interrupt run %s: %w", runID, err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var retryID string
+	if retry {
+		// The trigger moves first, so the hub renames the trigger's run to
+		// the retry before the interrupted run's events reach it.
+		retryID = ids.NewRunIDAt(s.now(), rand.Reader)
+		if err := s.moveTrigger(ctx, tx, runID, retryID); err != nil {
+			return Run{}, err
+		}
+	}
 	jobs, err := queryJobs(ctx, tx, runID)
 	if err != nil {
 		return Run{}, err
@@ -313,7 +361,7 @@ func (s *Store) InterruptRun(ctx context.Context, runID, reason string, retry bo
 	}
 	var created Run
 	if retry {
-		if created, err = s.createRetry(ctx, tx, runID); err != nil {
+		if created, err = s.createRetry(ctx, tx, runID, retryID); err != nil {
 			return Run{}, err
 		}
 	}
@@ -321,6 +369,29 @@ func (s *Store) InterruptRun(ctx context.Context, runID, reason string, retry bo
 		return Run{}, fmt.Errorf("store: interrupt run %s: %w", runID, err)
 	}
 	return created, nil
+}
+
+// moveTrigger points the trigger whose run is from at run to and appends the
+// accepted frame that tells the hub. A run without a trigger changes nothing.
+func (s *Store) moveTrigger(ctx context.Context, tx *sql.Tx, from, to string) error {
+	var triggerID string
+	if err := tx.QueryRowContext(ctx, `SELECT trigger_id FROM runs WHERE id = ?`, from).Scan(&triggerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("store: move trigger of run %s: %w", from, err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE triggers SET run_id = ? WHERE trigger_id = ? AND run_id = ?`, to, triggerID, from)
+	if err != nil {
+		return fmt.Errorf("store: move trigger %s: %w", triggerID, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	if err := s.appendFrame(ctx, tx, "accepted", protocol.Accepted{TriggerId: triggerID, RunId: to}); err != nil {
+		return fmt.Errorf("store: move trigger %s: %w", triggerID, err)
+	}
+	return nil
 }
 
 // Supersede moves the queued run runID to superseded and its queued jobs to

@@ -36,7 +36,8 @@ import (
 // deploy and the scheduler that orders deploys per env. Each run is checked
 // out into deployWorkDir and runs in deploy units as deploy.DeployUser, with
 // its output masked by deployRedactor. A run starts only while the docker
-// root dir and the state dir have gc.min_free_bytes of agentCfg free.
+// root dir and the state dir have gc.min_free_bytes of agentCfg free, and
+// writes route files only below deploy.route_dirs of agentCfg.
 func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConfig, events deploy.EventSink) *deploy.Scheduler {
 	load := func(ctx context.Context, run store.DeployRun) (config.Deployment, error) {
 		cfg, err := d.deployConfig(ctx, run)
@@ -54,11 +55,14 @@ func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConf
 	if runner == nil {
 		runner = execx.OS{}
 	}
+	routeDirs := deploy.RouteDirs(agentCfg)
 	eng := &deploy.Engine{
 		Store: d.st,
 		Strategies: strategies.New(strategies.Deps{
-			Store:    d.st,
-			Proxy:    func(route config.DeploymentRoute) (proxy.ProxyAdapter, error) { return routeProxy(runner, route) },
+			Store: d.st,
+			Proxy: func(route config.DeploymentRoute) (proxy.ProxyAdapter, error) {
+				return routeProxy(runner, route, routeDirs)
+			},
 			Health:   &health.Checker{Client: o.HealthClient, Clock: o.Clock},
 			Clock:    o.Clock,
 			StateDir: o.StateDir,
@@ -90,12 +94,13 @@ func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConf
 	return &deploy.Scheduler{Store: d.st, Engine: eng, Events: events, Clock: o.Clock.Now, Logger: o.Logger, LoadDeployment: load}
 }
 
-// routeProxy returns the adapter of a deployments.<env>.route block.
-func routeProxy(runner execx.Runner, route config.DeploymentRoute) (proxy.ProxyAdapter, error) {
+// routeProxy returns the adapter of a deployments.<env>.route block, writing
+// route files only below routeDirs, the agent's deploy.route_dirs.
+func routeProxy(runner execx.Runner, route config.DeploymentRoute, routeDirs []string) (proxy.ProxyAdapter, error) {
 	if route.Kind != config.DeploymentRouteKindCaddy {
 		return nil, fmt.Errorf("daemon: route kind %q is not supported; use caddy", route.Kind)
 	}
-	a, err := caddy.New(runner, route.Reload)
+	a, err := caddy.New(runner, route.Reload, routeDirs)
 	if err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}

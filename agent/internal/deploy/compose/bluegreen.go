@@ -47,14 +47,21 @@ func migrateIndex(cfg config.Deployment) int {
 	return 2
 }
 
+// finalizeIndex returns the plan index of the finalize step, the last one:
+// migrate, start, health, swap, verify, finalize.
+func finalizeIndex(cfg config.Deployment) int {
+	return migrateIndex(cfg) + 5
+}
+
 // hasMigrateBefore reports whether cfg sets a migrate.before hook.
 func hasMigrateBefore(cfg config.Deployment) bool {
 	return cfg.Migrate != nil && cfg.Migrate.Before != nil
 }
 
 // BlueGreen is the compose-bluegreen strategy: it starts the idle color in
-// its own compose project, gates on health, swaps the proxy route to it,
-// watches a verify window, and writes the color marker last.
+// its own compose project, gates on health, swaps the proxy route to it and
+// records it in the color marker, watches a verify window, then stops the
+// previous color.
 type BlueGreen struct {
 	Store *store.Store
 	// Proxy returns the adapter of a deployment's route block.
@@ -283,14 +290,20 @@ func (b *BlueGreen) health(ctx context.Context, sc *deploy.StepContext) error {
 	return b.Health.Wait(ctx, spec)
 }
 
-// swap points the route at the target color and reloads the proxy.
+// swap points the route at the target color, reloads the proxy and records
+// the target in the marker, so a run that stops after the swap leaves the
+// marker naming the color that serves.
 func (b *BlueGreen) swap(ctx context.Context, sc *deploy.StepContext) error {
 	port, err := outputPort(sc)
 	if err != nil {
 		return err
 	}
+	color := sc.Outputs[outColor]
 	sc.Outputs[outSwapped] = "true"
-	return b.applyRoute(ctx, sc, sc.Outputs[outColor], port)
+	if err := b.applyRoute(ctx, sc, color, port); err != nil {
+		return err
+	}
+	return WriteMarker(b.markerPath(sc.Run, sc.Cfg), color)
 }
 
 // verify probes the target color every verify.interval for verify.window;
@@ -331,15 +344,10 @@ func (b *BlueGreen) verify(ctx context.Context, sc *deploy.StepContext) error {
 	}
 }
 
-// finalize writes the marker, then stops the previous color. Once the marker
-// names the target the deploy is committed, so a failure to stop the
-// previous color is logged and does not fail the step: failing it would roll
-// back a live, committed color.
+// finalize stops the previous color. Verify passed, so the deploy is
+// committed: a failure to stop the previous color is logged and does not
+// fail the step, since failing it would roll back a live, committed color.
 func (b *BlueGreen) finalize(ctx context.Context, sc *deploy.StepContext) error {
-	color := sc.Outputs[outColor]
-	if err := WriteMarker(b.markerPath(sc.Run, sc.Cfg), color); err != nil {
-		return err
-	}
 	if prev := sc.Outputs[outPrevColor]; prev != "" {
 		if err := b.down(ctx, sc, "finalize", prev); err != nil {
 			if ctx.Err() != nil {
@@ -351,11 +359,12 @@ func (b *BlueGreen) finalize(ctx context.Context, sc *deploy.StepContext) error 
 	return nil
 }
 
-// Rollback restores the previous color. Before the swap it only stops the
-// target color; after it, it routes back to the previous color (or to an
-// empty route on a first deploy), reloads, and stops the target color. It
-// never touches the marker, and does nothing when the marker already names
-// the target: that color is committed and serving.
+// Rollback restores the previous color. A failure in finalize rolls nothing
+// back: verify passed and the target is committed. After the swap it routes
+// back to the previous color (or to an empty route on a first deploy),
+// reloads, restores the marker and stops the target color. Before the swap it
+// only stops the target color, unless the marker names it: then that color
+// serves.
 func (b *BlueGreen) Rollback(ctx context.Context, sc *deploy.StepContext, failedIndex int) error {
 	if failedIndex >= migrateIndex(sc.Cfg) && sc.Cfg.Migrate != nil && sc.Cfg.Migrate.Run != "" {
 		fmt.Fprintln(sc.Log, "migrations are forward-only and were not reverted")
@@ -364,20 +373,38 @@ func (b *BlueGreen) Rollback(ctx context.Context, sc *deploy.StepContext, failed
 	if target == "" {
 		return nil
 	}
-	active, err := ReadMarker(b.markerPath(sc.Run, sc.Cfg))
-	if err != nil {
-		return err
-	}
-	if active == target {
-		fmt.Fprintf(sc.Log, "marker already names %s, the deploy is committed; nothing to roll back\n", target)
+	if failedIndex >= finalizeIndex(sc.Cfg) {
+		fmt.Fprintf(sc.Log, "verify passed, %s is committed; nothing to roll back\n", target)
 		return nil
 	}
+	marker := b.markerPath(sc.Run, sc.Cfg)
 	if sc.Outputs[outSwapped] == "true" {
 		if err := b.restoreRoute(ctx, sc); err != nil {
 			return err
 		}
+		if err := restoreMarker(marker, sc.Outputs[outPrevColor]); err != nil {
+			return err
+		}
+	} else {
+		active, err := ReadMarker(marker)
+		if err != nil {
+			return err
+		}
+		if active == target {
+			fmt.Fprintf(sc.Log, "marker names %s, it serves; nothing to roll back\n", target)
+			return nil
+		}
 	}
 	return b.down(ctx, sc, "rollback", target)
+}
+
+// restoreMarker records prev in the marker, or removes the marker when no
+// color served before the swap.
+func restoreMarker(path, prev string) error {
+	if prev == "" {
+		return RemoveMarker(path)
+	}
+	return WriteMarker(path, prev)
 }
 
 // restoreRoute routes back to the previous color, or applies an empty route

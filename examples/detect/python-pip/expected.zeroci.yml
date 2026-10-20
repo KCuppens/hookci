@@ -1,9 +1,10 @@
 # python: pip into .venv (requirements.txt)
+# python: setup installs pytest for the detected jobs
 
 version: 1
 checks:
   setup:
-    - run: python -m venv .venv && .venv/bin/pip install -r requirements.txt
+    - run: python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install pytest
       cache:
         key: [requirements.txt]
         paths: [.venv]

@@ -23,8 +23,9 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-// MaxCheckAttempts caps how often a check run is started. An interrupted check
-// on a lower attempt is re-queued as the next attempt.
+// MaxCheckAttempts caps how often a check run is started. An interrupted hub
+// check on a lower attempt is re-queued as the next attempt, which takes over
+// its trigger; the daemon runs it once recovery is done.
 const MaxCheckAttempts = 3
 
 // InterruptedReason is recorded on every run and job recovery interrupts.
@@ -85,32 +86,30 @@ func Recover(ctx context.Context, d Deps) (Report, error) {
 		log = slog.Default()
 	}
 	var rep Report
-	runs, err := d.Store.ListRuns(ctx, store.RunFilter{})
+	owned, err := d.Store.RunIDs(ctx)
 	if err != nil {
 		return rep, fmt.Errorf("recovery: list runs: %w", err)
 	}
-	sweep(ctx, d, runs, &rep, log)
+	sweep(ctx, d, owned, &rep, log)
 	err = interrupt(ctx, d, &rep, log)
 	return rep, err
 }
 
-// sweep removes what the runs left behind. Units, namespaces and containers
-// are matched by the run ID encoded in their name or label, so only resources
-// of the given runs are touched.
-func sweep(ctx context.Context, d Deps, runs []store.Run, rep *Report, log *slog.Logger) {
+// sweep removes what the owned runs left behind. Units, namespaces and
+// containers are matched by the run ID encoded in their name or label, so
+// only resources of stored runs are touched.
+func sweep(ctx context.Context, d Deps, owned map[string]bool, rep *Report, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
 	defer cancel()
 	fail := func(err error) {
 		log.Warn("recovery: cleanup failed", "err", err)
 		rep.Errors = append(rep.Errors, err)
 	}
-	unitPrefixes := make([]string, 0, len(runs))
-	namespaces := make(map[string]bool, len(runs))
-	owned := make(map[string]bool, len(runs))
-	for _, r := range runs {
-		unitPrefixes = append(unitPrefixes, isolation.UnitPrefix+isolation.SanitizeUnitPart(r.ID)+"-")
-		namespaces[netns.NSName(r.ID)] = true
-		owned[r.ID] = true
+	unitRuns := make(map[string]bool, len(owned))
+	namespaces := make(map[string]bool, len(owned))
+	for id := range owned {
+		unitRuns[isolation.SanitizeUnitPart(id)] = true
+		namespaces[netns.NSName(id)] = true
 	}
 
 	units, err := d.Isolation.ListUnits(ctx, isolation.UnitPrefix)
@@ -118,7 +117,7 @@ func sweep(ctx context.Context, d Deps, runs []store.Run, rep *Report, log *slog
 		fail(fmt.Errorf("recovery: list units: %w", err))
 	}
 	for _, u := range units {
-		if !slices.ContainsFunc(unitPrefixes, func(p string) bool { return strings.HasPrefix(u.Name, p) }) {
+		if !ownedUnit(unitRuns, u.Name) {
 			continue
 		}
 		if err := d.Isolation.Stop(ctx, u.Name); err != nil {
@@ -166,6 +165,22 @@ func sweep(ctx context.Context, d Deps, runs []store.Run, rep *Report, log *slog
 	}
 }
 
+// ownedUnit reports whether unit is named UnitPrefix + <run> + "-" + <job>
+// for a sanitized run ID in runs. Job names may hold '-', so every split is
+// tried.
+func ownedUnit(runs map[string]bool, unit string) bool {
+	rest, ok := strings.CutPrefix(unit, isolation.UnitPrefix)
+	if !ok {
+		return false
+	}
+	for i := range len(rest) {
+		if rest[i] == '-' && runs[rest[:i]] {
+			return true
+		}
+	}
+	return false
+}
+
 func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error {
 	runs, err := d.Store.ListRuns(ctx, store.RunFilter{
 		States: []store.RunState{store.RunRunning, store.RunVerifying, store.RunRollingBack},
@@ -176,7 +191,9 @@ func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error
 	slices.Reverse(runs) // oldest first, so retries queue in the original order
 
 	for _, run := range runs {
-		retry := run.Kind == kindCheck && run.Attempt < MaxCheckAttempts
+		// A local zeroci run has no trigger, so no daemon would ever run its
+		// retry.
+		retry := run.Kind == kindCheck && run.TriggerID != "" && run.Attempt < MaxCheckAttempts
 		created, err := d.Store.InterruptRun(ctx, run.ID, InterruptedReason, retry)
 		if err != nil {
 			return fmt.Errorf("recovery: interrupt run %s: %w", run.ID, err)

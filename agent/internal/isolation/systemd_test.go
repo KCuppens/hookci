@@ -23,8 +23,6 @@ func fullSpec() Spec {
 			MemoryBytes: 2 << 30,
 			Tasks:       512,
 			Timeout:     90500 * time.Millisecond,
-			IOReadBps:   50 << 20,
-			IOWriteBps:  20 << 20,
 		},
 		NetNSPath:      "/run/netns/zc-01HXRUN",
 		ReadWritePaths: []string{"/var/lib/zeroci/runs/01HXRUN"},
@@ -120,9 +118,17 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 			"IPAddressDeny=localhost",
 			"IPAddressDeny=link-local",
 			"IPAddressDeny=multicast",
+			"IPAddressDeny=0.0.0.0/8",
 			"IPAddressDeny=10.0.0.0/8",
+			"IPAddressDeny=100.64.0.0/10",
 			"IPAddressDeny=172.16.0.0/12",
+			"IPAddressDeny=192.0.0.0/24",
 			"IPAddressDeny=192.168.0.0/16",
+			"IPAddressDeny=198.18.0.0/15",
+			"IPAddressDeny=240.0.0.0/4",
+			"IPAddressDeny=::/128",
+			"IPAddressDeny=fc00::/7",
+			"IPAddressDeny=fec0::/10",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,6 +139,35 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 				t.Errorf("network properties = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// systemd expands $VAR and $$ in a unit's command line, so every "$" in the
+// job script must reach systemd-run doubled for sh to see the original text.
+func TestBuildSystemdRunArgvEscapesDollarSigns(t *testing.T) {
+	spec := fullSpec()
+	spec.Argv = []string{"/bin/sh", "-ec", `for f in *; do echo "${HOME}/${f}"; done; echo $$ $1 100%`}
+	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	sep := slices.Index(argv, "--")
+	want := []string{"/bin/sh", "-ec", `for f in *; do echo "$${HOME}/$${f}"; done; echo $$$$ $$1 100%`}
+	if sep < 0 || !slices.Equal(argv[sep+1:], want) {
+		t.Errorf("command = %q, want %q", argv[sep+1:], want)
+	}
+	if spec.Argv[2] == want[2] {
+		t.Error("BuildSystemdRunArgv changed spec.Argv in place")
+	}
+}
+
+func TestEscapeCommand(t *testing.T) {
+	for _, tc := range []struct{ in, want []string }{
+		{nil, nil},
+		{[]string{"/bin/true"}, []string{"/bin/true"}},
+		{[]string{"sh", "-c", "echo ${A:-b} $$"}, []string{"sh", "-c", "echo $${A:-b} $$$$"}},
+		{[]string{"sh", "-c", "no dollars, 50% off"}, []string{"sh", "-c", "no dollars, 50% off"}},
+	} {
+		if got := EscapeCommand(tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("EscapeCommand(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -147,7 +182,7 @@ func TestBuildSystemdRunArgvOmitsZeroLimits(t *testing.T) {
 	}
 	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
 	for _, a := range argv {
-		for _, banned := range []string{"CPUQuota=", "MemoryMax=", "TasksMax=", "RuntimeMaxSec=", "IOReadBandwidthMax=", "IOWriteBandwidthMax=", "IOWeight"} {
+		for _, banned := range []string{"CPUQuota=", "MemoryMax=", "TasksMax=", "RuntimeMaxSec=", "IOWeight"} {
 			if strings.HasPrefix(a, banned) {
 				t.Errorf("argv has %q with zero limits", a)
 			}

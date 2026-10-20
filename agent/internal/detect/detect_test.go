@@ -178,7 +178,7 @@ func TestDetectPython(t *testing.T) {
 	t.Run("uv", func(t *testing.T) {
 		r := detectFixture(t, "python-uv")
 		setup := checksOf(t, r).Setup
-		if len(setup) != 1 || setup[0].Run != "uv sync --frozen" {
+		if len(setup) != 1 || setup[0].Run != "uv sync --frozen && uv pip install ruff pytest" {
 			t.Fatalf("setup = %+v", setup)
 		}
 		if got, want := setup[0].Cache.Key, []string{"uv.lock"}; !reflect.DeepEqual(got, want) {
@@ -197,7 +197,7 @@ func TestDetectPython(t *testing.T) {
 	t.Run("pip requirements", func(t *testing.T) {
 		r := detectFixture(t, "python-pip")
 		setup := checksOf(t, r).Setup
-		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -r requirements.txt" {
+		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install pytest" {
 			t.Fatalf("setup = %+v", setup)
 		}
 		if got, want := setup[0].Cache.Key, []string{"requirements.txt"}; !reflect.DeepEqual(got, want) {
@@ -217,7 +217,7 @@ func TestDetectPython(t *testing.T) {
 			"ruff.toml":        file("line-length = 100\n"),
 		})
 		setup := checksOf(t, r).Setup
-		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -e ." {
+		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -e . && .venv/bin/pip install ruff" {
 			t.Fatalf("setup = %+v", setup)
 		}
 		if got, want := setup[0].Cache.Key, []string{"pyproject.toml"}; !reflect.DeepEqual(got, want) {
@@ -301,17 +301,31 @@ func TestDetectComposePostgres(t *testing.T) {
 			t.Errorf("image = %q, want postgres:15-alpine from compose.yaml", got)
 		}
 	})
-	t.Run("non-major tags stay verbatim", func(t *testing.T) {
+	t.Run("only the official image is detected", func(t *testing.T) {
 		for image, want := range map[string]string{
-			"postgres:16":           "postgres:16-alpine",
-			"postgres:16.2":         "postgres:16.2",
-			"postgres:16-bookworm":  "postgres:16-bookworm",
-			"postgres":              "postgres",
-			"postgres@sha256:abc12": "postgres@sha256:abc12",
+			"postgres:16":                   "postgres:16-alpine",
+			"postgres:16.2":                 "postgres:16.2",
+			"postgres:16-bookworm":          "postgres:16-bookworm",
+			"postgres":                      "postgres:latest",
+			"docker.io/library/postgres:16": "docker.io/library/postgres:16-alpine",
+			"postgrest/postgrest:v12":       "",
+			"postgres.evil.example/x:1":     "",
+			"postgresx:1":                   "",
+			"postgres@sha256:abc12":         "",
 		} {
-			if got := postgresImage(image); got != want {
-				t.Errorf("postgresImage(%q) = %q, want %q", image, got, want)
+			got, ok := postgresImage(image)
+			if ok != (want != "") || (ok && got != want) {
+				t.Errorf("postgresImage(%q) = %q, %v; want %q", image, got, ok, want)
 			}
+		}
+	})
+	t.Run("non-postgres image sorted first is skipped", func(t *testing.T) {
+		r := detectFS(t, fstest.MapFS{
+			"go.mod":             file("module x\n"),
+			"docker-compose.yml": file("services:\n  api:\n    image: postgrest/postgrest:v12\n  db:\n    image: postgres:16\n"),
+		})
+		if got := checksOf(t, r).Services.Postgres.Image; got != "postgres:16-alpine" {
+			t.Errorf("image = %q, want postgres:16-alpine from service db", got)
 		}
 	})
 	t.Run("compose alone detects nothing", func(t *testing.T) {
@@ -370,16 +384,17 @@ func TestDetectNeverDeploys(t *testing.T) {
 func TestDetectMergeOrder(t *testing.T) {
 	r := detectFS(t, fstest.MapFS{
 		"requirements.txt":  file(""),
+		"tests/test_a.py":   file(""),
 		"Cargo.toml":        file(""),
 		"go.mod":            file("module x\n"),
 		"package.json":      file(`{"scripts": {"lint": "eslint ."}}`),
 		"package-lock.json": file("{}"),
 	})
-	want := []string{"npm ci", "go mod download", "cargo fetch", "python -m venv .venv && .venv/bin/pip install -r requirements.txt"}
+	want := []string{"npm ci", "go mod download", "cargo fetch", "python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install pytest"}
 	if got := setupRuns(r); !reflect.DeepEqual(got, want) {
 		t.Errorf("setup order = %q, want %q", got, want)
 	}
-	wantSources := []string{"Cargo.toml", "go.mod", "package-lock.json", "package.json", "requirements.txt"}
+	wantSources := []string{"Cargo.toml", "go.mod", "package-lock.json", "package.json", "requirements.txt", "tests/"}
 	if !reflect.DeepEqual(r.Sources, wantSources) {
 		t.Errorf("sources = %v, want %v", r.Sources, wantSources)
 	}
@@ -418,6 +433,50 @@ func TestDetectMalformedInput(t *testing.T) {
 			t.Errorf("%s: error = %v, want a parse error naming the file", name, err)
 		}
 	}
+}
+
+func TestDetectDirRefusesUnsafeFiles(t *testing.T) {
+	t.Run("symlinked manifest", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Symlink("/dev/zero", filepath.Join(dir, "package.json")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DetectDir(dir); err == nil || !strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Errorf("error = %v, want a symlink refusal", err)
+		}
+	})
+	t.Run("oversized manifest", func(t *testing.T) {
+		dir := t.TempDir()
+		big := `{"scripts": {"lint": "eslint ."}, "x": "` + strings.Repeat("a", maxFileSize) + `"}`
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(big), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DetectDir(dir); err == nil || !strings.Contains(err.Error(), "larger than") {
+			t.Errorf("error = %v, want a size error", err)
+		}
+	})
+	t.Run("symlinked lockfile is absent", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("/etc/passwd", filepath.Join(dir, "uv.lock")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, "tests"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		r, err := DetectDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(r.Sources, "uv.lock") {
+			t.Errorf("symlinked uv.lock used: sources %v", r.Sources)
+		}
+	})
 }
 
 func containsSubstring(ss []string, sub string) bool {

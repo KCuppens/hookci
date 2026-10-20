@@ -183,6 +183,16 @@ func (c *Client) Send(ctx context.Context, f protocol.Frame) (seq int64, err err
 	return seq, nil
 }
 
+// Withdraw deletes the outbox frame seq returned by Send, so a frame its
+// sender gave up on is not resent after a reconnect. A frame already written
+// to the session may still reach the hub.
+func (c *Client) Withdraw(ctx context.Context, seq int64) error {
+	if err := c.st.DropOutbox(ctx, seq); err != nil {
+		return fmt.Errorf("hubclient: withdraw: %w", err)
+	}
+	return nil
+}
+
 func sendKind(f protocol.Frame) (string, bool) {
 	switch f.(type) {
 	case protocol.Accepted:

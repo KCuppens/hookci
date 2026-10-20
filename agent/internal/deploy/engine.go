@@ -314,6 +314,9 @@ func (x *execution) plan(ctx context.Context, outputs map[string]string) (Deploy
 		}
 		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s: executor: %v", run.Env, err), -1)
 	}
+	if m, ok := exec.(maskingExecutor); ok {
+		x.log.maskWith(m.Masker())
+	}
 	if err := e.Checkout(ctx, run); err != nil {
 		if ctx.Err() != nil {
 			return nil, nil, fmt.Errorf("deploy: run %s: checkout: %w", run.RunID, err)
@@ -378,8 +381,10 @@ func (x *execution) rollback(ctx context.Context, strat DeployStrategy, sc *Step
 }
 
 // fail moves the run to Failed with error msg and emits the log tail. step
-// is the failed step index, or -1 when no step ran.
+// is the failed step index, or -1 when no step ran. msg is masked as the run
+// log is, since it can carry command or health check output.
 func (x *execution) fail(ctx context.Context, msg string, step int) error {
+	msg = x.log.mask(msg)
 	if err := x.e.Store.SetDeployRunState(ctx, x.run.RunID, store.DeployFailed, msg, x.e.Clock.Now()); err != nil {
 		return fmt.Errorf("deploy: %w", err)
 	}
@@ -469,19 +474,44 @@ func (x *execution) durationMs() *int {
 	return &ms
 }
 
+// maskingExecutor is an Executor that masks secrets, such as the env_file
+// values, in its output. Once the run has one, the run log and the failure
+// reason are masked with the same redactor.
+type maskingExecutor interface {
+	Masker() *redact.Redactor
+}
+
 // runLog is the redacted run log. It keeps the last TailLines lines and is
 // safe for concurrent writers, such as a command's stdout and stderr.
 type runLog struct {
 	mu   sync.Mutex
-	w    io.WriteCloser // redacting writer into tail
+	red  *redact.Redactor
+	w    io.WriteCloser // writer into tail, masking with red
 	tail lineTail
 }
 
 func newRunLog() *runLog {
 	l := &runLog{}
-	r, _ := redact.New(nil, nil) // no literals, so no warnings
-	l.w = r.Writer(&l.tail)
+	l.red, _ = redact.New(nil, nil) // no literals, so no warnings
+	l.w = l.red.Writer(&l.tail)
 	return l
+}
+
+// maskWith masks later writes and reasons with r. Every write so far ended
+// in a newline, so closing the old writer flushes nothing unmasked.
+func (l *runLog) maskWith(r *redact.Redactor) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.w.Close()
+	l.red = r
+	l.w = r.Writer(&l.tail)
+}
+
+// mask returns s with what the log masks replaced by redact.Mask.
+func (l *runLog) mask(s string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.red.Line(s)
 }
 
 func (l *runLog) Write(p []byte) (int, error) {

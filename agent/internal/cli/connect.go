@@ -32,6 +32,9 @@ const (
 	redeemTimeout      = 30 * time.Second
 	handshakeTimeout   = 15 * time.Second
 	maxRedeemRespBytes = 1 << 20
+	// pairTokenEnv holds the pair token when connect gets no argument.
+	pairTokenEnv = "ZEROCI_PAIR_TOKEN"
+	connectUsage = "usage: zeroci connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]"
 )
 
 // redeemRequest is the body of POST /v1/pair/redeem.
@@ -61,14 +64,16 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	fs.SetOutput(stderr)
 	hub := fs.String("hub", "", "hub base URL (default $ZEROCI_HUB_URL, else "+defaultHubURL+")")
 	name := fs.String("name", "", "agent name shown in Slack (default the hostname)")
-	stateDir := fs.String("state-dir", "", "agent state directory (default $ZEROCI_STATE_DIR or "+defaultStateRoot+"/<installation_id>)")
+	stateDir := fs.String("state-dir", "", "agent state directory (default $ZEROCI_STATE_DIR or "+d.StateRoot+"/<installation_id>)")
 	force := fs.Bool("force", false, "replace an agent already configured in the state directory")
 	noService := fs.Bool("no-service", false, "do not enable and start the zeroci-agent@<installation_id> systemd unit")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: zeroci connect <pair-token> [flags]")
+		fmt.Fprintln(stdout, "Usage: zeroci connect [pair-token] [flags]")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Pair this machine with the hub using a pair token from Slack App Home,")
-		fmt.Fprintln(stdout, "save the agent credential and check that the hub accepts it.")
+		fmt.Fprintln(stdout, "save the agent credential and check that the hub accepts it. Without a")
+		fmt.Fprintln(stdout, "pair-token argument the token comes from $"+pairTokenEnv+", else one line")
+		fmt.Fprintln(stdout, "on stdin, which keeps it out of the process list and shell history.")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Flags:")
 		fs.SetOutput(stdout)
@@ -81,11 +86,21 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	if err != nil {
 		return ExitUsage
 	}
-	if len(pos) != 1 || pos[0] == "" {
-		fmt.Fprintln(stderr, "usage: zeroci connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]")
+	if len(pos) > 1 || (len(pos) == 1 && pos[0] == "") {
+		fmt.Fprintln(stderr, connectUsage)
 		return ExitUsage
 	}
-	pairToken := pos[0]
+	var pairToken string
+	if len(pos) == 1 {
+		pairToken = pos[0]
+	} else if pairToken, err = readSecret(pairTokenEnv, "Pair token", d.Stdin, stderr); err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitRunFailed
+	}
+	if pairToken == "" {
+		fmt.Fprintln(stderr, connectUsage)
+		return ExitUsage
+	}
 
 	hostname, err := os.Hostname()
 	if err != nil && *name == "" {
@@ -141,8 +156,9 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	errw := red.Writer(stderr)
 	defer errw.Close()
 
+	defaultDir := filepath.Join(d.StateRoot, strconv.FormatInt(resp.InstallationID, 10))
 	if dir == "" {
-		dir = filepath.Join(defaultStateRoot, strconv.FormatInt(resp.InstallationID, 10))
+		dir = defaultDir
 		if !*force {
 			if err := checkNoAgent(dir); err != nil {
 				fmt.Fprintf(errw, "zeroci: %v\n", err)
@@ -183,6 +199,12 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 
 	fmt.Fprintf(stdout, "Connected to %s as %s (agent %s)\n", cfg.HubURL, cfg.Name, cfg.AgentID)
 	unit := systemd.AgentUnit(cfg.InstallationID)
+	// The unit runs zeroci agent --installation <id>, which reads defaultDir;
+	// starting it would not run the agent saved anywhere else.
+	if filepath.Clean(dir) != defaultDir {
+		fmt.Fprintf(stdout, "%s runs the agent in %s, not %s; start this agent with zeroci agent --state-dir %s\n", unit, defaultDir, dir, dir)
+		return ExitOK
+	}
 	if *noService {
 		if *force {
 			fmt.Fprintf(stdout, "Next: sudo systemctl enable %s && sudo systemctl restart %s\n", unit, unit)
@@ -312,6 +334,9 @@ func redeemPairToken(ctx context.Context, hubURL string, body redeemRequest) (*r
 	}
 	if out.AgentID == "" || out.Credential == "" {
 		return nil, errors.New("cli: redeem: hub response lacks agent_id or credential")
+	}
+	if out.InstallationID <= 0 {
+		return nil, errors.New("cli: redeem: hub response lacks installation_id")
 	}
 	if out.Name == "" {
 		out.Name = body.Name

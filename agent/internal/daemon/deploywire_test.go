@@ -91,7 +91,8 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 	t.Cleanup(func() { st.Close() })
 	seed(st)
 
-	cfg := fmt.Sprintf(wireConfig, filepath.Join(t.TempDir(), "app-prod.caddy"))
+	routeDir := t.TempDir()
+	cfg := fmt.Sprintf(wireConfig, filepath.Join(routeDir, "app-prod.caddy"))
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer ghs_hub" {
 			http.Error(w, "bad credentials", http.StatusUnauthorized)
@@ -137,6 +138,7 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 
 	conf := &agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}
 	conf.Gc = &config.AgentConfigGc{MinFreeBytes: 1}
+	conf.Deploy = &config.AgentConfigDeploy{RouteDirs: []string{routeDir}}
 	dialer := &idleDialer{dialed: make(chan struct{})}
 	d := New(conf, st, nil, Options{
 		StateDir: stateDir, Dialer: dialer, Source: src,

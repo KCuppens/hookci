@@ -10,11 +10,44 @@ import "unicode/utf8"
 
 // Settings of the agent host (agent.json), not part of .zeroci.yml.
 type AgentConfig struct {
+	// Deploy settings.
+	Deploy *AgentConfigDeploy `json:"deploy,omitempty,omitzero" yaml:"deploy,omitempty"`
+
 	// zeroci doctor settings.
 	Doctor *AgentConfigDoctor `json:"doctor,omitempty,omitzero" yaml:"doctor,omitempty"`
 
 	// Disk cleanup limits.
 	Gc *AgentConfigGc `json:"gc,omitempty,omitzero" yaml:"gc,omitempty"`
+}
+
+// Deploy settings.
+type AgentConfigDeploy struct {
+	// Directories a deployment's route.file may be in. Each is an absolute, clean
+	// path; the agent writes route files there as root.
+	RouteDirs []string `json:"route_dirs,omitempty,omitzero" yaml:"route_dirs,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AgentConfigDeploy) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AgentConfigDeploy
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["route_dirs"]; !ok || v == nil {
+		plain.RouteDirs = []string{
+			"/etc/caddy",
+		}
+	}
+	if plain.RouteDirs != nil && len(plain.RouteDirs) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "route_dirs", 1)
+	}
+	*j = AgentConfigDeploy(plain)
+	return nil
 }
 
 // zeroci doctor settings.
@@ -46,6 +79,11 @@ type AgentConfigGc struct {
 	// Docker build cache size above which the agent prunes it.
 	BuildCacheMaxBytes int `json:"build_cache_max_bytes,omitempty,omitzero" yaml:"build_cache_max_bytes,omitempty"`
 
+	// Total size of the setup step caches under <state>/cache above which the agent
+	// removes the least recently used entries. Entries unused for 14 days are removed
+	// regardless.
+	CacheMaxBytes int `json:"cache_max_bytes,omitempty,omitzero" yaml:"cache_max_bytes,omitempty"`
+
 	// Free disk space below which the agent prunes images and build cache. A deploy
 	// does not start while the docker root dir or the state dir has less free.
 	MinFreeBytes int `json:"min_free_bytes,omitempty,omitzero" yaml:"min_free_bytes,omitempty"`
@@ -67,6 +105,12 @@ func (j *AgentConfigGc) UnmarshalJSON(value []byte) error {
 	}
 	if 0 > plain.BuildCacheMaxBytes {
 		return fmt.Errorf("field %s: must be >= %v", "build_cache_max_bytes", 0)
+	}
+	if v, ok := raw["cache_max_bytes"]; !ok || v == nil {
+		plain.CacheMaxBytes = 10737418240
+	}
+	if 0 > plain.CacheMaxBytes {
+		return fmt.Errorf("field %s: must be >= %v", "cache_max_bytes", 0)
 	}
 	if v, ok := raw["min_free_bytes"]; !ok || v == nil {
 		plain.MinFreeBytes = 5368709120
@@ -613,13 +657,19 @@ func (j *DeploymentRetain) UnmarshalJSON(value []byte) error {
 
 // Reverse proxy route switched between colors. Required for compose-bluegreen.
 type DeploymentRoute struct {
-	// Absolute path of the route file zeroci writes.
+	// Absolute, clean path of the route file zeroci writes. It must be inside one of
+	// the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink
+	// leading out of it.
 	File string `json:"file" yaml:"file"`
 
 	// Reverse proxy.
 	Kind DeploymentRouteKind `json:"kind" yaml:"kind"`
 
-	// Command that reloads the proxy after the route file changes.
+	// Command that reloads the proxy after the route file changes. It runs as root,
+	// so it must be caddy reload [flags], /usr/bin/caddy reload [flags],
+	// /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload
+	// [flags] or systemctl reload caddy. It is split into words like a shell would,
+	// but no shell runs it.
 	Reload string `json:"reload,omitempty,omitzero" yaml:"reload,omitempty"`
 
 	// Host the proxy reaches the service on.

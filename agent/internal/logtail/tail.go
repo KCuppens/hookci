@@ -233,7 +233,7 @@ func (t *Tailer) step(s *subscription) bool {
 	data := append(s.carry, buf[:n]...)
 	cut := bytes.LastIndexByte(data, '\n') + 1
 	if cut == 0 && len(data) > redact.MaxLine {
-		// redact.Writer flushes a line this long in MaxLine pieces.
+		// redact.Writer flushes a line this long in pieces of at most MaxLine.
 		cut = redact.MaxLine
 	}
 	s.carry = slices.Clone(data[cut:])

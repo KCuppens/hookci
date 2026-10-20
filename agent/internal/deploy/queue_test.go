@@ -533,6 +533,82 @@ func TestScheduler_RetryFlagCallsEngineRetry(t *testing.T) {
 	}
 }
 
+// TestScheduler_InterruptedRunBlocksEnv checks that an Interrupted run fails
+// the env's new runs until its retry finishes, that its queued retry is not
+// superseded by a newer run, and that the newer run waits for it.
+func TestScheduler_InterruptedRunBlocksEnv(t *testing.T) {
+	ctx := context.Background()
+	r := newTestQueue(t)
+	r.insert(t, "x", "production", t0, store.DeployRunning)
+	if err := r.store.SetDeployRunState(ctx, "x", store.DeployInterrupted, "agent restarted", t0); err != nil {
+		t.Fatal(err)
+	}
+	r.insert(t, "s", "staging", t0.Add(time.Second), store.DeployQueued)
+	r.insert(t, "y", "production", t0.Add(time.Second), store.DeployQueued)
+	r.sched.Enqueue(ctx, "s", false)
+	r.sched.Enqueue(ctx, "y", false)
+	r.tick(t, ctx, 1)
+	if got := r.awaitStart(t); got != "s" {
+		t.Fatalf("started %s, want the other env's s", got)
+	}
+	const want = "deployments.production: run x was interrupted and left the environment in an unknown state; finish it with zeroci retry x before deploying again"
+	if run := r.wantState(t, "y", store.DeployFailed); run.Error != want {
+		t.Errorf("y error = %q, want %q", run.Error, want)
+	}
+	if evs := r.eventsFor("y"); len(evs) != 1 || evs[0].State != protocol.EventStateFailed {
+		t.Errorf("y events = %+v, want one failed event", evs)
+	}
+	r.step("s", succeed)
+	r.sched.Wait()
+
+	if _, err := PrepareRetry(ctx, r.store, "x"); err != nil {
+		t.Fatalf("PrepareRetry: %v", err)
+	}
+	r.insert(t, "z", "production", t0.Add(time.Minute), store.DeployQueued)
+	r.sched.Enqueue(ctx, "z", false)
+	r.sched.Enqueue(ctx, "x", true)
+	r.tick(t, ctx, 1)
+	if got := r.awaitStart(t); got != "x" {
+		t.Fatalf("started %s, want the retry of x", got)
+	}
+	r.wantState(t, "z", store.DeployQueued)
+	r.step("x", succeed)
+	r.sched.Wait()
+	r.wantState(t, "x", store.DeploySuccess)
+
+	r.tick(t, ctx, 1)
+	if got := r.awaitStart(t); got != "z" {
+		t.Fatalf("started %s, want z after the retry", got)
+	}
+	r.step("z", succeed)
+	r.sched.Wait()
+	r.wantState(t, "z", store.DeploySuccess)
+}
+
+// TestScheduler_InterruptedRunBeforeLastSuccessDoesNotBlock checks that an
+// Interrupted run a later Success of the env outlived blocks nothing.
+func TestScheduler_InterruptedRunBeforeLastSuccessDoesNotBlock(t *testing.T) {
+	ctx := context.Background()
+	r := newTestQueue(t)
+	r.insert(t, "x", "production", t0, store.DeployRunning)
+	if err := r.store.SetDeployRunState(ctx, "x", store.DeployInterrupted, "agent restarted", t0); err != nil {
+		t.Fatal(err)
+	}
+	r.insert(t, "ok", "production", t0.Add(time.Second), store.DeployRunning)
+	if err := r.store.SetDeployRunState(ctx, "ok", store.DeploySuccess, "", t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	r.insert(t, "y", "production", t0.Add(2*time.Minute), store.DeployQueued)
+	r.sched.Enqueue(ctx, "y", false)
+	r.tick(t, ctx, 1)
+	if got := r.awaitStart(t); got != "y" {
+		t.Fatalf("started %s, want y", got)
+	}
+	r.step("y", succeed)
+	r.sched.Wait()
+	r.wantState(t, "y", store.DeploySuccess)
+}
+
 // TestScheduler_RecoverRequeuesQueued checks that Recover enqueues the
 // Queued runs whose trigger was accepted and leaves a Queued run with no
 // answered trigger (a crash before the answer) for the hub's redelivery.

@@ -139,6 +139,8 @@ type harness struct {
 	mu       sync.Mutex
 	execs    [][]string           // job names of every ExecutorFunc call
 	policies []executor.RunPolicy // policy of every ExecutorFunc call
+	protects []bool               // protected of every ExecutorFunc call
+	lookups  []string             // repo:branch of every BranchProtected call
 	seq      int
 }
 
@@ -153,12 +155,14 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 
 // newHarnessWith is newHarnessAt with deploy triggers decided by deploys.
 func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake) *harness {
-	return newHarnessMode(t, src, runner, hubURL, deploys, "")
+	return newHarnessMode(t, src, runner, hubURL, deploys, "", nil)
 }
 
 // newHarnessMode is newHarnessWith for an agent.json that stored hubMode;
-// the start-up refresh of the mode fails, so the stored mode holds.
-func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake, hubMode string) *harness {
+// the start-up refresh of the mode fails, so the stored mode holds. seed,
+// when set, fills the store before the daemon starts, as an earlier agent
+// left it.
+func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake, hubMode string, seed func(*store.Store)) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
 	runner.stateDir = stateDir
@@ -167,10 +171,13 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	if seed != nil {
+		seed(st)
+	}
 	src.started = make(chan struct{})
 	runner.running = make(chan string, 16)
 	h := &harness{t: t, st: st, src: src, runner: runner}
-	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error) {
+	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, protected bool) (scheduler.JobRunner, error) {
 		var names []string
 		for _, j := range checks.Jobs {
 			names = append(names, j.Name)
@@ -178,6 +185,7 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 		h.mu.Lock()
 		h.execs = append(h.execs, names)
 		h.policies = append(h.policies, policy)
+		h.protects = append(h.protects, protected)
 		h.mu.Unlock()
 		return runner, nil
 	}
@@ -186,7 +194,14 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 	noHub := func(context.Context) (hubclient.HubInfo, error) {
 		return hubclient.HubInfo{}, errors.New("hub unreachable")
 	}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub})
+	// main is the one protected branch.
+	protectedBranch := func(_ context.Context, _, repo, branch string) (bool, error) {
+		h.mu.Lock()
+		h.lookups = append(h.lookups, repo+":"+branch)
+		h.mu.Unlock()
+		return branch == "main", nil
+	}
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub, BranchProtected: protectedBranch})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx
@@ -391,7 +406,7 @@ func TestDaemonTrustAllNeedsSelfHostedHub(t *testing.T) {
 	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
 	for _, mode := range []string{"", "shared", "self_hosted"} {
 		t.Run("mode "+mode, func(t *testing.T) {
-			h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{}, "https://hub.invalid", nil, mode)
+			h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{}, "https://hub.invalid", nil, mode, nil)
 			h.send(h.trigger("trg_1", false))
 			if mode == hubModeSelfHosted {
 				h.waitTrigger("trg_1", store.TriggerDone)
@@ -617,6 +632,55 @@ func TestDaemonRecoversUnstartedTrigger(t *testing.T) {
 	}
 }
 
+// A check the earlier agent was running when it died is re-queued by
+// recovery as a retry that takes over its trigger. The next agent runs that
+// retry to the end and finishes the trigger on it.
+func TestDaemonRunsRecoveredRetry(t *testing.T) {
+	var retry store.Run
+	seed := func(st *store.Store) {
+		ctx := context.Background()
+		run := store.Run{
+			ID: "run_old", Repo: "acme/app", SHA: headSHA, Ref: "refs/heads/main", Event: "push", Attempt: 1,
+			Kind: "check", TrustDomain: "trusted:acme/app", TriggerID: "trg_1",
+		}
+		if _, err := st.AcceptTrigger(ctx, "trg_1", run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateRun(ctx, run, []store.Job{{Name: "unit"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetTriggerState(ctx, "trg_1", store.TriggerRunning); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Transition(ctx, run.ID, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if retry, err = st.InterruptRun(ctx, run.ID, "agent restarted", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{}, "https://hub.invalid", nil, "", seed)
+
+	tr := h.waitTrigger("trg_1", store.TriggerDone)
+	if tr.RunID != retry.ID {
+		t.Fatalf("trigger run = %s, want the retry %s", tr.RunID, retry.ID)
+	}
+	got, err := h.st.GetRun(h.ctx, retry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.RunSuccess || got.Attempt != 2 {
+		t.Fatalf("retry = %s attempt %d, want success attempt 2", got.State, got.Attempt)
+	}
+	if !slices.Equal(h.runner.jobs, []string{"unit"}) || h.runCount() != 2 {
+		t.Fatalf("jobs run = %v, runs = %d; want [unit] and the retry beside the interrupted run", h.runner.jobs, h.runCount())
+	}
+	if len(h.policies) != 1 || !h.policies[0].AllowDeploy {
+		t.Fatalf("policies = %+v, want one trusted run", h.policies)
+	}
+}
+
 // A store left by a replaced agent holds frames and high-water marks of a hub
 // session the new agent's hub has never seen; the daemon drops them before
 // it dials.
@@ -744,6 +808,31 @@ func TestDaemonJobLogs(t *testing.T) {
 			}
 			if got := settled["logs"] == "local"; got != tc.wantLocal {
 				t.Errorf("success event logs = %v, want local %v", settled["logs"], tc.wantLocal)
+			}
+		})
+	}
+}
+
+// A trusted push to a protected branch may save caches; a pull request is
+// never asked about and never may.
+func TestDaemonProtectedBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pr      bool
+		want    bool
+		lookups []string
+	}{
+		{"push to protected main", false, true, []string{"acme/app:main"}},
+		{"pull request", true, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}, Base: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{})
+			h.send(h.trigger("trg_1", tc.pr))
+			h.waitTrigger("trg_1", store.TriggerDone)
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if !slices.Equal(h.protects, []bool{tc.want}) || !slices.Equal(h.lookups, tc.lookups) {
+				t.Fatalf("protected = %v, lookups = %v; want [%v], %v", h.protects, h.lookups, tc.want, tc.lookups)
 			}
 		})
 	}

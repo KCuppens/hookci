@@ -148,6 +148,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	pump := &sink.Pump{
 		Store: db,
 		Sink:  sink.NewStdout(sink.StdoutOptions{Out: stdout, Color: colorEnabled(stdout), Clock: d.Clock, Verbose: g.Verbose}),
+		Warn:  func(err error) { fmt.Fprintf(stderr, "zeroci: warning: print run progress: %v\n", err) },
 	}
 	pumpCtx, stopPump := context.WithCancel(context.WithoutCancel(ctx))
 	pumpErr := make(chan error, 1)
@@ -364,17 +365,11 @@ func onlyJob(checks *config.ResolvedChecks, name string, stderr io.Writer) (*con
 // nextLocalAttempt numbers a new local run of repo at sha after the earlier
 // ones, which keeps the store's (repo, sha, event, env, attempt) key unique.
 func nextLocalAttempt(ctx context.Context, db *store.Store, repo, sha string) (int, error) {
-	runs, err := db.ListRuns(ctx, store.RunFilter{Repo: repo})
+	last, err := db.LastAttempt(ctx, repo, sha, "local", "")
 	if err != nil {
 		return 0, err
 	}
-	attempt := 1
-	for _, r := range runs {
-		if r.SHA == sha && r.Event == "local" && r.Env == "" && r.Attempt >= attempt {
-			attempt = r.Attempt + 1
-		}
-	}
-	return attempt, nil
+	return last + 1, nil
 }
 
 // checkedOut is the executor Source of a run cmdRun has already checked out.

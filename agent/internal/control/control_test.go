@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 )
 
@@ -131,5 +133,46 @@ func TestServe_RejectsOversizedRequest(t *testing.T) {
 	}
 	if called {
 		t.Error("handler ran for an oversized request")
+	}
+}
+
+// flakyListener fails the first fails Accepts with EMFILE, as when the agent
+// briefly runs out of file descriptors.
+type flakyListener struct {
+	net.Listener
+	fails atomic.Int32
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	if l.fails.Add(-1) >= 0 {
+		return nil, &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept4", syscall.EMFILE)}
+	}
+	return l.Listener.Accept()
+}
+
+func TestServe_SurvivesTemporaryAcceptError(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Listen(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fl := &flakyListener{Listener: s.ln}
+	fl.fails.Store(3)
+	s.ln = fl
+	s.Handle("ping", func(context.Context, json.RawMessage) (any, error) { return "pong", nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx) }()
+
+	var out string
+	if err := Call(context.Background(), dir, "ping", nil, &out); err != nil || out != "pong" {
+		t.Errorf("Call = %q, %v; want pong", out, err)
+	}
+	if fl.fails.Load() >= 0 {
+		t.Error("Serve did not go through the temporary accept errors")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("Serve: %v", err)
 	}
 }

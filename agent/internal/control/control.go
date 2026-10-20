@@ -29,6 +29,10 @@ const (
 	maxRequestBytes = 1 << 20
 	readTimeout     = 10 * time.Second
 	writeTimeout    = 10 * time.Second
+
+	// Accept backoff after a temporary error, as in net/http.
+	minAcceptDelay = 5 * time.Millisecond
+	maxAcceptDelay = time.Second
 )
 
 // ErrNotRunning reports that no agent is listening on the control socket.
@@ -61,7 +65,7 @@ func SocketPath(stateDir string) string { return filepath.Join(stateDir, SocketN
 // Server answers control requests on the socket of one state dir.
 type Server struct {
 	path string
-	ln   *net.UnixListener
+	ln   net.Listener
 	log  *slog.Logger
 
 	mu       sync.RWMutex
@@ -118,13 +122,26 @@ func (s *Server) Handle(op string, h HandlerFunc) {
 }
 
 // Serve answers connections until ctx ends, then closes the socket and waits
-// for requests in flight. Handlers get ctx.
+// for requests in flight. Handlers get ctx. A temporary accept error (out of
+// file descriptors, say) is logged and retried with backoff.
 func (s *Server) Serve(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
+	var delay time.Duration
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
+			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && temporaryAcceptErr(err) {
+				delay = min(max(2*delay, minAcceptDelay), maxAcceptDelay)
+				s.log.Warn("control: accept failed; retrying", "err", err, "delay", delay)
+				t := time.NewTimer(delay)
+				select {
+				case <-t.C:
+				case <-ctx.Done():
+					t.Stop()
+				}
+				continue
+			}
 			_ = s.Close()
 			s.conns.Wait()
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
@@ -132,8 +149,22 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return fmt.Errorf("control: accept: %w", err)
 		}
+		delay = 0
 		s.conns.Go(func() { s.serveConn(ctx, conn) })
 	}
+}
+
+// temporaryAcceptErr reports whether a later Accept may succeed.
+func temporaryAcceptErr(err error) bool {
+	if errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	var te interface{ Temporary() bool }
+	return errors.As(err, &te) && te.Temporary()
 }
 
 // Close stops accepting connections and removes the socket.

@@ -291,11 +291,20 @@ func TestIntake_GitHubErrorIsAnError(t *testing.T) {
 	boom := errors.New("github /repos/acme/web/branches/main: 502")
 	f.refs.err = boom
 	got, err := f.in.Handle(context.Background(), pushTrigger())
-	if !errors.Is(err, boom) || got != (Decision{}) {
-		t.Fatalf("Handle = %+v, %v; want zero decision and %v", got, err, boom)
+	if !errors.Is(err, boom) || got != (Decision{}) || IsPermanent(err) {
+		t.Fatalf("Handle = %+v, %v; want zero decision and transient %v", got, err, boom)
 	}
 	if runs, _ := f.st.ListDeployRunsInStates(context.Background(), store.DeployQueued); len(runs) != 0 {
 		t.Errorf("an error stored runs: %+v", runs)
+	}
+}
+
+func TestIntake_NoEnvIsPermanent(t *testing.T) {
+	f := newFixture(t, deployment())
+	tr := pushTrigger()
+	tr.Env = nil
+	if _, err := f.in.Handle(context.Background(), tr); !IsPermanent(err) {
+		t.Fatalf("Handle err = %v, want permanent", err)
 	}
 }
 

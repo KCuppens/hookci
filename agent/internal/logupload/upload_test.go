@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -191,6 +192,40 @@ func TestRedactMatchesUpload(t *testing.T) {
 	got := string(Redact([]byte("token " + token + "\ntail " + token)))
 	if strings.Contains(got, token) || got != "token ***\ntail ***" {
 		t.Errorf("Redact = %q; want both tokens masked", got)
+	}
+}
+
+// TestEncodeIncompressibleFitsHubCap: random bytes do not compress, so
+// 10 MB of them gzip to more than the hub's cap; the log is cut short so
+// the body still fits.
+func TestEncodeIncompressibleFitsHubCap(t *testing.T) {
+	log := make([]byte, 11<<20)
+	if _, err := rand.Read(log); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1023; i < len(log); i += 1024 {
+		log[i] = '\n'
+	}
+	body, res, err := (&Uploader{}).encode(bytes.NewReader(log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > DefaultMaxBytes {
+		t.Fatalf("gzip body = %d bytes, want <= %d", len(body), DefaultMaxBytes)
+	}
+	if !res.Truncated || res.Bytes < DefaultMaxBytes-64<<10 {
+		t.Fatalf("Result = %+v, want truncated just under %d", res, DefaultMaxBytes)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := append(log[:res.Bytes:res.Bytes], TruncationMarker...); !bytes.Equal(got, want) {
+		t.Fatalf("body = %d bytes, want the first %d log bytes and the marker", len(got), res.Bytes)
 	}
 }
 

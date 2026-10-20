@@ -13,19 +13,19 @@ func TestEffectiveLimitsUntrustedCap(t *testing.T) {
 	big := config.ResolvedLimits{CPUs: 8, MemoryBytes: 16 << 30, Tasks: 4096, Timeout: time.Hour}
 
 	got := EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, big, config.ResolvedJob{})
-	want := isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 4096, Timeout: 10 * time.Minute}
+	want := isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}
 	if got != want {
 		t.Errorf("untrusted = %+v, want %+v", got, want)
 	}
 
 	got = EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, config.ResolvedLimits{}, config.ResolvedJob{})
-	if want := (isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Timeout: 10 * time.Minute}); got != want {
+	if want := (isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}); got != want {
 		t.Errorf("untrusted unset = %+v, want the cap %+v", got, want)
 	}
 
-	small := config.ResolvedLimits{CPUs: 1, MemoryBytes: 1 << 30, Timeout: time.Minute}
+	small := config.ResolvedLimits{CPUs: 1, MemoryBytes: 1 << 30, Tasks: 64, Timeout: time.Minute}
 	got = EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, small, config.ResolvedJob{})
-	if want := (isolation.Limits{CPUs: 1, MemoryBytes: 1 << 30, Timeout: time.Minute}); got != want {
+	if want := (isolation.Limits{CPUs: 1, MemoryBytes: 1 << 30, Tasks: 64, Timeout: time.Minute}); got != want {
 		t.Errorf("untrusted under cap = %+v, want %+v", got, want)
 	}
 

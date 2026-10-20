@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
 	"github.com/bmatcuk/doublestar/v4"
 )
 
@@ -68,9 +69,9 @@ func fillDeploymentDefaults(cfg *ZeroCIConfig) {
 
 // ValidateDeployments checks the deployment rules the schema cannot express:
 // the sections each strategy requires, the health URL, absolute host paths,
-// durations, the migrate.before hook, and needs between environments. cfg
-// must have passed the schema. Every problem is returned, in environment
-// name order.
+// the route reload command, durations, the migrate.before hook, and needs
+// between environments. cfg must have passed the schema. Every problem is
+// returned, in environment name order.
 func ValidateDeployments(cfg *ZeroCIConfig) []ValidationError {
 	var errs []ValidationError
 	names := sortedKeys(cfg.Deployments)
@@ -113,8 +114,16 @@ func validateDeployment(env string, d Deployment) []ValidationError {
 		}
 	}
 	absolute("env_file", d.EnvFile, "/etc/zeroci/"+env+".env")
-	if d.Route != nil {
-		absolute("route.file", &d.Route.File, "/etc/caddy/routes/"+env+".caddy")
+	if r := d.Route; r != nil {
+		if !path.IsAbs(r.File) || path.Clean(r.File) != r.File {
+			errs = append(errs, ValidationError{Path: base + ".route.file",
+				Msg: fmt.Sprintf("route.file %s must be an absolute, clean path", quote(r.File)),
+				Fix: "use a path that starts with / and has no . or .. parts, for example /etc/caddy/routes/" + env + ".caddy"})
+		}
+		if _, err := caddy.ParseReload(r.Reload); err != nil {
+			errs = append(errs, ValidationError{Path: base + ".route.reload", Msg: err.Error(),
+				Fix: "remove route.reload for the default caddy reload, or use systemctl reload caddy or docker exec <container> caddy reload --config /etc/caddy/Caddyfile"})
+		}
 	}
 	if d.Compose != nil {
 		absolute("compose.marker", d.Compose.Marker, "/var/lib/zeroci/"+env+".color")

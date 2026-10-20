@@ -9,8 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -28,8 +26,8 @@ credential of the agent in the state directory.
 
   sink add telegram --repo OWNER/NAME --chat-id ID [--label TEXT]
       The bot token comes from $ZEROCI_TELEGRAM_TOKEN, else one line on stdin.
-  sink add webhook --repo OWNER/NAME --url https://... [--label TEXT] [--secret-stdin]
-      Prints the generated signing secret once; --secret-stdin prints only it.
+  sink add webhook --repo OWNER/NAME --url https://... [--label TEXT] [--secret-only]
+      Prints the generated signing secret once; --secret-only prints only it.
   sink add linear --repo OWNER/NAME --team KEY [--assignee EMAIL] [--label TEXT]
       The API key comes from $ZEROCI_LINEAR_API_KEY, else one line on stdin.
   sink ls --repo OWNER/NAME [--json]
@@ -74,18 +72,14 @@ func cmdSink(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 // the agent whose credential calls the hub.
 type sinkFlags struct {
 	*flag.FlagSet
-	stateDir     *string
-	installation *int64
+	dirFlags stateDirFlags
+	stateDir string // set by parse
 }
 
 func newSinkFlags(d Deps, usage string, stderr io.Writer) *sinkFlags {
 	fs := flag.NewFlagSet("sink", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	f := &sinkFlags{
-		FlagSet:      fs,
-		stateDir:     fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect"),
-		installation: fs.Int64("installation", 0, "use the agent of this installation in "+defaultStateRoot+"/<ID>"),
-	}
+	f := &sinkFlags{FlagSet: fs, dirFlags: addStateDirFlags(fs, d)}
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: zeroci [global flags] sink %s [--state-dir DIR | --installation ID]\n", usage)
 		fs.PrintDefaults()
@@ -107,13 +101,11 @@ func (f *sinkFlags) parse(args []string, npos int, stderr io.Writer) (pos []stri
 		f.Usage()
 		return nil, ExitUsage, false
 	}
-	if *f.installation < 0 {
-		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+	dir, ok := f.dirFlags.resolve(stderr)
+	if !ok {
 		return nil, ExitUsage, false
 	}
-	if *f.installation > 0 {
-		*f.stateDir = filepath.Join(defaultStateRoot, strconv.FormatInt(*f.installation, 10))
-	}
+	f.stateDir = dir
 	return pos, ExitOK, true
 }
 
@@ -129,7 +121,7 @@ func slicesHasEmpty(s []string) bool {
 // client returns a hub client with the credential of the agent in the
 // state directory, or false after saying why there is none.
 func (f *sinkFlags) client(stderr io.Writer) (*hubclient.Client, bool) {
-	ac, err := agentconf.Load(*f.stateDir)
+	ac, err := agentconf.Load(f.stateDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		fmt.Fprintln(stderr, "zeroci: not connected to a hub; run zeroci connect")
 		return nil, false
@@ -280,11 +272,11 @@ func sinkAddLinear(ctx context.Context, d Deps, args []string, stdout, stderr io
 }
 
 func sinkAddWebhook(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
-	f := newSinkFlags(d, "add webhook --repo OWNER/NAME --url https://... [--label TEXT] [--secret-stdin]", stderr)
+	f := newSinkFlags(d, "add webhook --repo OWNER/NAME --url https://... [--label TEXT] [--secret-only]", stderr)
 	repo := f.String("repo", "", "repository the sink reports, as owner/name")
 	hookURL := f.String("url", "", "https URL the hub posts signed run events to")
 	label := f.String("label", "", "name shown in sink ls")
-	secretOnly := f.Bool("secret-stdin", false, "print only the signing secret, for piping it into a secret store")
+	secretOnly := f.Bool("secret-only", false, "print only the signing secret, for piping it into a secret store")
 	if _, code, ok := f.parse(args, 0, stderr); !ok {
 		return code
 	}

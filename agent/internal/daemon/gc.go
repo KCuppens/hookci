@@ -10,9 +10,10 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-// newCollector returns the agent's GC of deploy images, build cache and run
-// dirs. It manages the envs recorded by recordGCTargets and runs docker
-// through o.DeployRunner as the agent's own user.
+// newCollector returns the agent's GC of deploy images, build cache, run
+// dirs and setup step cache entries. It manages the envs recorded by
+// recordGCTargets and runs docker through o.DeployRunner as the agent's own
+// user.
 func newCollector(st *store.Store, o Options, cfg config.AgentConfig) *gc.Collector {
 	runner := o.DeployRunner
 	if runner == nil {
@@ -23,6 +24,7 @@ func newCollector(st *store.Store, o Options, cfg config.AgentConfig) *gc.Collec
 		Store:    st,
 		StateDir: o.StateDir,
 		Cfg:      cfg,
+		Cache:    o.Cache,
 		Clock:    o.Clock,
 		Log:      o.Logger,
 		Repos: func(ctx context.Context) ([]gc.RepoEnv, error) {

@@ -336,8 +336,9 @@ func cacheDomain(run store.Run) string {
 }
 
 // startNetwork decides the network mode and starts the egress proxy and,
-// in netns mode, the namespace. Deny mode has no proxy: systemd's
-// IPAddressDeny blocks all egress.
+// in netns mode, the namespace. Deny mode has no proxy and no allow list:
+// systemd's IPAddressDeny blocks only host-local, private and reserved
+// ranges, so public egress stays open and no egress decision is logged.
 //
 // An untrusted trust domain or Policy.EgressProxyOnly makes the run proxy
 // only. Decide then requires a private namespace whose sole way out is the
@@ -411,18 +412,15 @@ func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
 // cachePath maps a setup cache path onto the run dir, the cache workdir:
 // "~" and "~/x" are under home/, anything else is under src/.
 func cachePath(p string) (string, error) {
-	base, rest := "src", p
-	switch {
-	case p == "~":
-		return "home", nil
-	case strings.HasPrefix(p, "~/"):
-		base, rest = "home", p[2:]
+	home, rel, err := config.SplitCachePath(p)
+	if err != nil {
+		return "", err
 	}
-	c := filepath.Clean(rest)
-	if !filepath.IsLocal(c) || c == "." {
-		return "", fmt.Errorf("cache path %q is not inside the %s directory", p, base)
+	base := "src"
+	if home {
+		base = "home"
 	}
-	return filepath.ToSlash(filepath.Join(base, c)), nil
+	return filepath.ToSlash(filepath.Join(base, rel)), nil
 }
 
 func cachePaths(ps []string) ([]string, error) {

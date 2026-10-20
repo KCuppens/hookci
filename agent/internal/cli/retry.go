@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
-	"strconv"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/control"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
@@ -18,8 +16,7 @@ import (
 func cmdRetry(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("retry", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	stateDir := fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect")
-	installation := fs.Int64("installation", 0, "use the agent of this installation in "+defaultStateRoot+"/<ID>")
+	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: zeroci [global flags] retry <run_id> [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
@@ -37,16 +34,13 @@ func cmdRetry(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 		fs.Usage()
 		return ExitUsage
 	}
-	if *installation < 0 {
-		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+	stateDir, ok := dirFlags.resolve(stderr)
+	if !ok {
 		return ExitUsage
-	}
-	if *installation > 0 {
-		*stateDir = filepath.Join(defaultStateRoot, strconv.FormatInt(*installation, 10))
 	}
 
 	var rep deploy.RetryReply
-	err = control.Call(ctx, *stateDir, deploy.RetryOp, deploy.RetryRequest{RunID: pos[0]}, &rep)
+	err = control.Call(ctx, stateDir, deploy.RetryOp, deploy.RetryRequest{RunID: pos[0]}, &rep)
 	if errors.Is(err, control.ErrNotRunning) {
 		fmt.Fprintln(stderr, "zeroci: agent is not running; start it with systemctl start zeroci-agent@<installation>")
 		return ExitRunFailed

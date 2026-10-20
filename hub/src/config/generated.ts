@@ -297,11 +297,11 @@ export interface Deployment {
      */
     kind: "caddy";
     /**
-     * Absolute path of the route file zeroci writes.
+     * Absolute, clean path of the route file zeroci writes. It must be inside one of the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink leading out of it.
      */
     file: string;
     /**
-     * Command that reloads the proxy after the route file changes.
+     * Command that reloads the proxy after the route file changes. It runs as root, so it must be caddy reload [flags], /usr/bin/caddy reload [flags], /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload [flags] or systemctl reload caddy. It is split into words like a shell would, but no shell runs it.
      */
     reload?: string;
     /**

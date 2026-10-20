@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
@@ -126,13 +127,56 @@ func TestPumpStopsOnError(t *testing.T) {
 	}
 }
 
-func TestPumpRunReturnsDrainError(t *testing.T) {
+func TestPumpRunWarnsAndKeepsPollingAfterDrainError(t *testing.T) {
 	st := openStore(t)
-	appendFrame(t, st, store.KindEvent, protocol.Event{RunId: "r1", State: "running"})
+	seq := appendFrame(t, st, store.KindEvent, protocol.Event{RunId: "r1", State: "running"})
 	boom := errors.New("boom")
-	err := (&Pump{Store: st, Sink: &failSink{err: boom}}).Run(context.Background())
-	if !errors.Is(err, boom) {
-		t.Fatalf("Run = %v, want an error wrapping boom", err)
+	failing := &failSink{err: boom, failOn: 1}
+	warned := make(chan error, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	p := &Pump{Store: st, Sink: failing, Poll: time.Millisecond, Warn: func(err error) { warned <- err }}
+	go func() { done <- p.Run(ctx) }()
+
+	if err := <-warned; !errors.Is(err, boom) {
+		t.Fatalf("warned %v, want an error wrapping boom", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); len(pendingSeqs(t, st)) > 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("row never delivered after the failed Emit")
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if got := failing.Events(); len(got) != 1 || got[0].Seq != seq {
+		t.Errorf("delivered %+v, want seq %d", got, seq)
+	}
+}
+
+func TestPumpSkipsUndecodableRow(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	if _, err := st.AppendOutbox(ctx, store.KindEvent, []byte("not a frame")); err != nil {
+		t.Fatal(err)
+	}
+	good := appendFrame(t, st, store.KindEvent, protocol.Event{RunId: "r1", State: "running"})
+
+	rec := &Recorder{}
+	var warned []error
+	n, err := (&Pump{Store: st, Sink: rec, Warn: func(err error) { warned = append(warned, err) }}).Drain(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v; want 1 delivered and no error", n, err)
+	}
+	if len(warned) != 1 || !errors.Is(warned[0], errUndecodable) {
+		t.Errorf("warned %v, want one undecodable-row warning", warned)
+	}
+	if got := rec.Events(); len(got) != 1 || got[0].Seq != good {
+		t.Errorf("delivered %+v, want seq %d", got, good)
+	}
+	if got := pendingSeqs(t, st); len(got) != 0 {
+		t.Errorf("Pending = %v, want none", got)
 	}
 }
 

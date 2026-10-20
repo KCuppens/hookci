@@ -198,7 +198,7 @@ func newAgent(spec agentSpec, st *store.Store, events deploy.EventSink, log *slo
 	strats := strategies.New(strategies.Deps{
 		Store: st,
 		Proxy: func(route config.DeploymentRoute) (proxy.ProxyAdapter, error) {
-			return caddy.New(runner, route.Reload)
+			return caddy.New(runner, route.Reload, []string{filepath.Dir(spec.RouteFile)})
 		},
 		Health:   &health.Checker{},
 		Clock:    clock.Real{},

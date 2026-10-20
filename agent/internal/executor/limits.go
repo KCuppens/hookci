@@ -13,12 +13,11 @@ import (
 const JobPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // UntrustedCap bounds every limit of a run in an untrusted: trust domain.
-var UntrustedCap = isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Timeout: 10 * time.Minute}
+var UntrustedCap = isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}
 
 // EffectiveLimits merges the job's limits over the check-level limits; a
-// zero job field keeps the check-level value. For an untrusted run each of
-// CPUs, MemoryBytes and Timeout is clamped to UntrustedCap, and an unset
-// (zero) value becomes the cap. Tasks is not clamped.
+// zero job field keeps the check-level value. For an untrusted run every
+// field is clamped to UntrustedCap, and an unset (zero) value becomes the cap.
 func EffectiveLimits(run store.Run, checks config.ResolvedLimits, job config.ResolvedJob) isolation.Limits {
 	l := isolation.Limits{
 		CPUs:        pick(job.Limits.CPUs, checks.CPUs),
@@ -29,6 +28,7 @@ func EffectiveLimits(run store.Run, checks config.ResolvedLimits, job config.Res
 	if strings.HasPrefix(run.TrustDomain, "untrusted:") {
 		l.CPUs = clamp(l.CPUs, UntrustedCap.CPUs)
 		l.MemoryBytes = clamp(l.MemoryBytes, UntrustedCap.MemoryBytes)
+		l.Tasks = clamp(l.Tasks, UntrustedCap.Tasks)
 		l.Timeout = clamp(l.Timeout, UntrustedCap.Timeout)
 	}
 	return l
@@ -42,7 +42,7 @@ func pick[T comparable](job, checks T) T {
 	return checks
 }
 
-func clamp[T float64 | int64 | time.Duration](v, limit T) T {
+func clamp[T int | float64 | int64 | time.Duration](v, limit T) T {
 	if v <= 0 || v > limit {
 		return limit
 	}

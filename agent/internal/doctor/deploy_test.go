@@ -164,7 +164,9 @@ func TestDoctor_EnvFilePerms(t *testing.T) {
 		in   string
 	}{
 		{"root 0600", &fstest.MapFile{Mode: 0o600, Sys: &syscall.Stat_t{Uid: 0}}, Pass, "root-owned"},
-		{"root 0640", &fstest.MapFile{Mode: 0o640, Sys: &syscall.Stat_t{Uid: 0}}, Pass, "root-owned"},
+		{"root 0400", &fstest.MapFile{Mode: 0o400, Sys: &syscall.Stat_t{Uid: 0}}, Pass, "root-owned"},
+		// A trusted deploy refuses a group-readable env_file, so doctor must too.
+		{"group readable", &fstest.MapFile{Mode: 0o640, Sys: &syscall.Stat_t{Uid: 0}}, Fail, "mode 0640, want 0600"},
 		{"world readable", &fstest.MapFile{Mode: 0o644, Sys: &syscall.Stat_t{Uid: 0}}, Fail, "mode 0644"},
 		{"group writable", &fstest.MapFile{Mode: 0o660, Sys: &syscall.Stat_t{Uid: 0}}, Fail, "mode 0660"},
 		{"not root", &fstest.MapFile{Mode: 0o600, Sys: &syscall.Stat_t{Uid: 1000}}, Fail, "uid 1000"},
@@ -236,6 +238,14 @@ func TestDoctor_CaddyAdmin(t *testing.T) {
 			t.Errorf("result = %+v", r)
 		}
 	})
+	t.Run("other transport error does not pass", func(t *testing.T) {
+		env := deployEnv(t)
+		env.HTTP = &http.Client{Transport: failTransport{context.DeadlineExceeded}}
+		r := runOne(t, checkByID(t, DeployCheckDeps{CaddyAdmin: "http://127.0.0.1:2019/config/"}, "deploy.caddy_admin"), env)
+		if r.Status != Warn || r.Fix != caddyAdminFix || !strings.Contains(r.Detail, "deadline exceeded") {
+			t.Errorf("result = %+v", r)
+		}
+	})
 	t.Run("allow_caddy_tcp_admin warns", func(t *testing.T) {
 		env := deployEnv(t)
 		env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"doctor":{"allow_caddy_tcp_admin":true}}`)
@@ -245,6 +255,11 @@ func TestDoctor_CaddyAdmin(t *testing.T) {
 		}
 	})
 }
+
+// failTransport fails every request with err.
+type failTransport struct{ err error }
+
+func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
 
 func TestDoctor_CaddySkippedWithoutCaddyRoutes(t *testing.T) {
 	noRepos := func(context.Context) ([]config.ZeroCIConfig, error) { return nil, nil }
@@ -308,6 +323,40 @@ func TestDoctor_RouteFile(t *testing.T) {
 			t.Errorf("result = %+v, asked %q", r, asked)
 		}
 	})
+	t.Run("outside route_dirs", func(t *testing.T) {
+		env := deployEnv(t)
+		m := env.FS.(fstest.MapFS)
+		m["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes"]}}`)
+		r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env)
+		if r.Status != Fail || !strings.Contains(r.Detail, "deployments.production.route.file") ||
+			!strings.Contains(r.Fix, "/var/lib/zeroci/42/agent.json") {
+			t.Errorf("result = %+v", r)
+		}
+		m["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes","/etc/caddy/routes"]}}`)
+		if r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env); r.Status != Pass {
+			t.Errorf("result = %+v, want pass inside a listed dir", r)
+		}
+	})
+	t.Run("outside default route_dirs when unpaired", func(t *testing.T) {
+		env := deployEnv(t)
+		delete(env.FS.(fstest.MapFS), "var/lib/zeroci/42/agent.json")
+		repos := func(context.Context) ([]config.ZeroCIConfig, error) {
+			return []config.ZeroCIConfig{{Deployments: config.ZeroCIConfigDeployments{
+				"production": {Route: &config.DeploymentRoute{Kind: config.DeploymentRouteKindCaddy, File: "/srv/routes/app.caddy"}},
+			}}}, nil
+		}
+		if r := runOne(t, checkByID(t, DeployCheckDeps{Repos: repos}, "deploy.route_file"), env); r.Status != Fail || !strings.Contains(r.Fix, "/etc/caddy") {
+			t.Errorf("result = %+v", r)
+		}
+	})
+	t.Run("broken agent.json fails", func(t *testing.T) {
+		env := deployEnv(t)
+		env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{`)
+		r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env)
+		if r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/zeroci/42/agent.json") {
+			t.Errorf("result = %+v", r)
+		}
+	})
 }
 
 func TestDoctor_DiskCheck(t *testing.T) {
@@ -337,5 +386,12 @@ func TestDoctor_DiskCheck(t *testing.T) {
 	env.Exec = deployExec(map[string]execx.FakeResponse{"info": {Err: errors.New("cannot connect")}})
 	if r := runOne(t, c, env); r.Status != Fail || !strings.Contains(r.Detail, "docker info") {
 		t.Errorf("result = %+v, want docker info failure", r)
+	}
+
+	// A broken agent.json fails instead of falling back to the default limit.
+	env.Exec = deployExec(nil)
+	env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"gc":`)
+	if r := runOne(t, c, env); r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/zeroci/42/agent.json") {
+		t.Errorf("result = %+v, want agent.json failure", r)
 	}
 }

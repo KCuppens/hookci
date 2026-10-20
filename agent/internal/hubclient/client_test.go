@@ -690,3 +690,29 @@ func TestSendEventSetsAgentSeq(t *testing.T) {
 		t.Fatal("Send(ack) succeeded, want an error: ack is not an outbox frame")
 	}
 }
+
+// TestWithdrawDropsFrame: a withdrawn token_request leaves the outbox, so
+// the next session does not replay it; other frames stay queued.
+func TestWithdrawDropsFrame(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(Config{HubURL: "https://hub.invalid"}, st, nil, nil)
+	ctx := context.Background()
+	req, err := c.Send(ctx, protocol.TokenRequest{RunId: "run_1", Purpose: protocol.TokenRequestPurposeFetch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Send(ctx, protocol.Accepted{TriggerId: "trg_1", RunId: "run_1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Withdraw(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	items, err := st.Pending(ctx, 0, 0)
+	if err != nil || len(items) != 1 || items[0].Kind != "accepted" {
+		t.Fatalf("Pending after Withdraw = %+v, %v; want only the accepted frame", items, err)
+	}
+}

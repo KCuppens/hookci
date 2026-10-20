@@ -38,11 +38,11 @@ func commandTable() map[string]command {
 			run:     cmdAgent,
 		},
 		"connect": {
-			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
+			summary: "pair this machine with a hub: connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
 			run:     cmdConnect,
 		},
 		"deploy": {
-			summary: "preview a deployment without running it: deploy <env> --dry-run [--repo owner/name] [--sha SHA]",
+			summary: "preview a deployment without running it: deploy <env> --dry-run [--repo owner/name] [--sha SHA] [--state-dir DIR | --installation ID]",
 			run:     cmdDeploy,
 		},
 		"detect": {
@@ -73,7 +73,7 @@ func commandTable() map[string]command {
 			run:     noDeps(runInit),
 		},
 		"logs": {
-			summary: "print or follow job logs: logs <run> [job] [-f]",
+			summary: "print or follow job logs: logs <run> [job] [-f] [--state-dir DIR | --installation ID]",
 			run:     cmdLogs,
 		},
 		"run": {
@@ -93,7 +93,7 @@ func commandTable() map[string]command {
 			run:     cmdSink,
 		},
 		"status": {
-			summary: "list recent runs, or one run's jobs: status [run] [--json]",
+			summary: "list recent runs, or one run's jobs: status [run] [--json] [--state-dir DIR | --installation ID]",
 			run:     cmdStatus,
 		},
 		"upgrade": {

@@ -167,6 +167,13 @@ func TestChecksWarnOrFail(t *testing.T) {
 		{"credential empty", credentialCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"] = &fstest.MapFile{Data: []byte(`{"agent_id":"agt_1","installation_id":42}`)}
 		}, Fail, "has no credential"},
+		// A broken agent.json is named, not skipped as an unpaired directory.
+		{"credential undecodable", credentialCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/zeroci/42/agent.json: unexpected end of JSON input"},
+		{"unit undecodable agent.json", systemdUnitCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/zeroci/42/agent.json: unexpected end of JSON input"},
 		{"credential readable by others", credentialCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Mode = 0o644
 		}, Fail, "/var/lib/zeroci/42/agent.json has mode 0644, want 0600"},

@@ -28,8 +28,16 @@ const Mask = "***"
 const MinSecretLen = 4
 
 // MaxLine is the longest line Writer holds. Longer lines are flushed in
-// MaxLine chunks, each redacted on its own.
+// chunks of at most MaxLine bytes, each redacted on its own. A chunk never
+// ends inside a literal, registered secret or pattern match found in the
+// MaxLine window, and the last cutOverlap bytes (or the longest secret, if
+// longer) of the window wait for the next chunk, so a secret of up to that
+// length that straddles the window end is still masked whole.
 const MaxLine = 64 << 10
+
+// cutOverlap is the least a long-line chunk holds back for the next one; it
+// covers tokens such as JWTs that only match once they are complete.
+const cutOverlap = 8 << 10
 
 // Builtins are always on.
 var Builtins = []string{
@@ -142,9 +150,10 @@ func AddSecret(v string, exp time.Time) {
 }
 
 // Writer returns a line-buffered io.WriteCloser; partial lines are held until
-// '\n' or Close. Lines longer than 64 KiB are flushed in 64 KiB chunks (each
-// chunk redacted). Every redacted line (with its '\n') or chunk reaches dst
-// in exactly one Write call. A trailing '\r' is kept out of matching and
+// '\n' or Close. Lines longer than MaxLine are flushed in chunks of at most
+// MaxLine bytes (each chunk redacted, cut so it does not split a secret; see
+// MaxLine). Every redacted line (with its '\n') or chunk reaches dst in
+// exactly one Write call. A trailing '\r' is kept out of matching and
 // restored on output. Close flushes the partial line and does not close dst.
 // The writer is not safe for concurrent use.
 func (r *Redactor) Writer(dst io.Writer) io.WriteCloser {
@@ -177,15 +186,71 @@ func (w *writer) Write(p []byte) (int, error) {
 			}
 			start += i + 1
 		case len(rest) > MaxLine:
-			if err := w.emit(rest[:MaxLine], false); err != nil {
+			n := w.r.cut(rest[:MaxLine])
+			if err := w.emit(rest[:n], false); err != nil {
 				return len(p), err
 			}
-			start += MaxLine
+			start += n
 		default:
 			w.buf = append(w.buf[:0], rest...)
 			return len(p), nil
 		}
 	}
+}
+
+// cut returns how much of win, a MaxLine window of a longer line, to emit as
+// one chunk: win minus the hold-back overlap, moved back to the start of any
+// literal, registered secret or pattern match that would straddle it. When
+// that leaves nothing, a single match fills most of win and win goes whole.
+func (r *Redactor) cut(win []byte) int {
+	s := string(win)
+	hold := cutOverlap
+	if len(r.literals) > 0 {
+		hold = max(hold, len(r.literals[0])-1)
+	}
+	var reg []secret
+	if p := registry.Load(); p != nil {
+		reg = *p
+	}
+	if len(reg) > 0 {
+		hold = max(hold, len(reg[0].value)-1)
+	}
+	c := len(win) - min(hold, len(win)/2)
+
+	var spans [][2]int
+	literal := func(v string) {
+		for off := 0; ; {
+			i := strings.Index(s[off:], v)
+			if i < 0 {
+				return
+			}
+			spans = append(spans, [2]int{off + i, off + i + len(v)})
+			off += i + 1
+		}
+	}
+	for _, v := range r.literals {
+		literal(v)
+	}
+	for _, sec := range reg {
+		literal(sec.value)
+	}
+	for _, p := range r.patterns {
+		for _, m := range p.FindAllStringIndex(s, -1) {
+			spans = append(spans, [2]int{m[0], m[1]})
+		}
+	}
+	for moved := true; moved && c > 0; {
+		moved = false
+		for _, sp := range spans {
+			if sp[0] < c && c < sp[1] {
+				c, moved = sp[0], true
+			}
+		}
+	}
+	if c <= 0 {
+		return len(win)
+	}
+	return c
 }
 
 func (w *writer) Close() error {

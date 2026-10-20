@@ -29,6 +29,26 @@ type Decision struct {
 	Retry    bool
 }
 
+// permanentError marks a Handle error that deciding the trigger again
+// would only repeat.
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+
+// Permanent marks err as one a retry cannot fix, such as a refused fetch
+// token. Its message is err's.
+func Permanent(err error) error { return &permanentError{err: err} }
+
+// IsPermanent reports whether err, a Handle error, would recur on retry:
+// a trigger without an env, an invalid .zeroci.yml, a GitHub 4xx other
+// than 401, 403, 408 and 429, or an error marked by Permanent. Network,
+// GitHub 5xx and store failures are transient.
+func IsPermanent(err error) bool {
+	var p *permanentError
+	return errors.As(err, &p)
+}
+
 // Intake decides deploy triggers and records accepted ones as queued
 // deploy runs. The caller queues an accepted run once the hub has its
 // accepted frame.
@@ -42,15 +62,15 @@ type Intake struct {
 }
 
 // Handle decides t, a trigger with an env. A redelivered trigger gets the
-// run it already created. Errors are GitHub or store failures; the hub may
-// redeliver the trigger after them.
+// run it already created. Errors are GitHub or store failures; IsPermanent
+// tells the ones deciding t again would repeat.
 func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, error) {
 	env := ""
 	if t.Env != nil {
 		env = *t.Env
 	}
 	if env == "" {
-		return Decision{}, fmt.Errorf("trigger: %s has no env", t.TriggerId)
+		return Decision{}, Permanent(fmt.Errorf("trigger: %s has no env", t.TriggerId))
 	}
 	switch t.Event {
 	case protocol.TriggerEventPush:

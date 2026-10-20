@@ -22,15 +22,6 @@ func SupersedeKey(run store.Run) string {
 	}
 }
 
-// EnvLockKey is the lock a deploy holds while it runs (env:<repo>:<env>).
-// Checks take no lock and get "".
-func EnvLockKey(run store.Run) string {
-	if run.Kind != kindDeploy {
-		return ""
-	}
-	return "env:" + run.Repo + ":" + run.Env
-}
-
 // shortSHA is the 7-character SHA used in reasons.
 func shortSHA(sha string) string {
 	if len(sha) > 7 {

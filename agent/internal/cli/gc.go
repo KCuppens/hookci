@@ -6,26 +6,23 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
-	"strconv"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/control"
 	"github.com/KCuppens/zerocideploy/agent/internal/gc"
 )
 
 // cmdGC asks the running agent for a GC pass over its deploy images, build
-// cache and run dirs, and prints what it removed or, with --dry-run, would
-// remove.
+// cache, run dirs and setup step cache entries, and prints what it removed
+// or, with --dry-run, would remove.
 func cmdGC(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print what would be removed without removing it")
-	stateDir := fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect")
-	installation := fs.Int64("installation", 0, "use the agent of this installation in "+defaultStateRoot+"/<ID>")
+	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: zeroci [global flags] gc [--dry-run] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Remove old deploy images, cap the build cache and delete finished run dirs.")
+		fmt.Fprintln(stderr, "Remove old deploy images, cap the build cache, delete finished run dirs and evict old cache entries.")
 		fs.PrintDefaults()
 	}
 	pos, err := parseInterleaved(fs, args)
@@ -39,18 +36,15 @@ func cmdGC(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer)
 		fs.Usage()
 		return ExitUsage
 	}
-	if *installation < 0 {
-		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+	stateDir, ok := dirFlags.resolve(stderr)
+	if !ok {
 		return ExitUsage
-	}
-	if *installation > 0 {
-		*stateDir = filepath.Join(defaultStateRoot, strconv.FormatInt(*installation, 10))
 	}
 
 	var rep gc.Report
-	err = control.Call(ctx, *stateDir, "gc", gc.Request{DryRun: *dryRun}, &rep)
+	err = control.Call(ctx, stateDir, "gc", gc.Request{DryRun: *dryRun}, &rep)
 	if errors.Is(err, control.ErrNotRunning) {
-		fmt.Fprintf(stderr, "zeroci: no agent is running on %s; start it with systemctl start zeroci-agent@<installation>\n", *stateDir)
+		fmt.Fprintf(stderr, "zeroci: no agent is running on %s; start it with systemctl start zeroci-agent@<installation>\n", stateDir)
 		return ExitInternal
 	}
 	if err != nil {
@@ -60,11 +54,12 @@ func cmdGC(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer)
 	return printGCReport(rep, stdout, stderr)
 }
 
-// printGCReport prints one line per image and run dir, the build cache cap
-// and every skipped env and failure. Failures make it return ExitInternal.
+// printGCReport prints one line per image, run dir and cache entry, the
+// build cache cap and every skipped env and failure. Failures make it return
+// ExitInternal.
 func printGCReport(rep gc.Report, stdout, stderr io.Writer) int {
 	p := rep.Plan
-	images, dirs, pruned := p.RemoveImages, p.RemoveRunDirs, p.PruneBuildCache
+	images, dirs, entries, pruned := p.RemoveImages, p.RemoveRunDirs, p.RemoveCacheEntries, p.PruneBuildCache
 	verb, prune := "would remove", "would cap build cache:"
 	var failures []string
 	if !rep.DryRun {
@@ -73,7 +68,7 @@ func printGCReport(rep gc.Report, stdout, stderr io.Writer) int {
 			return ExitInternal
 		}
 		r := rep.Result
-		images, dirs, pruned, failures = r.RemovedImages, r.RemovedRunDirs, r.PrunedBuildCache, r.Errors
+		images, dirs, entries, pruned, failures = r.RemovedImages, r.RemovedRunDirs, r.RemovedCacheEntries, r.PrunedBuildCache, r.Errors
 		verb, prune = "removed", "capped build cache:"
 	}
 	for _, ref := range images {
@@ -84,6 +79,9 @@ func printGCReport(rep gc.Report, stdout, stderr io.Writer) int {
 	}
 	for _, dir := range dirs {
 		fmt.Fprintf(stdout, "%s run dir %s\n", verb, dir)
+	}
+	for _, e := range entries {
+		fmt.Fprintf(stdout, "%s cache entry %s\n", verb, e)
 	}
 	for _, env := range p.SkippedEnvs {
 		fmt.Fprintf(stdout, "skipped %s\n", env)

@@ -73,6 +73,28 @@ func TestOutboxAckAndPending(t *testing.T) {
 	}
 }
 
+func TestDropOutbox(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		if _, err := s.AppendOutbox(ctx, "test", []byte(fmt.Sprintf("p%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DropOutbox(ctx, 2); err != nil {
+		t.Fatalf("DropOutbox(2): %v", err)
+	}
+	if err := s.DropOutbox(ctx, 2); err != nil {
+		t.Fatalf("DropOutbox(2) again: %v", err)
+	}
+	if items, err := s.Pending(ctx, 0, 0); err != nil || fmt.Sprint(seqs(items)) != "[1 3]" {
+		t.Errorf("Pending after DropOutbox(2) = %v, %v; want [1 3]", seqs(items), err)
+	}
+	if hwm, err := s.GetHWM(ctx, HWMOutAcked); err != nil || hwm != 0 {
+		t.Errorf("out_acked = %d, %v; want 0", hwm, err)
+	}
+}
+
 func TestAppendSeqFrameStampsSeq(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

@@ -47,7 +47,7 @@ func TestValidateOK(t *testing.T) {
 	if code != ExitOK || !strings.HasPrefix(stdout, "ok: ") {
 		t.Errorf("validate with warnings = %d, stdout %q", code, stdout)
 	}
-	if !strings.Contains(stderr, "warning: deployments.production.env_file: env_file "+`"`+envFile+`" is writable by group or others`) {
+	if !strings.Contains(stderr, "warning: deployments.production.env_file: env_file "+`"`+envFile+`" gives group or others access (mode 0666)`) {
 		t.Errorf("stderr %q does not carry the env_file warning", stderr)
 	}
 }

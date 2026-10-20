@@ -453,6 +453,37 @@ func TestEngine_LogRedacted(t *testing.T) {
 	}
 }
 
+// TestEngine_EnvFileValuesMaskedInLogAndReason checks that an env_file value
+// the executor masks is masked in the strategy's own log lines, the stored run
+// error and the event reason too, such as a health check quoting a response
+// body.
+func TestEngine_EnvFileValuesMaskedInLogAndReason(t *testing.T) {
+	const secret = "pg-pass-0f9e8d7c"
+	r := newRig(t, store.DeployQueued, fourSteps)
+	r.engine.NewExecutor = func(context.Context, store.DeployRun, config.Deployment) (Executor, error) {
+		return &UnitExecutor{Runner: &execx.Fake{}, RunID: "r1", Secrets: []string{secret}}, nil
+	}
+	r.strat.hook = func(_ context.Context, sc *StepContext, i int) error {
+		fmt.Fprintf(sc.Log, "connecting to postgres://app:%s@db\n", secret)
+		return fmt.Errorf("deployments.production.health: 500 after 3 tries, last body: password=%s", secret)
+	}
+	if err := r.engine.Start(context.Background(), "r1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	run := r.run(t)
+	if run.State != store.DeployFailed || strings.Contains(run.Error, secret) || !strings.Contains(run.Error, "password="+redact.Mask) {
+		t.Errorf("run = %s %q, want failed with the env_file value masked", run.State, run.Error)
+	}
+	ev := r.events.last()
+	if ev.Reason == nil || *ev.Reason != run.Error {
+		t.Errorf("event reason = %v, want %q", ev.Reason, run.Error)
+	}
+	tail := strings.Join(ev.Tail, "\n")
+	if strings.Contains(tail, secret) || !strings.Contains(tail, "postgres://app:"+redact.Mask+"@db") {
+		t.Errorf("tail %q, want the env_file value masked", tail)
+	}
+}
+
 func TestLineTail_KeepsLastLines(t *testing.T) {
 	var many, last []string
 	for i := range TailLines + 5 {

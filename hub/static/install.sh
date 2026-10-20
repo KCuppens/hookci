@@ -69,7 +69,7 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/zeroci agent --installation %i
 Restart=always
-# Exit 3 is a revoked agent, 4 is agent_too_old or another internal error
+# Exit 3 is a revoked agent or no usable agent.json, 4 is agent_too_old
 # (agent/internal/cli/exit.go); restarting cannot fix either.
 RestartPreventExitStatus=3 4
 RestartSec=5

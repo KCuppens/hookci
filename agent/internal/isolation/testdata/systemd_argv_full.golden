@@ -41,10 +41,6 @@ TasksMax=512
 -p
 RuntimeMaxSec=91
 -p
-IOReadBandwidthMax=/var/lib/zeroci/runs/01HXRUN 52428800
--p
-IOWriteBandwidthMax=/var/lib/zeroci/runs/01HXRUN 20971520
--p
 Nice=10
 -p
 IPAddressDeny=any

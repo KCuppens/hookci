@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +17,17 @@ import (
 // stopTimeout bounds the systemctl stop issued after the run's ctx is done.
 const stopTimeout = 15 * time.Second
 
-// ipDenyHost is the §6 deny list for units that share the host network.
-// systemd 255's systemd-run rejects a symbolic name (localhost) mixed with
-// prefixes in one value, so each entry is passed as its own property.
-var ipDenyHost = []string{"localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+// ipDenyHost is the §6 deny list for units that share the host network: every
+// non-public range that egress.IsForbiddenIP also rejects, plus the
+// deprecated IPv6 site-local range. systemd 255's systemd-run rejects a
+// symbolic name (localhost) mixed with prefixes in one value, so each entry
+// is passed as its own property.
+var ipDenyHost = []string{
+	"localhost", "link-local", "multicast",
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "172.16.0.0/12", "192.0.0.0/24",
+	"192.168.0.0/16", "198.18.0.0/15", "240.0.0.0/4",
+	"::/128", "fc00::/7", "fec0::/10",
+}
 
 // Systemd runs each job as a transient systemd service (not a scope) with the
 // §6 sandbox properties and cgroup limits.
@@ -94,15 +102,6 @@ func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
 	if l.Timeout > 0 {
 		prop("RuntimeMaxSec=" + ceilSeconds(l.Timeout))
 	}
-	if len(spec.ReadWritePaths) > 0 {
-		dev := spec.ReadWritePaths[0]
-		if l.IOReadBps > 0 {
-			prop("IOReadBandwidthMax=" + dev + " " + formatBytes(l.IOReadBps))
-		}
-		if l.IOWriteBps > 0 {
-			prop("IOWriteBandwidthMax=" + dev + " " + formatBytes(l.IOWriteBps))
-		}
-	}
 	prop("Nice=10")
 
 	if spec.NetNSPath == "" {
@@ -119,7 +118,23 @@ func BuildSystemdRunArgv(bin, slice string, spec Spec) []string {
 		argv = append(argv, "-E", kv)
 	}
 	argv = append(argv, "--")
-	return append(argv, spec.Argv...)
+	return append(argv, EscapeCommand(spec.Argv)...)
+}
+
+// EscapeCommand returns a copy of a systemd-run command with every "$" in
+// the arguments after the program doubled. The service manager expands
+// ${VAR} and $VAR in a transient unit's command line and turns "$$" into
+// "$", so escaping hands the arguments to the program verbatim. This works
+// on every systemd version, unlike --expand-environment=no (systemd 254+).
+// argv[0] names the program, which systemd-run resolves to a path and which
+// may not hold a variable, so it is left as is. Specifiers ("%") are not
+// expanded in commands set over D-Bus and need no escaping.
+func EscapeCommand(argv []string) []string {
+	out := slices.Clone(argv)
+	for i := 1; i < len(out); i++ {
+		out[i] = strings.ReplaceAll(out[i], "$", "$$")
+	}
+	return out
 }
 
 // formatCPUQuota renders a CPU count as a systemd percentage: 2 -> "200%".

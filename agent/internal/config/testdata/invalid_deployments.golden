@@ -1,7 +1,7 @@
 invalid_deployments.yml:15: error: deployments.production.compose.marker: compose.marker ".active-color" must be an absolute path
   fix: use a path that starts with /, for example /var/lib/zeroci/production.color
-invalid_deployments.yml:18: error: deployments.production.route.file: route.file "routes/app.caddy" must be an absolute path
-  fix: use a path that starts with /, for example /etc/caddy/routes/production.caddy
+invalid_deployments.yml:18: error: deployments.production.route.file: route.file "routes/app.caddy" must be an absolute, clean path
+  fix: use a path that starts with / and has no . or .. parts, for example /etc/caddy/routes/production.caddy
 invalid_deployments.yml:20: error: deployments.production.health.url: must contain {port}
   fix: add {port} to the health URL
 invalid_deployments.yml:23: error: deployments.production.verify.interval: interval 30s is longer than window 10s

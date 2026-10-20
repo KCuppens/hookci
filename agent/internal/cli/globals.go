@@ -75,6 +75,9 @@ func defaultStateDir(getenv func(string) string) string {
 // them to stay hermetic.
 type Deps struct {
 	Globals Globals
+	// StateRoot holds the state dir of each installation's agent, as
+	// <StateRoot>/<installation_id>.
+	StateRoot string
 	// Isolation selects the job isolation by --isolation name and returns
 	// its warnings.
 	Isolation func(name string) (isolation.Isolation, []string, error)
@@ -106,7 +109,8 @@ type Deps struct {
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
 func DefaultDeps(g Globals, stderr io.Writer) Deps {
 	return Deps{
-		Globals: g,
+		Globals:   g,
+		StateRoot: defaultStateRoot,
 		Isolation: func(name string) (isolation.Isolation, []string, error) {
 			env := isolation.HostSelectEnv()
 			env.Warn = func(msg string) { fmt.Fprintf(stderr, "zeroci: warning: %s\n", msg) }
