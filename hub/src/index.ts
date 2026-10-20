@@ -14,6 +14,7 @@ import "./sinks/checks";
 import "./sinks/slack";
 
 export { AgentDO } from "./do/agent";
+export { SinkOutboxDO } from "./do/sink-outbox";
 export { SlackWorkspaceDO } from "./do/slack-workspace";
 
 export default {

@@ -38,9 +38,17 @@ class_name = "AgentDO"
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
 
+[[durable_objects.bindings]]
+name = "SINK_OUTBOX"
+class_name = "SinkOutboxDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SinkOutboxDO"]
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -82,3 +90,7 @@ class_name = "AgentDO"
 [[env.staging.durable_objects.bindings]]
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "SINK_OUTBOX"
+class_name = "SinkOutboxDO"

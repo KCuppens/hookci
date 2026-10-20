@@ -18,7 +18,7 @@ import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
 import type { Event as EventFrame, Interrupt } from "../protocol";
 import { QUOTAS } from "../quotas";
-import { fanOut, sinksFor } from "../sinks";
+import { fanOut, sinksFor, sinksForRun } from "../sinks";
 import { loadRunView } from "../sinks/runview";
 import { pruneStoredTails } from "../sinks/slack";
 import type { Annotation, RunView, Sink } from "../sinks/types";
@@ -147,7 +147,7 @@ function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 	return row;
 }
 
-/** Loads the run and hands it to fn for every sink, unless no sink is configured. */
+/** Loads the run and hands it to fn for every sink of its repo. */
 async function fanOutRun(dob: AgentDO, runId: string, fn: (sink: Sink, run: RunView) => Promise<void>): Promise<void> {
 	await fanOutView(dob, { runId }, fn);
 }
@@ -162,10 +162,10 @@ async function fanOutView(
 	key: { runId: string } | { triggerId: string },
 	fn: (sink: Sink, run: RunView) => Promise<void>,
 ): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
-	if (sinks.length === 0) return;
 	const run = await loadRunView(dob.bindings.DB, dob.installationId, key);
-	if (run) fanOut(dob.state, sinks, (sink) => fn(sink, run));
+	if (!run) return;
+	const sinks = await sinksForRun(dob.bindings, dob.installationId, run.repo, { storage: dob.state.storage, now: () => dob.clock.now() });
+	fanOut(dob.state, sinks, (sink) => fn(sink, run));
 }
 
 const runUpdate = (sink: Sink, run: RunView) => sink.onRunUpdate(run);

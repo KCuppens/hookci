@@ -44,15 +44,24 @@ class_name = "AgentDO"
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
 
+[[durable_objects.bindings]]
+name = "SINK_OUTBOX"
+class_name = "SinkOutboxDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
 
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SinkOutboxDO"]
+
 [triggers]
 crons = ["*/5 * * * *"]
 
-# The prebuilt Worker imports static/install.sh as a separate text module.
+# The prebuilt Worker imports static/install.sh and static/viewer.css as
+# separate text modules.
 [[rules]]
 type = "Text"
-globs = ["**/*.sh"]
+globs = ["**/*.sh", "**/*.css"]
 fallthrough = true

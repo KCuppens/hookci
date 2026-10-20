@@ -1,5 +1,6 @@
 import type { AgentDO } from "./do/agent";
 import type { Clock } from "./do/clock";
+import type { SinkOutboxDO } from "./do/sink-outbox";
 import type { SlackWorkspaceDO } from "./do/slack-workspace";
 import type { Fetcher } from "./http";
 
@@ -10,6 +11,7 @@ export interface Env {
 	LOGS: R2Bucket;
 	AGENT_DO: DurableObjectNamespace<AgentDO>;
 	SLACK_DO: DurableObjectNamespace<SlackWorkspaceDO>;
+	SINK_OUTBOX: DurableObjectNamespace<SinkOutboxDO>;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
 	/** Newest released agent version, e.g. v0.2.0; empty until the first release. */

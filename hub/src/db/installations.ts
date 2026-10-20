@@ -77,6 +77,9 @@ const PURGE_STATEMENTS = [
 	"DELETE FROM daily_counters WHERE installation_id = ?1",
 	"DELETE FROM fork_approvals WHERE installation_id = ?1",
 	"DELETE FROM deploy_triggers WHERE installation_id = ?1",
+	"DELETE FROM sink_configs WHERE installation_id = ?1",
+	"DELETE FROM sink_messages WHERE installation_id = ?1",
+	"DELETE FROM sink_deliveries WHERE installation_id = ?1",
 	"DELETE FROM installations WHERE id = ?1",
 ];
 
