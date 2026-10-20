@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 var t0 = time.Date(2026, 1, 2, 3, 4, 5, 6_000_000, time.UTC)

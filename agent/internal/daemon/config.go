@@ -8,17 +8,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/detect"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/detect"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/source"
 )
 
 // ConfigFile is the checks configuration at the root of a checkout.
-const ConfigFile = ".zeroci.yml"
+const ConfigFile = ".hookci.yml"
 
 // ConfigJob is the pseudo job that reports whether a pull request's own
-// .zeroci.yml is valid.
+// .hookci.yml is valid.
 const ConfigJob = "_config"
 
 // plan is what a checkout's configuration resolves to.
@@ -27,13 +27,13 @@ type plan struct {
 	checks *config.ResolvedChecks
 	// invalid holds the diagnostics of a configuration that has errors.
 	invalid config.Diagnostics
-	// head holds the diagnostics of a pull request's changed .zeroci.yml;
+	// head holds the diagnostics of a pull request's changed .hookci.yml;
 	// nil when the pull request leaves the file alone.
 	head *config.Diagnostics
 	// slack is the trusted configuration's notify.slack block for the hub;
 	// nil when it has none.
 	slack *protocol.JobPlannedSlack
-	// policy is what the trusted .zeroci.yml declares about forks, before
+	// policy is what the trusted .hookci.yml declares about forks, before
 	// the semantic checks judge it; nil when there is no file or it fails
 	// the schema.
 	policy *config.Policy
@@ -41,8 +41,8 @@ type plan struct {
 
 // resolvePlan picks the checks of co. A pull request (BaseDir set) runs the
 // base branch's configuration, so a head commit cannot change what runs on
-// the agent or where Slack hears of it; its own .zeroci.yml, when it
-// differs, is only validated. A base without a .zeroci.yml falls back to
+// the agent or where Slack hears of it; its own .hookci.yml, when it
+// differs, is only validated. A base without a .hookci.yml falls back to
 // detection on the head tree, as does a push without one.
 func resolvePlan(co source.Checkout, opts config.ParseOptions) (plan, error) {
 	trusted := co.Dir
@@ -113,7 +113,7 @@ func slackOverride(cfg *config.Config) *protocol.JobPlannedSlack {
 	return out
 }
 
-// readConfig returns dir's .zeroci.yml, or nil when it has none.
+// readConfig returns dir's .hookci.yml, or nil when it has none.
 func readConfig(dir string) ([]byte, error) {
 	data, err := os.ReadFile(filepath.Join(dir, ConfigFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -125,7 +125,7 @@ func readConfig(dir string) ([]byte, error) {
 	return data, nil
 }
 
-// annotations turns diagnostics into .zeroci.yml annotations.
+// annotations turns diagnostics into .hookci.yml annotations.
 func annotations(diags config.Diagnostics) []protocol.AnnotationsItemsElem {
 	items := make([]protocol.AnnotationsItemsElem, 0, len(diags))
 	for _, d := range diags {

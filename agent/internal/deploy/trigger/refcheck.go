@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // RefChecker answers the GitHub questions a deploy trigger must pass.
@@ -30,10 +30,10 @@ const DefaultGitHubURL = "https://api.github.com"
 const compareFileCap = 300
 
 // configFile is the deploy configuration at the root of a repository.
-const configFile = ".zeroci.yml"
+const configFile = ".hookci.yml"
 
 // GitHubRefChecker is a RefChecker over the GitHub REST API. It also loads
-// a repository's .zeroci.yml at a commit.
+// a repository's .hookci.yml at a commit.
 type GitHubRefChecker struct {
 	BaseURL string       // "" means DefaultGitHubURL
 	HTTP    *http.Client // nil means http.DefaultClient
@@ -94,7 +94,7 @@ func (g *GitHubRefChecker) ChangedFiles(ctx context.Context, repo, base, head st
 	return files, len(files) >= compareFileCap, nil
 }
 
-// LoadConfig returns repo's .zeroci.yml at sha. A commit without one has an
+// LoadConfig returns repo's .hookci.yml at sha. A commit without one has an
 // empty configuration; one that does not parse is an error naming its
 // problems.
 func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*config.Config, error) {

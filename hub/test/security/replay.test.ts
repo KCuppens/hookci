@@ -198,7 +198,7 @@ describe("pair token replay", () => {
 
     const first = await redeem();
     expect(first.status).toBe(200);
-    expect(await first.json()).toMatchObject({ credential: expect.stringMatching(/^zc_agent_/), installation_id: tenant.installationId });
+    expect(await first.json()).toMatchObject({ credential: expect.stringMatching(/^hci_agent_/), installation_id: tenant.installationId });
     const replay = await redeem();
 
     expect(replay.status).toBe(400);

@@ -97,7 +97,7 @@ const SLACK_BODIES: Record<string, { contentType: string; body: (tenant: Tenant)
         team_id: t.teamId,
         user_id: t.slackUserId,
         channel_id: t.channelId,
-        command: "/zeroci",
+        command: "/hookci",
         text: `watch ${t.fullName}`,
         response_url: "https://hooks.slack.com/commands/forged",
         trigger_id: "trg.forged",
@@ -146,8 +146,8 @@ async function bearerRequest(method: string, path: string, tenant: Tenant, autho
   if (path === "/v1/logs/:runId/:job") {
     const log = await gzip("forged log\n");
     headers.set("content-encoding", "gzip");
-    headers.set("x-zeroci-log-bytes", "11");
-    headers.set("x-zeroci-log-truncated", "0");
+    headers.set("x-hookci-log-bytes", "11");
+    headers.set("x-hookci-log-truncated", "0");
     return new Request(`${ORIGIN}/v1/logs/${tenant.runId}/${tenant.job}`, { method: "PUT", headers, body: log });
   }
   if (path === "/v1/render") {
@@ -160,7 +160,7 @@ async function bearerRequest(method: string, path: string, tenant: Tenant, autho
   }
   if (path === "/v1/agent/sinks") {
     headers.set("content-type", "application/json");
-    const body = { kind: "webhook", repo: tenant.fullName, url: "https://example.com/zeroci" };
+    const body = { kind: "webhook", repo: tenant.fullName, url: "https://example.com/hookci" };
     return new Request(`${ORIGIN}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
   }
   if (path === "/v1/agent/sinks/:id") return new Request(`${ORIGIN}/v1/agent/sinks/snk_forged`, { method: "DELETE", headers });
@@ -180,7 +180,7 @@ function redeemRequest(pairToken: string | undefined): Request {
 /** A state of the right shape, signed with a key that is not STATE_SIGNING_KEY, and the cookie that binds it. */
 async function forgedState(kind: string): Promise<{ state: string; cookie: string }> {
   const nonce = base64url(crypto.getRandomValues(new Uint8Array(32)));
-  return { state: `${nonce}.${base64url(await hmacSha256(WRONG_SECRET, `${kind}.${nonce}`))}`, cookie: `__Host-zeroci_oauth=${nonce}` };
+  return { state: `${nonce}.${base64url(await hmacSha256(WRONG_SECRET, `${kind}.${nonce}`))}`, cookie: `__Host-hookci_oauth=${nonce}` };
 }
 
 /** Each OAuth route's state parameter, and the state kind the route checks; POST /github/link/start takes the same form field. */
@@ -207,7 +207,7 @@ function oauthRequest(method: string, path: string, fields: Record<string, strin
 /** A session cookie for the tenant with a signature made under a key the hub does not hold. */
 async function forgedSession(tenant: Tenant): Promise<string> {
   const body = `${tenant.installationId}.${tenant.githubUserId}.${tenant.githubLogin}.${testClock.now() + 30 * 60_000}`;
-  return `__Host-zeroci_session=${body}.${base64url(await hmacSha256(WRONG_SECRET, `session.${body}`))}`;
+  return `__Host-hookci_session=${body}.${base64url(await hmacSha256(WRONG_SECRET, `session.${body}`))}`;
 }
 
 function sessionRequest(path: string, tenant: Tenant, cookie: string | null): Request {
@@ -297,7 +297,7 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
         {
           kind: "wrong",
           name: "a pair token the hub never issued",
-          request: async () => redeemRequest(`zc_pair_${crypto.randomUUID().replaceAll("-", "")}`),
+          request: async () => redeemRequest(`hci_pair_${crypto.randomUUID().replaceAll("-", "")}`),
           expected: { status: 400, json: "invalid_pair_token" },
         },
         {
@@ -313,7 +313,7 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       {
         kind: "wrong",
         name: "an agent credential the hub never issued",
-        request: (t) => bearerRequest(method, path, t, `Bearer zc_agent_${crypto.randomUUID().replaceAll("-", "")}`),
+        request: (t) => bearerRequest(method, path, t, `Bearer hci_agent_${crypto.randomUUID().replaceAll("-", "")}`),
         expected: { status: 401, json: "auth_failed" },
       },
       {

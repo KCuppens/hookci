@@ -39,7 +39,7 @@ export interface WebhookPayloadV1 {
 }
 
 export const WEBHOOK_EVENT = "run.updated";
-export const WEBHOOK_USER_AGENT = "ZeroCI-Hookshot/1";
+export const WEBHOOK_USER_AGENT = "HookCI-Hookshot/1";
 export function buildWebhookPayload(run: RunView, deliveryId: string, now: Date): WebhookPayloadV1 {
 	return {
 		v: 1,
@@ -70,7 +70,7 @@ export async function signWebhook(secret: string, timestamp: number, body: strin
 }
 
 export function generateWebhookSecret(): string {
-	return `zcwh_${hex(crypto.getRandomValues(new Uint8Array(32)))}`;
+	return `hciwh_${hex(crypto.getRandomValues(new Uint8Array(32)))}`;
 }
 
 export type WebhookUrlCheck = { ok: true; url: URL } | { ok: false; code: "invalid" | "not_https" | "private_host" | "self" };
@@ -192,10 +192,10 @@ export const webhookDeliverer: Deliverer = {
 				headers: {
 					"Content-Type": "application/json",
 					"User-Agent": WEBHOOK_USER_AGENT,
-					"X-ZeroCI-Event": WEBHOOK_EVENT,
-					"X-ZeroCI-Delivery": item.deliveryId,
-					"X-ZeroCI-Timestamp": String(timestamp),
-					"X-ZeroCI-Signature": await signWebhook(cfg.secret, timestamp, body),
+					"X-HookCI-Event": WEBHOOK_EVENT,
+					"X-HookCI-Delivery": item.deliveryId,
+					"X-HookCI-Timestamp": String(timestamp),
+					"X-HookCI-Signature": await signWebhook(cfg.secret, timestamp, body),
 				},
 				body,
 			});

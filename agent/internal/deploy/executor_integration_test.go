@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // TestUnitExecutorRunsAsDeployUserIntegration runs `id -un` in a real deploy
-// unit and expects the zeroci-deploy account.
+// unit and expects the hookci-deploy account.
 func TestUnitExecutorRunsAsDeployUserIntegration(t *testing.T) {
 	testutil.RequireIntegration(t)
 	if _, err := exec.LookPath("systemd-run"); err != nil {

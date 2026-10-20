@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)

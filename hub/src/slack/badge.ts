@@ -1,5 +1,5 @@
 // The one-line Slack badge of a run: emoji by state, then target, commit,
-// progress or outcome. Shared by /zeroci watch (test badge), /zeroci status
+// progress or outcome. Shared by /hookci watch (test badge), /hookci status
 // and the Slack sink.
 
 import { logJob } from "../sinks/runview";
@@ -120,7 +120,7 @@ function badgeText(run: RunView, test: boolean): string {
 	}
 }
 
-/** The badge of run; test marks the badge /zeroci watch posts, which carries `(test)` and no log link. */
+/** The badge of run; test marks the badge /hookci watch posts, which carries `(test)` and no log link. */
 export function renderBadge(run: RunView, opts: { test?: boolean } = {}): Badge {
 	const test = opts.test === true;
 	const text = badgeText(run, test);

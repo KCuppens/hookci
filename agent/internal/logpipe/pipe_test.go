@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
 func TestPipeWritesRedactedFile(t *testing.T) {
@@ -75,7 +75,7 @@ func TestPipeStepMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprint(p.Stdout(), "::zeroci step install\nnpm ci\n  ::zeroci step build  \n::zeroci step \n")
+	fmt.Fprint(p.Stdout(), "::hookci step install\nnpm ci\n  ::hookci step build  \n::hookci step \n")
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestPipeStepMarkers(t *testing.T) {
 		t.Errorf("steps = %+v, want %+v", steps, want)
 	}
 	data, _ := os.ReadFile(LogPath(runDir, "build"))
-	if !strings.Contains(string(data), "::zeroci step install\n") {
+	if !strings.Contains(string(data), "::hookci step install\n") {
 		t.Errorf("marker line missing from log: %q", data)
 	}
 }
@@ -99,7 +99,7 @@ func TestPipeCapsLogFile(t *testing.T) {
 	}
 	line := strings.Repeat("a", 39) + "\n" // 40 bytes
 	fmt.Fprint(p.Stdout(), line+line+"partial")
-	fmt.Fprint(p.Stdout(), "\n"+line+"::zeroci step late\nlast\n")
+	fmt.Fprint(p.Stdout(), "\n"+line+"::hookci step late\nlast\n")
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestPipeIgnoresStepMarkersPastMax(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range MaxSteps + 7 {
-		fmt.Fprintf(p.Stdout(), "::zeroci step s%d\n", i)
+		fmt.Fprintf(p.Stdout(), "::hookci step s%d\n", i)
 	}
 	fmt.Fprint(p.Stdout(), "unterminated")
 	if err := p.Close(); err != nil {
@@ -136,13 +136,13 @@ func TestPipeIgnoresStepMarkersPastMax(t *testing.T) {
 		t.Errorf("OnStep called %d times, want %d", steps, MaxSteps)
 	}
 	data, _ := os.ReadFile(LogPath(runDir, "loop"))
-	if want := fmt.Sprintf("unterminated\n[zeroci: ignored 7 step markers past the first %d]\n", MaxSteps); !strings.HasSuffix(string(data), want) {
+	if want := fmt.Sprintf("unterminated\n[hookci: ignored 7 step markers past the first %d]\n", MaxSteps); !strings.HasSuffix(string(data), want) {
 		t.Errorf("log does not end with %q", want)
 	}
 }
 
 func TestCountStepMarkers(t *testing.T) {
-	script := "echo '::zeroci step install'\nnpm ci\necho \"::zeroci step build\"\nmake\nprintf '::zeroci step test\\n'"
+	script := "echo '::hookci step install'\nnpm ci\necho \"::hookci step build\"\nmake\nprintf '::hookci step test\\n'"
 	if got := CountStepMarkers(script); got != 3 {
 		t.Errorf("CountStepMarkers = %d, want 3", got)
 	}

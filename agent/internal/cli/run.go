@@ -12,24 +12,24 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/detect"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/sink"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/detect"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/recovery"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/sink"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-// runNoChecksMessage is printed when run finds neither a .zeroci.yml nor a
+// runNoChecksMessage is printed when run finds neither a .hookci.yml nor a
 // detectable project with checks.
-const runNoChecksMessage = "zeroci: no checks detected. Add a .zeroci.yml or run zeroci init."
+const runNoChecksMessage = "hookci: no checks detected. Add a .hookci.yml or run hookci init."
 
 // cmdRun runs the checks of the committed HEAD of the repo around the
 // working directory, or one job and its transitive needs.
@@ -37,7 +37,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] run [job]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] run [job]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Run the checks of the current repo's committed HEAD, or one job and the jobs it needs.")
 	}
@@ -63,13 +63,13 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 
 	wd, err := d.Getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	runID := ids.NewRunID()
 	dir, err := executor.NewRunDir(g.StateDir, runID, jobUser)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	git := source.Git{Runner: execx.OS{}}
@@ -77,7 +77,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	co, err := local.Checkout(ctx, source.Request{Ref: "HEAD", RunAs: runAs}, dir.Src())
 	if err != nil {
 		os.RemoveAll(dir.Root)
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		if errors.Is(err, source.ErrNotGitRepo) {
 			return ExitUsage
 		}
@@ -97,7 +97,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	attempt, err := nextLocalAttempt(ctx, db, co.Repo, co.SHA)
 	if err != nil {
 		os.RemoveAll(dir.Root)
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	jobs := make([]store.Job, 0, len(checks.Jobs))
@@ -116,7 +116,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	}
 	if err := db.CreateRun(ctx, run, jobs); err != nil {
 		os.RemoveAll(dir.Root)
-		fmt.Fprintf(stderr, "zeroci: create run: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: create run: %v\n", err)
 		return ExitInternal
 	}
 
@@ -141,14 +141,14 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		Mirror: mirror,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 
 	pump := &sink.Pump{
 		Store: db,
 		Sink:  sink.NewStdout(sink.StdoutOptions{Out: stdout, Color: colorEnabled(stdout), Clock: d.Clock, Verbose: g.Verbose}),
-		Warn:  func(err error) { fmt.Fprintf(stderr, "zeroci: warning: print run progress: %v\n", err) },
+		Warn:  func(err error) { fmt.Fprintf(stderr, "hookci: warning: print run progress: %v\n", err) },
 	}
 	pumpCtx, stopPump := context.WithCancel(context.WithoutCancel(ctx))
 	pumpErr := make(chan error, 1)
@@ -159,23 +159,23 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	// Run drains the outbox once more before it returns.
 	stopPump()
 	if err := <-pumpErr; err != nil {
-		fmt.Fprintf(stderr, "zeroci: print run progress: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: print run progress: %v\n", err)
 	}
 	if runErr != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", runErr)
+		fmt.Fprintf(stderr, "hookci: %v\n", runErr)
 		return ExitInternal
 	}
 
 	final, err := db.GetRun(context.WithoutCancel(ctx), runID)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	if final.State == store.RunSuccess {
 		return ExitOK
 	}
 	if final.Reason != "" {
-		fmt.Fprintf(stderr, "zeroci: run %s: %s\n", final.State, final.Reason)
+		fmt.Fprintf(stderr, "hookci: run %s: %s\n", final.State, final.Reason)
 	}
 	return ExitRunFailed
 }
@@ -194,18 +194,18 @@ type host struct {
 // ExitOK has been reported on stderr.
 func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*host, int) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		fmt.Fprintf(stderr, "zeroci: create state directory: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: create state directory: %v\n", err)
 		return nil, ExitInternal
 	}
 	unlock, err := lockStateDir(stateDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %s: %v\n", stateDir, err)
+		fmt.Fprintf(stderr, "hookci: %s: %v\n", stateDir, err)
 		return nil, ExitInternal
 	}
 	db, err := store.Open(filepath.Join(stateDir, "agent.db"), store.WithClock(d.Clock))
 	if err != nil {
 		unlock()
-		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: open store: %v\n", err)
 		return nil, ExitInternal
 	}
 	h := &host{db: db, close: func() { db.Close(); unlock() }}
@@ -213,16 +213,16 @@ func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*
 	iso, warnings, err := d.Isolation(d.Globals.Isolation)
 	if err != nil {
 		h.close()
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return nil, ExitUsage
 	}
 	for _, w := range warnings {
-		fmt.Fprintf(stderr, "zeroci: warning: %s\n", w)
+		fmt.Fprintf(stderr, "hookci: warning: %s\n", w)
 	}
 	runAs, err := isolation.JobCredential(iso)
 	if err != nil {
 		h.close()
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return nil, ExitInternal
 	}
 	h.iso, h.jobUser = iso, executor.JobUser{Cred: runAs}
@@ -242,11 +242,11 @@ func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*
 		Logger:    slog.New(slog.DiscardHandler),
 	})
 	for _, e := range report.Errors {
-		fmt.Fprintf(stderr, "zeroci: warning: recovery: %v\n", e)
+		fmt.Fprintf(stderr, "hookci: warning: recovery: %v\n", e)
 	}
 	if err != nil {
 		h.close()
-		fmt.Fprintf(stderr, "zeroci: recovery: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: recovery: %v\n", err)
 		return nil, ExitInternal
 	}
 	return h, ExitOK
@@ -261,7 +261,7 @@ func executorHooks(d Deps, stateDir string, stderr io.Writer) executor.Hooks {
 	}
 	if hooks.Cache == nil {
 		if c, err := cache.New(cache.Options{Root: filepath.Join(stateDir, "cache")}); err != nil {
-			fmt.Fprintf(stderr, "zeroci: warning: caches disabled: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: warning: caches disabled: %v\n", err)
 		} else {
 			hooks.Cache = c
 		}
@@ -290,21 +290,21 @@ func driveRun(ctx context.Context, sched *scheduler.Scheduler, runID string) err
 	return err
 }
 
-// loadChecks loads <src>/.zeroci.yml, or detects the checks of src when it
+// loadChecks loads <src>/.hookci.yml, or detects the checks of src when it
 // has none. Config errors return ExitUsage; finding no jobs returns
 // ExitNoChecks.
 func loadChecks(src string, stderr io.Writer) (*config.ResolvedChecks, int) {
-	path := filepath.Join(src, ".zeroci.yml")
+	path := filepath.Join(src, ".hookci.yml")
 	var cfg *config.Config
 	switch _, err := os.Stat(path); {
 	case err == nil:
 		loaded, diags, err := config.Load(path, config.ParseOptions{})
 		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: load .zeroci.yml: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: load .hookci.yml: %v\n", err)
 			return nil, ExitUsage
 		}
 		if len(diags) > 0 {
-			fmt.Fprint(stderr, diags.Format(".zeroci.yml"))
+			fmt.Fprint(stderr, diags.Format(".hookci.yml"))
 		}
 		if diags.HasErrors() {
 			return nil, ExitUsage
@@ -317,12 +317,12 @@ func loadChecks(src string, stderr io.Writer) (*config.ResolvedChecks, int) {
 			return nil, ExitNoChecks
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: %v\n", err)
 			return nil, ExitUsage
 		}
 		cfg = det.Config
 	default:
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return nil, ExitInternal
 	}
 	checks := cfg.Checks()
@@ -343,7 +343,7 @@ func onlyJob(checks *config.ResolvedChecks, name string, stderr io.Writer) (*con
 		names = append(names, j.Name)
 	}
 	if _, ok := byName[name]; !ok {
-		fmt.Fprintf(stderr, "zeroci: unknown job %q (jobs: %s)\n", name, strings.Join(names, ", "))
+		fmt.Fprintf(stderr, "hookci: unknown job %q (jobs: %s)\n", name, strings.Join(names, ", "))
 		return nil, ExitUsage
 	}
 	keep := map[string]bool{}

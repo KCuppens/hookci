@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
 // DefaultMaxBytes is the hub's log cap (QUOTAS.logBytes). The hub applies it
@@ -27,7 +27,7 @@ const DefaultMaxBytes = 10 << 20
 const gzipHeadroom = 4 << 10
 
 // TruncationMarker ends a log cut at the cap.
-const TruncationMarker = "\n[zeroci: log truncated at 10 MB]\n"
+const TruncationMarker = "\n[hookci: log truncated at 10 MB]\n"
 
 // retries is how many times a 5xx or network failure is retried.
 const retries = 3
@@ -54,7 +54,7 @@ func Redact(b []byte) []byte {
 // Uploader PUTs job logs to the hub.
 type Uploader struct {
 	HubURL   string        // e.g. https://ci.webuno.io
-	Token    func() string // agent credential, zc_agent_...
+	Token    func() string // agent credential, hci_agent_...
 	HTTP     *http.Client  // nil: http.DefaultClient
 	MaxBytes int64         // <= 0: DefaultMaxBytes
 
@@ -136,12 +136,12 @@ func (u *Uploader) put(ctx context.Context, endpoint string, body []byte, res Re
 	req.Header.Set("Authorization", "Bearer "+u.Token())
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("X-Zeroci-Log-Bytes", strconv.FormatInt(res.Bytes, 10))
+	req.Header.Set("X-Hookci-Log-Bytes", strconv.FormatInt(res.Bytes, 10))
 	truncated := "0"
 	if res.Truncated {
 		truncated = "1"
 	}
-	req.Header.Set("X-Zeroci-Log-Truncated", truncated)
+	req.Header.Set("X-Hookci-Log-Truncated", truncated)
 	client := u.HTTP
 	if client == nil {
 		client = http.DefaultClient

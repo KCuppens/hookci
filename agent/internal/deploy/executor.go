@@ -11,21 +11,21 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // DeployUser is the account deploy units run as. It may use docker and
-// localhost, which the PR sandbox user zeroci-run may not.
-const DeployUser = "zeroci-deploy"
+// localhost, which the PR sandbox user hookci-run may not.
+const DeployUser = "hookci-deploy"
 
 // DeployHome is HOME for deploy units: docker keeps its config in ~/.docker,
 // and DeployUser is created without a home. systemd creates it per unit via
 // StateDirectory, owned by DeployUser, mode 0700.
-const DeployHome = "/var/lib/zeroci-deploy"
+const DeployHome = "/var/lib/hookci-deploy"
 
 // stopTimeout bounds the systemctl stop after a canceled step.
 const stopTimeout = 30 * time.Second
@@ -66,7 +66,7 @@ func NewExecutorForRun(run store.DeployRun, trusted bool, cfg config.Deployment,
 }
 
 // UnitName returns the transient unit name of a run's deploy commands,
-// "zeroci-run-<run_id>-deploy".
+// "hookci-run-<run_id>-deploy".
 func UnitName(runID string) string {
 	return isolation.UnitName(runID, "deploy")
 }

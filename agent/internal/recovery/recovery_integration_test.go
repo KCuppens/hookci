@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
-// TestKill9RecoveryIntegration runs `zeroci run` on a sleeping job with a
+// TestKill9RecoveryIntegration runs `hookci run` on a sleeping job with a
 // postgres service under systemd, kills the agent with SIGKILL while the job
 // runs, then checks that Recover interrupts the run without re-queueing it
 // (a local run has no trigger to retry for) and leaves no unit, namespace,
@@ -36,23 +36,23 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	ctx := context.Background()
 	docker := services.Docker{}
 
-	bin := filepath.Join(t.TempDir(), "zeroci")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/KCuppens/zerocideploy/agent/cmd/zeroci").CombinedOutput(); err != nil {
-		t.Fatalf("build zeroci: %v\n%s", err, out)
+	bin := filepath.Join(t.TempDir(), "hookci")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/KCuppens/hookci/agent/cmd/hookci").CombinedOutput(); err != nil {
+		t.Fatalf("build hookci: %v\n%s", err, out)
 	}
 	work := commitFixture(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n" +
+		".hookci.yml": "version: 1\nchecks:\n" +
 			"  services:\n    postgres:\n      image: postgres:16-alpine\n" +
 			"  jobs:\n    sleep:\n      run: sleep 300\n",
 	})
 	// PrivateTmp hides /tmp from job units, so the state dir lives in /run.
-	stateDir, err := os.MkdirTemp("/run", "zeroci-itest-")
+	stateDir, err := os.MkdirTemp("/run", "hookci-itest-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
 
-	logFile, err := os.Create(filepath.Join(t.TempDir(), "zeroci.log"))
+	logFile, err := os.Create(filepath.Join(t.TempDir(), "hookci.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	agent.Dir = work
 	agent.Stdout, agent.Stderr = logFile, logFile
 	if err := agent.Start(); err != nil {
-		t.Fatalf("start zeroci run: %v", err)
+		t.Fatalf("start hookci run: %v", err)
 	}
 	t.Cleanup(func() { _ = agent.Process.Kill() })
 
@@ -70,7 +70,7 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	unit := waitForUnit(t, sd, output)
 
 	if err := agent.Process.Kill(); err != nil {
-		t.Fatalf("SIGKILL zeroci run: %v", err)
+		t.Fatalf("SIGKILL hookci run: %v", err)
 	}
 	_ = agent.Wait()
 	t.Cleanup(func() { _ = sd.Stop(ctx, unit) })
@@ -158,12 +158,12 @@ func waitForUnit(t *testing.T, sd *isolation.Systemd, output func() string) stri
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("no active job unit within 2m; zeroci output:\n%s", output())
+	t.Fatalf("no active job unit within 2m; hookci output:\n%s", output())
 	return ""
 }
 
 // commitFixture writes files into a new git repository and commits them;
-// `zeroci run` checks out the committed HEAD.
+// `hookci run` checks out the committed HEAD.
 func commitFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // planSteps are the steps of a compose-bluegreen deploy, in order.
@@ -109,13 +109,13 @@ func TestIntegration_VerifyFailRollsBack(t *testing.T) {
 }
 
 // TestIntegration_KillAtEachStep SIGKILLs the agent while each step of a
-// deploy runs, restarts it and retries the run with `zeroci retry`: every
+// deploy runs, restarts it and retries the run with `hookci retry`: every
 // time the run must succeed with one color serving, the marker,
 // deploy_state and route file agreeing, and no containers of the other
 // color left.
 func TestIntegration_KillAtEachStep(t *testing.T) {
 	h := newHarness(t, harnessOpts{subprocess: true})
-	zeroci := buildZeroci(t)
+	hookci := buildHookci(t)
 
 	child := h.startAgent(t, "")
 	base := h.queueRun(t, "base", nil)
@@ -136,9 +136,9 @@ func TestIntegration_KillAtEachStep(t *testing.T) {
 
 			child := h.startAgent(t, "")
 			h.waitState(t, runID, store.DeployInterrupted)
-			out := retryRun(t, zeroci, h.spec.StateDir, runID)
+			out := retryRun(t, hookci, h.spec.StateDir, runID)
 			if !strings.Contains(out, "queued retry of "+runID) {
-				t.Fatalf("zeroci retry printed %q", out)
+				t.Fatalf("hookci retry printed %q", out)
 			}
 			requireState(t, h.wait(t, runID), store.DeploySuccess)
 			stopAgent(t, child)
@@ -150,16 +150,16 @@ func TestIntegration_KillAtEachStep(t *testing.T) {
 	}
 }
 
-// retryRun runs `zeroci retry`, again while the restarted agent is not yet
+// retryRun runs `hookci retry`, again while the restarted agent is not yet
 // listening on its control socket, and returns its output.
-func retryRun(t *testing.T, zeroci, stateDir, runID string) string {
+func retryRun(t *testing.T, hookci, stateDir, runID string) string {
 	t.Helper()
 	var out []byte
-	waitFor(t, time.Minute, "zeroci retry "+runID+" to reach the agent", func() bool {
+	waitFor(t, time.Minute, "hookci retry "+runID+" to reach the agent", func() bool {
 		var err error
-		out, err = exec.Command(zeroci, "retry", runID, "--state-dir", stateDir).CombinedOutput()
+		out, err = exec.Command(hookci, "retry", runID, "--state-dir", stateDir).CombinedOutput()
 		if err != nil {
-			t.Logf("zeroci retry: %v: %s", err, out)
+			t.Logf("hookci retry: %v: %s", err, out)
 			return false
 		}
 		return true

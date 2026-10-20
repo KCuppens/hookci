@@ -28,7 +28,7 @@ export interface RunRow {
 	finished_at: number | null;
 	duration_ms: number | null;
 	log_key: string | null;
-	/** The .zeroci.yml notify.slack channel name, without the leading #. */
+	/** The .hookci.yml notify.slack channel name, without the leading #. */
 	slack_channel: string | null;
 	slack_notify: WatchRow["notify"] | null;
 	slack_alert: WatchRow["alert"] | null;
@@ -85,7 +85,7 @@ export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
 }
 
 /**
- * Stores the run's .zeroci.yml notify.slack override as the agent sent it on
+ * Stores the run's .hookci.yml notify.slack override as the agent sent it on
  * job_planned: the channel without its # and lowercased as Slack names are,
  * YAML verbose as normal, and a notify or alert value the hub does not know
  * as unset.

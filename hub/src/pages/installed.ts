@@ -18,7 +18,7 @@ export interface InstalledView {
  */
 export function installedPage(v: InstalledView): Response {
 	const install = `curl -fsSL ${v.hubOrigin}/install | sh -s -- ${v.pairToken}`;
-	const connect = `sudo zeroci connect --hub ${v.hubOrigin} ${v.pairToken}`;
+	const connect = `sudo hookci connect --hub ${v.hubOrigin} ${v.pairToken}`;
 	const statusUrl = `/start/status?installation_id=${v.installationId}`;
 	return page(
 		S.pages.installedTitle,

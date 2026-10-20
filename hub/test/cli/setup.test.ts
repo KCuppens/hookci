@@ -19,8 +19,8 @@ const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const OTHER_ACCOUNT = "fedcba9876543210fedcba9876543210";
 const CREATED_DB = "5b0c7f4e-2a1d-4c3b-9e8f-1a2b3c4d5e6f";
 const EXISTING_DB = "1f2e3d4c-5b6a-4789-8a7b-6c5d4e3f2a1b";
-const WORKERS_DEV = "https://zeroci-hub.acme.workers.dev";
-const LIFECYCLE = ["r2", "bucket", "lifecycle", "add", "zeroci-hub-logs", "zeroci-log-retention", "--expire-days", "14", "--prefix", "logs/"];
+const WORKERS_DEV = "https://hookci-hub.acme.workers.dev";
+const LIFECYCLE = ["r2", "bucket", "lifecycle", "add", "hookci-hub-logs", "hookci-log-retention", "--expire-days", "14", "--prefix", "logs/"];
 const ACCOUNT_QUESTION = `Cloudflare account: 1) Acme Inc (${ACCOUNT}), 2) Acme Labs (${OTHER_ACCOUNT})`;
 const DOMAIN_QUESTION = "Custom domain (empty for workers.dev)";
 const BASE64_KEY = /^[A-Za-z0-9+/]{43}=$/;
@@ -68,7 +68,7 @@ beforeAll(async () => {
 beforeEach(async () => {
 	vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", undefined);
 	vi.stubEnv("CLOUDFLARE_API_TOKEN", undefined);
-	tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-setup-"));
+	tmp = await mkdtemp(join(tmpdir(), "hookci-hub-setup-"));
 	root = join(tmp, "pkg");
 	dir = join(tmp, "state");
 	await mkdir(join(root, "templates"), { recursive: true });
@@ -114,8 +114,8 @@ function freshAccount(over: FakeScript = []): FakeScript {
 		{ match: is("d1", "list"), result: ok("[]\n") },
 		{ match: is("d1", "create"), result: ok(fx["d1-create.txt"]) },
 		{ match: is("r2", "bucket", "list"), result: ok("Listing buckets...\n") },
-		{ match: is("r2", "bucket", "create"), result: ok("Creating bucket 'zeroci-hub-logs'...\n✅ Created bucket 'zeroci-hub-logs'\n") },
-		{ match: is("r2", "bucket", "lifecycle", "add"), result: ok("✨ Added lifecycle rule 'zeroci-log-retention' to bucket 'zeroci-hub-logs'.\n") },
+		{ match: is("r2", "bucket", "create"), result: ok("Creating bucket 'hookci-hub-logs'...\n✅ Created bucket 'hookci-hub-logs'\n") },
+		{ match: is("r2", "bucket", "lifecycle", "add"), result: ok("✨ Added lifecycle rule 'hookci-log-retention' to bucket 'hookci-hub-logs'.\n") },
 		{ match: is("d1", "migrations", "apply"), result: ok("✅ Migrations applied\n") },
 		{ match: is("deploy"), result: ok(fx["deploy.txt"]) },
 		{ match: is("secret", "put"), result: ok("✨ Success! Uploaded secret\n") },
@@ -148,11 +148,11 @@ describe("runSetup", () => {
 		expect(commands(exec)).toEqual([
 			["whoami"],
 			["d1", "list", "--json"],
-			["d1", "create", "zeroci-hub-db"],
+			["d1", "create", "hookci-hub-db"],
 			["r2", "bucket", "list"],
-			["r2", "bucket", "create", "zeroci-hub-logs"],
+			["r2", "bucket", "create", "hookci-hub-logs"],
 			LIFECYCLE,
-			["d1", "migrations", "apply", "zeroci-hub-db", "--remote"],
+			["d1", "migrations", "apply", "hookci-hub-db", "--remote"],
 			["deploy"],
 			["deploy"],
 			["secret", "put", "TOKEN_ENC_KEYS"],
@@ -163,9 +163,9 @@ describe("runSetup", () => {
 		]);
 		expect(state).toMatchObject({
 			account_id: ACCOUNT,
-			name: "zeroci-hub",
+			name: "hookci-hub",
 			d1_database_id: CREATED_DB,
-			r2_bucket: "zeroci-hub-logs",
+			r2_bucket: "hookci-hub-logs",
 			base_url: WORKERS_DEV,
 			slack_configured: true,
 			hub_version_seen: "0.3.0",
@@ -179,10 +179,10 @@ describe("runSetup", () => {
 		expect(log[log.length - 1]).toBe(setupSummary(state));
 
 		const toml = await renderedToml();
-		expect(toml.name).toBe("zeroci-hub");
+		expect(toml.name).toBe("hookci-hub");
 		expect(toml.account_id).toBe(ACCOUNT);
 		expect(toml.d1_databases[0]?.database_id).toBe(CREATED_DB);
-		expect(toml.r2_buckets[0]?.bucket_name).toBe("zeroci-hub-logs");
+		expect(toml.r2_buckets[0]?.bucket_name).toBe("hookci-hub-logs");
 		expect(toml.vars.HUB_ORIGIN).toBe(WORKERS_DEV);
 		expect(existsSync(join(dir, "worker", "index.js"))).toBe(true);
 		expect(existsSync(join(dir, "migrations", "0001_init.sql"))).toBe(true);
@@ -204,13 +204,13 @@ describe("runSetup", () => {
 		const failing = fakeExec(freshAccount([{ match: is("d1", "migrations", "apply"), result: { code: 1, stdout: "", stderr } }]));
 		const err = await setupError(runSetup(options(failing)));
 		expect(err.code).toBe("wrangler_failed");
-		expect(err.message).toBe("wrangler d1 migrations apply zeroci-hub-db --remote exited with code 1");
+		expect(err.message).toBe("wrangler d1 migrations apply hookci-hub-db --remote exited with code 1");
 		expect(err.detail.split("\n")).toEqual(Array.from({ length: 20 }, (_, i) => `stderr line ${i + 11}`));
 		expect((await loadState(dir))?.steps_done).toEqual(SETUP_STEPS.slice(0, SETUP_STEPS.indexOf("migrate")));
 
 		const exec = fakeExec(freshAccount());
 		const state = await runSetup(options(exec));
-		expect(commands(exec)[0]).toEqual(["d1", "migrations", "apply", "zeroci-hub-db", "--remote"]);
+		expect(commands(exec)[0]).toEqual(["d1", "migrations", "apply", "hookci-hub-db", "--remote"]);
 		expect(commands(exec).filter((a) => a.includes("create") || a[0] === "whoami")).toEqual([]);
 		expect(state.d1_database_id).toBe(CREATED_DB);
 		expect(state.steps_done).toEqual([...SETUP_STEPS]);
@@ -226,7 +226,7 @@ describe("runSetup", () => {
 		const state = await runSetup(options(exec));
 		expect(commands(exec).filter((a) => a.includes("create"))).toEqual([]);
 		expect(state.d1_database_id).toBe(EXISTING_DB);
-		expect(state.r2_bucket).toBe("zeroci-hub-logs");
+		expect(state.r2_bucket).toBe("hookci-hub-logs");
 		expect((await renderedToml()).d1_databases[0]?.database_id).toBe(EXISTING_DB);
 	});
 
@@ -291,7 +291,7 @@ describe("secrets", () => {
 });
 
 describe("lifecycle", () => {
-	const s: HubState = { account_id: ACCOUNT, name: "zeroci-hub", r2_bucket: "zeroci-hub-logs", version: "0.0.0", steps_done: [] };
+	const s: HubState = { account_id: ACCOUNT, name: "hookci-hub", r2_bucket: "hookci-hub-logs", version: "0.0.0", steps_done: [] };
 
 	it("expires logs/ after 14 days", async () => {
 		const exec = fakeExec(freshAccount());
@@ -300,7 +300,7 @@ describe("lifecycle", () => {
 	});
 
 	it("counts an existing rule as success and fails on other errors", async () => {
-		const exists = fakeExec([{ match: is("r2"), result: { code: 1, stdout: "", stderr: "✘ [ERROR] A lifecycle rule with ID zeroci-log-retention already exists" } }]);
+		const exists = fakeExec([{ match: is("r2"), result: { code: 1, stdout: "", stderr: "✘ [ERROR] A lifecycle rule with ID hookci-log-retention already exists" } }]);
 		await expect(applyLifecycle(options(exists), s)).resolves.toEqual(s);
 
 		const denied = fakeExec([{ match: is("r2"), result: { code: 1, stdout: "", stderr: "✘ [ERROR] Authentication error [code: 10000]" } }]);
@@ -315,7 +315,7 @@ describe("account", () => {
 		const exec = fakeExec([{ match: is("whoami"), result: ok(fx["whoami-two.txt"]) }]);
 		const prompter: Prompter = scriptedPrompter({ [ACCOUNT_QUESTION]: "2", [DOMAIN_QUESTION]: "" });
 		const s = await resolveAccount(options(exec, { yes: false, prompter }), { account_id: "", version: "0.0.0", steps_done: [] });
-		expect(s).toEqual({ account_id: OTHER_ACCOUNT, name: "zeroci-hub", version: "0.0.0", steps_done: [] });
+		expect(s).toEqual({ account_id: OTHER_ACCOUNT, name: "hookci-hub", version: "0.0.0", steps_done: [] });
 	});
 
 	it("takes CLOUDFLARE_ACCOUNT_ID without asking wrangler", async () => {
@@ -360,7 +360,7 @@ describe("errors", () => {
 
 	it("rejects an invalid hub name", async () => {
 		const exec = fakeExec([{ match: is("whoami"), result: ok(fx["whoami-one.txt"]) }]);
-		const prompter = scriptedPrompter({ "Hub name": "Zeroci_Hub" });
+		const prompter = scriptedPrompter({ "Hub name": "Hookci_Hub" });
 		const err = await setupError(runSetup(options(exec, { yes: false, prompter })));
 		expect(err.code).toBe("bad_name");
 		expect(err.hint).toContain("lowercase");

@@ -11,10 +11,10 @@ import (
 )
 
 // DefaultUser is the unprivileged runner account jobs run as under systemd.
-const DefaultUser = "zeroci-run"
+const DefaultUser = "hookci-run"
 
 // UnitPrefix starts every job unit name; recovery lists units by it.
-const UnitPrefix = "zeroci-run-"
+const UnitPrefix = "hookci-run-"
 
 // Limits are the resolved resource limits for one job. Zero means "unset" and
 // the corresponding systemd property is omitted.
@@ -33,13 +33,13 @@ type Spec struct {
 	Dir            string   // working directory (inside the run dir)
 	Env            []string // full, already-clean environment (KEY=VALUE); backends add nothing
 	Limits         Limits
-	NetNSPath      string   // netns.Network.NSPath ("/run/netns/zc-<run>") when a netns exists, else ""
+	NetNSPath      string   // netns.Network.NSPath ("/run/netns/hci-<run>") when a netns exists, else ""
 	ReadWritePaths []string // usually exactly [<rundir>]
 	// Hide is a dir the unit sees as an empty read-only tmpfs, with only the
 	// ReadWritePaths under it bound back in. The executor hides <state>/runs
 	// so a job cannot reach other runs' dirs. Empty hides nothing.
 	Hide   string
-	User   string // default "zeroci-run"; empty means default
+	User   string // default "hookci-run"; empty means default
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -55,7 +55,7 @@ type Result struct {
 
 // Unit is one live job unit.
 type Unit struct {
-	Name   string // zeroci-run-<run>-<job>.service without the suffix
+	Name   string // hookci-run-<run>-<job>.service without the suffix
 	Active string // systemctl ACTIVE column
 }
 
@@ -72,7 +72,7 @@ var (
 	ErrHubNone     = errors.New("isolation: none is never allowed when connected to a hub")
 )
 
-// UnitName returns "zeroci-run-<run>-<job>" with both parts sanitized.
+// UnitName returns "hookci-run-<run>-<job>" with both parts sanitized.
 func UnitName(runID, job string) string {
 	return UnitPrefix + SanitizeUnitPart(runID) + "-" + SanitizeUnitPart(job)
 }

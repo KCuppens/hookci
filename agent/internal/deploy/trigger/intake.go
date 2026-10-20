@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Decision is the answer to a deploy trigger: accepted for RunID, or
@@ -41,7 +41,7 @@ func (e *permanentError) Unwrap() error { return e.err }
 func Permanent(err error) error { return &permanentError{err: err} }
 
 // IsPermanent reports whether err, a Handle error, would recur on retry:
-// a trigger without an env, an invalid .zeroci.yml, a GitHub 4xx other
+// a trigger without an env, an invalid .hookci.yml, a GitHub 4xx other
 // than 401, 403, 408 and 429, or an error marked by Permanent. Network,
 // GitHub 5xx and store failures are transient.
 func IsPermanent(err error) bool {
@@ -94,7 +94,7 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	}
 	dep, ok := cfg.Deployments[env]
 	if !ok {
-		return rejected("deployments.%s: env not defined in .zeroci.yml at %s", env, short(t.Sha)), nil
+		return rejected("deployments.%s: env not defined in .hookci.yml at %s", env, short(t.Sha)), nil
 	}
 	branch := strings.TrimPrefix(t.Ref, "refs/heads/")
 	if dep.On.Push != branch {
@@ -144,7 +144,7 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 // re-queues a Failed or Interrupted run as a retry under the same run id,
 // once the run's branch is still protected, holds the commit and the
 // trigger is trusted: the hub counts only its own triggers, so a host-side
-// `zeroci retry` leaves the agent's attempt ahead of it. The daemon drops a
+// `hookci retry` leaves the agent's attempt ahead of it. The daemon drops a
 // trigger id it already answered. The paths filter does not apply to a retry.
 func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env string) (Decision, error) {
 	run, err := in.Store.LatestDeployRunFor(ctx, t.Repo, env, t.Sha)

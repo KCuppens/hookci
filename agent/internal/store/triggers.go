@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // TriggerState is the agent-side state of a hub trigger.

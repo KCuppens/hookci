@@ -11,7 +11,7 @@ import (
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	want := &AgentConfig{HubURL: "https://ci.webuno.io", AgentID: "agt_1", Credential: "zc_agent_abc", Name: "build-1", InstallationID: 42}
+	want := &AgentConfig{HubURL: "https://ci.webuno.io", AgentID: "agt_1", Credential: "hci_agent_abc", Name: "build-1", InstallationID: 42}
 	if err := Save(dir, want); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 func TestLoadRefusesLooseMode(t *testing.T) {
 	for _, mode := range []os.FileMode{0o640, 0o644, 0o604} {
 		dir := t.TempDir()
-		if err := Save(dir, &AgentConfig{AgentID: "agt_1", Credential: "zc_agent_abc"}); err != nil {
+		if err := Save(dir, &AgentConfig{AgentID: "agt_1", Credential: "hci_agent_abc"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Chmod(filepath.Join(dir, FileName), mode); err != nil {

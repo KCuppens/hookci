@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // MaxCheckAttempts caps how often a check run is started. An interrupted hub
@@ -70,7 +70,7 @@ type Report struct {
 // to Deps.Netns.
 type NetnsManager struct{ *netns.Manager }
 
-// ListNamespaces returns the zc- namespaces the manager sees.
+// ListNamespaces returns the hci- namespaces the manager sees.
 func (m NetnsManager) ListNamespaces(context.Context) ([]string, error) {
 	return m.Manager.ListNamespaces()
 }
@@ -191,7 +191,7 @@ func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error
 	slices.Reverse(runs) // oldest first, so retries queue in the original order
 
 	for _, run := range runs {
-		// A local zeroci run has no trigger, so no daemon would ever run its
+		// A local hookci run has no trigger, so no daemon would ever run its
 		// retry.
 		retry := run.Kind == kindCheck && run.TriggerID != "" && run.Attempt < MaxCheckAttempts
 		created, err := d.Store.InterruptRun(ctx, run.ID, InterruptedReason, retry)

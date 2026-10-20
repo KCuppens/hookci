@@ -17,9 +17,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/selfupdate"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/selfupdate"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 type acceptAll struct{}
@@ -33,7 +33,7 @@ func fakeReleases(t *testing.T, tag string, binary []byte) *httptest.Server {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
-	if err := tw.WriteHeader(&tar.Header{Name: "zeroci", Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "hookci", Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
 	tw.Write(binary)
@@ -81,7 +81,7 @@ func runUpgradeCLI(t *testing.T, srv *httptest.Server, current string, args ...s
 	t.Cleanup(func() { version.Version = old })
 	dir := t.TempDir()
 	env := upgradeEnv{
-		bin:         filepath.Join(dir, "zeroci"),
+		bin:         filepath.Join(dir, "hookci"),
 		trustedRoot: filepath.Join(dir, selfupdate.TrustedRootName),
 		svc:         &fakeServices{},
 	}

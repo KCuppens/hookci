@@ -293,8 +293,8 @@ export class AgentDO extends DurableObject<Env> {
 		if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
 			return Response.json({ error: "upgrade_required" }, { status: 426 });
 		}
-		const agentId = request.headers.get("x-zeroci-agent-id");
-		const installationId = request.headers.get("x-zeroci-installation-id");
+		const agentId = request.headers.get("x-hookci-agent-id");
+		const installationId = request.headers.get("x-hookci-installation-id");
 		if (!agentId || !installationId) return Response.json({ error: "bad_request" }, { status: 400 });
 
 		for (const old of this.ctx.getWebSockets()) {

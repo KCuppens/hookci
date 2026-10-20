@@ -1,10 +1,10 @@
 {
-  "name": "zeroci-hub",
+  "name": "hookci-hub",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "zeroci-hub": "dist/cli/index.js"
+    "hookci-hub": "dist/cli/index.js"
   },
   "files": [
     "dist",

@@ -1,4 +1,4 @@
-// Block Kit builders for the few block shapes ZeroCI sends.
+// Block Kit builders for the few block shapes HookCI sends.
 
 export interface SectionBlock {
 	type: "section";

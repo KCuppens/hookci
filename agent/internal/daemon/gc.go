@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/gc"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/gc"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // newCollector returns the agent's GC of deploy images, build cache, run

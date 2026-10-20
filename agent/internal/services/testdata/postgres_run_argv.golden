@@ -2,10 +2,10 @@ run
 -d
 --rm=false
 --name
-zeroci-svc-01HX-postgres
+hookci-svc-01HX-postgres
 --label
-zeroci.run=01HX
---cgroup-parent=zeroci.slice
+hookci.run=01HX
+--cgroup-parent=hookci.slice
 --cpus
 1.5
 --memory
@@ -31,7 +31,7 @@ SETUID
 --tmpfs
 /var/lib/postgresql/data:rw,size=1073741824
 -v
-/var/lib/zeroci/local/runs/01HX/pg:/var/run/postgresql
+/var/lib/hookci/local/runs/01HX/pg:/var/run/postgresql
 -e
 POSTGRES_HOST_AUTH_METHOD=trust
 postgres:16-alpine

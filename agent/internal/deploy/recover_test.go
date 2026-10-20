@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestRecoverer_MarksInterruptedAndStopsUnits(t *testing.T) {
@@ -23,11 +23,11 @@ func TestRecoverer_MarksInterruptedAndStopsUnits(t *testing.T) {
 	}
 	seeds := []seed{
 		{"r2", "staging", store.DeployRunning, []string{store.StepDone, store.StepRunning},
-			"agent restarted during step 2 start; run zeroci retry r2"},
+			"agent restarted during step 2 start; run hookci retry r2"},
 		{"r3", "qa", store.DeployVerifying, []string{store.StepDone, store.StepDone, store.StepRunning},
-			"agent restarted during step 3 verify; run zeroci retry r3"},
+			"agent restarted during step 3 verify; run hookci retry r3"},
 		{"r4", "eu", store.DeployRollingBack, []string{store.StepDone, store.StepFailed},
-			"agent restarted during step 2 start; run zeroci retry r4"},
+			"agent restarted during step 2 start; run hookci retry r4"},
 		{"r5", "us", store.DeploySuccess, []string{store.StepDone, store.StepDone, store.StepDone, store.StepDone}, ""},
 	}
 	for n, s := range seeds {
@@ -55,11 +55,11 @@ func TestRecoverer_MarksInterruptedAndStopsUnits(t *testing.T) {
 	}
 
 	fake := &execx.Fake{}
-	fake.On("systemctl", []string{"list-units", "--plain", "--no-legend", "zeroci-run-*"}, execx.FakeResponse{Stdout: "" +
-		"zeroci-run-r2-deploy.service loaded active running zeroci deploy r2\n" +
-		"zeroci-run-r3-deploy.service loaded active running zeroci deploy r3\n" +
-		"zeroci-run-ci1-build.service loaded active running zeroci job\n"})
-	fake.On("systemctl", []string{"stop", "zeroci-run-r2-deploy"}, execx.FakeResponse{Code: 5, Stderr: "Unit not loaded."})
+	fake.On("systemctl", []string{"list-units", "--plain", "--no-legend", "hookci-run-*"}, execx.FakeResponse{Stdout: "" +
+		"hookci-run-r2-deploy.service loaded active running hookci deploy r2\n" +
+		"hookci-run-r3-deploy.service loaded active running hookci deploy r3\n" +
+		"hookci-run-ci1-build.service loaded active running hookci job\n"})
+	fake.On("systemctl", []string{"stop", "hookci-run-r2-deploy"}, execx.FakeResponse{Code: 5, Stderr: "Unit not loaded."})
 	fake.On("systemctl", []string{"stop"}, execx.FakeResponse{})
 	rec := &Recoverer{Store: r.store, Runner: fake, Events: r.events, Clock: r.clock.Now, Logger: slog.New(slog.DiscardHandler)}
 	got, err := rec.Recover(ctx)
@@ -75,9 +75,9 @@ func TestRecoverer_MarksInterruptedAndStopsUnits(t *testing.T) {
 		calls = append(calls, c.Name+" "+strings.Join(c.Args, " "))
 	}
 	wantCalls := []string{
-		"systemctl list-units --plain --no-legend zeroci-run-*",
-		"systemctl stop zeroci-run-r2-deploy",
-		"systemctl stop zeroci-run-r3-deploy",
+		"systemctl list-units --plain --no-legend hookci-run-*",
+		"systemctl stop hookci-run-r2-deploy",
+		"systemctl stop hookci-run-r3-deploy",
 	}
 	if !slices.Equal(calls, wantCalls) {
 		t.Errorf("commands = %q, want %q: a failed stop is not fatal and CI units are left alone", calls, wantCalls)
@@ -130,7 +130,7 @@ func TestRecoverer_ListUnitsErrorStillInterrupts(t *testing.T) {
 	if err != nil || !slices.Equal(got, []string{"r1"}) {
 		t.Fatalf("Recover = %v, %v, want [r1]", got, err)
 	}
-	want := "agent restarted between steps; run zeroci retry r1"
+	want := "agent restarted between steps; run hookci retry r1"
 	if run := r.run(t); run.State != store.DeployInterrupted || run.Error != want {
 		t.Errorf("run = %s %q, want Interrupted %q", run.State, run.Error, want)
 	}

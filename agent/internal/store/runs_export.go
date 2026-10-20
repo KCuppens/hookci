@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/runstats"
+	"github.com/KCuppens/hookci/agent/internal/runstats"
 )
 
 // ListFinishedRuns returns the check runs (runs) and deploy runs

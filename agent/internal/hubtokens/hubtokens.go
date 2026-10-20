@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
 // Timeout bounds how long Request waits for the hub's token frame.

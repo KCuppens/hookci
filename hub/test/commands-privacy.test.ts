@@ -16,7 +16,7 @@ import {
   setUpCommandWorld,
   TEAM,
   USER,
-  zeroci,
+  hookci,
 } from "./commands-helpers";
 
 const OTHER_USER = "U0OTHER";
@@ -60,7 +60,7 @@ async function rowsOf(table: "author_map" | "author_cache" | "user_links"): Prom
   return results;
 }
 
-/** The URL of the download button in a `/zeroci export` reply. */
+/** The URL of the download button in a `/hookci export` reply. */
 function exportUrl(reply: { blocks?: unknown[] }): string {
   expect(reply.blocks).toEqual(
     expect.arrayContaining([{ type: "actions", elements: [expect.objectContaining({ type: "button", text: expect.objectContaining({ text: S.slack.exportButton }) })] }]),
@@ -70,7 +70,7 @@ function exportUrl(reply: { blocks?: unknown[] }): string {
   return url ?? "";
 }
 
-describe("/zeroci delete-my-data", () => {
+describe("/hookci delete-my-data", () => {
   it("deletes only the caller's link, author mappings and cached lookups", async () => {
     await upsertUserLink(env.DB, { team_id: TEAM, slack_user_id: OTHER_USER, github_user_id: 7002, github_login: "hubot", created_at: 1 });
     await upsertUserLink(env.DB, { team_id: OTHER_TEAM, slack_user_id: USER, github_user_id: 7001, github_login: LOGIN, created_at: 1 });
@@ -78,7 +78,7 @@ describe("/zeroci delete-my-data", () => {
     await seedAuthorRows(TEAM, OTHER_USER, "hubot");
     await seedAuthorRows(OTHER_TEAM, USER, LOGIN);
 
-    const reply = await zeroci(world, "delete-my-data");
+    const reply = await hookci(world, "delete-my-data");
 
     expect(reply.text).toBe(S.slack.deletedData(1, 1, 1));
     const survivors = [
@@ -93,12 +93,12 @@ describe("/zeroci delete-my-data", () => {
   it("works for a user with no GitHub link", async () => {
     await seedAuthorRows(TEAM, OTHER_USER, "hubot");
 
-    expect((await zeroci(world, "delete-my-data", OTHER_USER)).text).toBe(S.slack.deletedData(0, 1, 1));
+    expect((await hookci(world, "delete-my-data", OTHER_USER)).text).toBe(S.slack.deletedData(0, 1, 1));
     expect(await rowsOf("author_map")).toEqual([]);
   });
 });
 
-describe("/zeroci export", () => {
+describe("/hookci export", () => {
   beforeEach(async () => {
     await seedAuthorRows(TEAM, USER, LOGIN);
     const triggerId = ulid(testClock.now());
@@ -125,7 +125,7 @@ describe("/zeroci export", () => {
   });
 
   it("links to a JSON copy of the caller's link, mappings and runs", async () => {
-    const reply = await zeroci(world, "export");
+    const reply = await hookci(world, "export");
     expect(reply.text).toBe(S.slack.exportSummary(LOGIN, 1, 1, 14));
 
     const res = await exports.default.fetch(exportUrl(reply));
@@ -144,7 +144,7 @@ describe("/zeroci export", () => {
   });
 
   it("rejects the link once 15 minutes have passed", async () => {
-    const url = exportUrl(await zeroci(world, "export"));
+    const url = exportUrl(await hookci(world, "export"));
 
     testClock.advance(EXPORT_TTL_MS + 1000);
     const res = await exports.default.fetch(url);
@@ -154,7 +154,7 @@ describe("/zeroci export", () => {
   });
 
   it("rejects a link whose token was changed", async () => {
-    const url = new URL(exportUrl(await zeroci(world, "export")));
+    const url = new URL(exportUrl(await hookci(world, "export")));
     const token = url.searchParams.get("token") ?? "";
     url.searchParams.set("token", token.replace(USER, OTHER_USER));
 
@@ -164,7 +164,7 @@ describe("/zeroci export", () => {
     expect(await res.json()).toEqual({ error: "export_token_invalid" });
   });
 
-  it("prompts an unlinked user to run /zeroci me", async () => {
-    expect((await zeroci(world, "export", OTHER_USER)).text).toBe(S.slack.notLinked);
+  it("prompts an unlinked user to run /hookci me", async () => {
+    expect((await hookci(world, "export", OTHER_USER)).text).toBe(S.slack.notLinked);
   });
 });

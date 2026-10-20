@@ -197,7 +197,7 @@ func (c *Client) sinkAPI(ctx context.Context, method, path string, body any, wan
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.Credential)
-	req.Header.Set("User-Agent", "zeroci-agent/"+c.cfg.Version)
+	req.Header.Set("User-Agent", "hookci-agent/"+c.cfg.Version)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

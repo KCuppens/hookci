@@ -20,9 +20,9 @@ scripts/check-docs.sh
 	npm ci
 	npm test
 	npm run typecheck
-	npx wrangler deploy --dry-run --env "" --outdir /tmp/zeroci-dry
-	npx wrangler deploy --dry-run --env staging --outdir /tmp/zeroci-dry-staging
-	# zeroci-hub CLI: a config rendered from the packaged template deploys (dry run).
+	npx wrangler deploy --dry-run --env "" --outdir /tmp/hookci-dry
+	npx wrangler deploy --dry-run --env staging --outdir /tmp/hookci-dry-staging
+	# hookci-hub CLI: a config rendered from the packaged template deploys (dry run).
 	npm run prepack
 	cli_tmp=$(mktemp -d)
 	trap 'rm -rf "$cli_tmp"' EXIT

@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
 )
 
 // DefaultCaddyAdmin is the TCP address Caddy serves its admin API on unless
@@ -38,14 +38,14 @@ var minCompose = [2]int{2, 24}
 
 // DeployCheckDeps is what the deploy checks need beyond Env.
 type DeployCheckDeps struct {
-	// Repos returns the zeroci configs whose deployments run on this host.
-	Repos func(ctx context.Context) ([]config.ZeroCIConfig, error)
+	// Repos returns the hookci configs whose deployments run on this host.
+	Repos func(ctx context.Context) ([]config.HookCIConfig, error)
 	// CaddyAdmin is the URL of the Caddy admin API on TCP, default
 	// DefaultCaddyAdmin.
 	CaddyAdmin string
 }
 
-// DeployChecks is every deploy check zeroci doctor runs after Default, in
+// DeployChecks is every deploy check hookci doctor runs after Default, in
 // display order. deploy.caddy, deploy.route_file and deploy.env_file skip
 // when no deployment of deps.Repos needs them.
 func DeployChecks(deps DeployCheckDeps) []Check {
@@ -127,7 +127,7 @@ type envDeployment struct {
 
 // deployments lists every deployment of repos, ordered by env name within
 // each repo.
-func deployments(ctx context.Context, repos func(context.Context) ([]config.ZeroCIConfig, error)) ([]envDeployment, error) {
+func deployments(ctx context.Context, repos func(context.Context) ([]config.HookCIConfig, error)) ([]envDeployment, error) {
 	if repos == nil {
 		return nil, nil
 	}
@@ -145,11 +145,11 @@ func deployments(ctx context.Context, repos func(context.Context) ([]config.Zero
 }
 
 // caddyCheck wants caddy on PATH when a deployment routes through caddy.
-func caddyCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.ZeroCIConfig, error)) Result {
+func caddyCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.HookCIConfig, error)) Result {
 	const title = "caddy"
 	deps, err := deployments(ctx, repos)
 	if err != nil {
-		return fail(title, err.Error(), "fix .zeroci.yml: zeroci validate")
+		return fail(title, err.Error(), "fix .hookci.yml: hookci validate")
 	}
 	if !slices.ContainsFunc(deps, func(d envDeployment) bool {
 		return d.dep.Route != nil && d.dep.Route.Kind == config.DeploymentRouteKindCaddy
@@ -167,11 +167,11 @@ func caddyCheck(ctx context.Context, env Env, repos func(context.Context) ([]con
 // paired installation, or the default dirs when none is paired, and its
 // directory to exist and accept new files, since the route is written to a
 // temp file there and renamed into place.
-func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.ZeroCIConfig, error)) Result {
+func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.HookCIConfig, error)) Result {
 	const title = "route files"
 	deps, err := deployments(ctx, repos)
 	if err != nil {
-		return fail(title, err.Error(), "fix .zeroci.yml: zeroci validate")
+		return fail(title, err.Error(), "fix .hookci.yml: hookci validate")
 	}
 	insts, err := pairedOrDefault(env)
 	if err != nil {
@@ -198,7 +198,7 @@ func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([
 			return fail(title, fmt.Sprintf("deployments.%s.route.file: %s is not a directory", d.env, dir), "point route.file at a file in a directory")
 		}
 		if err := env.Writable(dir); err != nil {
-			return fail(title, fmt.Sprintf("deployments.%s.route.file: %s is not writable: %v", d.env, dir, err), "run zeroci doctor as root, the user the agent runs as")
+			return fail(title, fmt.Sprintf("deployments.%s.route.file: %s is not writable: %v", d.env, dir, err), "run hookci doctor as root, the user the agent runs as")
 		}
 		dirs = append(dirs, dir)
 	}
@@ -210,11 +210,11 @@ func routeFileCheck(ctx context.Context, env Env, repos func(context.Context) ([
 
 // envFileCheck wants every env file owned by root with no permission for
 // group or others, the rule a trusted deploy enforces when it loads the file.
-func envFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.ZeroCIConfig, error)) Result {
+func envFileCheck(ctx context.Context, env Env, repos func(context.Context) ([]config.HookCIConfig, error)) Result {
 	const title = "env files"
 	deps, err := deployments(ctx, repos)
 	if err != nil {
-		return fail(title, err.Error(), "fix .zeroci.yml: zeroci validate")
+		return fail(title, err.Error(), "fix .hookci.yml: hookci validate")
 	}
 	var files []string
 	for _, d := range deps {
@@ -356,7 +356,7 @@ func allowCaddyTCPAdmin(env Env) bool {
 // paired.
 func diskCheck(ctx context.Context, env Env) Result {
 	const title = "deploy disk headroom"
-	const fix = "free space on that file system: zeroci gc prunes images and build cache"
+	const fix = "free space on that file system: hookci gc prunes images and build cache"
 	root, err := deploy.DockerRootDir(ctx, env.Exec)
 	if err != nil {
 		return fail(title, err.Error(), dockerFix)

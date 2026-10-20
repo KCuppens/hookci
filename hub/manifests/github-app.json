@@ -1,5 +1,5 @@
 {
-  "name": "zeroci",
+  "name": "hookci",
   "url": "https://ci.webuno.io",
   "hook_attributes": { "url": "https://ci.webuno.io/github/webhook", "active": true },
   "redirect_url": "https://ci.webuno.io/github/oauth/callback",

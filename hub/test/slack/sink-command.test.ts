@@ -10,12 +10,12 @@ import { SUBMIT_ANSWER_MS } from "../../src/slack/sink-command";
 import { SINK_ADD_CALLBACK_ID } from "../../src/slack/sink-modal";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
-import { CHANNEL, type CommandWorld, INSTALLATION, LOGIN, REPO, setUpCommandWorld, slackCalls, TEAM, USER, zeroci } from "../commands-helpers";
+import { CHANNEL, type CommandWorld, INSTALLATION, LOGIN, REPO, setUpCommandWorld, slackCalls, TEAM, USER, hookci } from "../commands-helpers";
 
 const TG_API = "https://tg.test";
 const BOT_TOKEN = `123456789:AAH${"s".repeat(32)}`;
 const CHAT = "-1001234567890";
-const HOOK = "https://hooks.example.com/zeroci";
+const HOOK = "https://hooks.example.com/hookci";
 const LINEAR_API = "https://linear.test/graphql";
 const LIN_KEY = "lin_api_SLACKSECRET99";
 /** Every Slack method this feature may call. */
@@ -48,7 +48,7 @@ beforeEach(async () => {
   env.LINEAR_API_URL = LINEAR_API;
   world.gh.respond("POST", /\/getMe$/, () => Response.json({ ok: true, result: { id: 123456789, is_bot: true, username: "acme_ci_bot" } }));
   world.gh.respond("POST", /\/getChat$/, () => Response.json({ ok: true, result: { id: Number(CHAT), type: "supergroup", title: "Acme CI" } }));
-  world.gh.respond("POST", "/zeroci", () => new Response("ok"));
+  world.gh.respond("POST", "/hookci", () => new Response("ok"));
   logs = [];
   for (const level of ["log", "info", "warn", "error", "debug"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -144,15 +144,15 @@ function expectOnlySinkSlackMethods(): void {
 
 /** Adds a webhook sink through the command and the modal; returns its id and the result text the modal shows. */
 async function addWebhook(): Promise<{ id: string; text: string }> {
-  await zeroci(world, "sink add acme/api");
+  await hookci(world, "sink add acme/api");
   const text = modalText(await submit(filled({ kind: "webhook", webhook_url: HOOK })), S.slack.sinkModal.addedTitle);
   const [row] = await sinkRows();
   return { id: row!.id, text };
 }
 
-describe("/zeroci sink add", () => {
+describe("/hookci sink add", () => {
   it("opens the Add sink modal once, for a maintainer, with the repo and channel in its metadata", async () => {
-    const reply = await zeroci(world, "sink add acme/api");
+    const reply = await hookci(world, "sink add acme/api");
 
     expect(reply.text).toBe(S.slack.sinkFormOpened("acme/api"));
     const opens = slackCalls(world, "views.open");
@@ -165,25 +165,25 @@ describe("/zeroci sink add", () => {
 
   it("opens it for an admin too", async () => {
     world.roles[LOGIN] = "admin";
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     expect(slackCalls(world, "views.open")).toHaveLength(1);
   });
 
   it("refuses a user with only write, and opens nothing", async () => {
     world.roles[LOGIN] = "write";
-    const reply = await zeroci(world, "sink add acme/api");
+    const reply = await hookci(world, "sink add acme/api");
     expect(reply.text).toBe(S.slack.forbidden);
     expect(slackCalls(world, "views.open")).toEqual([]);
   });
 
   it("refuses an unlinked user", async () => {
-    const reply = await zeroci(world, "sink add acme/api", "U0STRANGER");
+    const reply = await hookci(world, "sink add acme/api", "U0STRANGER");
     expect(reply.text).toBe(S.slack.notLinked);
     expect(slackCalls(world, "views.open")).toEqual([]);
   });
 
   it("refuses a repo outside the linked installations", async () => {
-    const reply = await zeroci(world, "sink add other/repo");
+    const reply = await hookci(world, "sink add other/repo");
     expect(reply.text).toBe(S.slack.repoNotFound);
     expect(slackCalls(world, "views.open")).toEqual([]);
   });
@@ -199,7 +199,7 @@ describe("secrets in command text", () => {
     ["a Linear OAuth token after add", "sink add acme/api lin_oauth_xyz789"],
   ])("refuses %s and keeps it out of D1 and the logs", async (_, text) => {
     const secret = text.split(" ").at(-1)!;
-    const reply = await zeroci(world, text);
+    const reply = await hookci(world, text);
 
     expect(reply.text).toBe(S.slack.sinkSecretInCommand);
     expect(slackCalls(world, "views.open")).toEqual([]);
@@ -216,17 +216,17 @@ describe("Add sink submission", () => {
 
     expect(slackCalls(world, "chat.postEphemeral")).toEqual([]);
     expect(text).toContain(id);
-    expect(text).toMatch(/zcwh_/);
+    expect(text).toMatch(/hciwh_/);
     expect(text).toContain(S.slack.sinkSecretOnce);
-    const secret = /zcwh_[A-Za-z0-9_-]+/.exec(text)![0];
-    expect(slackCalls(world, "chat.postMessage").filter((c) => JSON.stringify(c.body).includes("zcwh_"))).toEqual([]);
+    const secret = /hciwh_[A-Za-z0-9_-]+/.exec(text)![0];
+    expect(slackCalls(world, "chat.postMessage").filter((c) => JSON.stringify(c.body).includes("hciwh_"))).toEqual([]);
     expect(await wholeDatabase()).not.toContain(secret);
     expect(logs.join("\n")).not.toContain(secret);
     expectOnlySinkSlackMethods();
   });
 
   it("adds a Telegram sink after the service checked the token and chat, and never echoes the token", async () => {
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     const answer = await submit(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT, label: "CI" }));
 
     expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "telegram" }]);
@@ -252,20 +252,20 @@ describe("Add sink submission", () => {
 
   it("adds a Linear sink and shows its team and assignee, never the key", async () => {
     linearAnswers([{ id: "team_1", key: "ENG" }]);
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     const answer = await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG", linear_assignee_email: "dana@acme.test" }));
 
     expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "linear" }]);
     const text = modalText(answer, S.slack.sinkModal.addedTitle);
     expect(text).toContain(S.sinks.linearTarget("ENG", "Dana"));
     expect(text).not.toContain(LIN_KEY);
-    expect((await zeroci(world, "sink list acme/api")).text).toContain("Linear, team ENG, assignee Dana, enabled");
+    expect((await hookci(world, "sink list acme/api")).text).toContain("Linear, team ENG, assignee Dana, enabled");
     expect(await wholeDatabase()).not.toContain(LIN_KEY);
     expect(logs.join("\n")).not.toContain(LIN_KEY);
   });
 
   it("shows an unknown Linear team on the team field and a refused key on the key field", async () => {
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     linearAnswers([]);
     expect(await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG" }))).toEqual({
       response_action: "errors",
@@ -280,7 +280,7 @@ describe("Add sink submission", () => {
   });
 
   it("checks the submitter's role again: a maintainer demoted to write before submitting adds nothing", async () => {
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     world.roles[LOGIN] = "write";
 
     const answer = await submit(filled({ kind: "webhook", webhook_url: HOOK }));
@@ -291,14 +291,14 @@ describe("Add sink submission", () => {
   });
 
   it("shows the service's refusal on the field it concerns", async () => {
-    await zeroci(world, "sink add acme/api");
-    const answer = await submit(filled({ kind: "webhook", webhook_url: "http://hooks.example.com/zeroci" }));
+    await hookci(world, "sink add acme/api");
+    const answer = await submit(filled({ kind: "webhook", webhook_url: "http://hooks.example.com/hookci" }));
     expect(answer).toEqual({ response_action: "errors", errors: { webhook_url: S.sinks.errors.not_https } });
     expect(await sinkRows()).toEqual([]);
   });
 
   it("names missing fields without calling the service", async () => {
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
     const answer = await submit(filled({ kind: "telegram", chat_id: CHAT }));
     expect(answer).toEqual({ response_action: "errors", errors: { bot_token: S.slack.sinkModal.needBotToken } });
     expect(world.gh.calls.filter((c) => c.url.startsWith(TG_API))).toEqual([]);
@@ -335,7 +335,7 @@ describe("Add sink submission", () => {
   }
 
   it("answers a slow save with a saving view that cannot be submitted again, then shows the result in the modal", async () => {
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
 
     const answer = await submitPastAnswerWindow(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT }));
 
@@ -354,7 +354,7 @@ describe("Add sink submission", () => {
 
   it("posts a slow save's result ephemeral to the submitter when the modal was closed", async () => {
     world.slack.respond("POST", "/api/views.update", () => Response.json({ ok: false, error: "not_found" }));
-    await zeroci(world, "sink add acme/api");
+    await hookci(world, "sink add acme/api");
 
     await submitPastAnswerWindow(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT }));
 
@@ -366,27 +366,27 @@ describe("Add sink submission", () => {
   });
 });
 
-describe("/zeroci sink list, test and remove", () => {
+describe("/hookci sink list, test and remove", () => {
   it("lists the repo's sinks with their target redacted and no secret", async () => {
     const { id, text } = await addWebhook();
-    const secret = /zcwh_[A-Za-z0-9_-]+/.exec(text)![0];
+    const secret = /hciwh_[A-Za-z0-9_-]+/.exec(text)![0];
 
-    const reply = await zeroci(world, "sink list acme/api");
+    const reply = await hookci(world, "sink list acme/api");
 
     expect(reply.text).toContain(S.slack.sinkListHeader("acme/api"));
-    expect(reply.text).toContain(`${id}: Webhook, https://hooks.example.com/zeroci, enabled`);
+    expect(reply.text).toContain(`${id}: Webhook, https://hooks.example.com/hookci, enabled`);
     expect(reply.text).not.toContain(secret);
   });
 
   it("says when the repo has no sinks", async () => {
-    expect((await zeroci(world, "sink list acme/api")).text).toBe(S.slack.sinkNone("acme/api"));
+    expect((await hookci(world, "sink list acme/api")).text).toBe(S.slack.sinkNone("acme/api"));
   });
 
   it("sends a test delivery through the service", async () => {
     const { id } = await addWebhook();
     const before = world.gh.calls.length;
 
-    const reply = await zeroci(world, `sink test ${id}`);
+    const reply = await hookci(world, `sink test ${id}`);
 
     expect(reply.text).toBe(S.slack.sinkTestOk(id));
     const posts = world.gh.calls.slice(before).filter((c) => c.url === HOOK);
@@ -396,7 +396,7 @@ describe("/zeroci sink list, test and remove", () => {
   it("removes the sink through the service", async () => {
     const { id } = await addWebhook();
 
-    const reply = await zeroci(world, `sink remove ${id}`);
+    const reply = await hookci(world, `sink remove ${id}`);
 
     expect(reply.text).toBe(S.slack.sinkRemoved(id, "acme/api"));
     expect(await sinkRows()).toEqual([]);
@@ -408,19 +408,19 @@ describe("/zeroci sink list, test and remove", () => {
     const before = world.gh.calls.filter((c) => c.url === HOOK).length;
 
     for (const text of ["sink list acme/api", `sink test ${id}`, `sink remove ${id}`]) {
-      expect((await zeroci(world, text)).text).toBe(S.slack.forbidden);
+      expect((await hookci(world, text)).text).toBe(S.slack.forbidden);
     }
     expect(await sinkRows()).toHaveLength(1);
     expect(world.gh.calls.filter((c) => c.url === HOOK)).toHaveLength(before);
   });
 
   it("does not find a sink of an installation the workspace is not linked to", async () => {
-    expect((await zeroci(world, "sink remove snk_missing")).text).toBe(S.slack.sinkNotFound("snk_missing"));
+    expect((await hookci(world, "sink remove snk_missing")).text).toBe(S.slack.sinkNotFound("snk_missing"));
   });
 
   it("answers usage for a missing or unknown subcommand", async () => {
     for (const text of ["sink", "sink add", "sink purge acme/api", "sink add acme/api extra"]) {
-      expect((await zeroci(world, text)).text).toBe(S.slack.usage(S.slack.sinkUsage));
+      expect((await hookci(world, text)).text).toBe(S.slack.usage(S.slack.sinkUsage));
     }
   });
 });

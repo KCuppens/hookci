@@ -13,8 +13,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // TestOverlayRestoreIntegration mounts a real overlay: writes in the workdir
@@ -58,7 +58,7 @@ func TestOverlayRestoreIntegration(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(nm, "b")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dst, ".zeroci-cache", "0", "upper", "c", "new.js")); err != nil {
+	if _, err := os.Stat(filepath.Join(dst, ".hookci-cache", "0", "upper", "c", "new.js")); err != nil {
 		t.Errorf("write did not land in upper: %v", err)
 	}
 	if after := treeState(t, entry); !maps.Equal(before, after) {
@@ -68,7 +68,7 @@ func TestOverlayRestoreIntegration(t *testing.T) {
 	if err := cleanup(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(filepath.Join(dst, ".zeroci-cache")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(dst, ".hookci-cache")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("scratch left after cleanup: %v", err)
 	}
 	if names, err := os.ReadDir(nm); err != nil || len(names) != 0 {

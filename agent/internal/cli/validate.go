@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int {
@@ -17,9 +17,9 @@ func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int
 	selfHosted := fs.Bool("self-hosted", false, "validate for a self-hosted hub, where trust: all is allowed without deployments")
 	asJSON := fs.Bool("json", false, "print the diagnostics as a JSON array")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: zeroci validate [flags] [path]")
+		fmt.Fprintln(stdout, "Usage: hookci validate [flags] [path]")
 		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Check a zeroci configuration file (default .zeroci.yml) against the schema and semantic rules.")
+		fmt.Fprintln(stdout, "Check a hookci configuration file (default .hookci.yml) against the schema and semantic rules.")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Flags:")
 		fs.SetOutput(stdout)
@@ -32,17 +32,17 @@ func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int
 		return ExitUsage
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "zeroci: validate takes at most one path")
+		fmt.Fprintln(stderr, "hookci: validate takes at most one path")
 		return ExitUsage
 	}
-	path := ".zeroci.yml"
+	path := ".hookci.yml"
 	if fs.NArg() == 1 {
 		path = fs.Arg(0)
 	}
 
 	cfg, diags, err := config.Load(path, config.ParseOptions{SelfHosted: *selfHosted})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 
@@ -52,7 +52,7 @@ func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int
 		}
 		out, err := json.MarshalIndent(diags, "", "  ")
 		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: encode diagnostics: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: encode diagnostics: %v\n", err)
 			return ExitInternal
 		}
 		fmt.Fprintf(stdout, "%s\n", out)

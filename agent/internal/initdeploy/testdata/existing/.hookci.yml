@@ -1,4 +1,4 @@
-# zeroci config for the shop app.
+# hookci config for the shop app.
 #   Keep the jobs fast.
 version: 1
 

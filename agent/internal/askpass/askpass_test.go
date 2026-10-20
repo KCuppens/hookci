@@ -25,7 +25,7 @@ func serve(t *testing.T, token func(ctx context.Context) (string, error)) (strin
 
 func run(args ...string) (int, string) {
 	var out bytes.Buffer
-	code := Main(append([]string{"zeroci"}, args...), &out)
+	code := Main(append([]string{"hookci"}, args...), &out)
 	return code, out.String()
 }
 

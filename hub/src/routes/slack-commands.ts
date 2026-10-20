@@ -1,4 +1,4 @@
-// POST /slack/commands: the /zeroci slash command. Slack wants an answer
+// POST /slack/commands: the /hookci slash command. Slack wants an answer
 // within 3 s, so known subcommands are acked with "working on it" and run in
 // the workspace's SlackWorkspaceDO, which posts the reply to response_url.
 

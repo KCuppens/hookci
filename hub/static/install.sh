@@ -1,41 +1,41 @@
 #!/bin/sh
-# ZeroCI agent installer, served by the hub at __HUB_ORIGIN__/install
+# HookCI agent installer, served by the hub at __HUB_ORIGIN__/install
 # (hub __HUB_VERSION__).
 #
 #   curl -fsSL __HUB_ORIGIN__/install | sh
 #   curl -fsSL __HUB_ORIGIN__/install | sh -s -- <pair-token>
 #
-# With a pair token the installer also runs `zeroci connect` to pair this
+# With a pair token the installer also runs `hookci connect` to pair this
 # machine with the hub.
 #
 # Environment:
-#   ZEROCI_VERSION          release tag to install, "latest" (default) or vX.Y.Z
-#   ZEROCI_INSTALL_DRY_RUN  when set, print the privileged steps instead of running them
-#   ZEROCI_RELEASE_BASE     where release assets live (a file:// base is copied)
-#   ZEROCI_PREFIX           absolute install prefix, the binary goes to $ZEROCI_PREFIX/bin
-#   ZEROCI_ALLOW_UNSIGNED   set to 1 to install without cosign, checking only the checksum
+#   HOOKCI_VERSION          release tag to install, "latest" (default) or vX.Y.Z
+#   HOOKCI_INSTALL_DRY_RUN  when set, print the privileged steps instead of running them
+#   HOOKCI_RELEASE_BASE     where release assets live (a file:// base is copied)
+#   HOOKCI_PREFIX           absolute install prefix, the binary goes to $HOOKCI_PREFIX/bin
+#   HOOKCI_ALLOW_UNSIGNED   set to 1 to install without cosign, checking only the checksum
 set -eu
 
 # Releases are cut locally with goreleaser; SHA256SUMS is signed with the
 # maintainer's cosign keyless identity (agent/internal/selfupdate/verify.go).
-ZEROCI_COSIGN_IDENTITY="kobecuppens@hotmail.com"
-ZEROCI_COSIGN_ISSUER="https://github.com/login/oauth"
+HOOKCI_COSIGN_IDENTITY="kobecuppens@hotmail.com"
+HOOKCI_COSIGN_ISSUER="https://github.com/login/oauth"
 
-ZEROCI_VERSION="${ZEROCI_VERSION:-latest}"
-ZEROCI_INSTALL_DRY_RUN="${ZEROCI_INSTALL_DRY_RUN:-}"
-ZEROCI_ALLOW_UNSIGNED="${ZEROCI_ALLOW_UNSIGNED:-}"
-ZEROCI_RELEASE_BASE="${ZEROCI_RELEASE_BASE:-https://github.com/KCuppens/zerocideploy/releases/download}"
-ZEROCI_PREFIX="${ZEROCI_PREFIX:-/usr/local}"
+HOOKCI_VERSION="${HOOKCI_VERSION:-latest}"
+HOOKCI_INSTALL_DRY_RUN="${HOOKCI_INSTALL_DRY_RUN:-}"
+HOOKCI_ALLOW_UNSIGNED="${HOOKCI_ALLOW_UNSIGNED:-}"
+HOOKCI_RELEASE_BASE="${HOOKCI_RELEASE_BASE:-https://github.com/KCuppens/hookci/releases/download}"
+HOOKCI_PREFIX="${HOOKCI_PREFIX:-/usr/local}"
 HUB_ORIGIN="__HUB_ORIGIN__"
 
 die() {
 	code=$1
 	shift
-	echo "zeroci install: $*" >&2
+	echo "hookci install: $*" >&2
 	exit "$code"
 }
 
-run() { if [ -n "$ZEROCI_INSTALL_DRY_RUN" ]; then echo "+ $*"; else "$@"; fi; }
+run() { if [ -n "$HOOKCI_INSTALL_DRY_RUN" ]; then echo "+ $*"; else "$@"; fi; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -52,36 +52,36 @@ fetch() {
 
 # write_units writes the systemd units from packaging/ into $tmp.
 write_units() {
-# BEGIN packaging/zeroci.slice (scripts/gen-install.sh)
-cat >"$tmp/zeroci.slice" <<'EOF'
+# BEGIN packaging/hookci.slice (scripts/gen-install.sh)
+cat >"$tmp/hookci.slice" <<'EOF'
 [Unit]
-Description=ZeroCI agents and their jobs
+Description=HookCI agents and their jobs
 Before=slices.target
 EOF
-# END packaging/zeroci.slice
+# END packaging/hookci.slice
 
-# BEGIN packaging/zeroci-agent@.service (scripts/gen-install.sh)
-cat >"$tmp/zeroci-agent@.service" <<'EOF'
+# BEGIN packaging/hookci-agent@.service (scripts/gen-install.sh)
+cat >"$tmp/hookci-agent@.service" <<'EOF'
 [Unit]
-Description=ZeroCI agent (installation %i)
+Description=HookCI agent (installation %i)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/zeroci agent --installation %i
+ExecStart=/usr/local/bin/hookci agent --installation %i
 Restart=always
 # Exit 3 is a revoked agent or no usable agent.json, 4 is agent_too_old
 # (agent/internal/cli/exit.go); restarting cannot fix either.
 RestartPreventExitStatus=3 4
 RestartSec=5
-Slice=zeroci.slice
-StateDirectory=zeroci/%i
+Slice=hookci.slice
+StateDirectory=hookci/%i
 NoNewPrivileges=no
 
 [Install]
 WantedBy=multi-user.target
 EOF
-# END packaging/zeroci-agent@.service
+# END packaging/hookci-agent@.service
 }
 
 # The whole install runs from main, so a download cut off mid-transfer
@@ -90,15 +90,15 @@ main() {
 	[ $# -le 1 ] || die 1 "usage: curl -fsSL $HUB_ORIGIN/install | sh -s -- [pair-token]"
 	token=${1:-}
 	case $token in
-	"" | zc_pair_?*) ;;
-	*) die 1 "the argument must be a pair token: zc_pair_ then letters, digits, _ or -" ;;
+	"" | hci_pair_?*) ;;
+	*) die 1 "the argument must be a pair token: hci_pair_ then letters, digits, _ or -" ;;
 	esac
 	case $token in
-	*[!A-Za-z0-9_-]*) die 1 "the argument must be a pair token: zc_pair_ then letters, digits, _ or -" ;;
+	*[!A-Za-z0-9_-]*) die 1 "the argument must be a pair token: hci_pair_ then letters, digits, _ or -" ;;
 	esac
 
 	[ "$(uname -s)" = Linux ] || die 2 "unsupported OS $(uname -s): the agent runs on Linux"
-	machine="${ZEROCI_TEST_UNAME_M:-$(uname -m)}"
+	machine="${HOOKCI_TEST_UNAME_M:-$(uname -m)}"
 	case $machine in
 	x86_64 | amd64) arch=amd64 ;;
 	aarch64 | arm64) arch=arm64 ;;
@@ -107,12 +107,12 @@ main() {
 
 	# The prefix lands in the unit's ExecStart, where whitespace, quotes,
 	# backslashes, % and $ have systemd meanings.
-	case $ZEROCI_PREFIX in
+	case $HOOKCI_PREFIX in
 	/*) ;;
-	*) die 1 "ZEROCI_PREFIX must be an absolute path, got $ZEROCI_PREFIX" ;;
+	*) die 1 "HOOKCI_PREFIX must be an absolute path, got $HOOKCI_PREFIX" ;;
 	esac
-	case $ZEROCI_PREFIX in
-	*[!A-Za-z0-9/._-]*) die 1 "ZEROCI_PREFIX may only contain letters, digits and / . _ -, got $ZEROCI_PREFIX" ;;
+	case $HOOKCI_PREFIX in
+	*[!A-Za-z0-9/._-]*) die 1 "HOOKCI_PREFIX may only contain letters, digits and / . _ -, got $HOOKCI_PREFIX" ;;
 	esac
 
 	have curl || die 1 "need curl"
@@ -125,22 +125,22 @@ main() {
 		die 1 "need sha256sum or shasum"
 	fi
 
-	tag=$ZEROCI_VERSION
+	tag=$HOOKCI_VERSION
 	if [ "$tag" = latest ]; then
-		latest=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${ZEROCI_RELEASE_BASE%/download}/latest") ||
+		latest=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${HOOKCI_RELEASE_BASE%/download}/latest") ||
 			die 1 "cannot resolve the latest release"
 		tag=${latest##*/}
 		case $tag in
 		v*) ;;
-		*) die 1 "no published release found at ${ZEROCI_RELEASE_BASE%/download}/latest: set ZEROCI_VERSION=vX.Y.Z" ;;
+		*) die 1 "no published release found at ${HOOKCI_RELEASE_BASE%/download}/latest: set HOOKCI_VERSION=vX.Y.Z" ;;
 		esac
 	fi
 	case $tag in
 	v*) ;;
-	*) die 1 "ZEROCI_VERSION must be latest or vX.Y.Z, got $tag" ;;
+	*) die 1 "HOOKCI_VERSION must be latest or vX.Y.Z, got $tag" ;;
 	esac
-	asset="zeroci_${tag#v}_linux_${arch}.tar.gz"
-	url="$ZEROCI_RELEASE_BASE/$tag"
+	asset="hookci_${tag#v}_linux_${arch}.tar.gz"
+	url="$HOOKCI_RELEASE_BASE/$tag"
 
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -156,62 +156,62 @@ main() {
 	if have cosign; then
 		fetch "$url/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS.sigstore.json" ||
 			die 4 "download failed: $url/SHA256SUMS.sigstore.json"
-		cosign verify-blob --certificate-identity "$ZEROCI_COSIGN_IDENTITY" \
-			--certificate-oidc-issuer "$ZEROCI_COSIGN_ISSUER" \
+		cosign verify-blob --certificate-identity "$HOOKCI_COSIGN_IDENTITY" \
+			--certificate-oidc-issuer "$HOOKCI_COSIGN_ISSUER" \
 			--bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
 			die 4 "signature verification failed for SHA256SUMS"
 		echo "Signature verified"
-	elif [ "$ZEROCI_ALLOW_UNSIGNED" = 1 ]; then
-		echo "cosign not found and ZEROCI_ALLOW_UNSIGNED=1: checksum verified, signature not verified" >&2
+	elif [ "$HOOKCI_ALLOW_UNSIGNED" = 1 ]; then
+		echo "cosign not found and HOOKCI_ALLOW_UNSIGNED=1: checksum verified, signature not verified" >&2
 	else
 		# The checksum comes from the same release as the binary, so only the
 		# signature shows who built it.
-		die 4 "cosign not found: install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify the release signature, or set ZEROCI_ALLOW_UNSIGNED=1 to install with only the checksum checked"
+		die 4 "cosign not found: install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify the release signature, or set HOOKCI_ALLOW_UNSIGNED=1 to install with only the checksum checked"
 	fi
 
-	tar -xzf "$tmp/$asset" -C "$tmp" zeroci || die 1 "$asset has no zeroci binary"
+	tar -xzf "$tmp/$asset" -C "$tmp" hookci || die 1 "$asset has no hookci binary"
 
 	write_units
-	awk -v bin="$ZEROCI_PREFIX/bin/zeroci" '
-	sub(/^ExecStart=\/usr\/local\/bin\/zeroci /, "ExecStart=" bin " ") { n++ }
+	awk -v bin="$HOOKCI_PREFIX/bin/hookci" '
+	sub(/^ExecStart=\/usr\/local\/bin\/hookci /, "ExecStart=" bin " ") { n++ }
 	{ print }
 	END { exit n != 1 }
-	' "$tmp/zeroci-agent@.service" >"$tmp/agent.service" ||
-		die 1 "zeroci-agent@.service has no ExecStart=/usr/local/bin/zeroci line"
+	' "$tmp/hookci-agent@.service" >"$tmp/agent.service" ||
+		die 1 "hookci-agent@.service has no ExecStart=/usr/local/bin/hookci line"
 
 	sudo=
 	if [ "$(id -u)" != 0 ]; then
 		sudo=sudo
 	fi
 
-	run $sudo install -D -m 0755 -o root -g root "$tmp/zeroci" "$ZEROCI_PREFIX/bin/zeroci"
-	if ! id zeroci-run >/dev/null 2>&1; then
-		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-run
+	run $sudo install -D -m 0755 -o root -g root "$tmp/hookci" "$HOOKCI_PREFIX/bin/hookci"
+	if ! id hookci-run >/dev/null 2>&1; then
+		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin hookci-run
 	fi
-	if ! id zeroci-deploy >/dev/null 2>&1; then
-		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-deploy
+	if ! id hookci-deploy >/dev/null 2>&1; then
+		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin hookci-deploy
 	fi
-	# Deploys run docker compose as zeroci-deploy (zeroci doctor check deploy.user).
+	# Deploys run docker compose as hookci-deploy (hookci doctor check deploy.user).
 	if getent group docker >/dev/null 2>&1; then
-		run $sudo usermod -aG docker zeroci-deploy
+		run $sudo usermod -aG docker hookci-deploy
 	fi
-	run $sudo install -m 0644 -o root -g root "$tmp/zeroci.slice" /etc/systemd/system/zeroci.slice
-	run $sudo install -m 0644 -o root -g root "$tmp/agent.service" /etc/systemd/system/zeroci-agent@.service
-	if [ -n "$ZEROCI_INSTALL_DRY_RUN" ]; then
+	run $sudo install -m 0644 -o root -g root "$tmp/hookci.slice" /etc/systemd/system/hookci.slice
+	run $sudo install -m 0644 -o root -g root "$tmp/agent.service" /etc/systemd/system/hookci-agent@.service
+	if [ -n "$HOOKCI_INSTALL_DRY_RUN" ]; then
 		cat "$tmp/agent.service"
 	fi
-	run $sudo mkdir -p /var/lib/zeroci
-	run $sudo chmod 0700 /var/lib/zeroci
+	run $sudo mkdir -p /var/lib/hookci
+	run $sudo chmod 0700 /var/lib/hookci
 	run $sudo systemctl daemon-reload
 
 	echo
 	if [ -n "$token" ]; then
-		echo "Installed zeroci $tag. Pairing this machine with $HUB_ORIGIN"
-		run $sudo "$ZEROCI_PREFIX/bin/zeroci" connect --hub "$HUB_ORIGIN" "$token" ||
-			die 1 "pairing failed: get a new pair token from Slack App Home ($HUB_ORIGIN) and run: sudo zeroci connect --hub $HUB_ORIGIN <pair-token>"
+		echo "Installed hookci $tag. Pairing this machine with $HUB_ORIGIN"
+		run $sudo "$HOOKCI_PREFIX/bin/hookci" connect --hub "$HUB_ORIGIN" "$token" ||
+			die 1 "pairing failed: get a new pair token from Slack App Home ($HUB_ORIGIN) and run: sudo hookci connect --hub $HUB_ORIGIN <pair-token>"
 	else
-		echo "Installed zeroci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
-		echo "  sudo zeroci connect --hub $HUB_ORIGIN <pair-token>"
+		echo "Installed hookci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
+		echo "  sudo hookci connect --hub $HUB_ORIGIN <pair-token>"
 	fi
 }
 

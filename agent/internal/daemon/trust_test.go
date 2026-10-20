@@ -4,10 +4,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestOptionsForTrustUntrusted(t *testing.T) {

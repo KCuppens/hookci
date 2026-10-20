@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 func TestDetectPnpmTurbo(t *testing.T) {
@@ -22,11 +22,11 @@ func TestDetectPnpmTurbo(t *testing.T) {
 	}
 	for _, name := range []string{"lint", "typecheck", "unit"} {
 		run := mustJob(t, r, name).Run
-		if !strings.Contains(run, "pnpm exec turbo run") || !strings.Contains(run, "--filter=...[$ZEROCI_BASE_SHA]") {
+		if !strings.Contains(run, "pnpm exec turbo run") || !strings.Contains(run, "--filter=...[$HOOKCI_BASE_SHA]") {
 			t.Errorf("%s run = %q, want pnpm exec turbo run with the base filter", name, run)
 		}
 	}
-	if got, want := mustJob(t, r, "unit").Run, "sh -c 'pnpm exec turbo run test:unit ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'"; got != want {
+	if got, want := mustJob(t, r, "unit").Run, "sh -c 'pnpm exec turbo run test:unit ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'"; got != want {
 		t.Errorf("unit run = %q, want %q", got, want)
 	}
 	paths := c.Setup[0].Cache.Paths
@@ -63,7 +63,7 @@ func TestDetectTurbo(t *testing.T) {
 		if got, want := jobNames(r), []string{"test", "typecheck"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("jobs = %v, want %v (persistent uncached lint skipped, scripts ignored)", got, want)
 		}
-		if got, want := mustJob(t, r, "typecheck").Run, "sh -c 'npx --no-install turbo run type-check ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'"; got != want {
+		if got, want := mustJob(t, r, "typecheck").Run, "sh -c 'npx --no-install turbo run type-check ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'"; got != want {
 			t.Errorf("typecheck run = %q, want %q", got, want)
 		}
 	})
@@ -243,7 +243,7 @@ func TestDetectPackageManagerField(t *testing.T) {
 	if got := mustJob(t, r, "lint").Run; got != "pnpm run lint" {
 		t.Errorf("lint run = %q", got)
 	}
-	for _, want := range []string{"package manager: pnpm (packageManager field)", "no lockfile, install is not reproducible", "pnpm@9.1.0 (from packageManager), not installed by zeroci"} {
+	for _, want := range []string{"package manager: pnpm (packageManager field)", "no lockfile, install is not reproducible", "pnpm@9.1.0 (from packageManager), not installed by hookci"} {
 		if !slices.Contains(r.Notes, want) {
 			t.Errorf("notes %q lack %q", r.Notes, want)
 		}
@@ -259,10 +259,10 @@ func TestNodeVersionNoteOrder(t *testing.T) {
 		pkg  packageJSON
 		want string
 	}{
-		{".nvmrc first", fstest.MapFS{".nvmrc": file("v22.1.0\n"), ".node-version": file("20\n")}, pkg, "node v22.1.0 (from .nvmrc), not installed by zeroci"},
-		{".node-version second", fstest.MapFS{".node-version": file("20\n")}, pkg, "node 20 (from .node-version), not installed by zeroci"},
-		{"engines third", fstest.MapFS{}, pkg, "node 18.x (from engines.node), not installed by zeroci"},
-		{"packageManager last", fstest.MapFS{}, packageJSON{PackageManager: "pnpm@9.0.0"}, "pnpm@9.0.0 (from packageManager), not installed by zeroci"},
+		{".nvmrc first", fstest.MapFS{".nvmrc": file("v22.1.0\n"), ".node-version": file("20\n")}, pkg, "node v22.1.0 (from .nvmrc), not installed by hookci"},
+		{".node-version second", fstest.MapFS{".node-version": file("20\n")}, pkg, "node 20 (from .node-version), not installed by hookci"},
+		{"engines third", fstest.MapFS{}, pkg, "node 18.x (from engines.node), not installed by hookci"},
+		{"packageManager last", fstest.MapFS{}, packageJSON{PackageManager: "pnpm@9.0.0"}, "pnpm@9.0.0 (from packageManager), not installed by hookci"},
 		{"nothing", fstest.MapFS{}, packageJSON{}, ""},
 	}
 	for _, tc := range cases {

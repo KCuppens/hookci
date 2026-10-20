@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-zerocideploy is pre-1.0. Only the latest minor release receives security fixes.
+hookci is pre-1.0. Only the latest minor release receives security fixes.
 
 ## Reporting a vulnerability
 
 Do not open a public issue for a vulnerability. Report it privately in one of these ways:
 
-- GitHub Security Advisories: use "Report a vulnerability" on the [Security tab](https://github.com/KCuppens/zerocideploy/security/advisories/new) of the repository.
+- GitHub Security Advisories: use "Report a vulnerability" on the [Security tab](https://github.com/KCuppens/hookci/security/advisories/new) of the repository.
 - Email `{{SECURITY_EMAIL}}`.
 
 Include a description, the affected component (agent, hub, installer, schema), steps or a proof of concept to reproduce, and the impact you see.
@@ -24,7 +24,7 @@ We follow coordinated disclosure with a 90-day window. We publish an advisory on
 
 ## Scope
 
-The hosted hub at `ci.webuno.io` and its GitHub and Slack Apps, the `zeroci` agent, and the installer served at `/install`. In particular:
+The hosted hub at `ci.webuno.io` and its GitHub and Slack Apps, the `hookci` agent, and the installer served at `/install`. In particular:
 
 - Agent sandbox escape: a job reaching the host, other jobs or other repositories beyond what its isolation allows.
 - Cross-tenant hub access: one installation reading or affecting another installation's data or agents.

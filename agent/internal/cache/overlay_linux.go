@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // mountOverlay mounts an overlay at target with lower as the read-only

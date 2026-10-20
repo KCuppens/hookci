@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
 )
 
 func TestAgentTooOldExits4(t *testing.T) {
@@ -36,7 +36,7 @@ func TestAgentTooOldExits4(t *testing.T) {
 	if code != ExitAgentTooOld || ExitAgentTooOld != 4 {
 		t.Fatalf("exit = %d, want 4; stderr:\n%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "zeroci: agent_too_old:") || !strings.Contains(stderr.String(), "zeroci upgrade") {
+	if !strings.Contains(stderr.String(), "hookci: agent_too_old:") || !strings.Contains(stderr.String(), "hookci upgrade") {
 		t.Fatalf("stderr does not report agent_too_old with an upgrade hint:\n%s", stderr.String())
 	}
 }

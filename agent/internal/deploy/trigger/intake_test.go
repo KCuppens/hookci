@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -68,8 +68,8 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{st: st, refs: &fakeRefs{}}
-	cfg := &config.Config{ZeroCIConfig: config.ZeroCIConfig{
-		Deployments: config.ZeroCIConfigDeployments{"prod": dep},
+	cfg := &config.Config{HookCIConfig: config.HookCIConfig{
+		Deployments: config.HookCIConfigDeployments{"prod": dep},
 	}}
 	f.in = &Intake{
 		Store: st,
@@ -178,7 +178,7 @@ func TestIntake_Rejections(t *testing.T) {
 				env := "staging"
 				tr.Env = &env
 			},
-			want: "deployments.staging: env not defined in .zeroci.yml at 0123456",
+			want: "deployments.staging: env not defined in .hookci.yml at 0123456",
 		},
 		{
 			name:   "branch not listed",
@@ -339,7 +339,7 @@ func TestIntake_RetryAttemptRules(t *testing.T) {
 			want: unchanged(store.DeployRunning, "nothing to retry for prod at 0123456 (attempt 2)")},
 		{name: "attempt skips ahead", state: store.DeployFailed, attempt: 3,
 			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},
-		// zeroci retry on the host moved the agent's attempt past the hub's
+		// hookci retry on the host moved the agent's attempt past the hub's
 		// count, so the hub's next retry carries the run's own attempt.
 		{name: "failed run at the same attempt after a host retry", state: store.DeployFailed, attempt: 1,
 			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},

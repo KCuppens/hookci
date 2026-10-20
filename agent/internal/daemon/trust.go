@@ -3,9 +3,9 @@ package daemon
 import (
 	"context"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // kindDeploy is the store.Run.Kind of a deploy run.
@@ -15,7 +15,7 @@ const kindDeploy = "deploy"
 const hubModeSelfHosted = "self_hosted"
 
 // refreshHubMode re-reads the hub's mode, which decides whether a
-// .zeroci.yml may declare trust: all. On failure the mode agent.json stored
+// .hookci.yml may declare trust: all. On failure the mode agent.json stored
 // at connect stays.
 func (d *Daemon) refreshHubMode(ctx context.Context) {
 	info, err := d.o.HubInfo(ctx)

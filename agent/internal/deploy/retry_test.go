@@ -10,9 +10,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // blueGreenSteps mirrors the compose-bluegreen plan.
@@ -128,7 +128,7 @@ func TestEngine_RetryInterruptedResumes(t *testing.T) {
 			r := newRig(t, store.DeployQueued, blueGreenSteps)
 			crashAt(t, r, i)
 			restart(t, r)
-			want := fmt.Sprintf("agent restarted during step %d %s; run zeroci retry r1", i+1, step.name)
+			want := fmt.Sprintf("agent restarted during step %d %s; run hookci retry r1", i+1, step.name)
 			if run := r.run(t); run.State != store.DeployInterrupted || run.Error != want {
 				t.Fatalf("after restart run = %s %q, want Interrupted %q", run.State, run.Error, want)
 			}
@@ -184,7 +184,7 @@ func TestEngine_RetryInterruptedDuringRollbackFinishesRollback(t *testing.T) {
 		}
 		r.strat.failAt, r.strat.rollbackHook, r.strat.rollbackErr = nil, nil, nil
 		restart(t, r)
-		want := "agent restarted during step 3 verify; run zeroci retry r1"
+		want := "agent restarted during step 3 verify; run hookci retry r1"
 		if run := r.run(t); run.State != store.DeployInterrupted || run.Error != want {
 			t.Fatalf("after restart run = %s %q, want Interrupted %q", run.State, run.Error, want)
 		}

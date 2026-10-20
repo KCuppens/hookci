@@ -1,4 +1,4 @@
-// Package version holds the build-time version metadata for the zeroci
+// Package version holds the build-time version metadata for the hookci
 // binary. Version and Commit are overridden at build time via -ldflags
 // (see the Makefile and .goreleaser.yaml):
 //
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Version is the zeroci release version. Defaults to "dev" for local,
+// Version is the hookci release version. Defaults to "dev" for local,
 // non-release builds.
 var Version = "dev"
 
@@ -18,10 +18,10 @@ var Version = "dev"
 // non-release builds.
 var Commit = ""
 
-// String returns the human-readable version string, e.g. "zeroci dev" or
-// "zeroci 1.2.3 (abcdef0)" when Commit is set.
+// String returns the human-readable version string, e.g. "hookci dev" or
+// "hookci 1.2.3 (abcdef0)" when Commit is set.
 func String() string {
-	s := "zeroci " + Version
+	s := "hookci " + Version
 	if Commit != "" {
 		s += " (" + Commit + ")"
 	}

@@ -21,7 +21,7 @@ export const APPROVE_ACTION = "approve_run";
 export type JobConclusion = Extract<CheckConclusion, "success" | "failure" | "timed_out" | "cancelled" | "skipped">;
 export type JobCheckState = { status: "queued" | "in_progress" } | { status: "completed"; conclusion: JobConclusion };
 
-/** The job the agent validates `.zeroci.yml` under; it never counts toward the aggregate. */
+/** The job the agent validates `.hookci.yml` under; it never counts toward the aggregate. */
 export const CONFIG_JOB = "_config";
 
 /** GitHub accepts at most this many annotations per check run request. */
@@ -76,7 +76,7 @@ export function actionRequiredText(reason: PendingReason, ctx: { hubOrigin: stri
 	}
 }
 
-/** The `zeroci` check for the run: its jobs other than `_config`, or why it is waiting. */
+/** The `hookci` check for the run: its jobs other than `_config`, or why it is waiting. */
 export function aggregateFor(run: RunView, hubOrigin: string): CheckView {
 	const jobs = run.jobs.filter((job) => job.name !== CONFIG_JOB);
 	const summary = jobsSummary(jobs);
@@ -143,7 +143,7 @@ function jobsSummary(jobs: readonly JobView[]): string {
 		.join("\n");
 }
 
-/** The `zeroci/<job>` check: state and step as the title, step progress and duration as the summary. */
+/** The `hookci/<job>` check: state and step as the title, step progress and duration as the summary. */
 export function jobCheck(job: JobView): CheckView {
 	const state = jobToCheck(job);
 	const word = S.checks.state[state.status === "completed" ? state.conclusion : state.status];
@@ -160,7 +160,7 @@ export function jobCheck(job: JobView): CheckView {
 	return { ...state, title, summary: lines.length > 0 ? lines.join("\n") : S.checks.waitingToStart };
 }
 
-/** The `zeroci/config` check: always neutral, titled by whether `.zeroci.yml` validated. */
+/** The `hookci/config` check: always neutral, titled by whether `.hookci.yml` validated. */
 export function configCheck(job: JobView): CheckView {
 	const title = job.state === "success" ? S.checks.configValid : job.state === "failed" ? S.checks.configInvalid : S.checks.configChecking;
 	return { status: "completed", conclusion: "neutral", title, summary: job.reason ?? title };

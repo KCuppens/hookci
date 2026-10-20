@@ -33,7 +33,7 @@ export function redirectToAuthorize(env: Env, state: string, callbackPath: strin
 export async function exchangeCode(env: Env, fetcher: Fetcher, code: string): Promise<OAuthToken> {
 	const res = await fetcher("https://github.com/login/oauth/access_token", {
 		method: "POST",
-		headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "zeroci-hub" },
+		headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "hookci-hub" },
 		body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code }),
 	});
 	if (!res.ok) throw new HubError("github_oauth_failed", 502, `GitHub token exchange answered ${res.status}`);

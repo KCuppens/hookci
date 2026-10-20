@@ -15,7 +15,7 @@ describe("negotiate", () => {
       const result = negotiate({ protocol_version: version }, N - 1, N);
       expect(result).toMatchObject({
         ok: false,
-        error: { v: 1, type: "error", code: "protocol_unsupported", upgrade_hint: "run: sudo zeroci upgrade" },
+        error: { v: 1, type: "error", code: "protocol_unsupported", upgrade_hint: "run: sudo hookci upgrade" },
       });
     }
   });

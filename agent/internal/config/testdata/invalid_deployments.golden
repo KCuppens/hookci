@@ -1,5 +1,5 @@
 invalid_deployments.yml:15: error: deployments.production.compose.marker: compose.marker ".active-color" must be an absolute path
-  fix: use a path that starts with /, for example /var/lib/zeroci/production.color
+  fix: use a path that starts with /, for example /var/lib/hookci/production.color
 invalid_deployments.yml:18: error: deployments.production.route.file: route.file "routes/app.caddy" must be an absolute, clean path
   fix: use a path that starts with / and has no . or .. parts, for example /etc/caddy/routes/production.caddy
 invalid_deployments.yml:20: error: deployments.production.health.url: must contain {port}
@@ -18,7 +18,7 @@ invalid_deployments.yml:30: error: deployments.staging.rollback: only used by st
   fix: remove rollback
 invalid_deployments.yml:31: error: deployments.preview.run: required by strategy: script
   fix: add run: <deploy command>
-invalid_deployments.yml:35: warning: deployments.preview.env_file: env_file "/etc/zeroci/missing.env" does not exist on this machine
+invalid_deployments.yml:35: warning: deployments.preview.env_file: env_file "/etc/hookci/missing.env" does not exist on this machine
   fix: create it on the deploy host, owned by root with mode 0600
 invalid_deployments.yml:37: error: deployments.preview.health.url: {port} is only filled in by the compose strategies
   fix: use a fixed port, or a compose strategy

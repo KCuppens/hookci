@@ -13,7 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // statusRuns is how many recent runs status lists.
@@ -26,7 +26,7 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	asJSON := fs.Bool("json", false, "print a JSON array")
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] status [run] [--json] [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] status [run] [--json] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "List the last 20 runs, or the jobs of one run.")
 		fs.PrintDefaults()
@@ -50,7 +50,7 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 
 	db, err := openStateStore(d)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: open store: %v\n", err)
 		return ExitInternal
 	}
 	if db != nil {
@@ -62,7 +62,7 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		runs := []store.Run{}
 		if db != nil {
 			if runs, err = db.ListRuns(ctx, store.RunFilter{Limit: statusRuns}); err != nil {
-				fmt.Fprintf(stderr, "zeroci: list runs: %v\n", err)
+				fmt.Fprintf(stderr, "hookci: list runs: %v\n", err)
 				return ExitInternal
 			}
 		}
@@ -84,7 +84,7 @@ func cmdStatus(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	}
 	jobs, err := db.Jobs(ctx, runID)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: list jobs: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: list jobs: %v\n", err)
 		return ExitInternal
 	}
 	if *asJSON {
@@ -126,16 +126,16 @@ func openStateStore(d Deps) (*store.Store, error) {
 // no run runID.
 func requireRun(ctx context.Context, db *store.Store, runID string, stderr io.Writer) int {
 	if db == nil {
-		fmt.Fprintf(stderr, "zeroci: run %s not found\n", runID)
+		fmt.Fprintf(stderr, "hookci: run %s not found\n", runID)
 		return ExitUsage
 	}
 	_, err := db.GetRun(ctx, runID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		fmt.Fprintf(stderr, "zeroci: run %s not found\n", runID)
+		fmt.Fprintf(stderr, "hookci: run %s not found\n", runID)
 		return ExitUsage
 	case err != nil:
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	return ExitOK
@@ -145,7 +145,7 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	return ExitOK
@@ -153,7 +153,7 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 
 func flushTable(tw *tabwriter.Writer, stderr io.Writer) int {
 	if err := tw.Flush(); err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	return ExitOK

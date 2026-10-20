@@ -74,7 +74,7 @@ async function seed(id: number): Promise<void> {
       "INSERT INTO pair_tokens (token_hash, installation_id, created_by_github_id, replaces_agent_id, expires_at, used_at) VALUES (?1, ?2, 7, NULL, 9, NULL)",
     ).bind(`token-${id}`, id),
     env.DB.prepare(
-      "INSERT INTO check_runs (installation_id, repo_id, head_sha, name, check_run_id) VALUES (?1, ?2, ?3, 'zeroci', ?4)",
+      "INSERT INTO check_runs (installation_id, repo_id, head_sha, name, check_run_id) VALUES (?1, ?2, ?3, 'hookci', ?4)",
     ).bind(id, repoId, "a".repeat(40), id * 1000),
     env.DB.prepare(
       "INSERT INTO author_cache (installation_id, team_id, key, slack_user_id, expires_at) VALUES (?1, 'T1', 'octocat', 'U9', 9)",

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // logsPoll is how often logs -f reads the logs again.
@@ -29,7 +29,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	follow := fs.Bool("f", false, "follow the logs until the run ends")
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] logs <run> [job|setup] [-f] [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] logs <run> [job|setup] [-f] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Print the setup log and the job logs of a run in plan order, or one log.")
 		fs.PrintDefaults()
@@ -54,7 +54,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 
 	db, err := openStateStore(d)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: open store: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: open store: %v\n", err)
 		return ExitInternal
 	}
 	if db != nil {
@@ -65,7 +65,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	}
 	jobs, err := db.Jobs(ctx, runID)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: list jobs: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: list jobs: %v\n", err)
 		return ExitInternal
 	}
 	names := make([]string, 0, len(jobs)+1)
@@ -78,7 +78,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		}
 	}
 	if len(names) == 0 {
-		fmt.Fprintf(stderr, "zeroci: run %s has no job %q\n", runID, pos[1])
+		fmt.Fprintf(stderr, "hookci: run %s has no job %q\n", runID, pos[1])
 		return ExitUsage
 	}
 
@@ -92,7 +92,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		for _, name := range names {
 			// A run that never reached setup has no setup log to show.
 			if err := l.print(name, name != setupLog); err != nil {
-				fmt.Fprintf(stderr, "zeroci: %v\n", err)
+				fmt.Fprintf(stderr, "hookci: %v\n", err)
 				return ExitInternal
 			}
 		}
@@ -105,7 +105,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		// a log seen finished before it is read has nothing left to write.
 		alive, err := stateDirLocked(d.Globals.StateDir)
 		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: %v\n", err)
 			return ExitInternal
 		}
 		run, err := db.GetRun(ctx, runID)
@@ -116,7 +116,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 			if ctx.Err() != nil {
 				return ExitOK
 			}
-			fmt.Fprintf(stderr, "zeroci: read run: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: read run: %v\n", err)
 			return ExitInternal
 		}
 		state := make(map[string]store.JobState, len(jobs))
@@ -126,7 +126,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		pending := names[:0]
 		for _, name := range names {
 			if err := l.print(name, false); err != nil {
-				fmt.Fprintf(stderr, "zeroci: %v\n", err)
+				fmt.Fprintf(stderr, "hookci: %v\n", err)
 				return ExitInternal
 			}
 			// The setup log ends with teardown, which precedes the run's
@@ -144,7 +144,7 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 			return ExitOK
 		}
 		if !alive {
-			fmt.Fprintf(stderr, "zeroci: no zeroci process is running run %s; stopped following\n", runID)
+			fmt.Fprintf(stderr, "hookci: no hookci process is running run %s; stopped following\n", runID)
 			return ExitOK
 		}
 		select {

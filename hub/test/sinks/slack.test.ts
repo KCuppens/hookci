@@ -187,7 +187,7 @@ describe("SlackSink", () => {
     expect(blocks).not.toContain("/logs/view?");
     expect(JSON.parse(blocks)).toContainEqual({
       type: "actions",
-      elements: [expect.objectContaining({ type: "button", action_id: "zeroci_view_logs", value: "run_1:test", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
+      elements: [expect.objectContaining({ type: "button", action_id: "hookci_view_logs", value: "run_1:test", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
     });
   });
 
@@ -344,7 +344,7 @@ describe("SlackSink", () => {
     expect(blocks).not.toContain("/logs/view?");
     expect(JSON.parse(blocks)).toContainEqual({
       type: "actions",
-      elements: [expect.objectContaining({ type: "button", action_id: "zeroci_view_logs", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
+      elements: [expect.objectContaining({ type: "button", action_id: "hookci_view_logs", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
     });
   });
 
@@ -360,7 +360,7 @@ describe("SlackSink", () => {
     const alert = apiCalls("chat.postMessage").find((call) => text(call) === S.slack.alertText("Failed", "acme/widgets", SHORT, "build"));
     const blocks = JSON.parse(String(formField(alert?.body, "blocks")));
     expect(blocks).toContainEqual({ type: "context", elements: [{ type: "mrkdwn", text: S.slack.logsLocal }] });
-    expect(JSON.stringify(blocks)).not.toContain("zeroci_view_logs");
+    expect(JSON.stringify(blocks)).not.toContain("hookci_view_logs");
     expect(JSON.stringify(blocks)).not.toContain("```");
   });
 
@@ -453,7 +453,7 @@ describe("SlackSink", () => {
     world.slack.calls.length = 0;
   });
 
-  describe("with a .zeroci.yml notify.slack override", () => {
+  describe("with a .hookci.yml notify.slack override", () => {
     const DEPLOYS = "C0DEPLOYS";
     const slack: RunView["slack"] = { channel: "deploys", notify: "quiet", alert: "dm" };
 

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 func newFakeLocal(t *testing.T, porcelain string) (*Local, *execx.Fake, *bytes.Buffer) {
@@ -33,7 +33,7 @@ func TestLocalDirtyWarns(t *testing.T) {
 	if !co.Dirty {
 		t.Fatal("Dirty = false, want true")
 	}
-	want := "warning: working tree has uncommitted changes; zeroci runs the committed HEAD 0123456\n"
+	want := "warning: working tree has uncommitted changes; hookci runs the committed HEAD 0123456\n"
 	if warn.String() != want {
 		t.Fatalf("warning = %q, want %q", warn.String(), want)
 	}
@@ -64,7 +64,7 @@ func TestLocalCleanCheckoutFlow(t *testing.T) {
 		g.Args("status", "--porcelain"),
 		g.Args("init", "--quiet", "--bare", mirror),
 		g.Args("-C", mirror, "config", "remote.origin.url", "/work/my app"),
-		g.Args("-C", mirror, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/zeroci/"+testSHA),
+		g.Args("-C", mirror, "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/hookci/"+testSHA),
 		g.Args("clone", "--shared", "--no-checkout", mirror, dir),
 		g.Args("-C", dir, "checkout", "--detach", "--quiet", testSHA),
 	}

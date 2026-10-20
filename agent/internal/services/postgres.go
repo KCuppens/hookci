@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
 )
 
 const (
 	// LabelRun is the container label key whose value is the run id.
-	LabelRun = "zeroci.run"
+	LabelRun = "hookci.run"
 	// DefaultPGImage is the postgres image used when the config names none.
 	DefaultPGImage = "postgres:16-alpine"
 	socketDirMode  = 0o777
@@ -74,7 +74,7 @@ type PostgresOptions struct {
 
 // Postgres is a started postgres container.
 type Postgres struct {
-	Name      string // zeroci-svc-<run>-postgres
+	Name      string // hookci-svc-<run>-postgres
 	SocketDir string // <RunDir>/pg
 
 	docker Docker
@@ -83,7 +83,7 @@ type Postgres struct {
 // ContainerName is the docker container name of runID's postgres. The run
 // id is sanitized like a systemd unit name part.
 func ContainerName(runID string) string {
-	return "zeroci-svc-" + isolation.SanitizeUnitPart(runID) + "-postgres"
+	return "hookci-svc-" + isolation.SanitizeUnitPart(runID) + "-postgres"
 }
 
 // BuildRunArgv returns the arguments to the docker binary that start the
@@ -97,7 +97,7 @@ func BuildRunArgv(o PostgresOptions) []string {
 		"run", "-d", "--rm=false",
 		"--name", ContainerName(o.RunID),
 		"--label", LabelRun + "=" + o.RunID,
-		"--cgroup-parent=zeroci.slice",
+		"--cgroup-parent=hookci.slice",
 		"--cpus", fmt.Sprintf("%g", o.CPUs),
 		"--memory", fmt.Sprintf("%db", o.MemoryBytes),
 		"--network", "none",

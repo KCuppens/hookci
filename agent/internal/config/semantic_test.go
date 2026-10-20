@@ -144,7 +144,7 @@ func TestRedactInvalidRegex(t *testing.T) {
 }
 
 func TestEnvFileWritableWarns(t *testing.T) {
-	const file = "/etc/zeroci/production.env"
+	const file = "/etc/hookci/production.env"
 	src := oneJob + scriptDeploy + "    env_file: " + file + "\n"
 	for _, tc := range []struct {
 		name string

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // ChangeLister lists the files changed between two commits of a repository;

@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/askpass"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/askpass"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // TokenFunc returns a GitHub fetch token for runID.
@@ -20,7 +20,7 @@ type TokenFunc func(ctx context.Context, runID string) (string, error)
 
 // HubSource fetches a commit from GitHub with a hub-issued installation
 // token. git gets the token only through GIT_ASKPASS: the askpass helper is
-// the zeroci binary itself, which reads the token from a 0600 unix socket
+// the hookci binary itself, which reads the token from a 0600 unix socket
 // that lives only for the fetch.
 type HubSource struct {
 	Git      string    // git binary; empty means "git"

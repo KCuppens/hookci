@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var hookNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

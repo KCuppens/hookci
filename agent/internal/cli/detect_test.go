@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 func detectFixtureDir(t *testing.T, name string) string {
@@ -35,12 +35,12 @@ func TestCLIDetectExitCodes(t *testing.T) {
 		if code != ExitOK {
 			t.Fatalf("exit = %d, want %d (stderr %q)", code, ExitOK, stderr)
 		}
-		want, err := os.ReadFile(filepath.Join(npm, "expected.zeroci.yml"))
+		want, err := os.ReadFile(filepath.Join(npm, "expected.hookci.yml"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if stdout != string(want) {
-			t.Errorf("stdout differs from expected.zeroci.yml:\n%s", stdout)
+			t.Errorf("stdout differs from expected.hookci.yml:\n%s", stdout)
 		}
 		if stderr != "" {
 			t.Errorf("stderr = %q, want empty", stderr)
@@ -51,7 +51,7 @@ func TestCLIDetectExitCodes(t *testing.T) {
 		if code != ExitNoChecks {
 			t.Fatalf("exit = %d, want %d", code, ExitNoChecks)
 		}
-		if stderr != "no checks detected: add .zeroci.yml (run zeroci init)\n" {
+		if stderr != "no checks detected: add .hookci.yml (run hookci init)\n" {
 			t.Errorf("stderr = %q", stderr)
 		}
 		if stdout != "" {
@@ -63,7 +63,7 @@ func TestCLIDetectExitCodes(t *testing.T) {
 		if code != ExitOK {
 			t.Fatalf("exit = %d, want %d (stderr %q)", code, ExitOK, stderr)
 		}
-		var got config.ZeroCIConfig
+		var got config.HookCIConfig
 		if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 			t.Fatalf("stdout is not config JSON: %v\n%s", err, stdout)
 		}
@@ -71,15 +71,15 @@ func TestCLIDetectExitCodes(t *testing.T) {
 			t.Errorf("unexpected JSON config: %s", stdout)
 		}
 	})
-	t.Run("existing zeroci.yml is noted", func(t *testing.T) {
+	t.Run("existing hookci.yml is noted", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "go.mod"), "module x\n")
-		writeFile(t, filepath.Join(dir, ".zeroci.yml"), "version: 1\n")
+		writeFile(t, filepath.Join(dir, ".hookci.yml"), "version: 1\n")
 		code, stdout, stderr := runCLI("detect", dir)
 		if code != ExitOK {
 			t.Fatalf("exit = %d, want %d (stderr %q)", code, ExitOK, stderr)
 		}
-		if stderr != "note: .zeroci.yml exists and takes precedence over detection\n" {
+		if stderr != "note: .hookci.yml exists and takes precedence over detection\n" {
 			t.Errorf("stderr = %q", stderr)
 		}
 		if !strings.Contains(stdout, "go test ./...") {
@@ -107,7 +107,7 @@ func TestCLIDetectExitCodes(t *testing.T) {
 	})
 	t.Run("help", func(t *testing.T) {
 		code, stdout, _ := runCLI("detect", "-h")
-		if code != ExitOK || !strings.Contains(stdout, "Usage: zeroci detect") {
+		if code != ExitOK || !strings.Contains(stdout, "Usage: hookci detect") {
 			t.Errorf("exit = %d stdout = %q", code, stdout)
 		}
 	})
@@ -117,7 +117,7 @@ func TestCLIInit(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "package.json"), `{"scripts": {"lint": "eslint .", "test": "vitest"}}`)
 	writeFile(t, filepath.Join(dir, "package-lock.json"), "{}")
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 
 	code, stdout, stderr := runCLI("init", dir)
 	if code != ExitOK {
@@ -129,7 +129,7 @@ func TestCLIInit(t *testing.T) {
 	assertValidConfig(t, path)
 	_, detected, _ := runCLI("detect", dir)
 	if got := readFile(t, path); got != detected {
-		t.Errorf("written file differs from zeroci detect output:\n%s\n--- detect ---\n%s", got, detected)
+		t.Errorf("written file differs from hookci detect output:\n%s\n--- detect ---\n%s", got, detected)
 	}
 
 	code, _, stderr = runCLI("init", dir)
@@ -171,7 +171,7 @@ func TestCLIInit(t *testing.T) {
 			if !strings.Contains(stderr, "no checks detected") {
 				t.Errorf("stderr hint = %q", stderr)
 			}
-			path := filepath.Join(dir, ".zeroci.yml")
+			path := filepath.Join(dir, ".hookci.yml")
 			if got := readFile(t, path); !strings.HasPrefix(got, "#") || !strings.Contains(got, "jobs:") {
 				t.Errorf("skeleton is not a commented jobs example:\n%s", got)
 			}
@@ -188,7 +188,7 @@ func TestCLIInitDeploy(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "package.json"), `{"scripts": {"test": "jest"}}`)
 	writeFile(t, filepath.Join(dir, "package-lock.json"), "{}")
 	writeFile(t, filepath.Join(dir, "compose.yaml"), "services:\n  web:\n    build: .\n    ports: [\"3000:3000\"]\n")
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 
 	if code, _, stderr := runCLI("init", dir, "--yes"); code != ExitUsage || !strings.Contains(stderr, "--yes only applies to --deploy") {
 		t.Errorf("init --yes: exit = %d, stderr %q", code, stderr)
@@ -206,13 +206,13 @@ func TestCLIInitDeploy(t *testing.T) {
 		t.Errorf("stdout = %q", stdout)
 	}
 	got := readFile(t, path)
-	if !strings.HasPrefix(got, checks) || !strings.Contains(got, "project: my-shop") || !strings.Contains(got, "/etc/zeroci/env/my-shop/production.env") {
+	if !strings.HasPrefix(got, checks) || !strings.Contains(got, "project: my-shop") || !strings.Contains(got, "/etc/hookci/env/my-shop/production.env") {
 		t.Errorf("written file:\n%s", got)
 	}
 	assertValidConfig(t, path)
 
 	code, _, stderr = runCLI("init", dir, "--deploy", "--yes")
-	if want := "zeroci: deployments: already present in .zeroci.yml; edit it or remove it to re-run init --deploy\n"; code != ExitUsage || stderr != want {
+	if want := "hookci: deployments: already present in .hookci.yml; edit it or remove it to re-run init --deploy\n"; code != ExitUsage || stderr != want {
 		t.Errorf("second init --deploy: exit = %d, stderr %q; want %d, %q", code, stderr, ExitUsage, want)
 	}
 	if code, _, stderr := runCLI("init", dir, "--deploy", "--force"); code != ExitUsage || !strings.Contains(stderr, "--force does not apply to --deploy") {

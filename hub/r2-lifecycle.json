@@ -1,7 +1,7 @@
 {
   "rules": [
     {
-      "id": "zeroci-log-retention",
+      "id": "hookci-log-retention",
       "enabled": true,
       "conditions": { "prefix": "logs/" },
       "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 1209600 } }

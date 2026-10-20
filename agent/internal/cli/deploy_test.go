@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const (
@@ -34,13 +34,13 @@ func newDeployRig(t *testing.T, healthURL, hubURL string) *deployRig {
 	t.Helper()
 	root := t.TempDir()
 	r := &deployRig{top: filepath.Join(root, "web"), route: filepath.Join(root, "routes", "web.caddy")}
-	zeroci := "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n" +
+	hookci := "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n" +
 		"deployments:\n  staging:\n    on: { push: main }\n    strategy: compose-bluegreen\n" +
 		"    compose: { project: web, service: web }\n" +
 		"    route: { kind: caddy, file: " + r.route + " }\n" +
 		"    health: { url: \"" + healthURL + "\" }\n"
 	files := map[string]string{
-		".zeroci.yml":          zeroci,
+		".hookci.yml":          hookci,
 		"docker-compose.yml":   "services:\n  web:\n    build: .\n    ports:\n      - \"8080\"\n",
 		".git/HEAD":            "ref: refs/heads/main\n",
 		".git/refs/heads/main": deployHeadSHA + "\n",
@@ -190,7 +190,7 @@ func TestDeployCommand_NoDryRun(t *testing.T) {
 	if code != ExitUsage {
 		t.Errorf("exit %d, want %d", code, ExitUsage)
 	}
-	if want := "deploy: only --dry-run is supported; deploys start from a push or zeroci retry\n"; stderr != want {
+	if want := "deploy: only --dry-run is supported; deploys start from a push or hookci retry\n"; stderr != want {
 		t.Errorf("stderr %q, want %q", stderr, want)
 	}
 	if stdout != "" || hub.req.Load() != nil {

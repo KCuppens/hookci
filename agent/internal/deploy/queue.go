@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Scheduler defaults.
@@ -146,7 +146,7 @@ func (s *Scheduler) Wait() {
 //
 // An Interrupted run left its env in an unknown state: a retry of it goes
 // first and is never superseded, the env's other runs wait for it, and while
-// no retry is queued the env's other runs fail until `zeroci retry` finishes
+// no retry is queued the env's other runs fail until `hookci retry` finishes
 // the interrupted one.
 func (s *Scheduler) Tick(ctx context.Context) (started int, err error) {
 	s.tickMu.Lock()
@@ -196,7 +196,7 @@ func (s *Scheduler) Tick(ctx context.Context) (started int, err error) {
 			continue
 		}
 		if blocker, ok := interrupted[k]; ok {
-			msg := fmt.Sprintf("deployments.%s: run %s was interrupted and left the environment in an unknown state; finish it with zeroci retry %s before deploying again",
+			msg := fmt.Sprintf("deployments.%s: run %s was interrupted and left the environment in an unknown state; finish it with hookci retry %s before deploying again",
 				k.env, blocker.RunID, blocker.RunID)
 			for _, p := range group {
 				if err := s.finish(ctx, p.run.RunID, store.DeployFailed, protocol.EventStateFailed, msg); err != nil {

@@ -17,7 +17,7 @@ export interface Agent {
 /** Pairs a new agent in D1. Every call gets its own agent id, so its AgentDO starts empty. */
 export async function seedAgent(installationId: number): Promise<Agent> {
   const agentId = `agt_${crypto.randomUUID()}`;
-  const credential = randomToken("zc_agent_", 32);
+  const credential = randomToken("hci_agent_", 32);
   await insertAgent(tenantDb(env.DB, installationId), {
     agent_id: agentId,
     name: "builder",

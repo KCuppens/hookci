@@ -43,7 +43,7 @@ func TestLookupCredential(t *testing.T) {
 	if strconv.FormatUint(uint64(cred.Uid), 10) != me.Uid || strconv.FormatUint(uint64(cred.Gid), 10) != me.Gid {
 		t.Errorf("LookupCredential(%s) = %+v, want uid %s gid %s", me.Username, cred, me.Uid, me.Gid)
 	}
-	if _, err := LookupCredential("zeroci-no-such-user"); err == nil {
+	if _, err := LookupCredential("hookci-no-such-user"); err == nil {
 		t.Error("LookupCredential of a missing user succeeded")
 	}
 }

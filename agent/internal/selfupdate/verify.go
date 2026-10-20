@@ -20,7 +20,7 @@ const (
 )
 
 // EmbeddedTrustedRoot is the Sigstore public-good trusted root shipped with
-// the binary. `zeroci upgrade --refresh-trust-root` stores a newer one on
+// the binary. `hookci upgrade --refresh-trust-root` stores a newer one on
 // disk, which LoadTrustedRoot prefers.
 //
 //go:embed trusted_root.json

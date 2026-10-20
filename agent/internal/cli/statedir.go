@@ -20,8 +20,8 @@ type stateDirFlags struct {
 // and --installation on fs.
 func addStateDirFlags(fs *flag.FlagSet, d Deps) stateDirFlags {
 	return stateDirFlags{
-		dir:          fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to zeroci connect"),
-		installation: fs.Int64("installation", 0, "use the agent of this installation in "+d.StateRoot+"/<ID>, as the zeroci-agent@ unit does"),
+		dir:          fs.String("state-dir", d.Globals.StateDir, "agent state directory, as given to hookci connect"),
+		installation: fs.Int64("installation", 0, "use the agent of this installation in "+d.StateRoot+"/<ID>, as the hookci-agent@ unit does"),
 		root:         d.StateRoot,
 	}
 }
@@ -32,7 +32,7 @@ func addStateDirFlags(fs *flag.FlagSet, d Deps) stateDirFlags {
 func (f stateDirFlags) resolve(stderr io.Writer) (string, bool) {
 	switch {
 	case *f.installation < 0:
-		fmt.Fprintln(stderr, "zeroci: --installation must be a positive installation id")
+		fmt.Fprintln(stderr, "hookci: --installation must be a positive installation id")
 		return "", false
 	case *f.installation > 0:
 		return filepath.Join(f.root, strconv.FormatInt(*f.installation, 10)), true

@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/doctor"
 )
 
 // cmdDoctor runs the host checks, then the deploy checks against the
-// .zeroci.yml of the checkout holding the working directory, and prints them
+// .hookci.yml of the checkout holding the working directory, and prints them
 // as a table, or as a JSON array with --json. It exits 1 when any check
 // fails.
 func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
@@ -26,7 +26,7 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	stateRoot := fs.String("state-root", defaultStateRoot, "directory holding one state directory per installation")
 	asJSON := fs.Bool("json", false, "print the results as a JSON array")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci doctor [--hub URL] [--state-root DIR] [--json]")
+		fmt.Fprintln(stderr, "usage: hookci doctor [--hub URL] [--state-root DIR] [--json]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Check this host and its path to the hub; exit 1 when a check fails.")
 	}
@@ -57,7 +57,7 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(rs); err != nil {
-			fmt.Fprintf(stderr, "zeroci: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: %v\n", err)
 			return ExitInternal
 		}
 		for _, r := range rs {
@@ -73,10 +73,10 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 }
 
 // cwdRepos returns the config of the checkout holding the working directory
-// for the deploy checks: none outside a checkout or without a .zeroci.yml,
+// for the deploy checks: none outside a checkout or without a .hookci.yml,
 // an error when the file does not load or validate.
-func cwdRepos(d Deps) func(context.Context) ([]config.ZeroCIConfig, error) {
-	return func(context.Context) ([]config.ZeroCIConfig, error) {
+func cwdRepos(d Deps) func(context.Context) ([]config.HookCIConfig, error) {
+	return func(context.Context) ([]config.HookCIConfig, error) {
 		wd, err := d.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("cli: doctor: %w", err)
@@ -85,7 +85,7 @@ func cwdRepos(d Deps) func(context.Context) ([]config.ZeroCIConfig, error) {
 		if err != nil {
 			return nil, nil
 		}
-		path := filepath.Join(top, ".zeroci.yml")
+		path := filepath.Join(top, ".hookci.yml")
 		cfg, diags, err := config.Load(path, config.ParseOptions{})
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -98,6 +98,6 @@ func cwdRepos(d Deps) func(context.Context) ([]config.ZeroCIConfig, error) {
 				return nil, fmt.Errorf("cli: doctor: %s: %s", path, config.ValidationError{Path: dg.Path, Msg: dg.Message, Fix: dg.Fix}.Error())
 			}
 		}
-		return []config.ZeroCIConfig{cfg.ZeroCIConfig}, nil
+		return []config.HookCIConfig{cfg.HookCIConfig}, nil
 	}
 }

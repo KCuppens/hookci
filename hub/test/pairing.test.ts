@@ -68,7 +68,7 @@ describe("pairing", () => {
     const body = await res.json<RedeemResult>();
     expect(body).toEqual({
       agent_id: expect.stringMatching(/^agt_[0-9a-z]{26}$/),
-      credential: expect.stringMatching(/^zc_agent_[a-z2-7]+$/),
+      credential: expect.stringMatching(/^hci_agent_[a-z2-7]+$/),
       installation_id: INSTALLATION,
       hub_ws_url: `${env.HUB_ORIGIN.replace(/^http/, "ws")}/v1/agent/connect`,
       name: "builder",
@@ -127,7 +127,7 @@ describe("pairing", () => {
     await pair(used);
     const expired = await newToken();
     testClock.advance(PAIR_TOKEN_TTL_MS);
-    const responses = await Promise.all([redeemRequest("zc_pair_doesnotexist"), redeemRequest(used), redeemRequest(expired)]);
+    const responses = await Promise.all([redeemRequest("hci_pair_doesnotexist"), redeemRequest(used), redeemRequest(expired)]);
     const bodies = await Promise.all(responses.map((r) => r.text()));
     expect(responses.map((r) => r.status)).toEqual([400, 400, 400]);
     expect(bodies).toEqual(Array(3).fill('{"error":"invalid_pair_token"}'));
@@ -174,7 +174,7 @@ describe("pairing", () => {
     for (let i = 0; i < 10; i++) await newToken();
     await expect(newToken()).rejects.toMatchObject({ code: "pair_rate_limited", status: 429 });
     testClock.advance(60 * 60_000);
-    await expect(newToken()).resolves.toMatch(/^zc_pair_/);
+    await expect(newToken()).resolves.toMatch(/^hci_pair_/);
   });
 
   it("a self-hosted hub pairs an eleventh agent and issues an eleventh pair token in the hour", async () => {
@@ -195,7 +195,7 @@ describe("pairing", () => {
     await sock.hello();
     const trig = await agent.stub.fetch("https://do/trigger", {
       method: "POST",
-      headers: { "x-zeroci-agent-id": agent.agentId },
+      headers: { "x-hookci-agent-id": agent.agentId },
       body: JSON.stringify({
         installationId: INSTALLATION,
         repoId: 1001,
@@ -271,7 +271,7 @@ describe("pairing", () => {
   });
 
   it("redeem per-IP limit", async () => {
-    for (let i = 0; i < 20; i++) expect((await redeemRequest(`zc_pair_guess${i}`, "198.51.100.4")).status).toBe(400);
+    for (let i = 0; i < 20; i++) expect((await redeemRequest(`hci_pair_guess${i}`, "198.51.100.4")).status).toBe(400);
     const limited = await redeemRequest(await newToken(), "198.51.100.4");
     expect(limited.status).toBe(429);
     expect((await redeemRequest(await newToken(), "198.51.100.5")).status).toBe(200);

@@ -8,7 +8,7 @@ describe("state file", () => {
 	let tmp: string;
 
 	beforeEach(async () => {
-		tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-state-"));
+		tmp = await mkdtemp(join(tmpdir(), "hookci-hub-state-"));
 	});
 
 	afterEach(async () => {
@@ -19,8 +19,8 @@ describe("state file", () => {
 		const state: HubState = {
 			account_id: "0123456789abcdef0123456789abcdef",
 			d1_database_id: "11111111-2222-3333-4444-555555555555",
-			r2_bucket: "zeroci-hub-logs",
-			base_url: "https://zeroci-hub.acme.workers.dev",
+			r2_bucket: "hookci-hub-logs",
+			base_url: "https://hookci-hub.acme.workers.dev",
 			github_app_id: 42,
 			version: "1.2.3",
 			steps_done: ["account", "d1", "r2"],
@@ -49,6 +49,6 @@ describe("state file", () => {
 
 	it("rejects a file that is not a state file", async () => {
 		await writeFile(join(tmp, STATE_FILE), JSON.stringify({ account_id: "a" }));
-		await expect(loadState(tmp)).rejects.toThrow("is not a zeroci-hub state file");
+		await expect(loadState(tmp)).rejects.toThrow("is not a hookci-hub state file");
 	});
 });

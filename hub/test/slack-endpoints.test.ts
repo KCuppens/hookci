@@ -67,7 +67,7 @@ function commandBody(text: string, overrides: Record<string, string> = {}): stri
     team_id: TEAM,
     user_id: "U0USER",
     channel_id: "C0CHAN",
-    command: "/zeroci",
+    command: "/hookci",
     text,
     response_url: RESPONSE_URL,
     trigger_id: "1.2.trig",
@@ -306,11 +306,11 @@ describe("/slack/commands", () => {
   });
 
   it("answers an unknown subcommand with the registered help command's reply", async () => {
-    registerCommand("", async () => ({ response_type: "ephemeral", text: "Try /zeroci status" }));
+    registerCommand("", async () => ({ response_type: "ephemeral", text: "Try /hookci status" }));
 
     const res = await post("/slack/commands", commandBody("frobnicate"));
 
-    expect(await res.json()).toEqual({ response_type: "ephemeral", text: "Try /zeroci status" });
+    expect(await res.json()).toEqual({ response_type: "ephemeral", text: "Try /hookci status" });
     expect(doCalls).toEqual([]);
   });
 });

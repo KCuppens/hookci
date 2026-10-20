@@ -8,7 +8,7 @@ func TestStringWithoutCommit(t *testing.T) {
 
 	Version, Commit = "dev", ""
 
-	if got, want := String(), "zeroci dev"; got != want {
+	if got, want := String(), "hookci dev"; got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
 }
@@ -19,7 +19,7 @@ func TestStringWithCommit(t *testing.T) {
 
 	Version, Commit = "1.2.3", "abcdef0"
 
-	if got, want := String(), "zeroci 1.2.3 (abcdef0)"; got != want {
+	if got, want := String(), "hookci 1.2.3 (abcdef0)"; got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
 }

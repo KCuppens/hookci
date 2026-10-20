@@ -57,7 +57,7 @@ function silentPrompter(): { ask: Refusal; secret: Refusal; confirm: Refusal } {
 let tmp: string;
 
 beforeEach(async () => {
-	tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-slack-"));
+	tmp = await mkdtemp(join(tmpdir(), "hookci-hub-slack-"));
 });
 
 afterEach(async () => {
@@ -70,7 +70,7 @@ function registered(over: Partial<HubState> = {}): HubState {
 		name: "acme-ci",
 		base_url: BASE,
 		github_app_id: 424242,
-		github_app_slug: "acme-zeroci",
+		github_app_slug: "acme-hookci",
 		version: "0.3.0",
 		steps_done: SETUP_STEPS.slice(0, SETUP_STEPS.indexOf("slack_app")),
 		...over,
@@ -208,7 +208,7 @@ describe("verifyStep", () => {
 		const { result } = await verify([{ status: 200, body: hubInfo({ github_app: { slug: "other-app" } }) }]);
 		const err = await setupError(result);
 		expect(err.code).toBe("verify_failed");
-		expect(err.message).toBe(`${BASE}/v1/info reports GitHub App "other-app", not "acme-zeroci"`);
+		expect(err.message).toBe(`${BASE}/v1/info reports GitHub App "other-app", not "acme-hookci"`);
 	});
 
 	it("waits out a deploy that is still propagating", async () => {
@@ -233,11 +233,11 @@ describe("setupSummary", () => {
 		const lines = setupSummary(registered({ slack_configured: true })).split("\n");
 		const order = [
 			`Hub: ${BASE}`,
-			"Install the GitHub App: https://github.com/apps/acme-zeroci/installations/new",
+			"Install the GitHub App: https://github.com/apps/acme-hookci/installations/new",
 			`Add to Slack: ${BASE}/slack/install`,
 			`  curl -fsSL ${BASE}/install | sh`,
-			`  zeroci connect --hub ${BASE} <pair-token>`,
-			"Upgrade later with: npx zeroci-hub upgrade",
+			`  hookci connect --hub ${BASE} <pair-token>`,
+			"Upgrade later with: npx hookci-hub upgrade",
 		].map((line) => lines.indexOf(line));
 		expect(order.every((i) => i >= 0)).toBe(true);
 		expect([...order].sort((a, b) => a - b)).toEqual(order);

@@ -50,7 +50,7 @@ describe("deploy badge rendering", () => {
     expect(msg.text).toBe("staging · abc1234 · failed at 5/8 health · rolled back · log");
     expect(msg.blocks).toContainEqual({
       type: "actions",
-      elements: [{ type: "button", action_id: "zeroci_deploy_retry", text: { type: "plain_text", text: "Retry", emoji: true }, value: "run_9:2" }],
+      elements: [{ type: "button", action_id: "hookci_deploy_retry", text: { type: "plain_text", text: "Retry", emoji: true }, value: "run_9:2" }],
     });
     expect(renderDeployBadge(failed).text).toBe("staging · abc1234 · failed at 5/8 health · log");
   });
@@ -61,7 +61,7 @@ describe("deploy badge rendering", () => {
     expect(renderDeployBadge({ ...base, state: "cancelled" }).text).toBe("staging · abc1234 · cancelled");
     expect(renderDeployBadge({ ...base, state: "superseded" }).text).toBe("staging · abc1234 · superseded by a newer deploy");
     for (const state of ["interrupted", "cancelled", "superseded"] as const) {
-      expect(JSON.stringify(renderDeployBadge({ ...base, state }).blocks)).not.toContain("zeroci_deploy_retry");
+      expect(JSON.stringify(renderDeployBadge({ ...base, state }).blocks)).not.toContain("hookci_deploy_retry");
     }
   });
 
@@ -241,7 +241,7 @@ describe("deploy rendering through the agent", () => {
 
     const created = calls("/repos/acme/widgets/check-runs");
     expect(created).toHaveLength(1);
-    expect(created[0]?.body).toMatchObject({ name: "zeroci/deploy:staging", head_sha: SHA, status: "in_progress" });
+    expect(created[0]?.body).toMatchObject({ name: "hookci/deploy:staging", head_sha: SHA, status: "in_progress" });
     const updated = calls("/repos/acme/widgets/check-runs/500");
     expect(updated.at(-1)?.body).toMatchObject({
       status: "completed",

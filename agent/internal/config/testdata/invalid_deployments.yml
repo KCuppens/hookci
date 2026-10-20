@@ -8,7 +8,7 @@ deployments:
     on:
       push: main
     strategy: compose-bluegreen
-    env_file: /etc/zeroci/production.env
+    env_file: /etc/hookci/production.env
     compose:
       project: app
       service: web
@@ -32,6 +32,6 @@ deployments:
     on:
       push: preview
     strategy: script
-    env_file: /etc/zeroci/missing.env
+    env_file: /etc/hookci/missing.env
     health:
       url: http://127.0.0.1:{port}/health

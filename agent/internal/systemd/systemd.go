@@ -1,4 +1,4 @@
-// Package systemd manages the zeroci-agent@ units the installer writes,
+// Package systemd manages the hookci-agent@ units the installer writes,
 // through systemctl.
 package systemd
 
@@ -11,17 +11,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
-// AgentUnit is the zeroci-agent@ instance that runs the agent of an
+// AgentUnit is the hookci-agent@ instance that runs the agent of an
 // installation.
 func AgentUnit(installationID int64) string {
-	return "zeroci-agent@" + strconv.FormatInt(installationID, 10) + ".service"
+	return "hookci-agent@" + strconv.FormatInt(installationID, 10) + ".service"
 }
 
-// AllAgentUnits matches every zeroci-agent@ instance.
-const AllAgentUnits = "zeroci-agent@*.service"
+// AllAgentUnits matches every hookci-agent@ instance.
+const AllAgentUnits = "hookci-agent@*.service"
 
 // ServiceManager is the part of systemd that connect and doctor use.
 type ServiceManager interface {

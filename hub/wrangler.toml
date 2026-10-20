@@ -1,8 +1,8 @@
-# zeroci-hub Worker. Secrets are set with `wrangler secret put` and typed in
+# hookci-hub Worker. Secrets are set with `wrangler secret put` and typed in
 # src/env.ts; none belong in this file. Database ids and SLACK_APP_ID are
 # placeholders until the Cloudflare resources and Slack Apps are created (M1-29).
 
-name = "zeroci-hub"
+name = "hookci-hub"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat", "enable_request_signal"]
@@ -14,7 +14,7 @@ HUB_VERSION = "dev"
 SECURITY_CONTACT = "mailto:security@example.invalid"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
-GITHUB_APP_SLUG = "zeroci"
+GITHUB_APP_SLUG = "hookci"
 HUB_MODE = "shared"
 SLACK_APP_ID = "A0000000000"
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -25,13 +25,13 @@ enabled = true
 
 [[d1_databases]]
 binding = "DB"
-database_name = "zeroci-hub"
+database_name = "hookci-hub"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "LOGS"
-bucket_name = "zeroci-logs"
+bucket_name = "hookci-logs"
 
 [[durable_objects.bindings]]
 name = "AGENT_DO"
@@ -62,7 +62,7 @@ globs = ["**/*.sh", "**/*.css", "**/*viewer.js"]
 fallthrough = true
 
 [env.staging]
-name = "zeroci-hub-staging"
+name = "hookci-hub-staging"
 
 [env.staging.vars]
 HUB_ORIGIN = "https://ci-staging.webuno.io"
@@ -70,7 +70,7 @@ HUB_VERSION = "dev"
 SECURITY_CONTACT = "mailto:security@example.invalid"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
-GITHUB_APP_SLUG = "zeroci-staging"
+GITHUB_APP_SLUG = "hookci-staging"
 HUB_MODE = "shared"
 SLACK_APP_ID = "A0000000001"
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -81,13 +81,13 @@ enabled = true
 
 [[env.staging.d1_databases]]
 binding = "DB"
-database_name = "zeroci-hub-staging"
+database_name = "hookci-hub-staging"
 database_id = "00000000-0000-0000-0000-000000000001"
 migrations_dir = "migrations"
 
 [[env.staging.r2_buckets]]
 binding = "LOGS"
-bucket_name = "zeroci-logs-staging"
+bucket_name = "hookci-logs-staging"
 
 [[env.staging.durable_objects.bindings]]
 name = "AGENT_DO"

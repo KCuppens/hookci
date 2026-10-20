@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // JobName is the job a deploy run reports in protocol frames.

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Recoverer settles the deploys a stopped agent left mid-flight. Recover
@@ -30,7 +30,7 @@ type Recoverer struct {
 // outlives its deploy goroutine only when the agent stopped, including one
 // taken by a run still Queued), then moves every Running, Verifying or
 // RollingBack deploy run to Interrupted with an error naming the step it
-// stopped in and `zeroci retry` and emits its interrupted event. It
+// stopped in and `hookci retry` and emits its interrupted event. It
 // enqueues nothing and returns the interrupted run ids. Only store errors
 // fail it.
 func (r *Recoverer) Recover(ctx context.Context) ([]string, error) {
@@ -97,7 +97,7 @@ func interruptedReason(runID string, steps []store.DeployStep) string {
 			at = fmt.Sprintf("during step %d %s", s.Index+1, s.Name)
 		}
 	}
-	return fmt.Sprintf("agent restarted %s; run zeroci retry %s", at, runID)
+	return fmt.Sprintf("agent restarted %s; run hookci retry %s", at, runID)
 }
 
 func (r *Recoverer) now() time.Time {

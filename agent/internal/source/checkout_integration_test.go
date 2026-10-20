@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // TestCheckoutAsJobUserIntegration checks out a local repo for the
-// zeroci-run account, as `zeroci run --isolation systemd` does, and checks
+// hookci-run account, as `hookci run --isolation systemd` does, and checks
 // that the account owns every file of the tree and that the tree holds its
 // own objects rather than borrowing the root-owned mirror's.
 func TestCheckoutAsJobUserIntegration(t *testing.T) {

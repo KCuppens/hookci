@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/control"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
 )
 
 // cmdRetry asks the running agent to retry a Failed or Interrupted deploy
@@ -18,7 +18,7 @@ func cmdRetry(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	fs.SetOutput(stderr)
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] retry <run_id> [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] retry <run_id> [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Retry a Failed or Interrupted deploy run.")
 		fs.PrintDefaults()
@@ -42,11 +42,11 @@ func cmdRetry(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	var rep deploy.RetryReply
 	err = control.Call(ctx, stateDir, deploy.RetryOp, deploy.RetryRequest{RunID: pos[0]}, &rep)
 	if errors.Is(err, control.ErrNotRunning) {
-		fmt.Fprintln(stderr, "zeroci: agent is not running; start it with systemctl start zeroci-agent@<installation>")
+		fmt.Fprintln(stderr, "hookci: agent is not running; start it with systemctl start hookci-agent@<installation>")
 		return ExitRunFailed
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "queued retry of %s (attempt %d)\n", rep.RunID, rep.Attempt)

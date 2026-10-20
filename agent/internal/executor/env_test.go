@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func pushInput() EnvInput {
@@ -35,7 +35,7 @@ func envValue(env []string, key string) (string, bool) {
 
 func TestBuildJobEnvExactKeys(t *testing.T) {
 	env := BuildJobEnv(pushInput())
-	want := []string{"CI", "HOME", "LANG", "PATH", "TMPDIR", "ZEROCI", "ZEROCI_EVENT", "ZEROCI_JOB", "ZEROCI_REF", "ZEROCI_RUN_ID", "ZEROCI_SHA"}
+	want := []string{"CI", "HOME", "HOOKCI", "HOOKCI_EVENT", "HOOKCI_JOB", "HOOKCI_REF", "HOOKCI_RUN_ID", "HOOKCI_SHA", "LANG", "PATH", "TMPDIR"}
 	if got := envKeys(env); !slices.Equal(got, want) {
 		t.Fatalf("keys = %v, want %v", got, want)
 	}
@@ -45,12 +45,12 @@ func TestBuildJobEnvExactKeys(t *testing.T) {
 		"TMPDIR":        "/state/runs/01run/tmp",
 		"LANG":          "C.UTF-8",
 		"CI":            "true",
-		"ZEROCI":        "1",
-		"ZEROCI_RUN_ID": "01run",
-		"ZEROCI_JOB":    "lint",
-		"ZEROCI_SHA":    "abc123",
-		"ZEROCI_REF":    "refs/heads/main",
-		"ZEROCI_EVENT":  "push",
+		"HOOKCI":        "1",
+		"HOOKCI_RUN_ID": "01run",
+		"HOOKCI_JOB":    "lint",
+		"HOOKCI_SHA":    "abc123",
+		"HOOKCI_REF":    "refs/heads/main",
+		"HOOKCI_EVENT":  "push",
 	} {
 		if got, _ := envValue(env, key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
@@ -69,15 +69,15 @@ func TestBuildJobEnvExactKeys(t *testing.T) {
 }
 
 func TestBuildJobEnvBaseSHAOnlyForPR(t *testing.T) {
-	if _, ok := envValue(BuildJobEnv(pushInput()), "ZEROCI_BASE_SHA"); ok {
-		t.Fatal("push run has ZEROCI_BASE_SHA")
+	if _, ok := envValue(BuildJobEnv(pushInput()), "HOOKCI_BASE_SHA"); ok {
+		t.Fatal("push run has HOOKCI_BASE_SHA")
 	}
 	in := pushInput()
 	pr := 7
 	in.Run.PR = &pr
 	in.Run.Event = "pull_request"
-	if got, ok := envValue(BuildJobEnv(in), "ZEROCI_BASE_SHA"); !ok || got != "base1" {
-		t.Fatalf("ZEROCI_BASE_SHA = %q, %v; want base1", got, ok)
+	if got, ok := envValue(BuildJobEnv(in), "HOOKCI_BASE_SHA"); !ok || got != "base1" {
+		t.Fatalf("HOOKCI_BASE_SHA = %q, %v; want base1", got, ok)
 	}
 }
 

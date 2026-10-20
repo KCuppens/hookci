@@ -1,4 +1,4 @@
-// Package testutil provides shared test helpers for the zeroci agent.
+// Package testutil provides shared test helpers for the hookci agent.
 package testutil
 
 import (
@@ -15,14 +15,14 @@ import (
 var update = flag.Bool("update", false, "update golden files")
 
 // RequireIntegration skips the test unless it is running on Linux as root
-// with ZEROCI_INTEGRATION=1 set. Integration tests exercise privileged
+// with HOOKCI_INTEGRATION=1 set. Integration tests exercise privileged
 // operations (process credentials, real filesystem layouts) that only make
 // sense on a disposable Linux VM running as root.
 func RequireIntegration(t testing.TB) {
 	t.Helper()
 
-	if os.Getenv("ZEROCI_INTEGRATION") != "1" || os.Geteuid() != 0 {
-		t.Skip("skipping integration test: set ZEROCI_INTEGRATION=1 and run as root")
+	if os.Getenv("HOOKCI_INTEGRATION") != "1" || os.Geteuid() != 0 {
+		t.Skip("skipping integration test: set HOOKCI_INTEGRATION=1 and run as root")
 	}
 	if runtime.GOOS != "linux" {
 		t.Skipf("skipping integration test: requires linux, running on %s", runtime.GOOS)

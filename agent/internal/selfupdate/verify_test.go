@@ -16,13 +16,13 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/sigstore/sigstore-go/pkg/tlog"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 const (
 	goldenIdentity = "release@example.test"
 	goldenIssuer   = "https://issuer.example.test"
-	goldenSums     = "0000000000000000000000000000000000000000000000000000000000000000  zeroci_1.2.3_linux_amd64.tar.gz\n"
+	goldenSums     = "0000000000000000000000000000000000000000000000000000000000000000  hookci_1.2.3_linux_amd64.tar.gz\n"
 )
 
 var goldenDir = filepath.Join("testdata", "golden")

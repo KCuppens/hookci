@@ -15,11 +15,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var start = time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)

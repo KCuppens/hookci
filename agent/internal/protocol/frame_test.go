@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // Every message defined in $defs.protocol must be generated.
@@ -97,7 +97,7 @@ func TestDecodeInterruptRejectsBothIDs(t *testing.T) {
 
 func TestDecodeError(t *testing.T) {
 	got := decode[protocol.Error](t, fixture(t, "valid-error.json"))
-	if got.Code != protocol.ErrorCodeProtocolUnsupported || got.Message == "" || got.UpgradeHint == nil || *got.UpgradeHint != "run zeroci upgrade" {
+	if got.Code != protocol.ErrorCodeProtocolUnsupported || got.Message == "" || got.UpgradeHint == nil || *got.UpgradeHint != "run hookci upgrade" {
 		t.Errorf("error frame = %+v", got)
 	}
 	if _, err := protocol.DecodeFrame([]byte(`{"v":1,"type":"error","code":"internal"}`)); err == nil || !strings.Contains(err.Error(), "message") {
@@ -154,7 +154,7 @@ func TestDecodeFrameRejectsUnknownTypeAndVersion(t *testing.T) {
 // list of every message in $defs.protocol: a frame with all of them decodes,
 // and dropping any one is rejected with an error naming it.
 func TestDecodeFrameRequiresSchemaFields(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "zeroci.schema.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "hookci.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

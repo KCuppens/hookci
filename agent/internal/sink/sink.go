@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
 )
 
 // Kind says what an Event describes.

@@ -1,5 +1,5 @@
 // Whether a trigger is a fork pull request. Which forks may run is decided
-// by policy/trust.ts from the base ref's `.zeroci.yml`.
+// by policy/trust.ts from the base ref's `.hookci.yml`.
 
 import type { HubTrigger } from "../github/normalize";
 

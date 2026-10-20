@@ -13,23 +13,23 @@ import (
 	"regexp"
 	"syscall"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/compose"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
-	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/compose"
+	"github.com/KCuppens/hookci/agent/internal/deploy/health"
+	"github.com/KCuppens/hookci/agent/internal/deploy/strategies"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
+	"github.com/KCuppens/hookci/agent/internal/doctor"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // newDeployScheduler builds the deploy lane: the engine that runs one
@@ -46,7 +46,7 @@ func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConf
 		}
 		dep, ok := cfg.Deployments[run.Env]
 		if !ok {
-			return config.Deployment{}, fmt.Errorf("daemon: .zeroci.yml at %s has no deployments.%s", run.SHA, run.Env)
+			return config.Deployment{}, fmt.Errorf("daemon: .hookci.yml at %s has no deployments.%s", run.SHA, run.Env)
 		}
 		return dep, nil
 	}
@@ -176,7 +176,7 @@ func githubRefs(githubURL string, hc *http.Client, tokens func(ctx context.Conte
 	}
 }
 
-// githubConfig returns a loader of the .zeroci.yml at a run's sha, fetched
+// githubConfig returns a loader of the .hookci.yml at a run's sha, fetched
 // with the run's GitHub client from refs.
 func githubConfig(refs func(store.DeployRun) *trigger.GitHubRefChecker) func(context.Context, store.DeployRun) (*config.Config, error) {
 	return func(ctx context.Context, run store.DeployRun) (*config.Config, error) {

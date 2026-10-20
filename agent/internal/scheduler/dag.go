@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Graph tracks the job states of one run. Jobs are ordered topologically with

@@ -1,5 +1,5 @@
 // POST /v1/pair/redeem: an agent trades a single-use pair token for its
-// credential (`zeroci connect <pair-token>`).
+// credential (`hookci connect <pair-token>`).
 
 import type { Context } from "hono";
 import type { Env } from "../env";

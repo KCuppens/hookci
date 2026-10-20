@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // ErrNotRetryable reports a retry of a run that is not Failed or Interrupted.
@@ -56,7 +56,7 @@ func Retryable(state string) bool {
 	return state == store.DeployFailed || state == store.DeployInterrupted
 }
 
-// RetryOp is the agent control op of `zeroci retry`.
+// RetryOp is the agent control op of `hookci retry`.
 const RetryOp = "deploy.retry"
 
 // RetryRequest is the body of RetryOp.
@@ -72,7 +72,7 @@ type RetryReply struct {
 
 // RetryControl serves RetryOp: it retries the RetryRequest's run with
 // RequestRetry and answers a RetryReply. Its errors are the messages
-// `zeroci retry` prints.
+// `hookci retry` prints.
 func RetryControl(st *store.Store, sched Enqueuer) func(context.Context, json.RawMessage) (any, error) {
 	return func(ctx context.Context, body json.RawMessage) (any, error) {
 		var req RetryRequest

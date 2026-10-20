@@ -210,12 +210,12 @@ func (p *Proxy) handle(client net.Conn) {
 	br := bufio.NewReaderSize(&io.LimitedReader{R: client, N: maxHeaderBytes}, maxHeaderBytes)
 	req, err := http.ReadRequest(br)
 	if err != nil {
-		p.deny(client, Decision{Reason: reasonBadRequest}, http.StatusBadRequest, "zeroci egress: bad request")
+		p.deny(client, Decision{Reason: reasonBadRequest}, http.StatusBadRequest, "hookci egress: bad request")
 		return
 	}
 	if req.Method != http.MethodConnect {
 		p.deny(client, Decision{Host: req.URL.Hostname(), Reason: reasonMethod},
-			http.StatusMethodNotAllowed, "zeroci egress: only CONNECT is allowed")
+			http.StatusMethodNotAllowed, "hookci egress: only CONNECT is allowed")
 		return
 	}
 	d, status, body := checkTarget(p.opts.Allow, req.URL.Host)
@@ -225,7 +225,7 @@ func (p *Proxy) handle(client net.Conn) {
 	}
 	if !p.acquire() {
 		d.Reason = reasonTooManyConns
-		p.deny(client, d, http.StatusServiceUnavailable, "zeroci egress: too many connections")
+		p.deny(client, d, http.StatusServiceUnavailable, "hookci egress: too many connections")
 		return
 	}
 	defer p.active.Add(-1)
@@ -239,15 +239,15 @@ func (p *Proxy) handle(client net.Conn) {
 	switch reason {
 	case reasonDNSError:
 		d.Reason = reason
-		p.deny(client, d, http.StatusBadGateway, "zeroci egress: cannot resolve "+d.Host)
+		p.deny(client, d, http.StatusBadGateway, "hookci egress: cannot resolve "+d.Host)
 		return
 	case reasonForbiddenIP:
 		d.Reason = reason
-		p.deny(client, d, http.StatusForbidden, "zeroci egress: "+d.Host+" resolves to a forbidden address")
+		p.deny(client, d, http.StatusForbidden, "hookci egress: "+d.Host+" resolves to a forbidden address")
 		return
 	case reasonDialError:
 		d.Reason = reason
-		p.deny(client, d, http.StatusBadGateway, "zeroci egress: cannot connect to "+d.Host)
+		p.deny(client, d, http.StatusBadGateway, "hookci egress: cannot connect to "+d.Host)
 		return
 	}
 	defer p.untrack(upstream)
@@ -270,32 +270,32 @@ func (p *Proxy) handle(client net.Conn) {
 func checkTarget(allow *AllowList, authority string) (Decision, int, string) {
 	rawHost, rawPort, err := net.SplitHostPort(authority)
 	if err != nil {
-		return Decision{Host: authority, Reason: reasonBadRequest}, http.StatusBadRequest, "zeroci egress: bad request"
+		return Decision{Host: authority, Reason: reasonBadRequest}, http.StatusBadRequest, "hookci egress: bad request"
 	}
 	d := Decision{Host: rawHost}
 	d.Port, _ = strconv.Atoi(rawPort)
 	if isIPLiteral(rawHost) {
 		d.Reason = reasonIPLiteral
-		return d, http.StatusForbidden, "zeroci egress: IP literal targets are not allowed; use a host name"
+		return d, http.StatusForbidden, "hookci egress: IP literal targets are not allowed; use a host name"
 	}
 	if rawPort != "443" {
 		d.Reason = reasonBadPort
-		return d, http.StatusForbidden, "zeroci egress: only port 443 is allowed"
+		return d, http.StatusForbidden, "hookci egress: only port 443 is allowed"
 	}
 	host, err := NormalizeHost(rawHost)
 	if err != nil {
 		d.Reason = reasonBadRequest
-		return d, http.StatusBadRequest, "zeroci egress: bad request"
+		return d, http.StatusBadRequest, "hookci egress: bad request"
 	}
 	d.Host = host
 	if isIPLiteral(host) {
 		d.Reason = reasonIPLiteral
-		return d, http.StatusForbidden, "zeroci egress: IP literal targets are not allowed; use a host name"
+		return d, http.StatusForbidden, "hookci egress: IP literal targets are not allowed; use a host name"
 	}
 	if !allow.Allows(host) {
 		d.Reason = reasonNotAllowlisted
-		return d, http.StatusForbidden, "zeroci egress: " + host +
-			" is not in the allow-list; add it under checks.egress in .zeroci.yml (trusted runs only)"
+		return d, http.StatusForbidden, "hookci egress: " + host +
+			" is not in the allow-list; add it under checks.egress in .hookci.yml (trusted runs only)"
 	}
 	return d, 0, ""
 }

@@ -11,15 +11,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/doctor"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
 )
 
 // Globals are the flags given before the command.
@@ -43,7 +43,7 @@ func parseGlobals(fs *flag.FlagSet, args []string, getenv func(string) string) (
 		return Globals{}, nil, err
 	}
 	if g.StateDir == "" {
-		return Globals{}, nil, errors.New("no state directory: set --state-dir or $ZEROCI_STATE_DIR")
+		return Globals{}, nil, errors.New("no state directory: set --state-dir or $HOOKCI_STATE_DIR")
 	}
 	if g.Slots < 1 {
 		return Globals{}, nil, fmt.Errorf("--slots must be at least 1, got %d", g.Slots)
@@ -56,17 +56,17 @@ func parseGlobals(fs *flag.FlagSet, args []string, getenv func(string) string) (
 	return g, fs.Args(), nil
 }
 
-// defaultStateDir is $ZEROCI_STATE_DIR, else $XDG_STATE_HOME/zeroci, else
-// ~/.local/state/zeroci. It is empty when none of them is known.
+// defaultStateDir is $HOOKCI_STATE_DIR, else $XDG_STATE_HOME/hookci, else
+// ~/.local/state/hookci. It is empty when none of them is known.
 func defaultStateDir(getenv func(string) string) string {
-	if dir := getenv("ZEROCI_STATE_DIR"); dir != "" {
+	if dir := getenv("HOOKCI_STATE_DIR"); dir != "" {
 		return dir
 	}
 	if dir := getenv("XDG_STATE_HOME"); dir != "" {
-		return filepath.Join(dir, "zeroci")
+		return filepath.Join(dir, "hookci")
 	}
 	if home := getenv("HOME"); home != "" {
-		return filepath.Join(home, ".local", "state", "zeroci")
+		return filepath.Join(home, ".local", "state", "hookci")
 	}
 	return ""
 }
@@ -93,7 +93,7 @@ type Deps struct {
 	Netns *netns.Manager
 	// After paces logs -f polling, like time.After.
 	After func(time.Duration) <-chan time.Time
-	// Services enables the zeroci-agent@ unit after connect.
+	// Services enables the hookci-agent@ unit after connect.
 	Services systemd.ServiceManager
 	// Doctor is the host env doctor checks for a state root and hub origin.
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
@@ -102,7 +102,7 @@ type Deps struct {
 	// Stdin is where sink add telegram reads the bot token. When it is a
 	// terminal *os.File the token is read without echo.
 	Stdin io.Reader
-	// Hub runs the zeroci-hub CLI for `zeroci hub`.
+	// Hub runs the hookci-hub CLI for `hookci hub`.
 	Hub HubDeps
 }
 
@@ -113,7 +113,7 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		StateRoot: defaultStateRoot,
 		Isolation: func(name string) (isolation.Isolation, []string, error) {
 			env := isolation.HostSelectEnv()
-			env.Warn = func(msg string) { fmt.Fprintf(stderr, "zeroci: warning: %s\n", msg) }
+			env.Warn = func(msg string) { fmt.Fprintf(stderr, "hookci: warning: %s\n", msg) }
 			return isolation.Select(name, env)
 		},
 		Clock:    time.Now,

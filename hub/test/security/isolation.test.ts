@@ -98,7 +98,7 @@ async function gateForkRun(t: Tenant): Promise<string> {
   } satisfies HubTrigger & { attempt: number; reason: "fork_gated" };
   const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(t.agentId)).fetch("https://do/gate", {
     method: "POST",
-    headers: { "x-zeroci-agent-id": t.agentId },
+    headers: { "x-hookci-agent-id": t.agentId },
     body: JSON.stringify(trigger),
   });
   expect(res.status).toBe(202);
@@ -144,7 +144,7 @@ function replies(prefix: string, from: number): unknown[] {
   return slack.calls.slice(from).flatMap((c) => (new URL(c.url).pathname.startsWith(prefix) ? [c.body] : []));
 }
 
-/** Runs `/zeroci text` as tenant t's linked user and returns the reply posted to its response_url. */
+/** Runs `/hookci text` as tenant t's linked user and returns the reply posted to its response_url. */
 async function slashCommand(t: Tenant, text: string): Promise<unknown> {
   const from = slack.calls.length;
   const res = await slackPost(
@@ -153,7 +153,7 @@ async function slashCommand(t: Tenant, text: string): Promise<unknown> {
       team_id: t.teamId,
       user_id: t.slackUserId,
       channel_id: t.channelId,
-      command: "/zeroci",
+      command: "/hookci",
       text,
       response_url: `https://hooks.slack.com/commands/${t.teamId}/1/cmd`,
       trigger_id: "1.2.trig",
@@ -197,8 +197,8 @@ describe("tenant isolation", () => {
         headers: {
           authorization: `Bearer ${a.credential}`,
           "content-encoding": "gzip",
-          "x-zeroci-log-bytes": String(text.length),
-          "x-zeroci-log-truncated": "0",
+          "x-hookci-log-bytes": String(text.length),
+          "x-hookci-log-truncated": "0",
         },
         body: await gzip(text),
       }),
@@ -290,7 +290,7 @@ describe("tenant isolation", () => {
     const before = await tenantRows(env, b.installationId);
     const agentB = await agentDoState(b);
 
-    const view = await click(a, "zeroci_view_logs", `${b.runId}:${b.job}`);
+    const view = await click(a, "hookci_view_logs", `${b.runId}:${b.job}`);
     expect(view).toMatchObject({ text: S.slack.viewLogsNoAccess });
     expect(JSON.stringify(view)).not.toContain("/logs/");
     expect(await click(a, "fork:approve", `${gated}:${b.headSha}`)).toMatchObject({ text: S.forks.notGated });

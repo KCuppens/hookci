@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // fakeClock is a clock that only moves when Sleep is called.
@@ -59,14 +59,14 @@ func isPGReady(c execx.Cmd) bool {
 
 // onFinalServer answers the readiness query the way the final server does.
 func onFinalServer(fake *execx.Fake) {
-	fake.On("docker", []string{"exec", "zeroci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Stdout: "*\n"})
+	fake.On("docker", []string{"exec", "hookci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Stdout: "*\n"})
 }
 
 func TestContainerName(t *testing.T) {
-	if got := ContainerName("01HX"); got != "zeroci-svc-01HX-postgres" {
+	if got := ContainerName("01HX"); got != "hookci-svc-01HX-postgres" {
 		t.Errorf("ContainerName(01HX) = %q", got)
 	}
-	if got := ContainerName("a/b c;d"); got != "zeroci-svc-a_b_c_d-postgres" {
+	if got := ContainerName("a/b c;d"); got != "hookci-svc-a_b_c_d-postgres" {
 		t.Errorf("ContainerName(unsafe) = %q, want unsafe characters replaced by _", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestContainerName(t *testing.T) {
 func TestBuildRunArgvGolden(t *testing.T) {
 	argv := BuildRunArgv(PostgresOptions{
 		RunID:       "01HX",
-		RunDir:      "/var/lib/zeroci/local/runs/01HX",
+		RunDir:      "/var/lib/hookci/local/runs/01HX",
 		Tmpfs:       true,
 		CPUs:        1.5,
 		MemoryBytes: 2 << 30,
@@ -122,7 +122,7 @@ func TestStartPostgresReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartPostgres: %v", err)
 	}
-	if p.Name != "zeroci-svc-01HX-postgres" || p.SocketDir != filepath.Join(o.RunDir, "pg") {
+	if p.Name != "hookci-svc-01HX-postgres" || p.SocketDir != filepath.Join(o.RunDir, "pg") {
 		t.Errorf("Postgres = %+v", p)
 	}
 	n := 0
@@ -155,7 +155,7 @@ func TestStartPostgresWaitsForFinalServer(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("docker", []string{"run"}, execx.FakeResponse{})
 	queries := 0
-	fake.On("docker", []string{"exec", "zeroci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
+	fake.On("docker", []string{"exec", "hookci-svc-01HX-postgres", "psql"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
 		queries++
 		if queries > 1 {
 			_, _ = c.Stdout.Write([]byte("*\n"))
@@ -170,7 +170,7 @@ func TestStartPostgresWaitsForFinalServer(t *testing.T) {
 	if queries != 2 {
 		t.Errorf("readiness queries = %d, want 2 (init server, then final server)", queries)
 	}
-	if n := countCalls(fake, "exec", "zeroci-svc-01HX-postgres", "pg_isready"); n != 2 {
+	if n := countCalls(fake, "exec", "hookci-svc-01HX-postgres", "pg_isready"); n != 2 {
 		t.Errorf("pg_isready calls = %d, want 2", n)
 	}
 }
@@ -179,7 +179,7 @@ func TestStartPostgresWaitsForFinalServer(t *testing.T) {
 func TestStartPostgresRunFailureRemovesContainer(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("docker", []string{"run"}, execx.FakeResponse{Code: 125, Stderr: "docker: Error response from daemon: failed to set up container networking"})
-	fake.On("docker", []string{"rm", "-f", "zeroci-svc-01HX-postgres"}, execx.FakeResponse{})
+	fake.On("docker", []string{"rm", "-f", "hookci-svc-01HX-postgres"}, execx.FakeResponse{})
 
 	p, err := StartPostgres(context.Background(), testOptions(t, fake))
 	if err == nil || p != nil {
@@ -199,7 +199,7 @@ func TestStartPostgresTimeout(t *testing.T) {
 	fake.On("docker", []string{"run"}, execx.FakeResponse{})
 	fake.On("docker", []string{"exec"}, execx.FakeResponse{Code: 2})
 	fake.On("docker", []string{"logs", "--tail", "40"}, execx.FakeResponse{Stdout: "FATAL:  data directory has wrong ownership\n"})
-	fake.On("docker", []string{"rm", "-f", "zeroci-svc-01HX-postgres"}, execx.FakeResponse{})
+	fake.On("docker", []string{"rm", "-f", "hookci-svc-01HX-postgres"}, execx.FakeResponse{})
 	o := testOptions(t, fake)
 	o.ReadyTimeout = 2 * time.Second
 	o.PollEvery = 500 * time.Millisecond
@@ -214,7 +214,7 @@ func TestStartPostgresTimeout(t *testing.T) {
 	if !strings.Contains(err.Error(), "data directory has wrong ownership") {
 		t.Errorf("error %q lacks the docker logs output", err)
 	}
-	if !fake.Called("docker", "rm", "-f", "zeroci-svc-01HX-postgres") {
+	if !fake.Called("docker", "rm", "-f", "hookci-svc-01HX-postgres") {
 		t.Error("docker rm -f was not called after the timeout")
 	}
 	// Probes at t=0, 0.5, 1, 1.5 and 2s, then the deadline is reached.
@@ -229,13 +229,13 @@ func TestStartPostgresStaleNameRetry(t *testing.T) {
 	fake.On("docker", []string{"run"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
 		runs++
 		if runs == 1 {
-			msg := `docker: Error response from daemon: Conflict. The container name "/zeroci-svc-01HX-postgres" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.`
+			msg := `docker: Error response from daemon: Conflict. The container name "/hookci-svc-01HX-postgres" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.`
 			_, _ = c.Stderr.Write([]byte(msg))
 			return &execx.ExitError{Code: 125, Stderr: msg}
 		}
 		return nil
 	}})
-	fake.On("docker", []string{"rm", "-f", "zeroci-svc-01HX-postgres"}, execx.FakeResponse{})
+	fake.On("docker", []string{"rm", "-f", "hookci-svc-01HX-postgres"}, execx.FakeResponse{})
 	onFinalServer(fake)
 	fake.On("docker", []string{"exec"}, execx.FakeResponse{})
 
@@ -299,10 +299,10 @@ func TestSocketDirMode(t *testing.T) {
 func TestStopIdempotent(t *testing.T) {
 	fake := &execx.Fake{}
 	stops := 0
-	fake.On("docker", []string{"rm", "-f", "zeroci-svc-r1-postgres"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
+	fake.On("docker", []string{"rm", "-f", "hookci-svc-r1-postgres"}, execx.FakeResponse{Fn: func(c execx.Cmd) error {
 		stops++
 		if stops == 2 {
-			msg := "Error response from daemon: No such container: zeroci-svc-r1-postgres"
+			msg := "Error response from daemon: No such container: hookci-svc-r1-postgres"
 			_, _ = c.Stderr.Write([]byte(msg))
 			return &execx.ExitError{Code: 1, Stderr: msg}
 		}

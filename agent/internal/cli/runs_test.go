@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/runstats"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/runstats"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const deployRun = "01JNDQ9000CCCCCCCCCCCCCCCC"

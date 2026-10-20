@@ -8,8 +8,8 @@ import (
 	"syscall"
 )
 
-// errStateDirBusy reports that another zeroci run holds the state directory lock.
-var errStateDirBusy = errors.New("another zeroci run is using this state directory")
+// errStateDirBusy reports that another hookci run holds the state directory lock.
+var errStateDirBusy = errors.New("another hookci run is using this state directory")
 
 // lockStateDir takes an exclusive, non-blocking lock on stateDir for the life of a run.
 // Crash recovery treats every active run in the store as dead, so two runs must never
@@ -30,7 +30,7 @@ func lockStateDir(stateDir string) (unlock func(), err error) {
 	return func() { _ = f.Close() }, nil
 }
 
-// stateDirLocked reports whether a zeroci run holds the lock on stateDir.
+// stateDirLocked reports whether a hookci run holds the lock on stateDir.
 // The probe holds a shared lock only for the instant of the check.
 func stateDirLocked(stateDir string) (bool, error) {
 	f, err := os.Open(filepath.Join(stateDir, "run.lock"))

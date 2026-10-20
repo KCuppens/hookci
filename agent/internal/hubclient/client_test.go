@@ -18,12 +18,12 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-const testCredential = "zc_agent_secretsecretsecret"
+const testCredential = "hci_agent_secretsecretsecret"
 
 // fakeHub serves /v1/agent/connect. While refuse is non-zero it answers the
 // upgrade with that HTTP status; otherwise it accepts and hands the socket to
@@ -268,7 +268,7 @@ func TestHelloWelcome(t *testing.T) {
 	if got := c.header.Get("Authorization"); got != "Bearer "+testCredential {
 		t.Errorf("Authorization = %q", got)
 	}
-	if got := c.header.Get("User-Agent"); got != "zeroci-agent/1.2.3" {
+	if got := c.header.Get("User-Agent"); got != "hookci-agent/1.2.3" {
 		t.Errorf("User-Agent = %q", got)
 	}
 	hello := c.readFrame(t)
@@ -402,13 +402,13 @@ func TestProtocolUnsupported(t *testing.T) {
 	x.start(t)
 	c := x.hub.next(t)
 	c.readFrame(t)
-	c.send(t, `{"v":1,"type":"error","code":"protocol_unsupported","message":"agent protocol 1 is not supported","upgrade_hint":"run zeroci upgrade"}`)
+	c.send(t, `{"v":1,"type":"error","code":"protocol_unsupported","message":"agent protocol 1 is not supported","upgrade_hint":"run hookci upgrade"}`)
 	c.c.Close(4400, "protocol_unsupported")
 
 	if err := x.runErr(t); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Run = %v, want ErrUnsupported", err)
 	}
-	if !strings.Contains(x.logs.String(), "run zeroci upgrade") {
+	if !strings.Contains(x.logs.String(), "run hookci upgrade") {
 		t.Fatalf("upgrade hint not logged; logs:\n%s", x.logs.String())
 	}
 }

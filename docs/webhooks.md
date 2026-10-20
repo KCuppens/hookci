@@ -2,7 +2,7 @@
 
 A webhook sink POSTs a JSON document to your HTTPS endpoint each time a run
 changes state. Every request is signed, so you can check it came from your
-ZeroCI hub and was not replayed.
+HookCI hub and was not replayed.
 
 ## Endpoint rules
 
@@ -65,20 +65,20 @@ egress does not reach private ranges.
 | Header | Value |
 | --- | --- |
 | `Content-Type` | `application/json` |
-| `User-Agent` | `ZeroCI-Hookshot/1` |
-| `X-ZeroCI-Event` | `run.updated` |
-| `X-ZeroCI-Delivery` | The payload's `delivery_id` |
-| `X-ZeroCI-Timestamp` | Unix time in seconds when the request was signed |
-| `X-ZeroCI-Signature` | `sha256=` followed by the lowercase hex HMAC-SHA256 |
+| `User-Agent` | `HookCI-Hookshot/1` |
+| `X-HookCI-Event` | `run.updated` |
+| `X-HookCI-Delivery` | The payload's `delivery_id` |
+| `X-HookCI-Timestamp` | Unix time in seconds when the request was signed |
+| `X-HookCI-Signature` | `sha256=` followed by the lowercase hex HMAC-SHA256 |
 
 ## Signature
 
-The hub generates the secret (`zcwh_` and 64 hex characters) and shows it
+The hub generates the secret (`hciwh_` and 64 hex characters) and shows it
 once when you create the webhook. The signature is HMAC-SHA256, keyed with
 the secret, over the timestamp, a dot, and the raw request body:
 
 ```
-sha256=hex(HMAC_SHA256(secret, X-ZeroCI-Timestamp + "." + body))
+sha256=hex(HMAC_SHA256(secret, X-HookCI-Timestamp + "." + body))
 ```
 
 Verify against the raw body bytes, before any JSON parsing. Compare in
@@ -90,7 +90,7 @@ from your clock, which stops replays of old requests.
 ```js
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export function verifyZeroCI(secret, timestamp, body, signature) {
+export function verifyHookCI(secret, timestamp, body, signature) {
   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
   const expected = "sha256=" + createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
   const a = Buffer.from(expected);
@@ -111,7 +111,7 @@ import (
 	"time"
 )
 
-func VerifyZeroCI(secret, timestamp string, body []byte, signature string) bool {
+func VerifyHookCI(secret, timestamp string, body []byte, signature string) bool {
 	ts, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil || math.Abs(float64(time.Now().Unix()-ts)) > 300 {
 		return false
@@ -127,7 +127,7 @@ func VerifyZeroCI(secret, timestamp string, body []byte, signature string) bool 
 ## Delivery
 
 - At least once: the same update may arrive more than once. Deduplicate by
-  `X-ZeroCI-Delivery`.
+  `X-HookCI-Delivery`.
 - Latest wins per run: if a run changes again before an update is delivered,
   only the newer state is sent. A request goes out only when the run's state
   differs from the last one delivered to your endpoint.

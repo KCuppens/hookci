@@ -1,5 +1,5 @@
 // Package netns gives a run a private network namespace whose only exit is
-// the run's egress proxy. The agent creates /run/netns/zc-<run> with ip,
+// the run's egress proxy. The agent creates /run/netns/hci-<run> with ip,
 // brings up loopback and starts pasta without --config-net, which forwards
 // 127.0.0.1:InNSProxyPort inside the namespace to the proxy's host port and
 // gives the namespace no outbound route. Jobs join the namespace through
@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
 )
 
 // Mode is how a run's network is restricted.
@@ -38,7 +38,7 @@ const (
 var ErrNetnsRequired = errors.New("untrusted run requires a private network namespace, but pasta or ip is not available on this host")
 
 const (
-	nsPrefix     = "zc-"
+	nsPrefix     = "hci-"
 	maxNSNameLen = 15
 
 	defaultNetnsDir     = "/run/netns"
@@ -46,7 +46,7 @@ const (
 	pastaGrace          = 2 * time.Second
 )
 
-// NSName returns "zc-" + isolation.SanitizeUnitPart(runID), lower-cased with
+// NSName returns "hci-" + isolation.SanitizeUnitPart(runID), lower-cased with
 // every byte outside [a-z0-9-] mapped to '-', truncated to at most 15 bytes.
 // Truncation keeps the tail: run IDs start with a millisecond timestamp and
 // end in random characters, so the tail keeps concurrent runs apart.
@@ -122,7 +122,7 @@ type Network struct {
 	RunID         string
 	Mode          Mode
 	NSName        string // "" unless ModeNetns
-	NSPath        string // "/run/netns/zc-<run>" or ""
+	NSPath        string // "/run/netns/hci-<run>" or ""
 	HostProxyPort int    // proxy port on the host side, 0 unless ModeNetns
 	pasta         *execx.Group
 }
@@ -187,7 +187,7 @@ func (m *Manager) Teardown(ctx context.Context, n *Network) error {
 	return errors.Join(errs...)
 }
 
-// ListNamespaces returns names under NetnsDir with prefix "zc-" (used by
+// ListNamespaces returns names under NetnsDir with prefix "hci-" (used by
 // crash recovery, M0-17). A missing NetnsDir yields an empty list.
 func (m *Manager) ListNamespaces() ([]string, error) {
 	dir := m.netnsDir()

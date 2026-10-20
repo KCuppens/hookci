@@ -1,5 +1,5 @@
-// The GitHub Checks sink: one aggregate `zeroci` check run per commit plus a
-// `zeroci/<job>` check run per job, with the job's annotations. In the AgentDO
+// The GitHub Checks sink: one aggregate `hookci` check run per commit plus a
+// `hookci/<job>` check run per job, with the job's annotations. In the AgentDO
 // in-progress updates are coalesced (see checks/coalesce); in the Worker every
 // update goes out at once.
 
@@ -23,8 +23,8 @@ import { registerSinkFactory, type SinkHost } from "./index";
 import { logJob } from "./runview";
 import type { AgentView, Annotation, JobView, RunView, Sink } from "./types";
 
-export const AGGREGATE_CHECK = "zeroci";
-export const CONFIG_CHECK = "zeroci/config";
+export const AGGREGATE_CHECK = "hookci";
+export const CONFIG_CHECK = "hookci/config";
 
 /**
  * The tail of the work each AgentDO is doing on one commit's checks. Calls

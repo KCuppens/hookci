@@ -32,4 +32,4 @@ command -v caddy >/dev/null 2>&1 || fail "caddy is not installed"
 docker buildx version >/dev/null 2>&1 || fail "docker buildx is not installed (docker-buildx-plugin, or docker-buildx on Ubuntu)"
 
 cd "$(dirname "$0")/../agent"
-ZEROCI_INTEGRATION=1 go test -tags integration -count=1 -timeout 60m ./internal/deploy/integration/... "$@"
+HOOKCI_INTEGRATION=1 go test -tags integration -count=1 -timeout 60m ./internal/deploy/integration/... "$@"

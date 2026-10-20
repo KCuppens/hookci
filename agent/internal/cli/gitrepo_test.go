@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/source"
 )
 
 // commitWorkDir writes files into a new git repository, commits them and
-// returns its path. `zeroci run` checks out the committed HEAD, so run tests
+// returns its path. `hookci run` checks out the committed HEAD, so run tests
 // need a repository.
 func commitWorkDir(t *testing.T, files map[string]string) string {
 	t.Helper()

@@ -6,9 +6,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const gib = 1 << 30
@@ -24,17 +24,17 @@ func statfsMap(free map[string]uint64) StatfsFunc {
 }
 
 func TestCheckDiskHeadroom_Below(t *testing.T) {
-	statfs := statfsMap(map[string]uint64{"/var/lib/docker": 1 * gib, "/var/lib/zeroci": 50 * gib})
-	err := CheckDiskHeadroom([]string{"/var/lib/zeroci", "/var/lib/docker"}, 5*gib, statfs)
-	want := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run zeroci gc or raise the limit"
+	statfs := statfsMap(map[string]uint64{"/var/lib/docker": 1 * gib, "/var/lib/hookci": 50 * gib})
+	err := CheckDiskHeadroom([]string{"/var/lib/hookci", "/var/lib/docker"}, 5*gib, statfs)
+	want := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run hookci gc or raise the limit"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
 }
 
 func TestCheckDiskHeadroom_OK(t *testing.T) {
-	statfs := statfsMap(map[string]uint64{"/var/lib/docker": 5 * gib, "/var/lib/zeroci": 50 * gib})
-	if err := CheckDiskHeadroom([]string{"/var/lib/docker", "/var/lib/zeroci"}, 5*gib, statfs); err != nil {
+	statfs := statfsMap(map[string]uint64{"/var/lib/docker": 5 * gib, "/var/lib/hookci": 50 * gib})
+	if err := CheckDiskHeadroom([]string{"/var/lib/docker", "/var/lib/hookci"}, 5*gib, statfs); err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
 	if err := CheckDiskHeadroom([]string{"/var/lib/docker"}, 0, statfsMap(map[string]uint64{"/var/lib/docker": 0})); err != nil {
@@ -71,7 +71,7 @@ func TestDiskPreflight_ChecksDockerRootAndStateDir(t *testing.T) {
 		return 10 * gib, nil
 	}
 	err := DiskPreflight(fake, "/state", 2*gib, statfs)(context.Background(), store.DeployRun{})
-	want := "gc.min_free_bytes: free disk 1073741824 on /state below 2147483648; run zeroci gc or raise the limit"
+	want := "gc.min_free_bytes: free disk 1073741824 on /state below 2147483648; run hookci gc or raise the limit"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
 	}

@@ -1,5 +1,5 @@
 // GitHub `check_run` webhook: the "Approve run" button on a gated fork run's
-// `zeroci` check (requested_action approve_run).
+// `hookci` check (requested_action approve_run).
 
 import { APPROVE_ACTION } from "../checks/map";
 import { systemClock } from "../do/clock";

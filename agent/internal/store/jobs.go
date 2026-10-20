@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // maxTailLines caps the log tail carried by a failed job's event.

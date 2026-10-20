@@ -66,13 +66,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Runs `/zeroci <text>` as USER and returns the reply SlackWorkspaceDO posted to response_url. */
-async function zeroci(text: string): Promise<unknown> {
+/** Runs `/hookci <text>` as USER and returns the reply SlackWorkspaceDO posted to response_url. */
+async function hookci(text: string): Promise<unknown> {
   const body = new URLSearchParams({
     team_id: TEAM,
     user_id: USER,
     channel_id: "C0CHAN",
-    command: "/zeroci",
+    command: "/hookci",
     text,
     response_url: RESPONSE_URL,
     trigger_id: "1.2.trig",
@@ -92,7 +92,7 @@ async function zeroci(text: string): Promise<unknown> {
   return posts.at(-1)?.body;
 }
 
-/** The URL of the Link button in a `/zeroci me` reply. */
+/** The URL of the Link button in a `/hookci me` reply. */
 function linkButtonUrl(reply: unknown): string {
   expect(reply).toMatchObject({
     blocks: expect.arrayContaining([{ type: "actions", elements: [expect.objectContaining({ type: "button", text: expect.objectContaining({ text: S.slack.linkButton }) })] }]),
@@ -123,7 +123,7 @@ function confirm(t: string, cookie?: string): Promise<Response> {
 /** The name=value part of the response's state cookie. */
 function stateCookie(res: Response): string {
   const setCookie = res.headers.get("set-cookie") ?? "";
-  expect(setCookie).toMatch(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
+  expect(setCookie).toMatch(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
   return setCookie.split(";")[0] ?? "";
 }
 
@@ -141,9 +141,9 @@ function callback(state: string, cookie: string): Promise<Response> {
   return get(`${env.HUB_ORIGIN}/github/link/callback?${new URLSearchParams({ code: "oauth-code", state })}`, cookie);
 }
 
-/** `/zeroci me`, the Link button, then GitHub's redirect back. */
+/** `/hookci me`, the Link button, then GitHub's redirect back. */
 async function link(): Promise<Response> {
-  const { state, cookie } = await startLink(linkButtonUrl(await zeroci("me")));
+  const { state, cookie } = await startLink(linkButtonUrl(await hookci("me")));
   return callback(state, cookie);
 }
 
@@ -155,9 +155,9 @@ function revokeCalls(): unknown[] {
   return gh.calls.filter((c) => c.method === "DELETE" && new URL(c.url).pathname === TOKEN_PATH).map((c) => c.body);
 }
 
-describe("/zeroci me", () => {
+describe("/hookci me", () => {
   it("offers an unlinked user an ephemeral Link button to /github/link/start", async () => {
-    const reply = await zeroci("me");
+    const reply = await hookci("me");
     expect(reply).toMatchObject({ response_type: "ephemeral", text: S.slack.linkPrompt });
     expect(linkButtonUrl(reply).startsWith(`${env.HUB_ORIGIN}/github/link/start?t=`)).toBe(true);
     expect(await env.DB.prepare("SELECT kind FROM oauth_states").all()).toMatchObject({ results: [{ kind: "github_link" }] });
@@ -170,17 +170,17 @@ describe("/zeroci me", () => {
       .bind(TEAM)
       .run();
     expect((await link()).status).toBe(200);
-    expect(await zeroci("me")).toEqual({ response_type: "ephemeral", text: S.slack.linkedAs("octocat") });
+    expect(await hookci("me")).toEqual({ response_type: "ephemeral", text: S.slack.linkedAs("octocat") });
 
-    expect(await zeroci("me unlink")).toEqual({ response_type: "ephemeral", text: S.slack.unlinked("octocat") });
+    expect(await hookci("me unlink")).toEqual({ response_type: "ephemeral", text: S.slack.unlinked("octocat") });
     expect(await userLinks()).toEqual([{ team_id: TEAM, slack_user_id: "U0OTHER", github_user_id: 8002, github_login: "hubot" }]);
-    expect(await zeroci("me unlink")).toEqual({ response_type: "ephemeral", text: S.slack.notLinkedNothing });
+    expect(await hookci("me unlink")).toEqual({ response_type: "ephemeral", text: S.slack.notLinkedNothing });
   });
 });
 
 describe("/github/link/start", () => {
   it("names the Slack workspace and user on a page, and goes to GitHub only from that page's POST", async () => {
-    const url = linkButtonUrl(await zeroci("me"));
+    const url = linkButtonUrl(await hookci("me"));
     const t = new URL(url).searchParams.get("t") ?? "";
     const shown = await get(url);
     expect(shown.status).toBe(200);
@@ -188,7 +188,7 @@ describe("/github/link/start", () => {
     expect(html).toContain(S.pages.linkConfirm("Acme", USER));
     expect(html).toContain(`<form method="post" action="/github/link/start"><input type="hidden" name="t" value="${t}">`);
     const mark = stateCookie(shown);
-    expect(mark).not.toBe(`__Host-zeroci_oauth=${t.split(".")[0]}`);
+    expect(mark).not.toBe(`__Host-hookci_oauth=${t.split(".")[0]}`);
     expect((await get(url)).status).toBe(200);
 
     const res = await confirm(t, mark);
@@ -201,15 +201,15 @@ describe("/github/link/start", () => {
       state: t,
       redirect_uri: `${env.HUB_ORIGIN}/github/link/callback`,
     });
-    expect(stateCookie(res)).toBe(`__Host-zeroci_oauth=${t.split(".")[0]}`);
+    expect(stateCookie(res)).toBe(`__Host-hookci_oauth=${t.split(".")[0]}`);
   });
 
   it("refuses a POST that lacks the page's cookie, as from a form on another site", async () => {
-    const url = linkButtonUrl(await zeroci("me"));
+    const url = linkButtonUrl(await hookci("me"));
     const t = new URL(url).searchParams.get("t") ?? "";
-    const other = stateCookie(await get(linkButtonUrl(await zeroci("me"))));
+    const other = stateCookie(await get(linkButtonUrl(await hookci("me"))));
     stateCookie(await get(url));
-    for (const cookie of [undefined, other, `__Host-zeroci_oauth=${t.split(".")[0]}`]) {
+    for (const cookie of [undefined, other, `__Host-hookci_oauth=${t.split(".")[0]}`]) {
       const res = await confirm(t, cookie);
       expect(res.status).toBe(400);
       expect(res.headers.get("location")).toBeNull();
@@ -217,7 +217,7 @@ describe("/github/link/start", () => {
   });
 
   it("does not finish a link with only the page's cookie, skipping the POST", async () => {
-    const url = linkButtonUrl(await zeroci("me"));
+    const url = linkButtonUrl(await hookci("me"));
     const mark = stateCookie(await get(url));
     expect((await callback(new URL(url).searchParams.get("t") ?? "", mark)).status).toBe(400);
     expect(await userLinks()).toEqual([]);
@@ -226,7 +226,7 @@ describe("/github/link/start", () => {
 
   it("refuses an unknown, expired or used state", async () => {
     expect((await get(`${env.HUB_ORIGIN}/github/link/start?t=forged.state`)).status).toBe(400);
-    const url = linkButtonUrl(await zeroci("me"));
+    const url = linkButtonUrl(await hookci("me"));
     const mark = stateCookie(await get(url));
     testClock.advance(10 * 60 * 1000 + 1);
     expect((await get(url)).status).toBe(400);
@@ -248,15 +248,15 @@ describe("GET /github/link/callback", () => {
     const res = await link();
     expect(res.status).toBe(200);
     expect(await res.text()).toContain(S.pages.linkedAs("octocat"));
-    expect(res.headers.getSetCookie()).toContain("__Host-zeroci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
+    expect(res.headers.getSetCookie()).toContain("__Host-hookci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
     expect(await userLinks()).toEqual([{ team_id: TEAM, slack_user_id: USER, github_user_id: 7001, github_login: "octocat" }]);
     expect(revokeCalls()).toEqual([{ access_token: USER_TOKEN }]);
     expect(revokeAuth).toEqual([`Basic ${btoa(`${env.GITHUB_CLIENT_ID}:${env.GITHUB_CLIENT_SECRET}`)}`]);
   });
 
   it("replaces the old link when a second link from before completes", async () => {
-    const first = await startLink(linkButtonUrl(await zeroci("me")));
-    const second = await startLink(linkButtonUrl(await zeroci("me")));
+    const first = await startLink(linkButtonUrl(await hookci("me")));
+    const second = await startLink(linkButtonUrl(await hookci("me")));
     expect((await callback(first.state, first.cookie)).status).toBe(200);
     githubUser = { id: 7002, login: "monalisa" };
     expect((await callback(second.state, second.cookie)).status).toBe(200);
@@ -264,7 +264,7 @@ describe("GET /github/link/callback", () => {
   });
 
   it("rejects a replayed callback and leaves the link as it was", async () => {
-    const { state, cookie } = await startLink(linkButtonUrl(await zeroci("me")));
+    const { state, cookie } = await startLink(linkButtonUrl(await hookci("me")));
     expect((await callback(state, cookie)).status).toBe(200);
     githubUser = { id: 7002, login: "monalisa" };
     const replay = await callback(state, cookie);
@@ -274,8 +274,8 @@ describe("GET /github/link/callback", () => {
   });
 
   it("rejects a cookie holding another state's nonce", async () => {
-    const first = await startLink(linkButtonUrl(await zeroci("me")));
-    const second = await startLink(linkButtonUrl(await zeroci("me")));
+    const first = await startLink(linkButtonUrl(await hookci("me")));
+    const second = await startLink(linkButtonUrl(await hookci("me")));
     expect((await callback(first.state, second.cookie)).status).toBe(400);
     expect(await userLinks()).toEqual([]);
     expect(gh.calls).toEqual([]);
@@ -325,19 +325,19 @@ describe("requireLinkedUser", () => {
     await link();
     expect(await requireLinkedUser(env, TEAM, USER)).toEqual({ githubUserId: 7001, githubLogin: "octocat" });
     await expect(requireLinkedUser(env, "T0OTHER", USER)).rejects.toMatchObject({ code: "not_linked" });
-    await zeroci("me unlink");
+    await hookci("me unlink");
     await expect(requireLinkedUser(env, TEAM, USER)).rejects.toMatchObject({ code: "not_linked" });
   });
 
-  it("turns not_linked from a command into the /zeroci me prompt instead of a failure", async () => {
+  it("turns not_linked from a command into the /hookci me prompt instead of a failure", async () => {
     const errors = vi.spyOn(console, "error");
     registerCommand("probe", async ({ env: e, teamId, userId }) => {
       const user = await requireLinkedUser(e, teamId, userId);
       return { text: user.githubLogin };
     });
-    expect(await zeroci("probe")).toEqual({ response_type: "ephemeral", text: S.slack.notLinked });
+    expect(await hookci("probe")).toEqual({ response_type: "ephemeral", text: S.slack.notLinked });
     expect(errors).not.toHaveBeenCalled();
     await link();
-    expect(await zeroci("probe")).toEqual({ text: "octocat" });
+    expect(await hookci("probe")).toEqual({ text: "octocat" });
   });
 });

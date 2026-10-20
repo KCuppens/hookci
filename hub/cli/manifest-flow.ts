@@ -71,7 +71,7 @@ function htmlEscape(value: string): string {
 /** A page that posts `manifest` to GitHub as soon as it loads. */
 export function manifestFormHtml(actionUrl: string, manifest: object, state: string): string {
 	return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Create the zeroci GitHub App</title></head>
+<html><head><meta charset="utf-8"><title>Create the hookci GitHub App</title></head>
 <body onload="document.forms[0].submit()">
 <form method="post" action="${htmlEscape(actionUrl)}">
 <input type="hidden" name="manifest" value="${htmlEscape(JSON.stringify(manifest))}">
@@ -133,7 +133,7 @@ export async function awaitManifestCode(opts: {
 			const code = url.searchParams.get("code");
 			if (url.searchParams.get("state") !== opts.state || !code) {
 				res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
-				res.end("This link does not belong to the running zeroci-hub setup.\n");
+				res.end("This link does not belong to the running hookci-hub setup.\n");
 				return;
 			}
 			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
@@ -243,8 +243,8 @@ export async function githubAppStep(ctx: SetupContext): Promise<HubState> {
 	const baseUrl = s.base_url;
 	if (!baseUrl) throw new Error("the setup state has no hub URL; the deploy step must run first");
 	const state = randomBytes(16).toString("hex");
-	const action = githubNewAppUrl({ baseUrl, name: s.name ?? "zeroci", ...(o.org ? { org: o.org } : {}), ...(o.githubBase ? { githubBase: o.githubBase } : {}) }, state);
-	const manifest = renderGithubManifest(baseUrl, s.name ?? "zeroci");
+	const action = githubNewAppUrl({ baseUrl, name: s.name ?? "hookci", ...(o.org ? { org: o.org } : {}), ...(o.githubBase ? { githubBase: o.githubBase } : {}) }, state);
+	const manifest = renderGithubManifest(baseUrl, s.name ?? "hookci");
 	const openBrowser = o.openBrowser ?? (async () => {});
 	const pending = await awaitManifestCode({
 		state,

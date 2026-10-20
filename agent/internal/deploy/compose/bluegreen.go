@@ -15,11 +15,11 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 	"gopkg.in/yaml.v3"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/health"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Step outputs of the compose-bluegreen plan.
@@ -418,7 +418,7 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 		if err != nil {
 			return err
 		}
-		empty := fmt.Appendf(nil, "# zerocideploy: no active route for %s %s\n", run.Repo, run.Env)
+		empty := fmt.Appendf(nil, "# hookci: no active route for %s %s\n", run.Repo, run.Env)
 		return proxy.ApplyAndReload(ctx, px, sc.Cfg.Route.File, empty)
 	}
 	port, err := b.Store.AllocatePort(ctx, run.Repo, run.Env, prev, store.DefaultPortLo, store.DefaultPortHi)

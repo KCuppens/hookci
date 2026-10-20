@@ -1,5 +1,5 @@
 // Which GitHub user a Slack user is, per workspace. A link comes from the
-// /zeroci me flow (or the Slack install); every permission-sensitive Slack
+// /hookci me flow (or the Slack install); every permission-sensitive Slack
 // handler starts with requireLinkedUser.
 
 import { getUserLink } from "../db/workspaces";
@@ -23,7 +23,7 @@ export async function getLinkedUser(env: Env, teamId: string, slackUserId: strin
 	return row && { githubUserId: row.github_user_id, githubLogin: row.github_login };
 }
 
-/** The linked GitHub user; throws not_linked (403) when the Slack user has not run /zeroci me. */
+/** The linked GitHub user; throws not_linked (403) when the Slack user has not run /hookci me. */
 export async function requireLinkedUser(env: Env, teamId: string, slackUserId: string): Promise<LinkedUser> {
 	const user = await getLinkedUser(env, teamId, slackUserId);
 	if (!user) throw new HubError("not_linked", 403, `Slack user ${slackUserId} in ${teamId} has no GitHub link`);

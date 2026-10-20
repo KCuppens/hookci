@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // Mode is how Restore materializes an entry in a workdir.
@@ -20,7 +20,7 @@ const (
 )
 
 // ModeEnv names the environment variable that overrides mode detection.
-const ModeEnv = "ZEROCI_CACHE_MODE"
+const ModeEnv = "HOOKCI_CACHE_MODE"
 
 func (m Mode) valid() bool {
 	return m == ModeReflink || m == ModeOverlay || m == ModeCopy
@@ -53,7 +53,7 @@ func reflinkWorks(ctx context.Context, root string, r execx.Runner) bool {
 	defer os.Remove(src)
 	defer os.Remove(dst)
 	_ = os.Remove(dst)
-	if err := os.WriteFile(src, []byte("zeroci reflink probe\n"), 0o600); err != nil {
+	if err := os.WriteFile(src, []byte("hookci reflink probe\n"), 0o600); err != nil {
 		return false
 	}
 	return r.Run(ctx, execx.Cmd{Name: "cp", Args: []string{"--reflink=always", ".probe-src", ".probe-dst"}, Dir: root}) == nil

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // writeLog appends text to job's log of runID.
@@ -79,7 +79,7 @@ func TestLogsPrintAll(t *testing.T) {
 	}
 	stdout.buf.Reset()
 	if code, stderr := logsOf(context.Background(), d, &stdout, failedRun, "deploy"); code != ExitUsage ||
-		stderr != "zeroci: run "+failedRun+" has no job \"deploy\"\n" {
+		stderr != "hookci: run "+failedRun+" has no job \"deploy\"\n" {
 		t.Errorf("logs run deploy = %d, %q", code, stderr)
 	}
 }
@@ -216,7 +216,7 @@ func TestLogsFollowAgentGone(t *testing.T) {
 	tick <- time.Time{}
 	select {
 	case r := <-done:
-		if r.code != ExitOK || r.stderr != "zeroci: no zeroci process is running run "+queuedRun+"; stopped following\n" {
+		if r.code != ExitOK || r.stderr != "hookci: no hookci process is running run "+queuedRun+"; stopped following\n" {
 			t.Errorf("logs -f = %d, %q", r.code, r.stderr)
 		}
 	case <-waiting:
@@ -243,13 +243,13 @@ func TestLogsUnknownRun(t *testing.T) {
 	d, _, _ := seedStore(t)
 	var stdout syncBuffer
 	code, stderr := logsOf(context.Background(), d, &stdout, "01JNDQ9000CCCCCCCCCCCCCCCC")
-	if code != ExitUsage || stderr != "zeroci: run 01JNDQ9000CCCCCCCCCCCCCCCC not found\n" {
+	if code != ExitUsage || stderr != "hookci: run 01JNDQ9000CCCCCCCCCCCCCCCC not found\n" {
 		t.Errorf("logs = %d, %q", code, stderr)
 	}
 
 	d.Globals.StateDir = filepath.Join(t.TempDir(), "empty")
 	code, stderr = logsOf(context.Background(), d, &stdout, failedRun)
-	if code != ExitUsage || stderr != "zeroci: run "+failedRun+" not found\n" {
+	if code != ExitUsage || stderr != "hookci: run "+failedRun+" not found\n" {
 		t.Errorf("logs without a store = %d, %q", code, stderr)
 	}
 }

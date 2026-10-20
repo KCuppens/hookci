@@ -10,7 +10,7 @@
     },
     "repository_selection": "selected",
     "app_id": 123456,
-    "app_slug": "zeroci",
+    "app_slug": "hookci",
     "target_id": 9,
     "target_type": "Organization",
     "permissions": {

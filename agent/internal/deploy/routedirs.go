@@ -3,7 +3,7 @@ package deploy
 import (
 	"encoding/json"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // RouteDirs is deploy.route_dirs of cfg, the directories a route.file may be

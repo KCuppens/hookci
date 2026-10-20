@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const (
@@ -45,7 +45,7 @@ type StdoutOptions struct {
 	Verbose bool             // print step events
 }
 
-// Stdout prints events as human-readable lines for `zeroci run`.
+// Stdout prints events as human-readable lines for `hookci run`.
 type Stdout struct {
 	mu      sync.Mutex
 	out     io.Writer

@@ -1,4 +1,4 @@
-// Package e2e_test runs `zeroci run` end to end on examples/node-app.
+// Package e2e_test runs `hookci run` end to end on examples/node-app.
 package e2e_test
 
 import (
@@ -21,22 +21,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/cli"
-	"github.com/KCuppens/zerocideploy/agent/internal/detect"
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/cli"
+	"github.com/KCuppens/hookci/agent/internal/detect"
+	"github.com/KCuppens/hookci/agent/internal/egress"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/source"
 )
 
 var wantJobs = []string{"lint", "test", "typecheck"}
 
 // markerRE matches the timing lines scripts/timed.js prints. npm and
 // node --test may prefix them, so it is not anchored.
-var markerRE = regexp.MustCompile(`ZEROCI_E2E (\S+) (start|end) (\d+)`)
+var markerRE = regexp.MustCompile(`HOOKCI_E2E (\S+) (start|end) (\d+)`)
 
 // interval is when a job's timed body ran, in Unix milliseconds.
 type interval struct {
@@ -133,7 +133,7 @@ func nodeApp(t *testing.T) string {
 	return dst
 }
 
-// runNodeApp runs `zeroci run` on repo with slots and returns the timed
+// runNodeApp runs `hookci run` on repo with slots and returns the timed
 // interval of every job, sorted by start.
 func runNodeApp(t *testing.T, repo string, slots int) []interval {
 	t.Helper()
@@ -141,7 +141,7 @@ func runNodeApp(t *testing.T, repo string, slots int) []interval {
 	var stdout, stderr bytes.Buffer
 	args := []string{"--state-dir", state, "--isolation", "none", "--slots", strconv.Itoa(slots), "run"}
 	if code := cli.MainWithDeps(args, &stdout, &stderr, hermeticDeps(t, repo)); code != cli.ExitOK {
-		t.Fatalf("zeroci run = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, cli.ExitOK, &stdout, &stderr)
+		t.Fatalf("hookci run = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, cli.ExitOK, &stdout, &stderr)
 	}
 	if !strings.Contains(stdout.String(), "success (3 jobs") {
 		t.Errorf("stdout lacks the success summary of 3 jobs:\n%s", &stdout)
@@ -230,11 +230,11 @@ func TestNodeAppEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DetectDir: %v", err)
 		}
-		if det.Config.ZeroCIConfig.Checks == nil {
+		if det.Config.HookCIConfig.Checks == nil {
 			t.Fatal("no checks detected")
 		}
 		var got []string
-		for name := range det.Config.ZeroCIConfig.Checks.Jobs {
+		for name := range det.Config.HookCIConfig.Checks.Jobs {
 			got = append(got, name)
 		}
 		slices.Sort(got)

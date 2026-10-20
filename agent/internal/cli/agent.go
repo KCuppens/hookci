@@ -9,17 +9,17 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/daemon"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/daemon"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 // unsupportedRetry is how long agent waits before reconnecting to a hub that
@@ -27,16 +27,16 @@ import (
 const unsupportedRetry = time.Hour
 
 // agentRevokedMessage is printed when the hub has revoked the agent.
-const agentRevokedMessage = "agent revoked: run zeroci connect with a new pair token"
+const agentRevokedMessage = "agent revoked: run hookci connect with a new pair token"
 
-// cmdAgent runs the agent daemon of the state directory zeroci connect
+// cmdAgent runs the agent daemon of the state directory hookci connect
 // paired until a signal stops it or the hub revokes the agent.
 func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] agent [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] agent [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Connect to the hub and run the checks it sends until stopped.")
 	}
@@ -58,7 +58,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 
 	conf, err := agentconf.Load(stateDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitNotConfigured
 	}
 	red, _ := redact.New([]string{conf.Credential}, nil)
@@ -113,7 +113,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			fmt.Fprintln(errw, agentRevokedMessage)
 			return ExitRevoked
 		case errors.Is(err, hubclient.ErrAgentTooOld):
-			fmt.Fprintf(errw, "zeroci: agent_too_old: %v\n", err)
+			fmt.Fprintf(errw, "hookci: agent_too_old: %v\n", err)
 			return ExitAgentTooOld
 		case errors.Is(err, hubclient.ErrUnsupported):
 			log.Error("hub refused this agent version; retrying in an hour", "err", err)
@@ -123,7 +123,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			case <-d.After(unsupportedRetry):
 			}
 		default:
-			fmt.Fprintf(errw, "zeroci: %v\n", err)
+			fmt.Fprintf(errw, "hookci: %v\n", err)
 			return ExitInternal
 		}
 	}

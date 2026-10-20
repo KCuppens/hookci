@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 var allRunStates = []RunState{
@@ -159,7 +159,7 @@ func TestJobTransitionsAndUpdate(t *testing.T) {
 	clearOutbox(t, s)
 
 	if err := s.TransitionJob(ctx, "r1", "lint", []JobState{JobQueued}, JobRunning,
-		JobUpdate{Unit: "zeroci-r1-lint.scope", Step: "go vet", StepIndex: 1, StepsTotal: 3}); err != nil {
+		JobUpdate{Unit: "hookci-r1-lint.scope", Step: "go vet", StepIndex: 1, StepsTotal: 3}); err != nil {
 		t.Fatalf("TransitionJob running: %v", err)
 	}
 	seq, ev := lastEvent(t, s)
@@ -184,7 +184,7 @@ func TestJobTransitionsAndUpdate(t *testing.T) {
 	}
 	lint := jobs[0]
 	if lint.State != JobSuccess || lint.ExitCode == nil || *lint.ExitCode != 0 || lint.DurationMS == nil ||
-		*lint.DurationMS != 1234 || lint.Unit != "zeroci-r1-lint.scope" || lint.StartedAt == nil || lint.FinishedAt == nil {
+		*lint.DurationMS != 1234 || lint.Unit != "hookci-r1-lint.scope" || lint.StartedAt == nil || lint.FinishedAt == nil {
 		t.Errorf("lint job = %+v, want success, exit 0, 1234ms, unit kept, timestamps set", lint)
 	}
 

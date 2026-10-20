@@ -72,7 +72,7 @@ var defaultLimits = ResolvedLimits{
 // every check. raw is the decoded document; it tells which limit keys the
 // file sets, since the generated types fill unset keys with defaults and
 // would hide the check-level values a job should inherit.
-func resolveChecks(cfg *ZeroCIConfig, raw any) *ResolvedChecks {
+func resolveChecks(cfg *HookCIConfig, raw any) *ResolvedChecks {
 	rc := &ResolvedChecks{
 		On:     OnSpec{PullRequest: true, PushBranches: []string{"main"}},
 		Trust:  string(ChecksTrustCollaborators),
@@ -80,7 +80,7 @@ func resolveChecks(cfg *ZeroCIConfig, raw any) *ResolvedChecks {
 		Limits: defaultLimits,
 		Jobs:   []ResolvedJob{},
 	}
-	rc.LogsLocal = cfg.Logs == ZeroCIConfigLogsLocal
+	rc.LogsLocal = cfg.Logs == HookCIConfigLogsLocal
 	for _, p := range cfg.Redact {
 		rc.Redact = append(rc.Redact, regexp.MustCompile(p)) // checkRedact compiled it already
 	}

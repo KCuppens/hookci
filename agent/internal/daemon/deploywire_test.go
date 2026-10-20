@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // deploySource checks out files, or fails with err, and records requests.
@@ -99,7 +99,7 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 			return
 		}
 		switch r.URL.Path {
-		case "/repos/acme/app/contents/.zeroci.yml":
+		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
 		case "/repos/acme/app/branches/main":
 			_, _ = w.Write([]byte(`{"protected":true}`))
@@ -136,7 +136,7 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 	w.runner.On("caddy", []string{"reload"}, execx.FakeResponse{})
 	w.runner.On("docker", []string{"info", "--format", "{{.DockerRootDir}}"}, execx.FakeResponse{Stdout: stateDir + "\n"})
 
-	conf := &agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}
+	conf := &agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "hci_agent_x"}
 	conf.Gc = &config.AgentConfigGc{MinFreeBytes: 1}
 	conf.Deploy = &config.AgentConfigDeploy{RouteDirs: []string{routeDir}}
 	dialer := &idleDialer{dialed: make(chan struct{})}

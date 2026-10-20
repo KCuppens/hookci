@@ -1,4 +1,4 @@
-// The agent bearer auth every /v1 agent route shares: `Authorization: Bearer zc_agent_...`.
+// The agent bearer auth every /v1 agent route shares: `Authorization: Bearer hci_agent_...`.
 
 import {
 	AGENT_CREDENTIAL_PREFIX,

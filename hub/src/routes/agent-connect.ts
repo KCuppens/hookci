@@ -28,8 +28,8 @@ export async function agentConnect(c: Context<{ Bindings: Env }>): Promise<Respo
 	return stub.fetch("https://do/connect", {
 		headers: {
 			upgrade: "websocket",
-			"x-zeroci-agent-id": agent.agent_id,
-			"x-zeroci-installation-id": String(agent.installation_id),
+			"x-hookci-agent-id": agent.agent_id,
+			"x-hookci-installation-id": String(agent.installation_id),
 		},
 	});
 }

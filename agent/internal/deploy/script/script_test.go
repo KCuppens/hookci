@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var t0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -143,21 +143,21 @@ func TestParseStepMarker(t *testing.T) {
 		line, name string
 		ok         bool
 	}{
-		{"::zeroci step migrate", "migrate", true},
-		{"::zeroci step db.migrate_v2-up", "db.migrate_v2-up", true},
-		{"::zeroci step 0", "0", true},
-		{"::zeroci step  restart \r", "restart", true},
-		{"::zeroci step " + strings.Repeat("a", 40), strings.Repeat("a", 40), true},
-		{"::zeroci step ", "", false},
-		{"::zeroci step", "", false},
-		{"::zeroci step    ", "", false},
-		{"::zeroci step Migrate", "", false},
-		{"::zeroci step " + strings.Repeat("a", 41), "", false},
-		{"::zeroci step two words", "", false},
-		{"::zeroci step -lead", "", false},
-		{"echo ::zeroci step migrate", "", false},
-		{" ::zeroci step migrate", "", false},
-		{"::zeroci  step migrate", "", false},
+		{"::hookci step migrate", "migrate", true},
+		{"::hookci step db.migrate_v2-up", "db.migrate_v2-up", true},
+		{"::hookci step 0", "0", true},
+		{"::hookci step  restart \r", "restart", true},
+		{"::hookci step " + strings.Repeat("a", 40), strings.Repeat("a", 40), true},
+		{"::hookci step ", "", false},
+		{"::hookci step", "", false},
+		{"::hookci step    ", "", false},
+		{"::hookci step Migrate", "", false},
+		{"::hookci step " + strings.Repeat("a", 41), "", false},
+		{"::hookci step two words", "", false},
+		{"::hookci step -lead", "", false},
+		{"echo ::hookci step migrate", "", false},
+		{" ::hookci step migrate", "", false},
+		{"::hookci  step migrate", "", false},
 		{"building", "", false},
 	}
 	for _, tt := range tests {
@@ -186,8 +186,8 @@ func TestScript_Plan(t *testing.T) {
 
 func TestScript_ProgressEvents(t *testing.T) {
 	r := newRig(t, "./deploy.sh")
-	r.exec.output = "::zeroci step build\nbuilding\necho ::zeroci step nope\n::zeroci step BAD\n" +
-		"::zeroci step " + strings.Repeat("x", maxMarkerLine) + "\n::zeroci step migrate\n::zeroci step restart"
+	r.exec.output = "::hookci step build\nbuilding\necho ::hookci step nope\n::hookci step BAD\n" +
+		"::hookci step " + strings.Repeat("x", maxMarkerLine) + "\n::hookci step migrate\n::hookci step restart"
 	run := r.deploy(t)
 	if run.State != store.DeploySuccess {
 		t.Fatalf("state = %s (%s), want Success", run.State, run.Error)
@@ -220,7 +220,7 @@ func TestScript_RollbackRunsWithFailedStep(t *testing.T) {
 	r := newRig(t, "./deploy.sh")
 	rollback := "./rollback.sh"
 	r.cfg.Rollback = &rollback
-	r.exec.output = "::zeroci step build\n::zeroci step migrate\nmigration 0042 failed\n"
+	r.exec.output = "::hookci step build\n::hookci step migrate\nmigration 0042 failed\n"
 	r.exec.runErr = errors.New("deploy: step run: exit code 1")
 	run := r.deploy(t)
 	if run.State != store.DeployFailed {
@@ -233,7 +233,7 @@ func TestScript_RollbackRunsWithFailedStep(t *testing.T) {
 	if c.name != "rollback" || !slices.Equal(c.argv, []string{"sh", "-c", "./rollback.sh"}) || c.opts.Dir != r.workdir {
 		t.Errorf("rollback call = %s %v in %s, want rollback sh -c ./rollback.sh in %s", c.name, c.argv, c.opts.Dir, r.workdir)
 	}
-	if want := map[string]string{"ZEROCI_FAILED_STEP": "migrate"}; !maps.Equal(c.opts.Env, want) {
+	if want := map[string]string{"HOOKCI_FAILED_STEP": "migrate"}; !maps.Equal(c.opts.Env, want) {
 		t.Errorf("rollback env = %v, want %v", c.opts.Env, want)
 	}
 }
@@ -251,14 +251,14 @@ func TestScript_RollbackFailureKeepsFailed(t *testing.T) {
 	if want := "rollback failed: deployments.production.rollback: deploy: step rollback: exit code 2"; !strings.Contains(run.Error, want) {
 		t.Errorf("error = %q, want it to contain %q", run.Error, want)
 	}
-	if env := r.exec.calls[1].opts.Env; env["ZEROCI_FAILED_STEP"] != "" {
+	if env := r.exec.calls[1].opts.Env; env["HOOKCI_FAILED_STEP"] != "" {
 		t.Errorf("rollback env = %v, want an empty failed step when the script reported none", env)
 	}
 }
 
 func TestScript_NoRollbackConfigured(t *testing.T) {
 	r := newRig(t, "./deploy.sh")
-	r.exec.output = "::zeroci step migrate\n"
+	r.exec.output = "::hookci step migrate\n"
 	r.exec.runErr = errors.New("deploy: step run: exit code 1")
 	run := r.deploy(t)
 	if run.State != store.DeployFailed {

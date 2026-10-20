@@ -10,16 +10,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // TestInstallerThenDoctor runs the real installer on a disposable VM (root,
 // systemd, network) and checks the host it leaves behind.
-// ZEROCI_INSTALL_VERSION picks the release to install. The installer needs
-// cosign on PATH, or ZEROCI_ALLOW_UNSIGNED=1 in the environment.
+// HOOKCI_INSTALL_VERSION picks the release to install. The installer needs
+// cosign on PATH, or HOOKCI_ALLOW_UNSIGNED=1 in the environment.
 func TestInstallerThenDoctor(t *testing.T) {
 	testutil.RequireIntegration(t)
 	if os.Geteuid() != 0 {
@@ -30,18 +30,18 @@ func TestInstallerThenDoctor(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", script)
-	cmd.Env = append(os.Environ(), "ZEROCI_VERSION="+os.Getenv("ZEROCI_INSTALL_VERSION"))
+	cmd.Env = append(os.Environ(), "HOOKCI_VERSION="+os.Getenv("HOOKCI_INSTALL_VERSION"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install.sh: %v\n%s", err, out)
 	}
-	for _, f := range []string{"/usr/local/bin/zeroci", "/etc/systemd/system/zeroci.slice", "/etc/systemd/system/zeroci-agent@.service"} {
+	for _, f := range []string{"/usr/local/bin/hookci", "/etc/systemd/system/hookci.slice", "/etc/systemd/system/hookci-agent@.service"} {
 		if _, err := os.Stat(f); err != nil {
 			t.Errorf("installer left no %s: %v", f, err)
 		}
 	}
 
 	env := Env{
-		StateRoot: "/var/lib/zeroci",
+		StateRoot: "/var/lib/hookci",
 		HubOrigin: "https://ci.webuno.io",
 		HTTP:      &http.Client{},
 		Clock:     clock.Real{},

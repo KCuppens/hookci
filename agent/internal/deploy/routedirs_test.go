@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 func TestRouteDirs(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 const runID = "01HXRUN0000000000000000000"

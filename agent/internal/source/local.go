@@ -9,17 +9,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
-// Local is the source for `zeroci run`: it checks out the committed HEAD of
+// Local is the source for `hookci run`: it checks out the committed HEAD of
 // the git repository containing Dir through a mirror, never the dirty tree,
 // so local runs match what the hub would run.
 type Local struct {
 	Git     Git
-	Dir     string // the directory zeroci was invoked in
+	Dir     string // the directory hookci was invoked in
 	Mirrors *Mirrors
-	Warn    io.Writer // receives "warning: working tree has uncommitted changes; zeroci runs the committed HEAD <sha7>"
+	Warn    io.Writer // receives "warning: working tree has uncommitted changes; hookci runs the committed HEAD <sha7>"
 }
 
 // Name implements Source.
@@ -61,7 +61,7 @@ func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout
 	}
 	dirty := len(strings.TrimSpace(string(out))) > 0
 	if dirty && l.Warn != nil {
-		fmt.Fprintf(l.Warn, "warning: working tree has uncommitted changes; zeroci runs the committed HEAD %s\n", sha[:7])
+		fmt.Fprintf(l.Warn, "warning: working tree has uncommitted changes; hookci runs the committed HEAD %s\n", sha[:7])
 	}
 
 	repo := LocalRepo(top)

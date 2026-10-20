@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // waitTimeout bounds every wait so a scheduler bug fails the test instead of

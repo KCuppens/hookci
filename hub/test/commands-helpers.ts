@@ -94,13 +94,13 @@ export async function setUpCommandWorld(): Promise<CommandWorld> {
   };
 }
 
-/** Runs `/zeroci <text>` as userId in CHANNEL and returns the reply SlackWorkspaceDO posted to response_url. */
-export async function zeroci(world: CommandWorld, text: string, userId = USER): Promise<{ text: string; blocks?: unknown[] }> {
+/** Runs `/hookci <text>` as userId in CHANNEL and returns the reply SlackWorkspaceDO posted to response_url. */
+export async function hookci(world: CommandWorld, text: string, userId = USER): Promise<{ text: string; blocks?: unknown[] }> {
   const body = new URLSearchParams({
     team_id: TEAM,
     user_id: userId,
     channel_id: CHANNEL,
-    command: "/zeroci",
+    command: "/hookci",
     text,
     response_url: RESPONSE_URL,
     trigger_id: "1.2.trig",

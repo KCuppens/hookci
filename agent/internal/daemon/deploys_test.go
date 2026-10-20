@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // fakeDeploys answers deploy triggers from canned decisions by trigger id
@@ -176,7 +176,7 @@ func gitHubHarness(t *testing.T, fails int) (h *harness, branchCalls func() int)
 	calls := 0
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/acme/app/contents/.zeroci.yml":
+		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
 		case "/repos/acme/app/branches/main":
 			mu.Lock()
@@ -253,7 +253,7 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
 		switch r.URL.Path {
-		case "/repos/acme/app/contents/.zeroci.yml":
+		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
 		case "/repos/acme/app/branches/main":
 			_, _ = w.Write([]byte(`{"protected":true}`))
@@ -398,7 +398,7 @@ func TestDaemonRefusedTriggerTokenRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := &refusingHub{t: t, trigger: frame, in: make(chan []byte, 16), closed: make(chan struct{})}
-	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}, st, nil,
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "hci_agent_x"}, st, nil,
 		Options{StateDir: stateDir, Dialer: hub, Source: &fakeSource{}, DeployRunner: noDeployUnits()})
 	intake := d.deploys.(*hubIntake)
 	intake.githubURL, intake.http = gh.URL, gh.Client()
@@ -466,11 +466,11 @@ func TestDaemonRunInterruptsDeploys(t *testing.T) {
 		t.Fatal(err)
 	}
 	units := &execx.Fake{}
-	units.On("systemctl", []string{"list-units"}, execx.FakeResponse{Stdout: "zeroci-run-run_dep-deploy.service loaded active running deploy\n"})
+	units.On("systemctl", []string{"list-units"}, execx.FakeResponse{Stdout: "hookci-run-run_dep-deploy.service loaded active running deploy\n"})
 	units.On("systemctl", []string{"stop"}, execx.FakeResponse{})
 
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}, st, nil,
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "hci_agent_x"}, st, nil,
 		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}, DeployRunner: units})
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
@@ -483,11 +483,11 @@ func TestDaemonRunInterruptsDeploys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "agent restarted during step 1 build; run zeroci retry run_dep"
+	const want = "agent restarted during step 1 build; run hookci retry run_dep"
 	if run.State != store.DeployInterrupted || run.Error != want {
 		t.Errorf("run = %s %q, want Interrupted %q", run.State, run.Error, want)
 	}
-	if !units.Called("systemctl", "stop", "zeroci-run-run_dep-deploy") {
+	if !units.Called("systemctl", "stop", "hookci-run-run_dep-deploy") {
 		t.Errorf("commands = %+v, want the leftover deploy unit stopped", units.Calls)
 	}
 	cancel()

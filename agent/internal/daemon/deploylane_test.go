@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // storingDeploys accepts every deploy trigger as a queued run, like the
@@ -74,7 +74,7 @@ func TestDeployRedactorMasksRepoPatterns(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("Parse: %v", diags)
 	}
-	const cred = "zc_agent_deploy_credential"
+	const cred = "hci_agent_deploy_credential"
 	got := deployRedactor(cred, cfg).Line("key ACME-123456 cred " + cred)
 	if strings.Contains(got, "ACME-123456") || strings.Contains(got, cred) {
 		t.Errorf("line = %q, want the redact: match and the credential masked", got)

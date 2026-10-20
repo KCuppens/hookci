@@ -6,8 +6,8 @@ import (
 )
 
 func TestRequireIntegrationSkipsByDefault(t *testing.T) {
-	if os.Getenv("ZEROCI_INTEGRATION") == "1" {
-		t.Skip("ZEROCI_INTEGRATION=1 set in environment; cannot verify default-skip behavior")
+	if os.Getenv("HOOKCI_INTEGRATION") == "1" {
+		t.Skip("HOOKCI_INTEGRATION=1 set in environment; cannot verify default-skip behavior")
 	}
 
 	var ran bool
@@ -17,6 +17,6 @@ func TestRequireIntegrationSkipsByDefault(t *testing.T) {
 	})
 
 	if ran {
-		t.Error("RequireIntegration did not skip when ZEROCI_INTEGRATION is unset")
+		t.Error("RequireIntegration did not skip when HOOKCI_INTEGRATION is unset")
 	}
 }

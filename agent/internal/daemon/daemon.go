@@ -1,4 +1,4 @@
-// Package daemon is zeroci agent: it keeps the hub session open, checks out
+// Package daemon is hookci agent: it keeps the hub session open, checks out
 // and runs every trigger the hub sends and reports the run back over the
 // same session.
 package daemon
@@ -17,27 +17,27 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/control"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/gc"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/logtail"
-	"github.com/KCuppens/zerocideploy/agent/internal/logupload"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/sink"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/gc"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/hubtokens"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/logtail"
+	"github.com/KCuppens/hookci/agent/internal/logupload"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/recovery"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/sink"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Reasons of the rejected frame.
@@ -106,7 +106,7 @@ type Daemon struct {
 	logs    *logupload.Uploader
 	tail    *logtail.Tailer // live log tail of the log viewer
 	// selfHosted is whether the hub reported mode self_hosted, which lets
-	// a .zeroci.yml without deployments declare trust: all.
+	// a .hookci.yml without deployments declare trust: all.
 	selfHosted atomic.Bool
 
 	wake    chan struct{}
@@ -121,7 +121,7 @@ type Daemon struct {
 	deploySched *deploy.Scheduler // runs accepted deploy runs
 	// deployRefs returns the GitHub client of a deploy run.
 	deployRefs func(run store.DeployRun) *trigger.GitHubRefChecker
-	// deployConfig loads the trusted .zeroci.yml at a deploy run's sha.
+	// deployConfig loads the trusted .hookci.yml at a deploy run's sha.
 	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
 	collector    *gc.Collector // removes old deploy images and run dirs
 }
@@ -233,7 +233,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// A control socket that cannot start only disables the CLI commands
 	// that use it; exiting would keep the unit down (RestartPreventExitStatus).
 	if ctl, err := control.Listen(d.o.StateDir, d.log); err != nil {
-		d.log.Error("control socket unavailable; zeroci gc and retry will not reach this agent", "err", err)
+		d.log.Error("control socket unavailable; hookci gc and retry will not reach this agent", "err", err)
 	} else {
 		ctl.Handle("gc", d.collector.HandleControl)
 		ctl.Handle(deploy.RetryOp, deploy.RetryControl(d.st, d.deploySched))
@@ -624,7 +624,7 @@ func (d *Daemon) reject(ctx context.Context, w *work, reason string, cause error
 	d.client.Flush()
 }
 
-// reportConfig reports a pull request's own .zeroci.yml as the _config job:
+// reportConfig reports a pull request's own .hookci.yml as the _config job:
 // its diagnostics as annotations and success or failed as its state.
 func (d *Daemon) reportConfig(ctx context.Context, runID string, diags config.Diagnostics) error {
 	hub := sink.NewHub(d.client, runID)

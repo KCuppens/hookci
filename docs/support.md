@@ -1,14 +1,14 @@
-# ZeroCI support
+# HookCI support
 
 ## Getting help
 
-- Run `/zeroci help` in Slack to list the commands.
-- Search or open an issue on [GitHub](https://github.com/KCuppens/zerocideploy/issues).
+- Run `/hookci help` in Slack to list the commands.
+- Search or open an issue on [GitHub](https://github.com/KCuppens/hookci/issues).
 - Email support@webuno.io.
 
 ## Security issues
 
-Do not open a public issue for a vulnerability. Report it privately as described in the [security policy](https://github.com/KCuppens/zerocideploy/blob/main/SECURITY.md).
+Do not open a public issue for a vulnerability. Report it privately as described in the [security policy](https://github.com/KCuppens/hookci/blob/main/SECURITY.md).
 
 ## Service status
 

@@ -16,7 +16,7 @@ export interface RenderInput {
 	hubVersion: string;
 	customDomain?: string;
 	githubApiUrl?: string;
-	/** The GitHub App's URL slug; `zeroci` until setup has registered the hub's own app. */
+	/** The GitHub App's URL slug; `hookci` until setup has registered the hub's own app. */
 	githubAppSlug?: string;
 	/** security.txt contact; empty makes the hub fall back to GitHub security advisories. */
 	securityContact?: string;
@@ -24,7 +24,7 @@ export interface RenderInput {
 
 export const TEMPLATE_FILE = join("templates", "wrangler.self-hosted.toml.tmpl");
 export const DEFAULT_GITHUB_API_URL = "https://api.github.com";
-export const DEFAULT_GITHUB_APP_SLUG = "zeroci";
+export const DEFAULT_GITHUB_APP_SLUG = "hookci";
 
 const PLACEHOLDER = /\{\{([A-Za-z][A-Za-z0-9]*)\}\}/g;
 /** Placeholders that may render as empty. */
@@ -88,11 +88,11 @@ export async function installBundle(dir: string, root = packageRoot()): Promise<
 
 /** Stand-in values for a state dir that has none yet; good for `wrangler deploy --dry-run` only. */
 export const PLACEHOLDER_INPUT = {
-	name: "zeroci-hub",
+	name: "hookci-hub",
 	accountId: "00000000000000000000000000000000",
 	d1DatabaseId: "00000000-0000-0000-0000-000000000000",
-	r2Bucket: "zeroci-hub-logs",
-	baseUrl: "https://zeroci-hub.workers.dev",
+	r2Bucket: "hookci-hub-logs",
+	baseUrl: "https://hookci-hub.workers.dev",
 } as const;
 
 /**

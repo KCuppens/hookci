@@ -15,7 +15,7 @@ function requestWith(cookie: string): Request {
   return new Request("https://hub.test/runs/run_1/logs?job=test", { headers: { cookie } });
 }
 
-describe("zc_session", () => {
+describe("hci_session", () => {
   it("is an HttpOnly, Secure, SameSite=Lax cookie that lasts 8 hours", async () => {
     const setCookie = await issueSession(env, USER, NOW);
     expect(setCookie).toMatch(new RegExp(`^${SESSION_COOKIE}=sess1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=28800$`));
@@ -53,7 +53,7 @@ describe("zc_session", () => {
     const payload = base64url(new TextEncoder().encode(JSON.stringify({ ...USER, exp: NOW / 1000 + SESSION_TTL_SEC })));
     const base = await crypto.subtle.importKey("raw", new Uint8Array(0), "HKDF", false, ["deriveBits"]);
     const bits = await crypto.subtle.deriveBits(
-      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode("zeroci-session-v1") },
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode("hookci-session-v1") },
       base,
       256,
     );
@@ -67,6 +67,6 @@ describe("zc_session", () => {
 
   it("is absent without the cookie", async () => {
     expect(await readSession(env, new Request("https://hub.test/"), NOW)).toBeNull();
-    expect(await readSession(env, requestWith("zc_session="), NOW)).toBeNull();
+    expect(await readSession(env, requestWith("hci_session="), NOW)).toBeNull();
   });
 });

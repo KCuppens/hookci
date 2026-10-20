@@ -1,7 +1,7 @@
 {
   "token": "verification-token",
   "team_id": "T0ACME",
-  "api_app_id": "A0ZEROCI",
+  "api_app_id": "A0HOOKCI",
   "event": {
     "type": "app_uninstalled",
     "event_ts": "1767225600.000100"

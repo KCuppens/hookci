@@ -1,4 +1,4 @@
-// /zeroci help, a bare /zeroci and unknown subcommands: one line per command.
+// /hookci help, a bare /hookci and unknown subcommands: one line per command.
 
 import { S } from "../../strings";
 import { type CommandHandler, registerCommand } from "../registry";

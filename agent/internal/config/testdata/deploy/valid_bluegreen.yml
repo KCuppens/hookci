@@ -20,4 +20,4 @@ deployments:
       file: /opt/infrauno/shared/routes/timeuno.caddy
       reload: "docker exec caddy caddy reload --config /etc/caddy/Caddyfile"
     health: { url: "http://127.0.0.1:{port}/health", expect: 200, retries: 40, interval: 2s }
-    env_file: /etc/zeroci/env/timeuno.env
+    env_file: /etc/hookci/env/timeuno.env

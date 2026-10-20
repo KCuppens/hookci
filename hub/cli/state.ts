@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-export const STATE_FILE = "zeroci-hub.state.json";
+export const STATE_FILE = "hookci-hub.state.json";
 
 /** What setup has learned and done so far. Holds resource ids only, never secret values. */
 export interface HubState {
@@ -39,7 +39,7 @@ function isHubState(v: unknown): v is HubState {
 	);
 }
 
-/** Reads `<dir>/zeroci-hub.state.json`; null when setup has never saved state there. */
+/** Reads `<dir>/hookci-hub.state.json`; null when setup has never saved state there. */
 export async function loadState(dir: string): Promise<HubState | null> {
 	const path = join(dir, STATE_FILE);
 	let raw: string;
@@ -50,7 +50,7 @@ export async function loadState(dir: string): Promise<HubState | null> {
 		throw err;
 	}
 	const parsed: unknown = JSON.parse(raw);
-	if (!isHubState(parsed)) throw new Error(`${path} is not a zeroci-hub state file (needs account_id, version and steps_done)`);
+	if (!isHubState(parsed)) throw new Error(`${path} is not a hookci-hub state file (needs account_id, version and steps_done)`);
 	return parsed;
 }
 

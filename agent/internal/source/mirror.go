@@ -15,13 +15,13 @@ import (
 
 var (
 	shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	// refRefspecRe accepts "+refs/<src>:refs/zeroci/<dst>" with plain ref characters only.
-	refRefspecRe = regexp.MustCompile(`^\+refs/[A-Za-z0-9._/-]+:refs/zeroci/[A-Za-z0-9._/-]+$`)
+	// refRefspecRe accepts "+refs/<src>:refs/hookci/<dst>" with plain ref characters only.
+	refRefspecRe = regexp.MustCompile(`^\+refs/[A-Za-z0-9._/-]+:refs/hookci/[A-Za-z0-9._/-]+$`)
 )
 
 // Mirrors keeps one full bare mirror per repo under Root, which only the
 // agent can read. Fetches and GC are serialised per repo. A sha fetched by
-// Fetch is kept by refs/zeroci/<sha> until its fetches are cloned and every
+// Fetch is kept by refs/hookci/<sha> until its fetches are cloned and every
 // clone of it is released, and GC waits while any clone of the repo is live,
 // so neither can prune objects a run needs.
 type Mirrors struct {
@@ -38,7 +38,7 @@ type Mirrors struct {
 type pinKey struct{ slug, sha string }
 
 // pin counts the fetches of a sha that wait for their clone and the live
-// clones of it. ref is set once Fetch has written refs/zeroci/<sha>.
+// clones of it. ref is set once Fetch has written refs/hookci/<sha>.
 type pin struct {
 	waiting, clones int
 	ref             bool
@@ -50,7 +50,7 @@ func NewMirrors(root string, g Git) *Mirrors {
 }
 
 // shaRef is the mirror ref that keeps a fetched sha's objects from GC.
-func shaRef(sha string) string { return "refs/zeroci/" + sha }
+func shaRef(sha string) string { return "refs/hookci/" + sha }
 
 // Path returns <root>/<slug>.git.
 func (m *Mirrors) Path(repo string) (string, error) {
@@ -109,8 +109,8 @@ func (m *Mirrors) Ensure(ctx context.Context, repo, remoteURL string) (string, e
 }
 
 // Fetch fetches exactly the given refspecs into the mirror, serialised per
-// repo. Each refspec is a 40-hex sha or "+refs/...:refs/zeroci/...". A sha
-// is stored as refs/zeroci/<sha> and counts as waiting for one CloneShared,
+// repo. Each refspec is a 40-hex sha or "+refs/...:refs/hookci/...". A sha
+// is stored as refs/hookci/<sha> and counts as waiting for one CloneShared,
 // so GC cannot prune it in between. env carries extra variables (askpass) on
 // top of SafeGitEnv. The mirror keeps full history: never shallow.
 func (m *Mirrors) Fetch(ctx context.Context, repo string, refspecs []string, env []string) error {
@@ -119,7 +119,7 @@ func (m *Mirrors) Fetch(ctx context.Context, repo string, refspecs []string, env
 	}
 	for _, r := range refspecs {
 		if !shaRe.MatchString(r) && (!refRefspecRe.MatchString(r) || strings.Contains(r, "..")) {
-			return fmt.Errorf("%w: refspec %q is neither a sha nor +refs/...:refs/zeroci/...", ErrBadSHA, r)
+			return fmt.Errorf("%w: refspec %q is neither a sha nor +refs/...:refs/hookci/...", ErrBadSHA, r)
 		}
 	}
 	path, err := m.Path(repo)

@@ -18,11 +18,11 @@ vi.mock("../../cli/package.js", async (importOriginal) => ({
 	packageVersion: () => pkg.version,
 }));
 
-const WORKERS_DEV = "https://zeroci-hub.acme.workers.dev";
-const LIST = ["d1", "migrations", "list", "zeroci-hub-db", "--remote"];
-const APPLY = ["d1", "migrations", "apply", "zeroci-hub-db", "--remote"];
+const WORKERS_DEV = "https://hookci-hub.acme.workers.dev";
+const LIST = ["d1", "migrations", "list", "hookci-hub-db", "--remote"];
+const APPLY = ["d1", "migrations", "apply", "hookci-hub-db", "--remote"];
 const PENDING = ["0015_sink_retries.sql", "0016_agent_versions.sql"];
-const CONFIRM = "Upgrade zeroci-hub to 0.4.0?";
+const CONFIRM = "Upgrade hookci-hub to 0.4.0?";
 
 const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "" });
 const is =
@@ -45,7 +45,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	pkg.version = "0.4.0";
-	tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-upgrade-test-"));
+	tmp = await mkdtemp(join(tmpdir(), "hookci-hub-upgrade-test-"));
 	root = join(tmp, "pkg");
 	dir = join(tmp, "state");
 	await mkdir(join(root, "templates"), { recursive: true });
@@ -57,9 +57,9 @@ beforeEach(async () => {
 
 	state = {
 		account_id: "0123456789abcdef0123456789abcdef",
-		name: "zeroci-hub",
+		name: "hookci-hub",
 		d1_database_id: "5b0c7f4e-2a1d-4c3b-9e8f-1a2b3c4d5e6f",
-		r2_bucket: "zeroci-hub-logs",
+		r2_bucket: "hookci-hub-logs",
 		base_url: WORKERS_DEV,
 		version: "0.3.0",
 		steps_done: [...SETUP_STEPS],
@@ -87,7 +87,7 @@ function infoStub(version: string) {
 	const urls: string[] = [];
 	const fetchFn = (async (url: string | URL | Request) => {
 		urls.push(String(url));
-		return Response.json({ name: "zeroci-hub", version });
+		return Response.json({ name: "hookci-hub", version });
 	}) as typeof fetch;
 	return { fetchFn, urls };
 }
@@ -195,7 +195,7 @@ describe("runUpgrade", () => {
 	it("needs a setup state that deployed the hub", async () => {
 		await rm(dir, { recursive: true, force: true });
 		await rejectsWith(runUpgrade(options(fakeExec([]), { yes: true })), "not_set_up");
-		await saveState(dir, { account_id: state.account_id, name: "zeroci-hub", version: "0.3.0", steps_done: ["preflight", "account"] });
+		await saveState(dir, { account_id: state.account_id, name: "hookci-hub", version: "0.3.0", steps_done: ["preflight", "account"] });
 		await rejectsWith(runUpgrade(options(fakeExec([]), { yes: true })), "not_set_up");
 	});
 });

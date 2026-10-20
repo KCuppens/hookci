@@ -45,7 +45,7 @@ export async function gateForkRun(
 	const reason: GateReason = cfg.forks === "never" ? "fork_never" : "fork_gated";
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId)).fetch("https://do/gate", {
 		method: "POST",
-		headers: { "x-zeroci-agent-id": agentId },
+		headers: { "x-hookci-agent-id": agentId },
 		body: JSON.stringify({ ...trigger, reason, trustRefused: trust.refused }),
 	});
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `AgentDO /gate answered ${res.status}`);
@@ -117,7 +117,7 @@ export async function approveForkRun(
 async function dispatchApproved(env: Env, agentId: string, trigger: TriggerRequest): Promise<"dispatched" | "stale" | "already_used"> {
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId)).fetch("https://do/trigger", {
 		method: "POST",
-		headers: { "x-zeroci-agent-id": agentId },
+		headers: { "x-hookci-agent-id": agentId },
 		body: JSON.stringify(trigger),
 	});
 	if (res.status === 409) {

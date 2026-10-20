@@ -17,16 +17,16 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
-	testPairToken  = "zc_pair_tokentokentoken"
-	testCredential = "zc_agent_credcredcredcred"
+	testPairToken  = "hci_pair_tokentokentoken"
+	testCredential = "hci_agent_credcredcredcred"
 )
 
 // fakePairHub serves /v1/info, /v1/pair/redeem with status and body, and
@@ -48,7 +48,7 @@ func newFakePairHub(t *testing.T, status int, body string) *fakePairHub {
 	h := &fakePairHub{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
-		info := fmt.Sprintf(`{"name":"zeroci-hub","version":"test","mode":"shared","protocol_versions":[%d,%d],"github_app":{"slug":"zeroci"},"slack":{"enabled":true}}`, protocol.Version, protocol.Version)
+		info := fmt.Sprintf(`{"name":"hookci-hub","version":"test","mode":"shared","protocol_versions":[%d,%d],"github_app":{"slug":"hookci"},"slack":{"enabled":true}}`, protocol.Version, protocol.Version)
 		if i := h.info.Load(); i != nil {
 			info = *i
 		}
@@ -132,13 +132,13 @@ func (f *fakeServices) ActiveState(context.Context, string) (string, error) {
 	return f.state, nil
 }
 
-// runConnectCLI runs zeroci with svc in place of systemctl, an empty stdin
+// runConnectCLI runs hookci with svc in place of systemctl, an empty stdin
 // and a state root no test can write, so each test passes --state-dir.
 func runConnectCLI(svc systemd.ServiceManager, args ...string) (int, string, string) {
 	return runConnectCLIIn(os.DevNull, "", svc, args...)
 }
 
-// runConnectCLIIn runs zeroci with svc in place of systemctl, stdin as the
+// runConnectCLIIn runs hookci with svc in place of systemctl, stdin as the
 // standard input and root as the state root.
 func runConnectCLIIn(root, stdin string, svc systemd.ServiceManager, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
@@ -157,7 +157,7 @@ func TestConnectWritesConfig(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "42")
 
-	svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": true}}
+	svc := &fakeServices{exist: map[string]bool{"hookci-agent@42.service": true}}
 	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--name", "build-1")
 	if code != ExitOK {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, stderr)
@@ -189,9 +189,9 @@ func TestConnectWritesConfig(t *testing.T) {
 			t.Errorf("output contains secret %q\nstdout:\n%s\nstderr:\n%s", secret, stdout, stderr)
 		}
 	}
-	wantOut := "Connected to " + hub.srv.URL + " as build-1 (agent agt_1)\nStarted zeroci-agent@42.service\n"
-	if len(svc.enabled) != 1 || svc.enabled[0] != "zeroci-agent@42.service" {
-		t.Errorf("enabled units = %v, want zeroci-agent@42.service", svc.enabled)
+	wantOut := "Connected to " + hub.srv.URL + " as build-1 (agent agt_1)\nStarted hookci-agent@42.service\n"
+	if len(svc.enabled) != 1 || svc.enabled[0] != "hookci-agent@42.service" {
+		t.Errorf("enabled units = %v, want hookci-agent@42.service", svc.enabled)
 	}
 	if stdout != wantOut {
 		t.Errorf("stdout = %q, want %q", stdout, wantOut)
@@ -217,7 +217,7 @@ func TestConnectWritesConfig(t *testing.T) {
 func TestConnectCustomStateDirLeavesUnit(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
 	root, dir := t.TempDir(), filepath.Join(t.TempDir(), "state")
-	svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": true}, state: "active"}
+	svc := &fakeServices{exist: map[string]bool{"hookci-agent@42.service": true}, state: "active"}
 	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
 	if code != ExitOK {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, stderr)
@@ -228,12 +228,12 @@ func TestConnectCustomStateDirLeavesUnit(t *testing.T) {
 	if len(svc.enabled) != 0 || len(svc.restarted) != 0 {
 		t.Errorf("enabled %v restarted %v, want neither", svc.enabled, svc.restarted)
 	}
-	if want := "zeroci agent --state-dir " + dir; !strings.Contains(stdout, want) || !strings.Contains(stdout, filepath.Join(root, "42")) {
+	if want := "hookci agent --state-dir " + dir; !strings.Contains(stdout, want) || !strings.Contains(stdout, filepath.Join(root, "42")) {
 		t.Errorf("stdout = %q, want a hint naming %s and %q", stdout, filepath.Join(root, "42"), want)
 	}
 }
 
-// The pair token comes from $ZEROCI_PAIR_TOKEN, else stdin, so it need not
+// The pair token comes from $HOOKCI_PAIR_TOKEN, else stdin, so it need not
 // show in the process list.
 func TestConnectPairTokenWithoutArgument(t *testing.T) {
 	for _, tc := range []struct{ name, env, stdin string }{
@@ -274,13 +274,13 @@ func TestConnectServiceSkipped(t *testing.T) {
 		flags []string
 		want  string
 	}{
-		{"no-service flag", true, []string{"--no-service"}, "Next: sudo systemctl enable --now zeroci-agent@42.service\n"},
-		{"unit not installed", false, nil, "No zeroci-agent@42.service unit"},
+		{"no-service flag", true, []string{"--no-service"}, "Next: sudo systemctl enable --now hookci-agent@42.service\n"},
+		{"unit not installed", false, nil, "No hookci-agent@42.service unit"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			hub := newFakePairHub(t, http.StatusOK, redeemOK)
-			svc := &fakeServices{exist: map[string]bool{"zeroci-agent@42.service": tc.exist}}
+			svc := &fakeServices{exist: map[string]bool{"hookci-agent@42.service": tc.exist}}
 			args := append([]string{"connect", testPairToken, "--hub", hub.srv.URL}, tc.flags...)
 			code, stdout, stderr := runConnectCLIIn(t.TempDir(), "", svc, args...)
 			if code != ExitOK {
@@ -336,7 +336,7 @@ func TestConnectRedeemErrors(t *testing.T) {
 func TestConnectRefusesExistingAgent(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
 	dir := t.TempDir()
-	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
+	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "hci_agent_old", Name: "old"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -367,10 +367,10 @@ func TestConnectForceRestartsRunningAgent(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
+	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "hci_agent_old", Name: "old"}); err != nil {
 		t.Fatal(err)
 	}
-	unit := "zeroci-agent@42.service"
+	unit := "hookci-agent@42.service"
 	svc := &fakeServices{exist: map[string]bool{unit: true}, state: "active"}
 	code, stdout, stderr := runConnectCLIIn(root, "", svc, "connect", testPairToken, "--hub", hub.srv.URL, "--force")
 	if code != ExitOK {
@@ -395,7 +395,7 @@ func TestConnectForceRestartsRunningAgent(t *testing.T) {
 func TestConnectForceClaimsNoHubFrames(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
 	dir := t.TempDir()
-	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "zc_agent_old", Name: "old"}); err != nil {
+	if err := agentconf.Save(dir, &agentconf.AgentConfig{AgentID: "agt_old", Credential: "hci_agent_old", Name: "old"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(filepath.Join(dir, "agent.db"))
@@ -509,11 +509,11 @@ func TestCompatible(t *testing.T) {
 // single-use pair token.
 func TestConnectProtocolMismatchSkipsRedeem(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
-	info := `{"name":"zeroci-hub","version":"9.0.0","mode":"self_hosted","protocol_versions":[7,8],"github_app":{"slug":"x"},"slack":{"enabled":false}}`
+	info := `{"name":"hookci-hub","version":"9.0.0","mode":"self_hosted","protocol_versions":[7,8],"github_app":{"slug":"x"},"slack":{"enabled":false}}`
 	hub.info.Store(&info)
 	dir := t.TempDir()
 	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir)
-	want := fmt.Sprintf("hub speaks protocol versions 7..8, this agent speaks %d; upgrade with `zeroci upgrade`", protocol.Version)
+	want := fmt.Sprintf("hub speaks protocol versions 7..8, this agent speaks %d; upgrade with `hookci upgrade`", protocol.Version)
 	if code == ExitOK || !strings.Contains(stderr, want) {
 		t.Fatalf("exit = %d stderr = %q, want non-zero and %q", code, stderr, want)
 	}
@@ -530,7 +530,7 @@ func TestConnectStoresHubMode(t *testing.T) {
 	for _, mode := range []string{"shared", "self_hosted"} {
 		t.Run(mode, func(t *testing.T) {
 			hub := newFakePairHub(t, http.StatusOK, redeemOK)
-			info := fmt.Sprintf(`{"name":"zeroci-hub","version":"test","mode":%q,"protocol_versions":[%d,%d],"github_app":{"slug":"zeroci"},"slack":{"enabled":true}}`, mode, protocol.Version, protocol.Version)
+			info := fmt.Sprintf(`{"name":"hookci-hub","version":"test","mode":%q,"protocol_versions":[%d,%d],"github_app":{"slug":"hookci"},"slack":{"enabled":true}}`, mode, protocol.Version, protocol.Version)
 			hub.info.Store(&info)
 			dir := t.TempDir()
 			if code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--no-service"); code != ExitOK {
@@ -549,7 +549,7 @@ func TestConnectRefusesNonHub(t *testing.T) {
 	info := `{"name":"something-else"}`
 	hub.info.Store(&info)
 	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", t.TempDir())
-	if code == ExitOK || !strings.Contains(stderr, "not a zeroci hub") {
+	if code == ExitOK || !strings.Contains(stderr, "not a hookci hub") {
 		t.Fatalf("exit = %d stderr = %q, want a not-a-hub refusal", code, stderr)
 	}
 	if n := hub.redeems.Load(); n != 0 {
@@ -557,11 +557,11 @@ func TestConnectRefusesNonHub(t *testing.T) {
 	}
 }
 
-// The hub URL comes from $ZEROCI_HUB_URL without --hub, loses its trailing
+// The hub URL comes from $HOOKCI_HUB_URL without --hub, loses its trailing
 // slash, and is stored for the agent's reconnects; --hub still wins over it.
 func TestConnectHubURLFromEnvIsStored(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
-	t.Setenv("ZEROCI_HUB_URL", hub.srv.URL+"/")
+	t.Setenv("HOOKCI_HUB_URL", hub.srv.URL+"/")
 	dir := t.TempDir()
 	code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--state-dir", dir, "--no-service")
 	if code != ExitOK {
@@ -572,7 +572,7 @@ func TestConnectHubURLFromEnvIsStored(t *testing.T) {
 		t.Fatalf("agent.json = %+v, %v; want hub_url %s", cfg, err, hub.srv.URL)
 	}
 
-	t.Setenv("ZEROCI_HUB_URL", "https://unreachable.invalid")
+	t.Setenv("HOOKCI_HUB_URL", "https://unreachable.invalid")
 	dir = t.TempDir()
 	code, _, stderr = runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--no-service")
 	if code != ExitOK {

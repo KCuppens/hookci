@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { S } from "../../src/strings";
-import { LOGIN, REPO, zeroci } from "../commands-helpers";
+import { LOGIN, REPO, hookci } from "../commands-helpers";
 import { click, deliver, type ForkWorld, forkPush, HEAD_SHA, outbox, POLICY_FILE, type Row, runs, setUpForkWorld } from "./world";
 
 const SHORT_SHA = HEAD_SHA.slice(0, 7);
@@ -22,9 +22,9 @@ async function retryFrames(): Promise<Row[]> {
   return (await outbox(world.agent)).filter((f) => f.type === "trigger" && f.attempt === 2);
 }
 
-describe("/zeroci retry of a fork pull request run", () => {
+describe("/hookci retry of a fork pull request run", () => {
   it("gates the new attempt until a writer approves it, then dispatches it once as untrusted", async () => {
-    expect((await zeroci(world, `retry ${REPO.full_name}`)).text).toBe(S.slack.retryGated(REPO.full_name, SHORT_SHA, 2));
+    expect((await hookci(world, `retry ${REPO.full_name}`)).text).toBe(S.slack.retryGated(REPO.full_name, SHORT_SHA, 2));
     expect(await retryFrames()).toEqual([]);
     const retried = (await runs()).at(-1)!;
     expect(retried).toMatchObject({ attempt: 2, sha: HEAD_SHA, state: "gated", reason: "fork_gated" });
@@ -40,7 +40,7 @@ describe("/zeroci retry of a fork pull request run", () => {
   it("never runs the retry when the base ref sets forks: never", async () => {
     world.files[POLICY_FILE] = "checks:\n  forks: never\n";
 
-    expect((await zeroci(world, `retry ${REPO.full_name}`)).text).toBe(S.slack.retryForkNever(REPO.full_name, SHORT_SHA));
+    expect((await hookci(world, `retry ${REPO.full_name}`)).text).toBe(S.slack.retryForkNever(REPO.full_name, SHORT_SHA));
     expect(await retryFrames()).toEqual([]);
     expect((await runs()).at(-1)).toMatchObject({ attempt: 2, state: "gated", reason: "fork_never" });
   });
@@ -50,7 +50,7 @@ describe("/zeroci retry of a fork pull request run", () => {
     env.HUB_MODE = "self_hosted";
     try {
       world.files[POLICY_FILE] = "checks:\n  trust: all\n";
-      await zeroci(world, `retry ${REPO.full_name}`);
+      await hookci(world, `retry ${REPO.full_name}`);
       expect(await retryFrames()).toEqual([expect.objectContaining({ trust: "untrusted", sha: HEAD_SHA })]);
       expect((await runs()).at(-1)).toMatchObject({ attempt: 2, state: "queued" });
     } finally {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // stopTimeout bounds the systemctl stop issued after the run's ctx is done.
@@ -35,7 +35,7 @@ type Systemd struct {
 	Runner     execx.Runner
 	SystemdRun string // default "systemd-run"
 	Systemctl  string // default "systemctl"
-	Slice      string // default "zeroci.slice"
+	Slice      string // default "hookci.slice"
 }
 
 // Name reports "systemd".
@@ -50,7 +50,7 @@ func (s *Systemd) runner() execx.Runner {
 
 func (s *Systemd) systemdRun() string { return orDefault(s.SystemdRun, "systemd-run") }
 func (s *Systemd) systemctl() string  { return orDefault(s.Systemctl, "systemctl") }
-func (s *Systemd) slice() string      { return orDefault(s.Slice, "zeroci.slice") }
+func (s *Systemd) slice() string      { return orDefault(s.Slice, "hookci.slice") }
 
 func orDefault(v, def string) string {
 	if v == "" {

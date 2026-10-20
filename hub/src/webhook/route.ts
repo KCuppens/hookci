@@ -62,7 +62,7 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id));
 	const res = await stub.fetch("https://do/trigger", {
 		method: "POST",
-		headers: { "x-zeroci-agent-id": binding.agent_id },
+		headers: { "x-hookci-agent-id": binding.agent_id },
 		body: JSON.stringify(body),
 	});
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `AgentDO /trigger answered ${res.status}`);

@@ -56,7 +56,7 @@ type Row = Record<string, unknown>;
 async function postTrigger(agent: Agent, over: Partial<TriggerRequest> = {}): Promise<Response> {
   return agent.stub.fetch("https://do/trigger", {
     method: "POST",
-    headers: { "x-zeroci-agent-id": agent.agentId },
+    headers: { "x-hookci-agent-id": agent.agentId },
     body: JSON.stringify({ ...PR_TRIGGER, ...over } satisfies TriggerRequest),
   });
 }
@@ -274,7 +274,7 @@ describe("AgentDO run lifecycle", () => {
     });
   });
 
-  it("job_planned keeps the .zeroci.yml slack override for the sinks, verbose as normal", async () => {
+  it("job_planned keeps the .hookci.yml slack override for the sinks, verbose as normal", async () => {
     const agent = await seedAgent(INSTALLATION);
     const sock = await online(agent);
     await acceptedRun(agent, sock, "run_a");

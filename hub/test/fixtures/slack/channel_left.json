@@ -1,7 +1,7 @@
 {
   "token": "verification-token",
   "team_id": "T0ACME",
-  "api_app_id": "A0ZEROCI",
+  "api_app_id": "A0HOOKCI",
   "event": {
     "type": "channel_left",
     "channel": "C0BUILDS",

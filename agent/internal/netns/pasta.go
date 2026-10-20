@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 const (

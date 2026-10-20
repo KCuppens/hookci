@@ -11,7 +11,7 @@ export interface SlackInstalled {
 	cookies: string[];
 }
 
-/** Says ZeroCI joined the workspace, what to do next and links to the app's Home tab. */
+/** Says HookCI joined the workspace, what to do next and links to the app's Home tab. */
 export function slackInstalledPage(p: SlackInstalled): Response {
 	const appHome = `slack://app?team=${encodeURIComponent(p.teamId)}&id=${encodeURIComponent(p.slackAppId)}&tab=home`;
 	return page(

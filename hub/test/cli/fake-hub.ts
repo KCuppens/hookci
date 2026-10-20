@@ -8,11 +8,11 @@ export const SLACK_ANSWERS = {
 /** A self-hosted hub's GET /v1/info body for the fake GitHub's default app. */
 export function hubInfo(over: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
-		name: "zeroci-hub",
+		name: "hookci-hub",
 		version: "0.3.0",
 		mode: "self_hosted",
 		protocol_versions: [1],
-		github_app: { slug: "acme-zeroci" },
+		github_app: { slug: "acme-hookci" },
 		slack: { enabled: true },
 		...over,
 	};

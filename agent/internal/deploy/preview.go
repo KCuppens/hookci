@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // ErrNoPreview reports a strategy that cannot show a dry run.

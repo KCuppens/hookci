@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/control"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // recordingSched records the runs the retry handler queues.
@@ -86,7 +86,7 @@ func TestRetryCommand_NotRetryable(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			d, _, sched := retryAgent(t, state)
 			code, stdout, stderr := retryOf(d, "run_dep")
-			want := "zeroci: run run_dep is " + state + "; only Failed or Interrupted runs can be retried\n"
+			want := "hookci: run run_dep is " + state + "; only Failed or Interrupted runs can be retried\n"
 			if code != ExitRunFailed || stdout != "" || stderr != want {
 				t.Errorf("retry = %d, %q, %q; want 1 and %q", code, stdout, stderr, want)
 			}
@@ -98,7 +98,7 @@ func TestRetryCommand_NotRetryable(t *testing.T) {
 }
 
 func TestRetryCommand_AgentNotRunning(t *testing.T) {
-	const want = "zeroci: agent is not running; start it with systemctl start zeroci-agent@<installation>\n"
+	const want = "hookci: agent is not running; start it with systemctl start hookci-agent@<installation>\n"
 	d := Deps{Globals: Globals{StateDir: t.TempDir()}}
 	if code, stdout, stderr := retryOf(d, "run_dep"); code != ExitRunFailed || stdout != "" || stderr != want {
 		t.Errorf("retry = %d, %q, %q; want 1 and %q", code, stdout, stderr, want)

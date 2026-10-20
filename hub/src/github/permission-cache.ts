@@ -1,6 +1,6 @@
 // In-isolate cache of GitHub repository roles, keyed by installation, repo
 // and login. An entry lives at most 5 minutes, so a revoked collaborator
-// loses access to /zeroci commands within that time. At most 1000 entries;
+// loses access to /hookci commands within that time. At most 1000 entries;
 // the oldest goes first.
 
 import type { RepoPermission } from "./types";

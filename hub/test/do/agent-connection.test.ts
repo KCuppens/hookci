@@ -51,7 +51,7 @@ describe("GET /v1/agent/connect", () => {
     expect(await missing.json()).toEqual({ error: "auth_failed" });
     expect(missing.webSocket).toBeNull();
 
-    const unknown = await connectRequest(randomToken("zc_agent_", 32));
+    const unknown = await connectRequest(randomToken("hci_agent_", 32));
     expect(unknown.status).toBe(401);
     expect(await unknown.json()).toEqual({ error: "auth_failed" });
 
@@ -129,7 +129,7 @@ describe("AgentDO connection", () => {
       expect(await sock.hello(protocol)).toMatchObject({
         type: "error",
         code: "protocol_unsupported",
-        upgrade_hint: "run: sudo zeroci upgrade",
+        upgrade_hint: "run: sudo hookci upgrade",
       });
       expect(await sock.closed).toEqual({ code: 4400, reason: "protocol_unsupported" });
     }

@@ -60,7 +60,7 @@ describe("oauth state", () => {
 describe("session cookie", () => {
   it("covers only its installations, for 30 minutes, and only with a valid signature", async () => {
     const setCookie = await issueSession(env, { installationIds: [42, 43], githubUserId: 7, githubLogin: "octo-cat" }, testClock.now());
-    expect(setCookie).toMatch(/^__Host-zeroci_session=42-43\.7\.octo-cat\.\d+\.[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=1800$/);
+    expect(setCookie).toMatch(/^__Host-hookci_session=42-43\.7\.octo-cat\.\d+\.[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=1800$/);
     const header = cookieHeader(setCookie);
 
     expect(await readSession(env, header, 43, testClock.now())).toEqual({ installationIds: [42, 43], githubUserId: 7, githubLogin: "octo-cat" });

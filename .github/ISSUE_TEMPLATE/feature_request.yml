@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose an enhancement or new capability for ZeroCIDeploy
+description: Propose an enhancement or new capability for HookCIDeploy
 title: "[Feature]: "
 labels: ["enhancement"]
 
@@ -33,7 +33,7 @@ body:
       label: Component
       description: Which component would this change impact?
       options:
-        - agent (`zeroci` CLI / daemon)
+        - agent (`hookci` CLI / daemon)
         - hub (Cloudflare Worker)
         - schema (config format)
         - build / Makefile / scripts

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestHubSinkSplitsAnnotations(t *testing.T) {
@@ -16,7 +16,7 @@ func TestHubSinkSplitsAnnotations(t *testing.T) {
 	h := NewHub(hubclient.New(hubclient.Config{}, st, nil, nil), "run-1")
 	items := make([]protocol.AnnotationsItemsElem, 120)
 	for i := range items {
-		items[i] = protocol.AnnotationsItemsElem{Path: ".zeroci.yml", Line: i + 1, Level: protocol.AnnotationsItemsElemLevelFailure, Message: fmt.Sprint("problem ", i)}
+		items[i] = protocol.AnnotationsItemsElem{Path: ".hookci.yml", Line: i + 1, Level: protocol.AnnotationsItemsElemLevelFailure, Message: fmt.Sprint("problem ", i)}
 	}
 	if err := h.Annotations(ctx, "_config", items); err != nil {
 		t.Fatal(err)

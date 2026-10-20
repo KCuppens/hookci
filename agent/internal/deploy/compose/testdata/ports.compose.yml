@@ -2,7 +2,7 @@ services:
   web:
     build: .
     ports:
-      - "${ZEROCI_PORT:-3000}:8080/tcp"
+      - "${HOOKCI_PORT:-3000}:8080/tcp"
     environment:
       DATABASE_URL: postgres://db/app
   db:

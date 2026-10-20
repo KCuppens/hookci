@@ -1,5 +1,5 @@
 // Package script is the script deploy strategy: deployments.<env>.run is
-// the whole deploy, reporting sub-steps through `::zeroci step <name>` lines.
+// the whole deploy, reporting sub-steps through `::hookci step <name>` lines.
 package script
 
 import (
@@ -11,27 +11,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const (
-	markerPrefix = "::zeroci step "
+	markerPrefix = "::hookci step "
 	// maxMarkerLine bounds the bytes kept of one output line; longer lines
 	// are never markers.
 	maxMarkerLine = 256
 	// outSubStep is the output holding the last sub-step the script reported.
 	outSubStep = "sub_step"
 	// failedStepEnv names the last reported sub-step for the rollback command.
-	failedStepEnv = "ZEROCI_FAILED_STEP"
+	failedStepEnv = "HOOKCI_FAILED_STEP"
 )
 
 var stepNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,39}$`)
 
 // Script runs `sh -c <run>` as the single engine step "run". Every
-// `::zeroci step <name>` line on its stdout emits a progress event, and the
+// `::hookci step <name>` line on its stdout emits a progress event, and the
 // last one names the failed sub-step for `sh -c <rollback>`. The engine
 // resumes per step, so a resumed script deploy re-runs run from the start.
 type Script struct {
@@ -91,7 +91,7 @@ func (s *Script) run(ctx context.Context, sc *deploy.StepContext) error {
 }
 
 // Rollback runs deployments.<env>.rollback, when set, with
-// ZEROCI_FAILED_STEP naming the last sub-step the script reported (empty
+// HOOKCI_FAILED_STEP naming the last sub-step the script reported (empty
 // when it reported none). Without rollback it does nothing.
 func (s *Script) Rollback(ctx context.Context, sc *deploy.StepContext, _ int) error {
 	if sc.Cfg.Rollback == nil || *sc.Cfg.Rollback == "" {
@@ -107,7 +107,7 @@ func (s *Script) Rollback(ctx context.Context, sc *deploy.StepContext, _ int) er
 	return nil
 }
 
-// ParseStepMarker returns the sub-step name of a `::zeroci step <name>`
+// ParseStepMarker returns the sub-step name of a `::hookci step <name>`
 // line. The prefix must start the line; the trimmed name must match
 // ^[a-z0-9][a-z0-9_.-]{0,39}$. Any other line is plain output.
 func ParseStepMarker(line string) (name string, ok bool) {

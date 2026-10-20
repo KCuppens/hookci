@@ -11,15 +11,15 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/egress"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // recorder is the shared, ordered list of side effects the fakes saw.
@@ -159,7 +159,7 @@ type fakePostgres struct {
 }
 
 func (p *fakePostgres) Env() []string {
-	return []string{"DATABASE_URL=postgres://zeroci@localhost/zeroci"}
+	return []string{"DATABASE_URL=postgres://hookci@localhost/hookci"}
 }
 
 func (p *fakePostgres) Stop(context.Context) error {
@@ -256,7 +256,7 @@ func newHarness(t *testing.T, isoName string, cfg *config.ResolvedChecks, mut fu
 	return h
 }
 
-// localRun is a trusted `zeroci run` of local/app.
+// localRun is a trusted `hookci run` of local/app.
 func localRun() store.Run {
 	return store.Run{ID: "01run", Repo: "local/app", Ref: "refs/heads/main", Event: "local", Kind: "check", TrustDomain: "trusted:local/app"}
 }

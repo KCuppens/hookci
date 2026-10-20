@@ -19,7 +19,7 @@ import { seedTenant, type Tenant } from "../helpers/tenants";
 const TG_API = "https://tg.test";
 const BOT_TOKEN = "123456:AAH-secret_bot_token";
 const CHAT = "-1001234567890";
-const HOOK = "https://hooks.example.com/services/zeroci-builds-and-deploys?token=q";
+const HOOK = "https://hooks.example.com/services/hookci-builds-and-deploys?token=q";
 
 interface Sent {
   url: string;
@@ -94,8 +94,8 @@ describe("addSinkConfig", () => {
 
   it("returns a webhook's generated secret once and never lists it", async () => {
     const { sink, generatedSecret } = await addSinkConfig(env, ta, actor, { kind: "webhook", repo: a.fullName, url: HOOK });
-    expect(generatedSecret).toMatch(/^zcwh_/);
-    expect(sink.target).toBe("https://hooks.example.com/services/zeroci-builds-...");
+    expect(generatedSecret).toMatch(/^hciwh_/);
+    expect(sink.target).toBe("https://hooks.example.com/services/hookci-builds-...");
     const listed = await listSinkConfigsForRepo(ta, a.fullName);
     expect(listed).toEqual([sink]);
     expect(JSON.stringify(listed)).not.toContain(generatedSecret!);
@@ -280,7 +280,7 @@ describe("sendTestDelivery", () => {
     expect(post!.url).toBe(HOOK);
     const headers = new Headers(post!.init.headers);
     const body = String(post!.init.body);
-    expect(headers.get("X-ZeroCI-Signature")).toBe(await signWebhook(generatedSecret!, Number(headers.get("X-ZeroCI-Timestamp")), body));
+    expect(headers.get("X-HookCI-Signature")).toBe(await signWebhook(generatedSecret!, Number(headers.get("X-HookCI-Timestamp")), body));
     expect(JSON.parse(body)).toMatchObject({ run: { repo: a.fullName, sha: "0".repeat(40), state: "success", terminal: true } });
     expect(await count("sink_messages")).toBe(0);
     expect(await count("sink_deliveries")).toBe(0);

@@ -21,12 +21,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const schemaURL = "https://ci.webuno.io/schema/zeroci.schema.json"
+const schemaURL = "https://ci.webuno.io/schema/hookci.schema.json"
 
-// Config is a parsed .zeroci.yml: the generated root type plus the resolved
+// Config is a parsed .hookci.yml: the generated root type plus the resolved
 // view of the checks that Parse builds once the file is valid.
 type Config struct {
-	ZeroCIConfig `yaml:",inline"`
+	HookCIConfig `yaml:",inline"`
 
 	checks *ResolvedChecks
 }
@@ -76,7 +76,7 @@ func Parse(data []byte, opts ParseOptions) (*Config, Diagnostics) {
 // schema, semantic and resolve steps as Parse, so a configuration built in
 // code (auto-detection) is indistinguishable from a parsed file. Diagnostics
 // carry paths but no lines.
-func FromRoot(root ZeroCIConfig) (*Config, Diagnostics) {
+func FromRoot(root HookCIConfig) (*Config, Diagnostics) {
 	encoded, err := json.Marshal(root)
 	if err != nil {
 		return nil, Diagnostics{{Message: fmt.Sprintf("cannot encode configuration: %v", err), Severity: SeverityError}}
@@ -103,7 +103,7 @@ func DeclaredPolicy(data []byte) (p Policy, ok bool) {
 	if diags.HasErrors() {
 		return Policy{}, false
 	}
-	var root ZeroCIConfig
+	var root HookCIConfig
 	if decodeRoot(raw, lines, &root).HasErrors() {
 		return Policy{}, false
 	}
@@ -118,21 +118,21 @@ func DeclaredPolicy(data []byte) (p Policy, ok bool) {
 // resolved checks.
 func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
 	var cfg Config
-	if diags := decodeRoot(raw, lines, &cfg.ZeroCIConfig); diags.HasErrors() {
+	if diags := decodeRoot(raw, lines, &cfg.HookCIConfig); diags.HasErrors() {
 		return nil, diags
 	}
-	diags := checkSemantics(&cfg.ZeroCIConfig, opts, lines)
+	diags := checkSemantics(&cfg.HookCIConfig, opts, lines)
 	diags.sort()
 	if diags.HasErrors() {
 		return nil, diags
 	}
-	cfg.checks = resolveChecks(&cfg.ZeroCIConfig, raw)
+	cfg.checks = resolveChecks(&cfg.HookCIConfig, raw)
 	return &cfg, diags
 }
 
 // decodeRoot schema-validates a decoded document and decodes it into root
 // with deployment defaults filled in. Only errors come back.
-func decodeRoot(raw any, lines lineIndex, root *ZeroCIConfig) Diagnostics {
+func decodeRoot(raw any, lines lineIndex, root *HookCIConfig) Diagnostics {
 	if diags := validateSchema(raw, lines); diags.HasErrors() {
 		diags.sort()
 		return diags
@@ -462,7 +462,7 @@ func schemaDiagnostics(e *jsonschema.ValidationError, path string, li lineIndex)
 		return Diagnostics{nameDiagnostic(path, k.Property, li)}
 	case *kind.Const:
 		if path == "version" {
-			return Diagnostics{li.errorf(path, "set version: 1", "unsupported version %s; this zeroci reads version 1", jsonText(k.Got))}
+			return Diagnostics{li.errorf(path, "set version: 1", "unsupported version %s; this hookci reads version 1", jsonText(k.Got))}
 		}
 		return Diagnostics{li.errorf(path, "", "must be %s, got %s", jsonText(k.Want), jsonText(k.Got))}
 	case *kind.Enum:

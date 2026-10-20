@@ -1,4 +1,4 @@
-module github.com/KCuppens/zerocideploy/agent
+module github.com/KCuppens/hookci/agent
 
 go 1.26.0
 

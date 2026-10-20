@@ -20,11 +20,11 @@ export interface FakeGithub {
 
 const DEFAULTS: Omit<ManifestConversion, "pem"> = {
 	id: 424242,
-	slug: "acme-zeroci",
+	slug: "acme-hookci",
 	webhook_secret: "whsec-fake-0f9e8d7c",
 	client_id: "Iv1.fakeclientid0001",
 	client_secret: "fake-client-secret-5a4b3c2d1e",
-	html_url: "https://github.com/apps/acme-zeroci",
+	html_url: "https://github.com/apps/acme-hookci",
 };
 
 /** Checks an RS256 JWT against `publicKey` and returns its claims, or null. */

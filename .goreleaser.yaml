@@ -2,21 +2,21 @@
 # Dry run: goreleaser release --snapshot --clean --skip=sign,publish
 version: 2
 
-project_name: zeroci
+project_name: hookci
 
 builds:
-  - id: zeroci
+  - id: hookci
     dir: agent
-    main: ./cmd/zeroci
-    binary: zeroci
+    main: ./cmd/hookci
+    binary: hookci
     env:
       - CGO_ENABLED=0
     flags:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/KCuppens/zerocideploy/agent/internal/version.Version={{.Version}}
-      - -X github.com/KCuppens/zerocideploy/agent/internal/version.Commit={{.Commit}}
+      - -X github.com/KCuppens/hookci/agent/internal/version.Version={{.Version}}
+      - -X github.com/KCuppens/hookci/agent/internal/version.Commit={{.Commit}}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
@@ -25,32 +25,32 @@ builds:
       - arm64
 
 archives:
-  - id: zeroci
+  - id: hookci
     formats: [tar.gz]
-    name_template: "zeroci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "hookci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
-      - src: packaging/zeroci-agent@.service
-      - src: packaging/zeroci.slice
+      - src: packaging/hookci-agent@.service
+      - src: packaging/hookci.slice
 
 nfpms:
-  - id: zeroci
-    package_name: zeroci
-    file_name_template: "zeroci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    vendor: ZeroCI
-    homepage: https://github.com/KCuppens/zerocideploy
+  - id: hookci
+    package_name: hookci
+    file_name_template: "hookci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: HookCI
+    homepage: https://github.com/KCuppens/hookci
     maintainer: Kobe Cuppens <kobecuppens@hotmail.com>
-    description: ZeroCI agent, runs CI checks sent by the ZeroCI hub.
+    description: HookCI agent, runs CI checks sent by the HookCI hub.
     license: Proprietary
     formats:
       - deb
       - rpm
     bindir: /usr/local/bin
     contents:
-      - src: packaging/zeroci-agent@.service
-        dst: /etc/systemd/system/zeroci-agent@.service
+      - src: packaging/hookci-agent@.service
+        dst: /etc/systemd/system/hookci-agent@.service
         type: config
-      - src: packaging/zeroci.slice
-        dst: /etc/systemd/system/zeroci.slice
+      - src: packaging/hookci.slice
+        dst: /etc/systemd/system/hookci.slice
         type: config
     scripts:
       postinstall: packaging/postinstall.sh

@@ -273,7 +273,7 @@ func TestProxyDeniesNotAllowlisted(t *testing.T) {
 	h := newHarness(t, Options{})
 	_, _, resp := h.connect("evil.example:443", "")
 	h.expectDenied(resp, http.StatusForbidden, "not-allowlisted",
-		"zeroci egress: evil.example is not in the allow-list; add it under checks.egress in .zeroci.yml (trusted runs only)")
+		"hookci egress: evil.example is not in the allow-list; add it under checks.egress in .hookci.yml (trusted runs only)")
 	if s := h.p.Stats(); s.Denied != 1 || s.Allowed != 0 {
 		t.Fatalf("stats = %+v", s)
 	}
@@ -301,7 +301,7 @@ func TestProxyDeniesIPLiteralAndBadPort(t *testing.T) {
 		t.Run(tc.target, func(t *testing.T) {
 			h := newHarness(t, Options{})
 			_, _, resp := h.connect(tc.target, "")
-			h.expectDenied(resp, http.StatusForbidden, tc.reason, "zeroci egress:")
+			h.expectDenied(resp, http.StatusForbidden, tc.reason, "hookci egress:")
 		})
 	}
 }
@@ -309,13 +309,13 @@ func TestProxyDeniesIPLiteralAndBadPort(t *testing.T) {
 func TestProxyRejectsNonConnect(t *testing.T) {
 	h := newHarness(t, Options{})
 	_, _, resp := h.send("GET http://registry.npmjs.org/ HTTP/1.1\r\nHost: registry.npmjs.org\r\n\r\n")
-	h.expectDenied(resp, http.StatusMethodNotAllowed, "method-not-allowed", "zeroci egress: only CONNECT is allowed")
+	h.expectDenied(resp, http.StatusMethodNotAllowed, "method-not-allowed", "hookci egress: only CONNECT is allowed")
 }
 
 func TestProxyRejectsMalformedTarget(t *testing.T) {
 	h := newHarness(t, Options{})
 	_, _, resp := h.connect("registry.npmjs.org", "")
-	h.expectDenied(resp, http.StatusBadRequest, "bad-request", "zeroci egress:")
+	h.expectDenied(resp, http.StatusBadRequest, "bad-request", "hookci egress:")
 }
 
 func TestProxyDNSErrorAndDialError(t *testing.T) {
@@ -389,7 +389,7 @@ func TestProxyHeaderTimeout(t *testing.T) {
 func TestProxyHeaderTooLarge(t *testing.T) {
 	h := newHarness(t, Options{})
 	_, _, resp := h.send("CONNECT registry.npmjs.org:443 HTTP/1.1\r\nX-Pad: " + strings.Repeat("a", 9000) + "\r\n\r\n")
-	h.expectDenied(resp, http.StatusBadRequest, "bad-request", "zeroci egress: bad request")
+	h.expectDenied(resp, http.StatusBadRequest, "bad-request", "hookci egress: bad request")
 }
 
 func TestProxyMaxConns(t *testing.T) {
@@ -400,7 +400,7 @@ func TestProxyMaxConns(t *testing.T) {
 	}
 	_, _, second := h.connect("registry.npmjs.org:443", "")
 	b, _ := io.ReadAll(second.Body)
-	if second.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(b), "zeroci egress: too many connections") {
+	if second.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(b), "hookci egress: too many connections") {
 		t.Fatalf("second = %d %q, want 503 too many connections", second.StatusCode, b)
 	}
 	if s := h.p.Stats(); s.Active != 1 || s.Allowed != 1 || s.Denied != 1 {

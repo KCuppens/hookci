@@ -1,4 +1,4 @@
--- zeroci hub D1 schema. Every timestamp is INTEGER unix milliseconds.
+-- hookci hub D1 schema. Every timestamp is INTEGER unix milliseconds.
 -- Tenant data carries installation_id, or (jobs, slack_messages) is reachable
 -- only through runs.run_id; hub/src/db/installations.ts purgeInstallation
 -- deletes all of it.
@@ -123,7 +123,7 @@ CREATE TABLE runs (
 	finished_at INTEGER,
 	duration_ms INTEGER,
 	log_key TEXT,
-	-- The trusted .zeroci.yml notify.slack override, from the run's job_planned frame.
+	-- The trusted .hookci.yml notify.slack override, from the run's job_planned frame.
 	slack_channel TEXT,
 	slack_notify TEXT CHECK (slack_notify IN ('normal', 'quiet')),
 	slack_alert TEXT CHECK (slack_alert IN ('channel', 'dm'))

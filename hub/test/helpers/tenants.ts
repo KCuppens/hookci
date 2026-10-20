@@ -88,7 +88,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     repoId: n * 10 + 1,
     fullName: `org${n}/api`,
     agentId: `agt_${n}`,
-    credential: `zc_agent_agt_${n}`,
+    credential: `hci_agent_agt_${n}`,
     runId: `run_${n}`,
     job: "test",
     logKey: logKey(installationId, `run_${n}`, "test"),
@@ -189,7 +189,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     alert: "channel",
     created_by: tenant.slackUserId,
   });
-  await putCheckRun(t, { repo_id: tenant.repoId, head_sha: tenant.headSha, name: "zeroci", check_run_id: 50_000 + n });
+  await putCheckRun(t, { repo_id: tenant.repoId, head_sha: tenant.headSha, name: "hookci", check_run_id: 50_000 + n });
   await recordApproval(t, { repoId: tenant.repoId, prNumber: tenant.prNumber, headSha: tenant.headSha, attempt: 1, approvedByGithubId: tenant.githubUserId });
   await recordDelivery(env.DB, {
     delivery_id: `dlv-${n}`,

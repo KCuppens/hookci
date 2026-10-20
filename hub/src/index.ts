@@ -1,4 +1,4 @@
-// zeroci-hub: the Cloudflare Worker that receives GitHub webhooks, holds the
+// hookci-hub: the Cloudflare Worker that receives GitHub webhooks, holds the
 // agent WebSockets (AgentDO) and reports to Slack and GitHub Checks.
 
 import { app } from "./app";

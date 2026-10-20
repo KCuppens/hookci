@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 func dockerCalls(fake *execx.Fake) []string {
@@ -26,7 +26,7 @@ func TestRemoveByLabel(t *testing.T) {
 	if err := (Docker{Runner: fake}).RemoveByLabel(context.Background(), LabelRun); err != nil {
 		t.Fatalf("RemoveByLabel: %v", err)
 	}
-	want := []string{"docker ps -aq --filter label=zeroci.run", "docker rm -f id1 id2"}
+	want := []string{"docker ps -aq --filter label=hookci.run", "docker rm -f id1 id2"}
 	if got := dockerCalls(fake); !slices.Equal(got, want) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}
@@ -36,7 +36,7 @@ func TestRemoveByLabel(t *testing.T) {
 	if err := (Docker{Runner: empty}).RemoveByLabel(context.Background(), LabelRun+"=r1"); err != nil {
 		t.Fatalf("RemoveByLabel with no containers: %v", err)
 	}
-	if want := []string{"docker ps -aq --filter label=zeroci.run=r1"}; !slices.Equal(dockerCalls(empty), want) {
+	if want := []string{"docker ps -aq --filter label=hookci.run=r1"}; !slices.Equal(dockerCalls(empty), want) {
 		t.Errorf("calls = %q, want %q (no rm)", dockerCalls(empty), want)
 	}
 }
@@ -51,7 +51,7 @@ func TestRunIDs(t *testing.T) {
 	if want := []string{"r1", "r2"}; !slices.Equal(ids, want) {
 		t.Errorf("ids = %q, want %q", ids, want)
 	}
-	want := []string{`docker ps -a --filter label=zeroci.run --format {{.Label "zeroci.run"}}`}
+	want := []string{`docker ps -a --filter label=hookci.run --format {{.Label "hookci.run"}}`}
 	if got := dockerCalls(fake); !slices.Equal(got, want) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}

@@ -1,4 +1,4 @@
-// /zeroci sink add|list|remove|test: Slack's side of the sink config service.
+// /hookci sink add|list|remove|test: Slack's side of the sink config service.
 // add opens the Add sink modal, whose submission /slack/interactive hands to
 // handleSinkAddSubmission. Every command and every submission asks GitHub
 // afresh whether the caller is admin or maintain on the repo. Secrets travel
@@ -101,7 +101,7 @@ function testText(id: string, result: DeliveryResult): string {
 	return result.kind === "retry" ? S.slack.sinkTestRetry(id, detail) : S.slack.sinkTestFail(id, detail);
 }
 
-/** Runs `/zeroci sink <args>` for the caller in ctx and answers with an ephemeral reply. */
+/** Runs `/hookci sink <args>` for the caller in ctx and answers with an ephemeral reply. */
 export async function handleSinkCommand(env: Env, ctx: SlackCommandRequest, args: string[]): Promise<SlackReply> {
 	const [sub, ref, ...rest] = args;
 	if (args.slice(1).some((arg) => SECRET_ARGS.some((secret) => secret.test(arg)))) return ephemeral(S.slack.sinkSecretInCommand);

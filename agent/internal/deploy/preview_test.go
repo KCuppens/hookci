@@ -14,13 +14,13 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/strategies"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const (
@@ -176,7 +176,7 @@ func TestPreview_BlueGreen(t *testing.T) {
 		"--- " + r.route,
 		"-reverse_proxy 127.0.0.1:20000",
 		"+reverse_proxy 127.0.0.1:20001",
-		"+# managed by zeroci: acme/web staging color=green. Do not edit.",
+		"+# managed by hookci: acme/web staging color=green. Do not edit.",
 	} {
 		if !strings.Contains(pv.RouteDiff, want) {
 			t.Errorf("RouteDiff lacks %q:\n%s", want, pv.RouteDiff)

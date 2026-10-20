@@ -1,6 +1,6 @@
-// /zeroci delete-my-data deletes what ZeroCI stores about the caller in
+// /hookci delete-my-data deletes what HookCI stores about the caller in
 // this workspace; it needs no GitHub link, so an unlinked user can still
-// clear author mappings. /zeroci export hands the linked caller a 15-minute
+// clear author mappings. /hookci export hands the linked caller a 15-minute
 // link to a JSON copy of their data.
 
 import { deleteSlackUserData } from "../../db/user-data";

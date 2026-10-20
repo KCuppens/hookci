@@ -1,6 +1,6 @@
 import { createFakeService, type FakeService } from "./http";
 
-/** Methods ZeroCI must never call: it keeps what it posted instead of reading channels back. */
+/** Methods HookCI must never call: it keeps what it posted instead of reading channels back. */
 export const FORBIDDEN_SLACK_METHODS = ["conversations.history", "conversations.replies"];
 
 /**

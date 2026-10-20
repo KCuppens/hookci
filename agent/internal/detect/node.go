@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // packageJSON holds the package.json fields detection reads. Unknown fields
@@ -214,7 +214,7 @@ func detectNode(fsys fs.FS) (*partial, error) {
 			present[name] = !task.devServer()
 		}
 		p.jobs = nodeJobs(present, func(task string) string {
-			return fmt.Sprintf("sh -c '%s turbo run %s ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'", pm.Exec, task)
+			return fmt.Sprintf("sh -c '%s turbo run %s ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'", pm.Exec, task)
 		})
 		p.notes = append(p.notes, fmt.Sprintf("turbo runs as %s turbo, so turbo must be a devDependency", pm.Exec))
 		p.sources = append(p.sources, "turbo.json")
@@ -309,14 +309,14 @@ func nodeVersionNote(fsys fs.FS, pkg packageJSON) (note, source string) {
 			continue
 		}
 		if v := firstLine(data); v != "" {
-			return fmt.Sprintf("node %s (from %s), not installed by zeroci", v, name), name
+			return fmt.Sprintf("node %s (from %s), not installed by hookci", v, name), name
 		}
 	}
 	if v := pkg.engineNode(); v != "" {
-		return fmt.Sprintf("node %s (from engines.node), not installed by zeroci", v), ""
+		return fmt.Sprintf("node %s (from engines.node), not installed by hookci", v), ""
 	}
 	if v, _, _ := strings.Cut(strings.TrimSpace(pkg.PackageManager), "+"); v != "" {
-		return fmt.Sprintf("%s (from packageManager), not installed by zeroci", v), ""
+		return fmt.Sprintf("%s (from packageManager), not installed by hookci", v), ""
 	}
 	return "", ""
 }

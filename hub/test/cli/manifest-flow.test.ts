@@ -24,7 +24,7 @@ import { type FakeExec, fakeExec } from "./fake-exec.js";
 import { type FakeGithub, fakeBrowser, startFakeGithub } from "./fake-github.js";
 import { fakeHub } from "./fake-hub.js";
 
-const BASE = "https://zeroci-hub.acme.workers.dev";
+const BASE = "https://hookci-hub.acme.workers.dev";
 const GITHUB_SECRETS = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
 
 const ok = (stdout = ""): ExecResult => ({ code: 0, stdout, stderr: "" });
@@ -156,7 +156,7 @@ describe("githubAppStep through runSetup", () => {
 	let deployOut: string;
 
 	beforeEach(async () => {
-		tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-manifest-"));
+		tmp = await mkdtemp(join(tmpdir(), "hookci-hub-manifest-"));
 		root = join(tmp, "pkg");
 		dir = join(tmp, "state");
 		await mkdir(join(root, "templates"), { recursive: true });
@@ -169,9 +169,9 @@ describe("githubAppStep through runSetup", () => {
 		deployOut = await readFile(join(packageRoot(), "test", "cli", "fixtures", "deploy.txt"), "utf8");
 		const before: HubState = {
 			account_id: "0123456789abcdef0123456789abcdef",
-			name: "zeroci-hub",
+			name: "hookci-hub",
 			d1_database_id: "5b0c7f4e-2a1d-4c3b-9e8f-1a2b3c4d5e6f",
-			r2_bucket: "zeroci-hub-logs",
+			r2_bucket: "hookci-hub-logs",
 			base_url: BASE,
 			version: "0.0.0",
 			steps_done: SETUP_STEPS.slice(0, SETUP_STEPS.indexOf("github_app")),
@@ -221,17 +221,17 @@ describe("githubAppStep through runSetup", () => {
 
 		const stateFile = await readFile(join(dir, STATE_FILE), "utf8");
 		expect(stateFile).not.toContain("PRIVATE KEY");
-		expect(state).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-zeroci", steps_done: SETUP_STEPS.filter((s) => s !== "slack_app") });
+		expect(state).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-hookci", steps_done: SETUP_STEPS.filter((s) => s !== "slack_app") });
 		expect(await loadState(dir)).toEqual(state);
 
 		const lastPut = exec.calls.map((c) => c.args[0]).lastIndexOf("secret");
 		expect(exec.calls.findIndex((c) => c.args[0] === "deploy")).toBeGreaterThan(lastPut);
 		const toml = parse(await readFile(join(dir, "wrangler.toml"), "utf8")) as { vars: Record<string, string> };
-		expect(toml.vars.GITHUB_APP_SLUG).toBe("acme-zeroci");
+		expect(toml.vars.GITHUB_APP_SLUG).toBe("acme-hookci");
 
 		expect(opened).toHaveLength(1);
 		expect(log).toContain(`Open ${opened[0]} in your browser to create the GitHub App`);
-		expect(log).toContain("Install the app: https://github.com/apps/acme-zeroci/installations/new");
+		expect(log).toContain("Install the app: https://github.com/apps/acme-hookci/installations/new");
 	});
 
 	it("puts no secret when the conversion fails", async () => {
@@ -258,7 +258,7 @@ describe("githubAppStep through runSetup", () => {
 		]);
 		const first = await runSetup(options(failing, { openBrowser: fakeBrowser("code-4") })).catch((e: unknown) => e);
 		expect((first as SetupError).code).toBe("wrangler_failed");
-		expect(await loadState(dir)).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-zeroci", github_app_html_url: "https://github.com/apps/acme-zeroci" });
+		expect(await loadState(dir)).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-hookci", github_app_html_url: "https://github.com/apps/acme-hookci" });
 		expect(await readFile(join(dir, STATE_FILE), "utf8")).not.toContain("PRIVATE KEY");
 
 		const callsBefore = gh.calls.length;
@@ -267,7 +267,7 @@ describe("githubAppStep through runSetup", () => {
 		const second = await runSetup(options(exec, { openBrowser: async (url) => void opened.push(url) })).catch((e: unknown) => e);
 		expect(second).toBeInstanceOf(SetupError);
 		expect((second as SetupError).code).toBe("github_app_incomplete");
-		expect((second as SetupError).message).toContain("GitHub App 424242 (https://github.com/apps/acme-zeroci)");
+		expect((second as SetupError).message).toContain("GitHub App 424242 (https://github.com/apps/acme-hookci)");
 		expect((second as SetupError).hint).toContain("Delete that app");
 		expect(gh.calls).toHaveLength(callsBefore);
 		expect(opened).toEqual([]);
@@ -297,8 +297,8 @@ describe("githubAppStep through runSetup", () => {
 		expect(state.steps_done).toContain("github_app");
 		expect(await loadState(dir)).toEqual(state);
 		const toml = parse(await readFile(join(dir, "wrangler.toml"), "utf8")) as { vars: Record<string, string> };
-		expect(toml.vars.GITHUB_APP_SLUG).toBe("acme-zeroci");
-		expect(log).toContain("Install the app: https://github.com/apps/acme-zeroci/installations/new");
+		expect(toml.vars.GITHUB_APP_SLUG).toBe("acme-hookci");
+		expect(log).toContain("Install the app: https://github.com/apps/acme-hookci/installations/new");
 	});
 
 	it("does nothing on a second run once the app is registered", async () => {

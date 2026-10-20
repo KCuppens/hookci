@@ -13,7 +13,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // ErrNothingDetected is returned when no ecosystem yields any check.
@@ -93,7 +93,7 @@ func Detect(fsys fs.FS) (*Result, error) {
 	}
 	checks.Jobs = jobs
 
-	cfg, diags := config.FromRoot(config.ZeroCIConfig{Version: 1, Checks: checks})
+	cfg, diags := config.FromRoot(config.HookCIConfig{Version: 1, Checks: checks})
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("detected configuration does not validate:\n%s", diags.Format("detected"))
 	}

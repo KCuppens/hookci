@@ -16,7 +16,7 @@ describe("GET /v1/info", () => {
     const body = await res.json<Record<string, unknown>>();
     expect(Object.keys(body).sort()).toEqual(["github_app", "mode", "name", "protocol_versions", "slack", "version"]);
     expect(body).toEqual({
-      name: "zeroci-hub",
+      name: "hookci-hub",
       version: env.HUB_VERSION,
       mode: "shared",
       protocol_versions: [1, 1],

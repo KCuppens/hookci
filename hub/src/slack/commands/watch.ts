@@ -1,4 +1,4 @@
-// /zeroci watch <owner/repo> [quiet] [dm]: posts the repo's run badges in
+// /hookci watch <owner/repo> [quiet] [dm]: posts the repo's run badges in
 // this channel, quiet mode and DM alerts optional, and proves it with a test
 // badge. The bot must be a member of the channel.
 
@@ -15,7 +15,7 @@ import { registerCommand } from "../registry";
 import { requireRepoAccess, type ResolvedRepo } from "../resolve";
 import { commandArgs, ephemeral } from "./common";
 
-const USAGE = "/zeroci watch <owner/repo> [quiet] [dm]";
+const USAGE = "/hookci watch <owner/repo> [quiet] [dm]";
 
 /** Whether the bot can post in channelId: a member of the channel, or the channel is a DM. */
 async function botInChannel(env: Env, teamId: string, channelId: string): Promise<boolean> {
@@ -41,7 +41,7 @@ function testRun(repo: ResolvedRepo, authorLogin: string): RunView {
 		event: "push",
 		target: "checks",
 		state: "success",
-		commitTitle: "ZeroCI test badge",
+		commitTitle: "HookCI test badge",
 		authorLogin,
 		durationMs: 124_000,
 		jobs: [{ name: "test", state: "success", durationMs: 124_000 }],

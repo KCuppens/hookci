@@ -1,14 +1,14 @@
 // Slack OAuth v2 for the bot install: the authorize URL, the code exchange and
-// revoking a token ZeroCI will not keep. Bot scopes only; no user scopes.
+// revoking a token HookCI will not keep. Bot scopes only; no user scopes.
 
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { type Fetcher, jsonOrNull, PROVIDER_TIMEOUT_MS } from "../http";
 
-/** The bot scopes ZeroCI asks for, comma separated as Slack's `scope` parameter wants them. */
+/** The bot scopes HookCI asks for, comma separated as Slack's `scope` parameter wants them. */
 export const SLACK_BOT_SCOPES = "chat:write,commands,channels:read,groups:read,im:write,users:read,users:read.email";
 
-/** Lets the bot post in channels it was never invited to; ZeroCI must never hold it. */
+/** Lets the bot post in channels it was never invited to; HookCI must never hold it. */
 const FORBIDDEN_SCOPE = "chat:write.public";
 
 export interface SlackOAuthResult {
@@ -32,7 +32,7 @@ export function slackAuthorizeUrl(env: Env, state: string): string {
 	return `https://slack.com/oauth/v2/authorize?client_id=${encodeURIComponent(env.SLACK_CLIENT_ID)}&scope=${SLACK_BOT_SCOPES}&redirect_uri=${redirectUri}&state=${encodeURIComponent(state)}`;
 }
 
-/** Whether granted holds every bot scope ZeroCI asks for and not chat:write.public. */
+/** Whether granted holds every bot scope HookCI asks for and not chat:write.public. */
 export function grantedScopesMatch(granted: string): boolean {
 	const scopes = new Set(granted.split(",").map((s) => s.trim()));
 	return !scopes.has(FORBIDDEN_SCOPE) && SLACK_BOT_SCOPES.split(",").every((s) => scopes.has(s));

@@ -254,7 +254,7 @@ export async function sendTestDelivery(env: Env, t: TenantDb, actor: SinkActor, 
 		target: "checks",
 		state: "success",
 		commitTitle: S.sinks.testCommitTitle,
-		authorLogin: "zeroci",
+		authorLogin: "hookci",
 		jobs: [],
 	};
 	let result: DeliveryResult;

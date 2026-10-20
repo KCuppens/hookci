@@ -1,4 +1,4 @@
-// Handlers for /zeroci subcommands, interactive actions and Events API
+// Handlers for /hookci subcommands, interactive actions and Events API
 // events. Feature modules register at import time; the Slack routes and
 // SlackWorkspaceDO look them up, so new features never edit the routes.
 
@@ -45,7 +45,7 @@ const commands = new Map<string, CommandHandler>();
 const actions = new Map<string, ActionHandler>();
 const events = new Map<string, EventHandler>();
 
-/** Serves `/zeroci <name> ...`; name "" serves a bare `/zeroci` and unknown subcommands (help). A later registration replaces an earlier one. */
+/** Serves `/hookci <name> ...`; name "" serves a bare `/hookci` and unknown subcommands (help). A later registration replaces an earlier one. */
 export function registerCommand(name: string, fn: CommandHandler): void {
 	commands.set(name.toLowerCase(), fn);
 }

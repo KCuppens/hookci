@@ -1,4 +1,4 @@
-// Small pieces every /zeroci command module uses.
+// Small pieces every /hookci command module uses.
 
 import type { SlackReply } from "../registry";
 

@@ -1,6 +1,6 @@
 # GitHub Marketplace listing
 
-Copy for the GitHub Marketplace listing of the `zeroci` GitHub App
+Copy for the GitHub Marketplace listing of the `hookci` GitHub App
 (`hub/manifests/github-app.json`). Paste each section into the matching field
 of the listing form. `scripts/check-marketplace.mjs` checks the short
 description length and the permissions table against the manifest, so edit
@@ -16,7 +16,7 @@ Pending decisions:
 
 ## Listing name
 
-zeroci
+hookci
 
 ## Short description
 
@@ -27,7 +27,7 @@ and no app name.)
 
 ## Introductory description
 
-zeroci runs your pull request and push builds on a machine you own, then
+hookci runs your pull request and push builds on a machine you own, then
 reports every job to GitHub Checks and Slack. Install the app, pair an agent on
 your box and push. No runner minutes to buy.
 
@@ -47,14 +47,14 @@ free, with daily caps that keep it fair for everyone.
 
 ### Results where you already look
 
-Each job becomes a GitHub check run, and a single `zeroci` check sums them up
+Each job becomes a GitHub check run, and a single `hookci` check sums them up
 for branch protection. Slack gets one message per run, updated in place, with
 a thread for failures.
 
 ### Works without a config file
 
 The agent detects Go, Node.js, Python, Rust and Docker Compose projects. Add a
-`.zeroci.yml` to set your own commands, deploy steps or fork policy.
+`.hookci.yml` to set your own commands, deploy steps or fork policy.
 
 ### Safe with forks
 
@@ -83,7 +83,7 @@ Limits of the hosted hub (the run cap resets at 00:00 UTC):
 ## Supported languages
 
 Go, JavaScript, TypeScript, Python, Rust. Any other language runs through the
-commands in `.zeroci.yml`.
+commands in `.hookci.yml`.
 
 ## Links
 
@@ -92,7 +92,7 @@ commands in `.zeroci.yml`.
 | Customer support (required) | https://ci.webuno.io/support |
 | Privacy policy (required) | https://ci.webuno.io/privacy |
 | Terms of service | https://ci.webuno.io/terms |
-| Documentation | https://github.com/KCuppens/zerocideploy#readme |
+| Documentation | https://github.com/KCuppens/hookci#readme |
 | Status | {{STATUS_PAGE_URL}} |
 
 ## Permissions and events
@@ -100,12 +100,12 @@ commands in `.zeroci.yml`.
 Every permission and webhook event in `hub/manifests/github-app.json`, with the
 reason the app asks for it. GitHub shows these on the install page.
 
-| Kind | Name | Access | Why zeroci needs it |
+| Kind | Name | Access | Why hookci needs it |
 | --- | --- | --- | --- |
-| Permission | `contents` | read | The hub mints a read only token for one repository so the agent can check out the commit, and reads `.zeroci.yml` for the fork policy. |
+| Permission | `contents` | read | The hub mints a read only token for one repository so the agent can check out the commit, and reads `.hookci.yml` for the fork policy. |
 | Permission | `metadata` | read | Required by GitHub for every app; lists the repositories in the installation. |
 | Permission | `pull_requests` | read | Detects pull requests from forks and confirms the head commit before an approved or retried run starts. |
-| Permission | `checks` | write | Creates the per job check runs, the `zeroci` aggregate check and the "Approve run" button for fork pull requests. |
+| Permission | `checks` | write | Creates the per job check runs, the `hookci` aggregate check and the "Approve run" button for fork pull requests. |
 | Permission | `members` | read | Confirms that a user is an organization admin before admin only actions such as binding an agent to a repository. |
 | Event | `pull_request` | | Starts a run when a pull request is opened or gets new commits. |
 | Event | `push` | | Starts a run on pushed branches and triggers configured deploys. |
@@ -140,8 +140,8 @@ Screenshots (GitHub allows up to 5):
 
 Capture these:
 
-1. A pull request Checks tab showing the per job check runs and the `zeroci`
+1. A pull request Checks tab showing the per job check runs and the `hookci`
    aggregate check.
 2. The Slack run message with its thread for a failed job.
 3. The log viewer on a finished job.
-4. A terminal running `zeroci doctor` with every check passing.
+4. A terminal running `hookci doctor` with every check passing.

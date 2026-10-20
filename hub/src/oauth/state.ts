@@ -1,8 +1,8 @@
 // Browser-flow proofs shared by the GitHub install (M1-11), GitHub user link
 // (M1-14), Slack install (M1-12) and log sign-in (M3-09) flows:
 // - OAuth state: signed, single use, 10 minutes, bound to the browser through
-//   the __Host-zeroci_oauth cookie.
-// - Session: the __Host-zeroci_session cookie set when a browser completed the
+//   the __Host-hookci_oauth cookie.
+// - Session: the __Host-hookci_session cookie set when a browser completed the
 //   GitHub flow, naming the installations GitHub said that user can access.
 //   The log sign-in keeps its own session; see auth/session.ts.
 
@@ -18,9 +18,9 @@ export interface IssuedState {
 }
 
 export const STATE_TTL_MS = 600_000;
-export const STATE_COOKIE = "__Host-zeroci_oauth";
+export const STATE_COOKIE = "__Host-hookci_oauth";
 export const SESSION_TTL_MS = 30 * 60_000;
-export const SESSION_COOKIE = "__Host-zeroci_session";
+export const SESSION_COOKIE = "__Host-hookci_session";
 
 export function setCookie(name: string, value: string, maxAgeSeconds: number): string {
 	return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;

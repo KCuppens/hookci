@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/control"
-	"github.com/KCuppens/zerocideploy/agent/internal/gc"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/gc"
 )
 
 // cmdGC asks the running agent for a GC pass over its deploy images, build
@@ -20,7 +20,7 @@ func cmdGC(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer)
 	dryRun := fs.Bool("dry-run", false, "print what would be removed without removing it")
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] gc [--dry-run] [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] gc [--dry-run] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Remove old deploy images, cap the build cache, delete finished run dirs and evict old cache entries.")
 		fs.PrintDefaults()
@@ -44,11 +44,11 @@ func cmdGC(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer)
 	var rep gc.Report
 	err = control.Call(ctx, stateDir, "gc", gc.Request{DryRun: *dryRun}, &rep)
 	if errors.Is(err, control.ErrNotRunning) {
-		fmt.Fprintf(stderr, "zeroci: no agent is running on %s; start it with systemctl start zeroci-agent@<installation>\n", stateDir)
+		fmt.Fprintf(stderr, "hookci: no agent is running on %s; start it with systemctl start hookci-agent@<installation>\n", stateDir)
 		return ExitInternal
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: gc: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: gc: %v\n", err)
 		return ExitInternal
 	}
 	return printGCReport(rep, stdout, stderr)
@@ -64,7 +64,7 @@ func printGCReport(rep gc.Report, stdout, stderr io.Writer) int {
 	var failures []string
 	if !rep.DryRun {
 		if rep.Result == nil {
-			fmt.Fprintln(stderr, "zeroci: gc: agent sent no result")
+			fmt.Fprintln(stderr, "hookci: gc: agent sent no result")
 			return ExitInternal
 		}
 		r := rep.Result
@@ -87,7 +87,7 @@ func printGCReport(rep gc.Report, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "skipped %s\n", env)
 	}
 	for _, f := range failures {
-		fmt.Fprintf(stderr, "zeroci: gc: %s\n", f)
+		fmt.Fprintf(stderr, "hookci: gc: %s\n", f)
 	}
 	if len(failures) > 0 {
 		return ExitInternal
