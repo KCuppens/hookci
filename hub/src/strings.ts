@@ -147,7 +147,9 @@ export const S = {
 		alertTail: (lines: number) => `Last ${lines} log lines:`,
 		alertNoTail: "The agent sent no log lines with the failure.",
 		logsLocal: "This repository keeps its logs on the agent (`logs: local`). Read them on the agent host with `zeroci logs`.",
-		viewLog: "View log",
+		viewLogs: "View logs",
+		viewLogsNotLinked: "Link your GitHub account with `/zeroci me` to view logs.",
+		viewLogsNoAccess: "You do not have access to this repository.",
 		logLink: (url: string) => `<${url}|Open the log>. The link works for 15 minutes and only for whoever has it, so do not share it.`,
 		offlineDmText: (state: string, agent: string, runs: number) =>
 			`${state}: ${agent}. ${runs === 1 ? "1 run waits" : `${runs} runs wait`} for it to reconnect.`,
@@ -255,6 +257,7 @@ export const S = {
 		linkExpired: "This log link has expired. Open the run again from Slack or GitHub to get a fresh link.",
 		notFoundTitle: "Log not found",
 		notFound: (days: number) => `Log expired (${days}-day retention) or kept local on the agent.`,
+		noLog: "There is no log here, or your GitHub account cannot read this repository.",
 		repoRemoved: "Repository no longer installed",
 		run: "Run",
 		job: "Job",

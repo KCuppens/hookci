@@ -162,7 +162,7 @@ async function fanOutView(
 	key: { runId: string } | { triggerId: string },
 	fn: (sink: Sink, run: RunView) => Promise<void>,
 ): Promise<void> {
-	const run = await loadRunView(dob.bindings.DB, dob.installationId, key);
+	const run = await loadRunView(dob.bindings, dob.installationId, key);
 	if (!run) return;
 	const sinks = await sinksForRun(dob.bindings, dob.installationId, run.repo, { storage: dob.state.storage, now: () => dob.clock.now() });
 	fanOut(dob.state, sinks, (sink) => fn(sink, run));
@@ -452,7 +452,7 @@ async function notifyAgentOffline(dob: AgentDO): Promise<void> {
 	if (!agent) return;
 	const open = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE state IN ('sent', 'accepted') ORDER BY created_at").toArray();
 	const affected = (
-		await Promise.all(open.map((row) => loadRunView(dob.bindings.DB, dob.installationId, { runId: row.run_id ?? row.trigger_id })))
+		await Promise.all(open.map((row) => loadRunView(dob.bindings, dob.installationId, { runId: row.run_id ?? row.trigger_id })))
 	).filter((run): run is RunView => run !== null);
 	const view = {
 		agentId: agent.agent_id,

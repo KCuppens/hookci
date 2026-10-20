@@ -126,7 +126,7 @@ async function loadInstallation(env: Env, teamId: string, installationId: number
 	]);
 	const channels = new Map<number, string[]>();
 	for (const w of watches) channels.set(w.repo_id, [...(channels.get(w.repo_id) ?? []), w.channel_id]);
-	const runs = await Promise.all(runRows.map((run) => loadRunView(env.DB, installationId, { runId: run.run_id })));
+	const runs = await Promise.all(runRows.map((run) => loadRunView(env, installationId, { runId: run.run_id })));
 	return {
 		id: installationId,
 		accountLogin: installation.account_login,

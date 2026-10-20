@@ -3,7 +3,7 @@
   "url": "https://ci.webuno.io",
   "hook_attributes": { "url": "https://ci.webuno.io/github/webhook", "active": true },
   "redirect_url": "https://ci.webuno.io/github/oauth/callback",
-  "callback_urls": ["https://ci.webuno.io/github/oauth/callback", "https://ci.webuno.io/github/link/callback"],
+  "callback_urls": ["https://ci.webuno.io/github/oauth/callback", "https://ci.webuno.io/github/link/callback", "https://ci.webuno.io/auth/github/callback"],
   "setup_url": "https://ci.webuno.io/github/oauth/callback",
   "setup_on_update": true,
   "request_oauth_on_install": true,

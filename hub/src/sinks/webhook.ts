@@ -13,6 +13,7 @@ import { systemClock } from "../do/clock";
 import { defaultFetcher } from "../http";
 import { TERMINAL } from "../slack/badge";
 import { type Deliverer, type DeliveryResult, registerDeliverer } from "./deliverers";
+import { logJob } from "./runview";
 import type { RunView } from "./types";
 
 export interface WebhookPayloadV1 {
@@ -40,19 +41,6 @@ export interface WebhookPayloadV1 {
 export const WEBHOOK_EVENT = "run.updated";
 export const WEBHOOK_USER_AGENT = "ZeroCI-Hookshot/1";
 export const WEBHOOK_TIMEOUT_MS = 10_000;
-/** The path of the hub's signed, expiring log links, which must never leave in a payload. */
-const SIGNED_LOG_PATH = "/logs/view";
-
-/** The stable log link of the run; null when it has none or only a signed one. */
-function stableLogUrl(raw: string | undefined): string | null {
-	if (!raw) return null;
-	try {
-		return new URL(raw).pathname === SIGNED_LOG_PATH ? null : raw;
-	} catch {
-		return null;
-	}
-}
-
 export function buildWebhookPayload(run: RunView, deliveryId: string, now: Date): WebhookPayloadV1 {
 	return {
 		v: 1,
@@ -72,7 +60,7 @@ export function buildWebhookPayload(run: RunView, deliveryId: string, now: Date)
 			jobs: run.jobs.map((j) => ({ name: j.name, state: j.state, duration_ms: j.durationMs ?? null })),
 			started_at: run.startedAt === undefined ? null : new Date(run.startedAt).toISOString(),
 			finished_at: run.finishedAt === undefined ? null : new Date(run.finishedAt).toISOString(),
-			log_url: stableLogUrl(run.logUrl),
+			log_url: logJob(run)?.logLink ?? null,
 		},
 	};
 }

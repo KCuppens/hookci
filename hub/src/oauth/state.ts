@@ -1,15 +1,16 @@
 // Browser-flow proofs shared by the GitHub install (M1-11), GitHub user link
-// (M1-14) and Slack install (M1-12) flows:
+// (M1-14), Slack install (M1-12) and log sign-in (M3-09) flows:
 // - OAuth state: signed, single use, 10 minutes, bound to the browser through
 //   the __Host-zeroci_oauth cookie.
 // - Session: the __Host-zeroci_session cookie set when a browser completed the
 //   GitHub flow, naming the installations GitHub said that user can access.
+//   The log sign-in keeps its own session; see auth/session.ts.
 
 import { base64url, hmacSha256, sha256Hex, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 
-export type OAuthKind = "github_install" | "github_link" | "slack_install";
+export type OAuthKind = "github_install" | "github_link" | "slack_install" | "github_logs";
 /** cookie is the full Set-Cookie header value. */
 export interface IssuedState {
 	state: string;
@@ -21,12 +22,12 @@ export const STATE_COOKIE = "__Host-zeroci_oauth";
 export const SESSION_TTL_MS = 30 * 60_000;
 export const SESSION_COOKIE = "__Host-zeroci_session";
 
-function setCookie(name: string, value: string, maxAgeSeconds: number): string {
+export function setCookie(name: string, value: string, maxAgeSeconds: number): string {
 	return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
 }
 
 /** The value of cookie name in a Cookie request header, or null. */
-function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
+export function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
 	if (!cookieHeader) return null;
 	for (const part of cookieHeader.split(";")) {
 		const eq = part.indexOf("=");

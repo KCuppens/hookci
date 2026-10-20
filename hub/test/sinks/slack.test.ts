@@ -2,15 +2,16 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { upsertInstallation } from "../../src/db/installations";
-import { acceptRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
+import { acceptRun, insertRun, type NewRun, setJobLog, updateRunState, upsertJob } from "../../src/db/runs";
 import { upsertRepos } from "../../src/db/repos";
 import { getSlackMessage } from "../../src/db/slack-messages";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watches";
 import { clearOfflineDm } from "../../src/do/agent-hooks";
-import { verifyLogUrl } from "../../src/logs/signing";
+import { stableLogLink } from "../../src/logs/links";
 import { slackApi, slackApiFireAndForget } from "../../src/slack/api";
 import { resetChannelCacheForTests } from "../../src/slack/channels";
+import { loadRunView } from "../../src/sinks/runview";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
 import type { JobView, RunView } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -171,6 +172,25 @@ describe("SlackSink", () => {
     expect(text(updates.at(-1))).toMatch(/^Passed: acme\/widgets 2222222 on main/);
   });
 
+  it("links a job's uploaded log in the run message with the stable link and a View logs button", async () => {
+    await watch();
+    await upsertJob(t, { run_id: "run_1", name: "test", state: "success", step: null, step_index: null, steps_total: null, duration_ms: 1500 });
+    expect(await updateRunState(t, "run_1", "success")).toBe(true);
+    await setJobLog(t, "run_1", "test", { key: `logs/${INSTALLATION}/run_1/test.log.gz`, bytes: 10, truncated: false });
+    const view = await loadRunView(env, INSTALLATION, { runId: "run_1" });
+    expect(view?.jobs).toEqual([expect.objectContaining({ name: "test", logLink: stableLogLink(env, "run_1", "test") })]);
+    await slackSinkFactory(env, INSTALLATION).onRunUpdate(view!);
+    await drain();
+
+    const blocks = String(formField(apiCalls("chat.postMessage")[0]?.body, "blocks"));
+    expect(blocks).toContain(`<${stableLogLink(env, "run_1", "test")}|log>`);
+    expect(blocks).not.toContain("/logs/view?");
+    expect(JSON.parse(blocks)).toContainEqual({
+      type: "actions",
+      elements: [expect.objectContaining({ type: "button", action_id: "zeroci_view_logs", value: "run_1:test", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
+    });
+  });
+
   it("posts once when two sinks race on the run's first update", async () => {
     await watch();
     const run = runView({ state: "received" });
@@ -304,7 +324,7 @@ describe("SlackSink", () => {
     expect((await getSlackMessage(t, "run_1", world.team, CHANNEL))?.alert_ts).toBe("1700000000.000003");
   });
 
-  it("alerts with the uploaded log's last 40 lines, a signed log link and a View log button", async () => {
+  it("alerts with the uploaded log's last 40 lines, the stable log link and a View logs button", async () => {
     await watch();
     await env.LOGS.put(`logs/${INSTALLATION}/run_1/build.log.gz`, await gzip(numberedLines(100)));
     const agent = await seedAgent(INSTALLATION);
@@ -320,15 +340,11 @@ describe("SlackSink", () => {
     const fenced = /```\\n(.*?)\\n```/.exec(blocks)?.[1]?.split("\\n") ?? [];
     expect(fenced).toEqual(Array.from({ length: 40 }, (_, i) => `line ${61 + i}`));
     expect(blocks).not.toContain("agent tail");
-    const url = new URL(/<(https:[^|>]+\/logs\/[^|>]+)\|/.exec(blocks)?.[1] ?? "");
-    expect(`${url.origin}${url.pathname}`).toBe(`${env.HUB_ORIGIN}/logs/view`);
-    expect(await verifyLogUrl(env, url.searchParams, new Date(world.clock.now()))).toEqual({
-      ok: true,
-      ref: { installationId: INSTALLATION, runId: "run_1", job: "build" },
-    });
+    expect(blocks).toContain(`<${stableLogLink(env, "run_1", "build")}|log>`);
+    expect(blocks).not.toContain("/logs/view?");
     expect(JSON.parse(blocks)).toContainEqual({
       type: "actions",
-      elements: [expect.objectContaining({ type: "button", action_id: "log:view", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLog }) })],
+      elements: [expect.objectContaining({ type: "button", action_id: "zeroci_view_logs", value: "run_1:build", text: expect.objectContaining({ text: S.slack.viewLogs }) })],
     });
   });
 
@@ -344,7 +360,7 @@ describe("SlackSink", () => {
     const alert = apiCalls("chat.postMessage").find((call) => text(call) === S.slack.alertText("Failed", "acme/widgets", SHORT, "build"));
     const blocks = JSON.parse(String(formField(alert?.body, "blocks")));
     expect(blocks).toContainEqual({ type: "context", elements: [{ type: "mrkdwn", text: S.slack.logsLocal }] });
-    expect(JSON.stringify(blocks)).not.toContain("log:view");
+    expect(JSON.stringify(blocks)).not.toContain("zeroci_view_logs");
     expect(JSON.stringify(blocks)).not.toContain("```");
   });
 

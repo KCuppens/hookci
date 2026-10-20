@@ -45,7 +45,8 @@ ${bodyHtml}
 	return new Response(html, { status, headers: { ...HEADERS, "Content-Type": "text/html; charset=utf-8" } });
 }
 
-function noticePage(title: string, message: string, status: number): Response {
+/** A titled one-paragraph page under the viewer's security headers. */
+export function noticePage(title: string, message: string, status: number): Response {
 	return viewerPage(title, `<h1>${escapeHtml(title)}</h1>\n<p>${escapeHtml(message)}</p>`, status);
 }
 

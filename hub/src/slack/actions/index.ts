@@ -3,4 +3,4 @@
 import "./deploy-retry";
 import "./fork-approve";
 import "./home-actions";
-import "./log-view";
+import "../view-logs";

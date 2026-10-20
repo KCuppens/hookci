@@ -290,8 +290,8 @@ describe("tenant isolation", () => {
     const before = await tenantRows(env, b.installationId);
     const agentB = await agentDoState(b);
 
-    const view = await click(a, "log:view", `${b.runId}:${b.job}`);
-    expect(view).toMatchObject({ text: S.slack.forbidden });
+    const view = await click(a, "zeroci_view_logs", `${b.runId}:${b.job}`);
+    expect(view).toMatchObject({ text: S.slack.viewLogsNoAccess });
     expect(JSON.stringify(view)).not.toContain("/logs/");
     expect(await click(a, "fork:approve", `${gated}:${b.headSha}`)).toMatchObject({ text: S.forks.notGated });
     expect(await click(a, `home:revoke_agent:${b.agentId}`, String(b.installationId))).toMatchObject({ text: S.slack.forbidden });

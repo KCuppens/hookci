@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSinkConfig, getSinkConfigWithSecret, type SinkConfigWithSecret } from "../../src/db/sinks";
 import { tenantDb } from "../../src/db/tenant";
 import type { Clock } from "../../src/do/clock";
-import { signLogUrl } from "../../src/logs/signing";
+import { stableLogLink } from "../../src/logs/links";
 import type { OutboxDelivery } from "../../src/sinks/deliverers";
 import type { RunState, RunView } from "../../src/sinks/types";
 import { buildWebhookPayload, signWebhook, type WebhookPayloadV1, webhookDeliverer } from "../../src/sinks/webhook";
@@ -183,17 +183,19 @@ describe("webhookDeliverer", () => {
     expect(sent).toHaveLength(2);
   });
 
-  it("never puts a signed /logs/view URL in log_url", async () => {
-    const signed = await signLogUrl(env, { installationId: INSTALLATION, runId: "run_1", job: "test" }, new Date(at));
-    expect(new URL(signed).pathname).toBe("/logs/view");
-
-    await webhookDeliverer.deliver(env, cfg, delivery(view("failed", { logUrl: signed })), 1);
+  it("puts the failed job's stable log link in log_url, else the first job's with a log", async () => {
+    const jobs = [
+      { name: "lint", state: "success" as const, logLink: stableLogLink(env, "run_1", "lint") },
+      { name: "test", state: "failed" as const, logLink: stableLogLink(env, "run_1", "test") },
+    ];
+    await webhookDeliverer.deliver(env, cfg, delivery(view("failed", { jobs })), 1);
     const body = String(sent[0]!.init.body);
     expect(body).not.toContain("/logs/view");
-    expect((JSON.parse(body) as WebhookPayloadV1).run.log_url).toBeNull();
+    expect((JSON.parse(body) as WebhookPayloadV1).run.log_url).toBe(stableLogLink(env, "run_1", "test"));
 
-    const stable = "https://ci.example.com/runs/run_1";
-    expect(buildWebhookPayload(view("failed", { logUrl: stable }), "01X", new Date(at)).run.log_url).toBe(stable);
+    const passed = jobs.map((job) => ({ ...job, state: "success" as const }));
+    expect(buildWebhookPayload(view("success", { jobs: passed }), "01X", new Date(at)).run.log_url).toBe(stableLogLink(env, "run_1", "lint"));
+    expect(buildWebhookPayload(view("success", { jobs: [{ name: "lint", state: "success" }] }), "01X", new Date(at)).run.log_url).toBeNull();
   });
 
   it("refuses a private target without sending and disables the config", async () => {

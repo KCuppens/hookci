@@ -12,6 +12,7 @@ import { githubOAuthCallback } from "./routes/github-oauth";
 import { githubWebhook } from "./routes/github-webhook";
 import { info } from "./routes/info";
 import { install } from "./routes/install";
+import { authGithubCallback, logLinks } from "./routes/log-links";
 import { rawLog, viewerStylesheet, viewLogPage } from "./routes/log-viewer";
 import { uploadLog } from "./routes/logs";
 import { pairRedeem } from "./routes/pair";
@@ -58,6 +59,8 @@ app.post("/v1/render", renderPreview);
 app.get("/logs/view", viewLogPage);
 app.get("/logs/raw", rawLog);
 app.get("/logs/viewer.css", viewerStylesheet);
+app.get("/runs/:runId/logs", logLinks);
+app.get("/auth/github/callback", authGithubCallback);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);

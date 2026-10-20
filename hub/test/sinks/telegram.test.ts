@@ -95,7 +95,7 @@ describe("telegramDeliverer", () => {
       {
         method: "POST",
         url: `${FAKE_TELEGRAM_API}/bot${TOKEN}/sendMessage`,
-        body: { chat_id: CHAT, text: renderTelegram(view("running"), {}).text, parse_mode: "HTML", disable_web_page_preview: true },
+        body: { chat_id: CHAT, text: renderTelegram(view("running")).text, parse_mode: "HTML", disable_web_page_preview: true },
       },
     ]);
     expect((await message())?.externalId).toBe("77");
@@ -104,7 +104,7 @@ describe("telegramDeliverer", () => {
     expect(tg.calls[1]).toEqual({
       method: "POST",
       url: `${FAKE_TELEGRAM_API}/bot${TOKEN}/editMessageText`,
-      body: { chat_id: CHAT, message_id: 77, text: renderTelegram(view("success"), {}).text, parse_mode: "HTML", disable_web_page_preview: true },
+      body: { chat_id: CHAT, message_id: 77, text: renderTelegram(view("success")).text, parse_mode: "HTML", disable_web_page_preview: true },
     });
   });
 

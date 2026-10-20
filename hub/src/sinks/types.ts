@@ -29,6 +29,8 @@ export interface JobView {
 	tail?: string[];
 	/** "local" when the repo keeps its logs on the agent: nothing is uploaded and the agent sends no tail. */
 	logs?: "local";
+	/** The stable log link (HUB_ORIGIN/runs/<run>/logs?job=<job>) once the agent uploaded the job's log. */
+	logLink?: string;
 }
 export interface RunView {
 	installationId: number;
@@ -54,7 +56,6 @@ export interface RunView {
 	startedAt?: number;
 	finishedAt?: number;
 	durationMs?: number;
-	logUrl?: string;
 	jobs: JobView[];
 	currentJob?: string;
 	/** The .zeroci.yml notify.slack override: channel is a name without #; notify and alert fall back to the watch's. */

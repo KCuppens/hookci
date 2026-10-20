@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { JobView, RunView } from "../src/sinks/types";
 import { formatDuration, renderBadge } from "../src/slack/badge";
 
-const LINT: JobView = { name: "lint", state: "success", durationMs: 20_000 };
+const LINT: JobView = { name: "lint", state: "success", durationMs: 20_000, logLink: "https://hub.test/runs/r1/logs?job=lint" };
 
 const RUN: RunView = {
   installationId: 4242,
@@ -17,7 +17,6 @@ const RUN: RunView = {
   commitTitle: "Fix <script> & stuff",
   authorLogin: "octocat",
   durationMs: 124_000,
-  logUrl: "https://hub.test/v1/logs/abc",
   jobs: [
     LINT,
     { name: "test", state: "success", durationMs: 104_000 },
@@ -39,21 +38,22 @@ describe("renderBadge", () => {
 
   it("shows duration, job count and log link on success", () => {
     expect(renderBadge(RUN)).toEqual({
-      text: ":large_green_circle: checks · abcdef1 · 2m04s · 2/2 jobs passed · <https://hub.test/v1/logs/abc|log>",
+      text: ":large_green_circle: checks · abcdef1 · 2m04s · 2/2 jobs passed · <https://hub.test/runs/r1/logs?job=lint|log>",
       blocks: [
-        { type: "section", text: { type: "mrkdwn", text: ":large_green_circle: checks · abcdef1 · 2m04s · 2/2 jobs passed · <https://hub.test/v1/logs/abc|log>" } },
+        { type: "section", text: { type: "mrkdwn", text: ":large_green_circle: checks · abcdef1 · 2m04s · 2/2 jobs passed · <https://hub.test/runs/r1/logs?job=lint|log>" } },
       ],
     });
   });
 
-  it("names the failed jobs on failure", () => {
-    const badge = renderBadge({ ...RUN, state: "failed", durationMs: 41_200, jobs: [LINT, { name: "test", state: "failed" }] });
+  it("names the failed jobs on failure and links the failed job's log", () => {
+    const failed: JobView = { name: "test", state: "failed", logLink: "https://hub.test/runs/r1/logs?job=test" };
+    const badge = renderBadge({ ...RUN, state: "failed", durationMs: 41_200, jobs: [LINT, failed] });
 
-    expect(badge.text).toBe(":red_circle: checks · abcdef1 · 41.2s · failed: test · <https://hub.test/v1/logs/abc|log>");
+    expect(badge.text).toBe(":red_circle: checks · abcdef1 · 41.2s · failed: test · <https://hub.test/runs/r1/logs?job=test|log>");
   });
 
   it("prefers the jobs' own summaries", () => {
-    const badge = renderBadge({ ...RUN, jobs: [{ name: "test", state: "success", summary: "412 tests passed" }], logUrl: undefined });
+    const badge = renderBadge({ ...RUN, jobs: [{ name: "test", state: "success", summary: "412 tests passed" }] });
 
     expect(badge.text).toBe(":large_green_circle: checks · abcdef1 · 2m04s · 412 tests passed");
   });

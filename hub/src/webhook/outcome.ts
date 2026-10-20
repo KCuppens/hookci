@@ -49,7 +49,7 @@ export async function notifyOutcome(
 		duration_ms: null,
 		log_key: null,
 	});
-	const view = await loadRunView(env.DB, trig.installationId, { runId: triggerId });
+	const view = await loadRunView(env, trig.installationId, { runId: triggerId });
 	if (!view) return;
 	const sinks = await sinksForRun(env, trig.installationId, view.repo);
 	fanOut(ctx, sinks, (sink) => sink.onRunUpdate(view));

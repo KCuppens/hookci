@@ -16,6 +16,7 @@ import { getLogTail } from "../logs/tail";
 import { formatDuration } from "../slack/badge";
 import { S } from "../strings";
 import { type Deliverer, type DeliveryResult, registerDeliverer } from "./deliverers";
+import { logJob } from "./runview";
 import type { JobView, RunView } from "./types";
 
 /** Telegram rejects a message text longer than this. */
@@ -116,21 +117,15 @@ function joinedLength(lines: readonly string[]): number {
 	return lines.reduce((n, line) => n + line.length, 0) + Math.max(0, lines.length - 1);
 }
 
-/** The hub page of the run's logs under base, opened at its failed job, else its first. */
-function stableLogLink(base: string, run: RunView, jobs: readonly JobView[]): string | undefined {
-	const job = jobs.find((j) => j.state === "failed") ?? jobs[0];
-	if (!run.runId || !job) return undefined;
-	return `${base.replace(/\/+$/, "")}/runs/${encodeURIComponent(run.runId)}/logs?job=${encodeURIComponent(job.name)}`;
-}
-
 /**
  * The run as one Telegram HTML message: status word, repo and short SHA; ref,
  * trigger, target environment; one line per job; for a failed run its failed
- * job's log tail; a View logs link. Text from the repo or the agent is
+ * job's log tail; a View logs link to its log job's stable link (runview.ts
+ * logJob). Text from the repo or the agent is
  * escaped. Over TELEGRAM_MAX_CHARS the tail goes first, oldest line first,
  * then the last job lines, which a "... and N more jobs" line stands for.
  */
-export function renderTelegram(run: RunView, opts: { logLinkBase?: string }): { text: string; parseMode: "HTML" } {
+export function renderTelegram(run: RunView): { text: string; parseMode: "HTML" } {
 	const jobs = run.jobs.filter((job) => job.name !== CONFIG_JOB);
 	const status = statusOf(run, jobs);
 
@@ -145,7 +140,7 @@ export function renderTelegram(run: RunView, opts: { logLinkBase?: string }): { 
 	const failedTail = status === "failure" || status === "timed_out" ? run.jobs.find((job) => job.state === "failed" && job.tail?.length)?.tail : undefined;
 	let tail = failedTail ? tailLines(failedTail) : [];
 
-	const href = run.logUrl ?? (opts.logLinkBase ? stableLogLink(opts.logLinkBase, run, jobs) : undefined);
+	const href = logJob(run)?.logLink;
 	const link = href ? [`<a href="${escapeTelegramHtml(href)}">${S.telegram.viewLogs}</a>`] : [];
 
 	const compose = (shown: readonly string[], tailShown: readonly string[]): string[] => [
@@ -233,7 +228,7 @@ export const telegramDeliverer: Deliverer = {
 	async deliver(env, cfg, item): Promise<DeliveryResult> {
 		if (!cfg.secret) return { kind: "fail", disable: UNAUTHORIZED };
 		const t = tenantDb(env.DB, item.installationId);
-		const { text, parseMode } = renderTelegram(await withTail(env, item.payload), {});
+		const { text, parseMode } = renderTelegram(await withTail(env, item.payload));
 		const hash = await sha256Hex(text);
 		const stored = await getSinkMessage(t, item.sinkId, item.runId);
 		const messageId = stored?.externalId ?? null;

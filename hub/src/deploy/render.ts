@@ -14,7 +14,7 @@ import { createCheckRun, updateCheckRun } from "../github/api";
 import { GitHubClient } from "../github/client";
 import type { CheckRunConclusion } from "../github/types";
 import { defaultFetcher } from "../http";
-import { signLogUrl } from "../logs/signing";
+import { stableLogLink } from "../logs/links";
 import { reportError } from "../observability";
 import type { Event as AgentEvent } from "../protocol";
 import { escapeMrkdwn } from "../slack/badge";
@@ -221,19 +221,13 @@ async function authorMention(env: Env, trigger: DeployTriggerRow, runId: string,
 	return link ? `<@${link.slack_user_id}>` : login;
 }
 
-/** A signed link to the deploy's log, or undefined when the run has no job or signing fails. */
-async function logUrlFor(env: Env, installationId: number, runId: string): Promise<string | undefined> {
+/** The stable link to the deploy's first job's log, or undefined when the run has no job. */
+async function logLinkFor(env: Env, installationId: number, runId: string): Promise<string | undefined> {
 	const job = await tenantDb(env.DB, installationId).first<{ name: string }>(
 		"SELECT name FROM jobs WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1 AND run_id = ?2) ORDER BY name LIMIT 1",
 		runId,
 	);
-	if (!job) return undefined;
-	try {
-		return await signLogUrl(env, { installationId, runId, job: job.name }, new Date(now(env)));
-	} catch (err) {
-		reportError(err, { op: "deploy_log_url", run_id: runId });
-		return undefined;
-	}
+	return job ? stableLogLink(env, runId, job.name) : undefined;
 }
 
 async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: DeployRenderRow, badge: string): Promise<number> {
@@ -310,7 +304,7 @@ export async function onDeployEvent(env: Env, ev: AgentEvent): Promise<void> {
 			...(row.state === "failed" && prev?.state === "rolling_back" ? { rolledBack: true } : {}),
 		};
 		if (terminal) {
-			const logUrl = await logUrlFor(env, trigger.installation_id, row.run_id);
+			const logUrl = await logLinkFor(env, trigger.installation_id, row.run_id);
 			if (logUrl) badge.logUrl = logUrl;
 		}
 

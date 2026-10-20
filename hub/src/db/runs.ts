@@ -201,6 +201,16 @@ export async function getRun(t: TenantDb, runId: string): Promise<RunRow | null>
 	return t.first<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 AND run_id = ?2", runId);
 }
 
+/** The job named name of the installation's run runId, or null. */
+export async function getJob(t: TenantDb, runId: string, name: string): Promise<JobRow | null> {
+	return t.first<JobRow>(
+		`SELECT j.run_id, j.name, j.state, j.step, j.step_index, j.steps_total, j.duration_ms
+		FROM jobs j JOIN runs r ON r.run_id = j.run_id WHERE r.installation_id = ?1 AND j.run_id = ?2 AND j.name = ?3`,
+		runId,
+		name,
+	);
+}
+
 /** The installation's most recently recorded runs, newest first. */
 export async function listRecentRuns(t: TenantDb, limit = 10): Promise<RunRow[]> {
 	return t.all<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 ORDER BY rowid DESC LIMIT ?2", limit);

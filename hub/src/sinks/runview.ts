@@ -2,8 +2,10 @@
 
 import type { JobRow, RunRow } from "../db/runs";
 import { tenantDb } from "../db/tenant";
+import type { Env } from "../env";
 import { HubError } from "../errors";
-import type { PendingReason, RunState, RunView } from "./types";
+import { stableLogLink } from "../logs/links";
+import type { JobView, PendingReason, RunState, RunView } from "./types";
 
 const RUN_STATES: Record<RunState, true> = {
 	received: true,
@@ -36,13 +38,16 @@ function runState(state: string): RunState {
 	throw new HubError("bad_run_state", 500, `unknown run state ${state}`);
 }
 
-/** The run with its jobs, by run_id (the trigger_id until the agent accepts) or by trigger_id; null when not this installation's. */
+/**
+ * The run with its jobs, by run_id (the trigger_id until the agent accepts) or by trigger_id; null when not this installation's.
+ * A job whose log was uploaded gets its stable log link.
+ */
 export async function loadRunView(
-	db: D1Database,
+	env: Pick<Env, "DB" | "HUB_ORIGIN">,
 	installationId: number,
 	key: { runId: string } | { triggerId: string },
 ): Promise<RunView | null> {
-	const t = tenantDb(db, installationId);
+	const t = tenantDb(env.DB, installationId);
 	const select = `SELECT r.*, p.full_name FROM runs r
 		LEFT JOIN repos p ON p.installation_id = r.installation_id AND p.repo_id = r.repo_id
 		WHERE r.installation_id = ?1`;
@@ -52,7 +57,7 @@ export async function loadRunView(
 			: await t.first<RunRow & { full_name: string | null }>(`${select} AND r.trigger_id = ?2 ORDER BY r.rowid DESC LIMIT 1`, key.triggerId);
 	if (!run) return null;
 	if (run.event !== "pull_request" && run.event !== "push") throw new HubError("bad_run_event", 500, `unknown run event ${run.event}`);
-	const jobs = await t.all<JobRow>(
+	const jobs = await t.all<JobRow & { log_key: string | null }>(
 		"SELECT j.* FROM jobs j JOIN runs r ON r.run_id = j.run_id WHERE r.installation_id = ?1 AND j.run_id = ?2 ORDER BY j.rowid",
 		run.run_id,
 	);
@@ -82,6 +87,7 @@ export async function loadRunView(
 			step: job.step ?? undefined,
 			stepIndex: job.step_index ?? undefined,
 			stepsTotal: job.steps_total ?? undefined,
+			logLink: job.log_key === null ? undefined : stableLogLink(env, run.run_id, job.name),
 		})),
 		currentJob: jobs.find((job) => job.state === "running")?.name,
 		slack:
@@ -89,4 +95,9 @@ export async function loadRunView(
 				? undefined
 				: { channel: run.slack_channel, notify: run.slack_notify ?? undefined, alert: run.slack_alert ?? undefined },
 	};
+}
+
+/** The job whose log a run message links: the first failed job with a log, else the first job with one. */
+export function logJob(run: RunView): JobView | undefined {
+	return run.jobs.find((job) => job.state === "failed" && job.logLink) ?? run.jobs.find((job) => job.logLink);
 }

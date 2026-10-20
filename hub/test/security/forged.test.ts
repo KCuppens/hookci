@@ -178,6 +178,7 @@ const OAUTH_ROUTES: Record<string, { param: string; kind: string }> = {
   "/github/link/start": { param: "t", kind: "github_link" },
   "/github/link/callback": { param: "state", kind: "github_link" },
   "/slack/oauth/callback": { param: "state", kind: "slack_install" },
+  "/auth/github/callback": { param: "state", kind: "github_logs" },
 };
 
 /** A GET with fields in the query, or a POST with them as a form body. */

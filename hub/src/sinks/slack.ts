@@ -26,7 +26,7 @@ import { systemClock } from "../do/clock";
 import type { SlackCallResult } from "../do/slack-queue";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { signLogUrl } from "../logs/signing";
+import { stableLogLink } from "../logs/links";
 import { getLogTail } from "../logs/tail";
 import { logEvent, reportError } from "../observability";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
@@ -74,7 +74,7 @@ interface StoredTail {
 interface AlertLog {
 	job: JobView;
 	tail: string[];
-	logUrl: string | null;
+	logLink: string | null;
 }
 
 /**
@@ -319,10 +319,10 @@ export class SlackSink implements Sink {
 				await setAlertTs(this.t, runKey, team, channel, null);
 				return;
 			}
-			const { job, tail, logUrl } = log;
+			const { job, tail, logLink } = log;
 			const author = await resolveAuthor(this.env, this.t.installationId, team, { login: run.authorLogin, email: run.authorEmail });
 			let target = { channel, thread_ts: parentTs };
-			const msg = renderAlert(run, job, tail, watch.alert === "dm" ? null : author, logUrl);
+			const msg = renderAlert(run, job, tail, watch.alert === "dm" ? null : author, logLink);
 			if (watch.alert === "dm" && author) {
 				const { channel: dm } = await slackApi(this.env, team, "conversations.open", { users: author }, { priority: "alert" });
 				if (typeof dm !== "object" || dm === null || !("id" in dm) || typeof dm.id !== "string") {
@@ -346,8 +346,8 @@ export class SlackSink implements Sink {
 
 	/**
 	 * The failed job and its log for the alert, read once per update: the
-	 * last TAIL_LINES lines of the uploaded log with a signed link to it, else
-	 * the tail the agent sent (kept in the AgentDO), else nothing.
+	 * last TAIL_LINES lines of the uploaded log with its stable link, else the
+	 * tail the agent sent (kept in the AgentDO), else nothing.
 	 */
 	private async alertLog(run: RunView, runKey: string): Promise<AlertLog | null> {
 		const stored = (await this.host?.storage.get<StoredTail>(tailKey(runKey))) ?? { job: "", tail: [], at: 0 };
@@ -355,12 +355,11 @@ export class SlackSink implements Sink {
 		if (!found) return null;
 		const own = stored.job === found.name;
 		const job: JobView = own && stored.logs ? { ...found, logs: stored.logs } : found;
-		const fallback = { job, tail: own ? stored.tail : [], logUrl: null };
+		const fallback = { job, tail: own ? stored.tail : [], logLink: null };
 		if (job.logs === "local" || !run.runId) return fallback;
 		const tail = await getLogTail(this.env, run.runId, job.name, TAIL_LINES);
 		if (!tail) return fallback;
-		const ref = { installationId: this.t.installationId, runId: run.runId, job: job.name };
-		return { job, tail, logUrl: await signLogUrl(this.env, ref, new Date(this.now())) };
+		return { job, tail, logLink: stableLogLink(this.env, run.runId, job.name) };
 	}
 
 	/**
@@ -419,7 +418,7 @@ export async function completeQueuedSlackPost(env: Env, claim: string, result: S
 		else await setThreadReply(t, ref.runKey, ref.teamId, ref.channelId, ref.job, ts);
 		return;
 	}
-	const run = await loadRunView(env.DB, ref.installationId, ref.runKey === ref.triggerId ? { triggerId: ref.triggerId } : { runId: ref.runKey });
+	const run = await loadRunView(env, ref.installationId, ref.runKey === ref.triggerId ? { triggerId: ref.triggerId } : { runId: ref.runKey });
 	// The agent may have accepted the run under its own id while the post was queued.
 	const runKey = run?.runId ?? ref.runKey;
 	if (runKey !== ref.runKey) await adoptSlackMessages(t, ref.triggerId, runKey);
