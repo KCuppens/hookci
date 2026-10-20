@@ -2,17 +2,12 @@ package deploy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
-
-// OpDeployPlan is the control socket op answered by PlanHandler.
-const OpDeployPlan = "deploy_plan"
 
 // ErrNoPreview reports a strategy that cannot show a dry run.
 var ErrNoPreview = errors.New("strategy has no dry-run preview")
@@ -34,51 +29,6 @@ type PlanPreview struct {
 	// RouteDiff is a unified diff from the current route file to the route
 	// the deploy would write; "" when they are equal.
 	RouteDiff string `json:"route_diff,omitempty"`
-}
-
-// PlanRequest is the body of the deploy_plan op. An empty SHA previews
-// the last commit deployed to Env.
-type PlanRequest struct {
-	Repo string `json:"repo"`
-	Env  string `json:"env"`
-	SHA  string `json:"sha,omitempty"`
-}
-
-// PlanHandler answers deploy_plan with the PlanPreview of the request,
-// loading the deployment through e.LoadDeployment.
-func PlanHandler(e *Engine, ps PreviewStore) func(ctx context.Context, body json.RawMessage) (any, error) {
-	return func(ctx context.Context, body json.RawMessage) (any, error) {
-		var req PlanRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			return nil, fmt.Errorf("deploy: %s: %w", OpDeployPlan, err)
-		}
-		if req.Repo == "" || req.Env == "" {
-			return nil, fmt.Errorf("deploy: %s: repo and env are required", OpDeployPlan)
-		}
-		if req.SHA == "" {
-			st, ok, err := ps.GetDeployState(ctx, req.Repo, req.Env)
-			if err != nil {
-				return nil, fmt.Errorf("deploy: %s: %w", OpDeployPlan, err)
-			}
-			if !ok || st.LastSuccessSHA == "" {
-				return nil, fmt.Errorf("deploy: %s: %s/%s has no deployed commit; pass sha", OpDeployPlan, req.Repo, req.Env)
-			}
-			req.SHA = st.LastSuccessSHA
-		}
-		cfg, err := e.LoadDeployment(ctx, store.DeployRun{Repo: req.Repo, Env: req.Env, SHA: req.SHA})
-		if err != nil {
-			return nil, fmt.Errorf("deploy: %s: %w", OpDeployPlan, err)
-		}
-		return BuildPreview(ctx, e, PreviewContext{
-			Repo: req.Repo, Env: req.Env, SHA: req.SHA, Cfg: cfg, Store: ps, ReadFile: os.ReadFile,
-		})
-	}
-}
-
-// RegisterPlan registers PlanHandler as the deploy_plan op through handle,
-// the control server's registration.
-func RegisterPlan(handle func(op string, h func(context.Context, json.RawMessage) (any, error)), e *Engine, ps PreviewStore) {
-	handle(OpDeployPlan, PlanHandler(e, ps))
 }
 
 // Previewer is a strategy that can show a dry run. Preview must not run

@@ -3,7 +3,6 @@ package deploy_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -319,64 +318,6 @@ func TestBuildPreview_StrategyWithoutPreview(t *testing.T) {
 	})
 	if !errors.Is(err, deploy.ErrNoPreview) {
 		t.Errorf("err = %v, want ErrNoPreview", err)
-	}
-}
-
-// The deploy_plan op previews the last deployed commit when the request
-// names none, loading the deployment through the engine.
-func TestPlanHandler_DefaultsToLastDeployedSHA(t *testing.T) {
-	r := newPreviewRig(t)
-	cfg := r.blueGreen()
-	bluePort := r.activateBlue(t, cfg)
-	ctx := context.Background()
-	if err := r.store.SetDeployState(ctx, store.DeployState{Repo: pvRepo, Env: pvEnv, ActiveColor: "blue", LastSuccessSHA: pvSHA}); err != nil {
-		t.Fatal(err)
-	}
-	var loaded store.DeployRun
-	r.engine.LoadDeployment = func(_ context.Context, run store.DeployRun) (config.Deployment, error) {
-		loaded = run
-		return cfg, nil
-	}
-	var ops []string
-	var handler func(context.Context, json.RawMessage) (any, error)
-	deploy.RegisterPlan(func(op string, h func(context.Context, json.RawMessage) (any, error)) {
-		ops = append(ops, op)
-		handler = h
-	}, r.engine, r.store)
-	if !slices.Equal(ops, []string{"deploy_plan"}) {
-		t.Fatalf("registered ops %v, want [deploy_plan]", ops)
-	}
-
-	out, err := handler(ctx, json.RawMessage(`{"repo":"acme/web","env":"staging"}`))
-	if err != nil {
-		t.Fatalf("deploy_plan: %v", err)
-	}
-	if loaded.SHA != pvSHA || loaded.Repo != pvRepo || loaded.Env != pvEnv {
-		t.Errorf("loaded deployment for %+v, want %s %s at %s", loaded, pvRepo, pvEnv, pvSHA)
-	}
-	pv, ok := out.(deploy.PlanPreview)
-	if !ok {
-		t.Fatalf("deploy_plan answered %T, want PlanPreview", out)
-	}
-	if pv.ActiveColor != "blue" || pv.TargetColor != "green" || pv.TargetPort != bluePort+1 {
-		t.Errorf("colors %q -> %q port %d, want blue -> green port %d", pv.ActiveColor, pv.TargetColor, pv.TargetPort, bluePort+1)
-	}
-	if !strings.Contains(pv.Image, ":0123456") {
-		t.Errorf("image %q is not tagged with the last deployed commit", pv.Image)
-	}
-}
-
-// A request without a sha for an env that never deployed is refused rather
-// than previewing an arbitrary commit.
-func TestPlanHandler_NoDeployedCommit(t *testing.T) {
-	r := newPreviewRig(t)
-	r.engine.LoadDeployment = func(context.Context, store.DeployRun) (config.Deployment, error) {
-		t.Fatal("loaded a deployment without a commit")
-		return config.Deployment{}, nil
-	}
-	_, err := deploy.PlanHandler(r.engine, r.store)(context.Background(), json.RawMessage(`{"repo":"acme/web","env":"staging"}`))
-	if err == nil || !strings.Contains(err.Error(), "has no deployed commit") {
-		t.Errorf("err = %v, want no deployed commit", err)
 	}
 }
 
