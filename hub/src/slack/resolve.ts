@@ -62,6 +62,19 @@ export async function requirePermission(
 }
 
 /**
+ * Throws forbidden (403) unless githubLogin is admin or maintain on the repo.
+ * Asks GitHub every time, without the permission cache: sink configs carry
+ * secrets, so a revoked role must stop the next command or form submission.
+ */
+export async function requireSinkManager(env: Env, installationId: number, repoFullName: string, githubLogin: string): Promise<void> {
+	const [owner = "", repo = ""] = repoFullName.split("/");
+	const permission = await getCollaboratorPermission(await commandGitHub(env).installation(installationId), owner, repo, githubLogin);
+	if (permission !== "admin" && permission !== "maintain") {
+		throw new HubError("forbidden", 403, `${githubLogin} has ${permission} on ${repoFullName}, needs maintain`);
+	}
+}
+
+/**
  * The checks every repo command makes after requireLinkedUser: the repo is
  * in a linked installation (else repo_not_found) and the user's GitHub role
  * on it is at least need (else forbidden).

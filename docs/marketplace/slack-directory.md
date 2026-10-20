@@ -66,6 +66,8 @@ user's role on the linked GitHub repository or organization.
 | `/zeroci status [owner/repo]` | Shows the agents and the repository's last 5 runs. |
 | `/zeroci retry <owner/repo> [sha]` | Runs the latest run of the repository, or of the given commit, again. |
 | `/zeroci bind <owner/repo> <agent> [checks\|deploy:<env>]` | Makes an agent run the repository's checks or a deploy environment (admins only). |
+| `/zeroci sink add\|list <owner/repo>` | Opens a form that sends the repository's run updates to a Telegram chat or a signed webhook, or lists those sinks (admin or maintain on the repository). Bot tokens and URLs go in the form, never in the command. |
+| `/zeroci sink remove\|test <sink-id>` | Removes a sink, or sends it a test delivery (admin or maintain on the repository). |
 | `/zeroci me` | Links your GitHub account through GitHub sign in; `/zeroci me unlink` removes the link. |
 | `/zeroci export` | Sends you a link to a JSON copy of your data. |
 | `/zeroci delete-my-data` | Deletes your GitHub link and author mappings in this workspace. |

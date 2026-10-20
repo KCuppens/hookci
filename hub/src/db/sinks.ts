@@ -144,6 +144,12 @@ export async function listRepoSinkConfigs(t: TenantDb, repo: string): Promise<Si
 	return rows.map(fromStored);
 }
 
+/** The config without its secret, disabled or not; null when the installation has none by that id. */
+export async function getSinkConfig(t: TenantDb, id: string): Promise<SinkConfigRow | null> {
+	const row = await t.first<StoredSinkConfig>(`SELECT ${ROW_COLUMNS} FROM sink_configs WHERE installation_id = ?1 AND id = ?2`, id);
+	return row && fromStored(row);
+}
+
 /** Deletes the config and its per-run messages; the deleted config, or null when there was none. */
 export async function deleteSinkConfig(t: TenantDb, id: string): Promise<SinkConfigRow | null> {
 	const row = await t.first<StoredSinkConfig>(`DELETE FROM sink_configs WHERE installation_id = ?1 AND id = ?2 RETURNING ${ROW_COLUMNS}`, id);
