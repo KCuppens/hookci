@@ -9,7 +9,7 @@ zerocideploy is pre-1.0. Only the latest minor release receives security fixes.
 Do not open a public issue for a vulnerability. Report it privately in one of these ways:
 
 - GitHub Security Advisories: use "Report a vulnerability" on the [Security tab](https://github.com/KCuppens/zerocideploy/security/advisories/new) of the repository.
-- Email `security@webuno.io`.
+- Email `{{SECURITY_EMAIL}}`.
 
 Include a description, the affected component (agent, hub, installer, schema), steps or a proof of concept to reproduce, and the impact you see.
 

@@ -18,8 +18,8 @@ export interface Env {
 	MIN_AGENT_VERSION: string;
 	/** The public GitHub App's URL slug: https://github.com/apps/<slug>. */
 	GITHUB_APP_SLUG: string;
-	/** RFC 9116 Expires for /.well-known/security.txt: an RFC 3339 time one year past the build date. */
-	SECURITY_TXT_EXPIRES: string;
+	/** security.txt Contact, a mailto: or https: URI; empty points reporters at GitHub's private advisories. */
+	SECURITY_CONTACT: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;

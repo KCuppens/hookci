@@ -13,14 +13,13 @@ import { githubWebhook } from "./routes/github-webhook";
 import { install } from "./routes/install";
 import { uploadLog, viewLog } from "./routes/logs";
 import { pairRedeem } from "./routes/pair";
-import { publicRoutes } from "./routes/public";
 import { renderPreview } from "./routes/render";
-import { securityTxt } from "./routes/security-txt";
 import { slackCommands } from "./routes/slack-commands";
 import { slackEvents } from "./routes/slack-events";
 import { slackInstall, slackOAuthCallback } from "./routes/slack-install";
 import { slackInteractive } from "./routes/slack-interactive";
 import { start, startStatus } from "./routes/start";
+import { handleWellKnown, WELL_KNOWN_PATHS } from "./routes/well-known";
 
 type AppEnv = { Bindings: Env };
 
@@ -50,8 +49,7 @@ app.post("/slack/events", slackEvents);
 app.post("/slack/commands", slackCommands);
 app.post("/slack/interactive", slackInteractive);
 app.get("/v1/export", exportData);
-app.get("/.well-known/security.txt", securityTxt);
-app.route("/", publicRoutes);
+for (const path of WELL_KNOWN_PATHS) app.get(path, (c) => handleWellKnown(c.req.raw, c.env) ?? c.notFound());
 app.put("/v1/logs/:runId/:job", uploadLog);
 app.post("/v1/render", renderPreview);
 app.get("/logs/:runId/:job", viewLog);
