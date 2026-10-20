@@ -19,6 +19,7 @@ Options:
   --dir <path>     State directory (default: ./zeroci-hub)
   --yes            Answer yes to every confirmation and take the defaults
   --force-render   setup: render wrangler.toml and deploy again even if done
+  --org <login>    setup: create the GitHub App under this organization
   -h, --help       Show this help
 `;
 
@@ -32,6 +33,8 @@ export interface ParsedArgs {
 	dir: string;
 	yes: boolean;
 	forceRender: boolean;
+	/** GitHub organization to own the hub's GitHub App. */
+	org?: string;
 }
 
 export type ParseResult = { kind: "run"; args: ParsedArgs } | { kind: "help" } | { kind: "usage-error"; message: string };
@@ -41,6 +44,7 @@ export function parseArgs(argv: string[]): ParseResult {
 	let dir = DEFAULT_DIR;
 	let yes = false;
 	let forceRender = false;
+	let org: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i] as string;
 		if (arg === "-h" || arg === "--help") return { kind: "help" };
@@ -52,6 +56,10 @@ export function parseArgs(argv: string[]): ParseResult {
 			const value = arg === "--dir" ? argv[++i] : arg.slice("--dir=".length);
 			if (!value) return { kind: "usage-error", message: "--dir needs a path" };
 			dir = value;
+		} else if (arg === "--org" || arg.startsWith("--org=")) {
+			const value = arg === "--org" ? argv[++i] : arg.slice("--org=".length);
+			if (!value) return { kind: "usage-error", message: "--org needs a login" };
+			org = value;
 		} else if (arg.startsWith("-")) {
 			return { kind: "usage-error", message: `unknown option ${arg}` };
 		} else if (command !== undefined) {
@@ -63,7 +71,7 @@ export function parseArgs(argv: string[]): ParseResult {
 		}
 	}
 	if (command === undefined) return { kind: "usage-error", message: "no command given" };
-	return { kind: "run", args: { command, dir, yes, forceRender } };
+	return { kind: "run", args: { command, dir, yes, forceRender, ...(org ? { org } : {}) } };
 }
 
 export interface Io {
@@ -87,7 +95,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 		io.err(`zeroci-hub: ${parsed.message}\n\n${USAGE}`);
 		return 2;
 	}
-	const { command, dir, yes, forceRender } = parsed.args;
+	const { command, dir, yes, forceRender, org } = parsed.args;
 	try {
 		switch (command) {
 			case "version":
@@ -103,6 +111,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 					dir,
 					yes,
 					forceRender,
+					...(org ? { org } : {}),
 					exec: nodeExec(),
 					prompter: ttyPrompter(),
 					fetchFn: fetch,

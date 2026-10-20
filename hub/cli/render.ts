@@ -16,12 +16,15 @@ export interface RenderInput {
 	hubVersion: string;
 	customDomain?: string;
 	githubApiUrl?: string;
+	/** The GitHub App's URL slug; `zeroci` until setup has registered the hub's own app. */
+	githubAppSlug?: string;
 	/** security.txt contact; empty makes the hub fall back to GitHub security advisories. */
 	securityContact?: string;
 }
 
 export const TEMPLATE_FILE = join("templates", "wrangler.self-hosted.toml.tmpl");
 export const DEFAULT_GITHUB_API_URL = "https://api.github.com";
+export const DEFAULT_GITHUB_APP_SLUG = "zeroci";
 
 const PLACEHOLDER = /\{\{([A-Za-z][A-Za-z0-9]*)\}\}/g;
 /** Placeholders that may render as empty. */
@@ -46,6 +49,7 @@ export function renderWranglerToml(tmpl: string, i: RenderInput): string {
 		baseUrl: tomlEscape(i.baseUrl),
 		hubVersion: tomlEscape(i.hubVersion),
 		githubApiUrl: tomlEscape(i.githubApiUrl || DEFAULT_GITHUB_API_URL),
+		githubAppSlug: tomlEscape(i.githubAppSlug || DEFAULT_GITHUB_APP_SLUG),
 		securityContact: tomlEscape(i.securityContact ?? ""),
 		routes: i.customDomain ? `routes = [{ pattern = ${JSON.stringify(i.customDomain)}, custom_domain = true }]` : "",
 	};
@@ -107,6 +111,7 @@ export async function renderStateDir(dir: string, prompter: Prompter, root = pac
 		baseUrl: state?.base_url ?? PLACEHOLDER_INPUT.baseUrl,
 		hubVersion: packageVersion(),
 		customDomain: state?.custom_domain,
+		githubAppSlug: state?.github_app_slug,
 	});
 	const path = join(dir, "wrangler.toml");
 	if (existsSync(path) && (await readFile(path, "utf8")) !== toml && !(await prompter.confirm(`Overwrite ${path}?`, false))) return false;

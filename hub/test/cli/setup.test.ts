@@ -11,6 +11,7 @@ import { SETUP_STEPS, SetupError, type SetupOptions, applyLifecycle, preflight, 
 import { type HubState, STATE_FILE, loadState } from "../../cli/state.js";
 import type { Exec, ExecResult } from "../../cli/wrangler.js";
 import { type FakeExec, type FakeScript, fakeExec } from "./fake-exec.js";
+import { type FakeGithub, fakeBrowser, startFakeGithub } from "./fake-github.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const OTHER_ACCOUNT = "fedcba9876543210fedcba9876543210";
@@ -36,12 +37,20 @@ const is =
 	(...prefix: string[]) =>
 	(args: string[]) =>
 		prefix.every((p, i) => args[i] === p);
-const noFetch: typeof fetch = async () => expect.unreachable("setup made an HTTP request");
+const GITHUB_APP_COMMANDS = [
+	["secret", "put", "GITHUB_APP_ID"],
+	["secret", "put", "GITHUB_APP_PRIVATE_KEY"],
+	["secret", "put", "GITHUB_WEBHOOK_SECRET"],
+	["secret", "put", "GITHUB_CLIENT_ID"],
+	["secret", "put", "GITHUB_CLIENT_SECRET"],
+	["deploy"],
+];
 
 const fx: Record<string, string> = {};
 let tmp: string;
 let root: string;
 let dir: string;
+let gh: FakeGithub;
 
 beforeAll(async () => {
 	for (const name of ["whoami-one.txt", "whoami-two.txt", "d1-create.txt", "d1-list.json", "r2-list.txt", "deploy.txt"]) {
@@ -61,15 +70,18 @@ beforeEach(async () => {
 	await writeFile(join(root, "templates", "wrangler.self-hosted.toml.tmpl"), await readTemplate(packageRoot()));
 	await writeFile(join(root, "dist", "worker", "index.js"), "export default {};\n");
 	await writeFile(join(root, "migrations", "0001_init.sql"), "SELECT 1;\n");
+	gh = await startFakeGithub();
 });
 
 afterEach(async () => {
 	vi.unstubAllEnvs();
 	await rm(tmp, { recursive: true, force: true });
+	await gh.close();
 });
 
+/** Setup options whose GitHub App step runs against the fake GitHub with a scripted browser. */
 function options(exec: Exec, over: Partial<SetupOptions> = {}): SetupOptions {
-	return { dir, yes: true, exec, prompter: scriptedPrompter({}), fetchFn: noFetch, root, ...over };
+	return { dir, yes: true, exec, prompter: scriptedPrompter({}), fetchFn: fetch, githubApiBase: gh.url, openBrowser: fakeBrowser("code"), root, ...over };
 }
 
 /** wrangler on an account with no hub resources yet. */
@@ -124,6 +136,7 @@ describe("runSetup", () => {
 			["secret", "put", "TOKEN_ENC_KEYS"],
 			["secret", "put", "STATE_SIGNING_KEY"],
 			["secret", "put", "LOG_SIGNING_KEY"],
+			...GITHUB_APP_COMMANDS,
 		]);
 		expect(state).toMatchObject({
 			account_id: ACCOUNT,
@@ -134,7 +147,8 @@ describe("runSetup", () => {
 			steps_done: [...SETUP_STEPS],
 		});
 		expect(await loadState(dir)).toEqual(state);
-		expect(log).toHaveLength(SETUP_STEPS.length);
+		// One line per step, plus the GitHub App step's browser URL and install link.
+		expect(log).toHaveLength(SETUP_STEPS.length + 2);
 
 		const toml = await renderedToml();
 		expect(toml.name).toBe("zeroci-hub");
@@ -189,7 +203,7 @@ describe("runSetup", () => {
 		const exec = fakeExec(freshAccount());
 		const prompter = scriptedPrompter({ "Hub name": "acme-ci", [DOMAIN_QUESTION]: "ci.acme.dev" });
 		const state = await runSetup(options(exec, { yes: false, prompter }));
-		expect(commands(exec).filter((a) => a[0] === "deploy")).toEqual([["deploy"]]);
+		expect(commands(exec).filter((a) => a[0] === "deploy")).toEqual([["deploy"], ["deploy"]]);
 		expect(commands(exec)).toContainEqual(["d1", "create", "acme-ci-db"]);
 		expect(commands(exec)).toContainEqual(["r2", "bucket", "create", "acme-ci-logs"]);
 		expect(state).toMatchObject({ name: "acme-ci", custom_domain: "ci.acme.dev", base_url: "https://ci.acme.dev" });
@@ -212,7 +226,7 @@ describe("secrets", () => {
 	it("passes each generated value on stdin only and never writes it down", async () => {
 		const exec = fakeExec(freshAccount());
 		const state = await runSetup(options(exec));
-		const puts = exec.calls.filter((c) => c.args[0] === "secret");
+		const puts = exec.calls.filter((c) => c.args[0] === "secret" && !c.args[2]?.startsWith("GITHUB_"));
 		expect(puts.map((c) => c.args[2])).toEqual(["TOKEN_ENC_KEYS", "STATE_SIGNING_KEY", "LOG_SIGNING_KEY"]);
 
 		const [encKeys = "", stateKey = "", logKey = ""] = puts.map((c) => c.stdin ?? "");

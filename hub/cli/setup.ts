@@ -4,6 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { packageRoot, packageVersion } from "./package.js";
 import { parseD1Create, parseD1List, parseDeployUrl, parseR2List, parseWhoami } from "./parse.js";
 import type { Prompter } from "./prompts.js";
+import { githubAppStep } from "./manifest-flow.js";
 import { installBundle, readTemplate, renderWranglerToml } from "./render.js";
 import { type HubState, loadState, saveState } from "./state.js";
 import type { Exec, ExecResult } from "./wrangler.js";
@@ -16,6 +17,13 @@ export interface SetupOptions {
 	fetchFn: typeof fetch;
 	randomBytes?: (n: number) => Uint8Array;
 	noSlack?: boolean;
+	/** GitHub organization login to own the hub's GitHub App; the signed-in user owns it when unset. */
+	org?: string;
+	/** Shows the user the local manifest page; the default leaves it to the printed URL. */
+	openBrowser?: (url: string) => Promise<void>;
+	/** github.com and api.github.com stand-ins, for tests. */
+	githubBase?: string;
+	githubApiBase?: string;
 	/** Rerun the render and deploy steps even when the state says they are done. */
 	forceRender?: boolean;
 	log?: (line: string) => void;
@@ -23,10 +31,19 @@ export interface SetupOptions {
 	root?: string;
 }
 
-export const SETUP_STEPS = ["preflight", "account", "d1", "r2", "r2_lifecycle", "render", "migrate", "deploy", "secrets"] as const;
+export const SETUP_STEPS = ["preflight", "account", "d1", "r2", "r2_lifecycle", "render", "migrate", "deploy", "secrets", "github_app"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
-export type SetupErrorCode = "node_too_old" | "not_logged_in" | "multiple_accounts" | "wrangler_failed" | "parse_failed" | "bad_name";
+export type SetupErrorCode =
+	| "node_too_old"
+	| "not_logged_in"
+	| "multiple_accounts"
+	| "wrangler_failed"
+	| "parse_failed"
+	| "bad_name"
+	| "manifest_timeout"
+	| "manifest_conversion_failed"
+	| "github_app_verify_failed";
 
 const HINTS: Record<SetupErrorCode, string> = {
 	node_too_old: "Install Node.js 20 or newer, then run zeroci-hub setup again.",
@@ -35,6 +52,9 @@ const HINTS: Record<SetupErrorCode, string> = {
 	wrangler_failed: "Fix the cause shown above, then run zeroci-hub setup again; finished steps are skipped.",
 	parse_failed: "Run zeroci-hub setup again; if it fails the same way, report it with the wrangler output.",
 	bad_name: "Use 3 to 41 lowercase letters, digits or dashes, starting with a letter.",
+	manifest_timeout: "Run zeroci-hub setup again and finish creating the GitHub App in the browser within 10 minutes.",
+	manifest_conversion_failed: "The manifest code is single-use and expires after an hour; run zeroci-hub setup again.",
+	github_app_verify_failed: "Delete the new app in GitHub settings, then run zeroci-hub setup again.",
 };
 
 export class SetupError extends Error {
@@ -69,6 +89,7 @@ const STEP_LABELS: Record<SetupStep, string> = {
 	migrate: "Applying D1 migrations",
 	deploy: "Deploying the Worker",
 	secrets: "Storing generated Worker secrets",
+	github_app: "Registering the hub's GitHub App",
 };
 
 /** Worker secrets setup generates; GitHub and Slack credentials come from their manifest flows. */
@@ -185,6 +206,7 @@ async function writeWranglerToml(o: SetupOptions, s: HubState, baseUrl: string):
 		r2Bucket: need(s.r2_bucket, "R2 bucket"),
 		baseUrl,
 		hubVersion: packageVersion(),
+		...(s.github_app_slug ? { githubAppSlug: s.github_app_slug } : {}),
 		...(s.custom_domain ? { customDomain: s.custom_domain } : {}),
 	});
 	await writeFile(join(o.dir, "wrangler.toml"), toml);
@@ -253,6 +275,7 @@ const STEPS: Record<SetupStep, (o: SetupOptions, s: HubState) => Promise<HubStat
 	migrate: applyMigrations,
 	deploy: deployWorker,
 	secrets: putSecrets,
+	github_app: (o, s) => githubAppStep({ options: o, state: s, exec: o.exec, log: o.log ?? (() => {}) }),
 };
 
 /**
