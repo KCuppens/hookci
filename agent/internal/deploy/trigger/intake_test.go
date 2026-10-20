@@ -214,10 +214,10 @@ func TestIntake_Rejections(t *testing.T) {
 			want:   "deployments.prod: untrusted trigger cannot deploy",
 		},
 		{
-			name:   "retry stub",
+			name:   "retry with no run for the commit",
 			dep:    deployment(),
 			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.Event = protocol.TriggerEventRetry },
-			want:   "retry not supported yet",
+			want:   "nothing to retry for prod at 0123456",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -296,5 +296,113 @@ func TestIntake_GitHubErrorIsAnError(t *testing.T) {
 	}
 	if runs, _ := f.st.ListDeployRunsInStates(context.Background(), store.DeployQueued); len(runs) != 0 {
 		t.Errorf("an error stored runs: %+v", runs)
+	}
+}
+
+func TestIntake_RetryAttemptRules(t *testing.T) {
+	type want struct {
+		accepted bool
+		reason   string
+		retry    bool
+		state    string // run state after Handle
+		attempt  int
+		retryOf  string
+	}
+	unchanged := func(state, reason string) want {
+		return want{reason: reason, state: state, attempt: 1}
+	}
+	for _, tc := range []struct {
+		name    string
+		state   string // run-9 state at attempt 1
+		attempt int    // trigger attempt
+		mutate  func(*protocol.Trigger, *fakeRefs)
+		want    want
+	}{
+		{name: "failed run retries", state: store.DeployFailed, attempt: 2,
+			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},
+		{name: "interrupted run retries", state: store.DeployInterrupted, attempt: 2,
+			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployInterrupted}},
+		{name: "redelivered first trigger gets the run", state: store.DeployRunning, attempt: 1,
+			want: want{accepted: true, state: store.DeployRunning, attempt: 1}},
+		{name: "successful run", state: store.DeploySuccess, attempt: 2,
+			want: unchanged(store.DeploySuccess, "nothing to retry for prod at 0123456 (attempt 2)")},
+		{name: "running run", state: store.DeployRunning, attempt: 2,
+			want: unchanged(store.DeployRunning, "nothing to retry for prod at 0123456 (attempt 2)")},
+		{name: "attempt skips ahead", state: store.DeployFailed, attempt: 3,
+			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 3)")},
+		{name: "failed run at the same attempt", state: store.DeployFailed, attempt: 1,
+			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 1)")},
+		{name: "branch no longer protected", state: store.DeployFailed, attempt: 2,
+			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.unprotected = true },
+			want: unchanged(store.DeployFailed,
+				"deployments.prod: branch main is not protected on GitHub; protect it or remove the env")},
+		{name: "sha no longer on branch", state: store.DeployFailed, attempt: 2,
+			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.notOnRef = true },
+			want:   unchanged(store.DeployFailed, "deployments.prod: 0123456 is not on main")},
+		{name: "untrusted retry", state: store.DeployInterrupted, attempt: 2,
+			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.Trust = protocol.TriggerTrustUntrusted },
+			want:   unchanged(store.DeployInterrupted, "deployments.prod: untrusted trigger cannot deploy")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			// A paths filter no file matches: retries skip it.
+			f := newFixture(t, deployment("services/api/**"))
+			f.setLastSuccess(t, "prev-sha")
+			f.refs.files = []string{"README.md"}
+			f.in.LoadConfig = func(context.Context, string, string) (*config.Config, error) {
+				t.Error("a retry loaded the configuration")
+				return nil, errors.New("unexpected")
+			}
+			if err := f.st.InsertDeployRun(ctx, store.DeployRun{
+				RunID: "run-9", Repo: "acme/web", Env: "prod", SHA: testSHA, Ref: "refs/heads/main",
+				Strategy: "compose-bluegreen", Attempt: 1, State: tc.state, CreatedAt: t0,
+			}); err != nil {
+				t.Fatalf("InsertDeployRun: %v", err)
+			}
+			tr := pushTrigger()
+			tr.Event, tr.Attempt = protocol.TriggerEventRetry, tc.attempt
+			if tc.mutate != nil {
+				tc.mutate(&tr, f.refs)
+			}
+			got, err := f.in.Handle(ctx, tr)
+			if err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			wantDec := Decision{Reason: tc.want.reason}
+			if tc.want.accepted {
+				wantDec = Decision{Accepted: true, RunID: "run-9", Retry: tc.want.retry}
+			}
+			if got != wantDec {
+				t.Errorf("Handle = %+v, want %+v", got, wantDec)
+			}
+			run, err := f.st.GetDeployRun(ctx, "run-9")
+			if err != nil {
+				t.Fatalf("GetDeployRun: %v", err)
+			}
+			if run.State != tc.want.state || run.Attempt != tc.want.attempt || run.RetryOfState != tc.want.retryOf {
+				t.Errorf("run = %s attempt %d retry_of %q, want %s attempt %d retry_of %q",
+					run.State, run.Attempt, run.RetryOfState, tc.want.state, tc.want.attempt, tc.want.retryOf)
+			}
+			if len(f.refs.compares) != 0 {
+				t.Errorf("a retry compared %v for the paths filter", f.refs.compares)
+			}
+			if f.n != 0 {
+				t.Errorf("a retry minted %d new run ids", f.n)
+			}
+
+			if !tc.want.retry {
+				return
+			}
+			again, err := f.in.Handle(ctx, tr)
+			if err != nil {
+				t.Fatalf("redelivered Handle: %v", err)
+			}
+			if again != wantDec {
+				t.Errorf("redelivered Handle = %+v, want %+v", again, wantDec)
+			}
+			if run, _ := f.st.GetDeployRun(ctx, "run-9"); run.Attempt != 2 {
+				t.Errorf("redelivery moved the attempt to %d, want 2", run.Attempt)
+			}
+		})
 	}
 }

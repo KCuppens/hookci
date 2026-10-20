@@ -1,7 +1,8 @@
 // Package trigger decides whether a deploy trigger from the hub may deploy:
 // the env must exist at the commit, the push branch must be listed and
 // protected on GitHub, the commit must be on it, the trigger trusted, and a
-// paths filter must match the files changed since the last success.
+// paths filter must match the files changed since the last success. A
+// retry trigger re-queues the commit's Failed or Interrupted run.
 package trigger
 
 import (
@@ -12,17 +13,20 @@ import (
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
 // Decision is the answer to a deploy trigger: accepted for RunID, or
-// rejected with Reason.
+// rejected with Reason. Retry marks an accepted run the caller queues as a
+// retry of a Failed or Interrupted run.
 type Decision struct {
 	Accepted bool
 	RunID    string
 	Reason   string
+	Retry    bool
 }
 
 // Intake decides deploy triggers and records accepted ones as queued
@@ -114,9 +118,53 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	return Decision{Accepted: true, RunID: runID}, nil
 }
 
-// handleRetry answers a retry trigger. Retries are not supported yet.
-func (in *Intake) handleRetry(context.Context, protocol.Trigger, string) (Decision, error) {
-	return rejected("retry not supported yet"), nil
+// handleRetry answers a retry trigger for the newest run of env at t.Sha.
+// A trigger at that run's attempt is a redelivery and gets the run while it
+// is not Failed or Interrupted. A trigger at the next attempt re-queues a
+// Failed or Interrupted run as a retry under the same run id, once the run's
+// branch is still protected, holds the commit and the trigger is trusted.
+// The paths filter does not apply to a retry.
+func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env string) (Decision, error) {
+	run, err := in.Store.LatestDeployRunFor(ctx, t.Repo, env, t.Sha)
+	if errors.Is(err, store.ErrNotFound) {
+		return rejected("nothing to retry for %s at %s", env, short(t.Sha)), nil
+	}
+	if err != nil {
+		return Decision{}, fmt.Errorf("trigger: %w", err)
+	}
+	stale := rejected("nothing to retry for %s at %s (attempt %d)", env, short(t.Sha), t.Attempt)
+	retryable := deploy.Retryable(run.State)
+	if run.Attempt == t.Attempt && !retryable {
+		return Decision{Accepted: true, RunID: run.RunID, Retry: run.RetryOfState != ""}, nil
+	}
+	if run.Attempt != t.Attempt-1 || !retryable {
+		return stale, nil
+	}
+	branch := strings.TrimPrefix(run.Ref, "refs/heads/")
+	protected, err := in.Refs.IsProtected(ctx, t.Repo, branch)
+	if err != nil {
+		return Decision{}, fmt.Errorf("trigger: %w", err)
+	}
+	if !protected {
+		return rejected("deployments.%s: branch %s is not protected on GitHub; protect it or remove the env", env, branch), nil
+	}
+	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
+	if err != nil {
+		return Decision{}, fmt.Errorf("trigger: %w", err)
+	}
+	if !onRef {
+		return rejected("deployments.%s: %s is not on %s", env, short(t.Sha), branch), nil
+	}
+	if t.Trust != protocol.TriggerTrustTrusted {
+		return rejected("deployments.%s: untrusted trigger cannot deploy", env), nil
+	}
+	if _, err := deploy.PrepareRetry(ctx, in.Store, run.RunID); err != nil {
+		if errors.Is(err, deploy.ErrNotRetryable) {
+			return stale, nil
+		}
+		return Decision{}, fmt.Errorf("trigger: %w", err)
+	}
+	return Decision{Accepted: true, RunID: run.RunID, Retry: true}, nil
 }
 
 // pathsMatch reports whether the files changed since the env's last

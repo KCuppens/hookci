@@ -172,8 +172,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.recoverTriggers(ctx); err != nil {
 		return err
 	}
-	if err := d.deploySched.Recover(ctx); err != nil {
-		return fmt.Errorf("daemon: %w", err)
+	if err := d.recoverDeploys(ctx); err != nil {
+		return err
 	}
 	reset, err := d.st.BindAgent(ctx, d.agentID)
 	if err != nil {
@@ -190,6 +190,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.log.Error("control socket unavailable; zeroci gc and retry will not reach this agent", "err", err)
 	} else {
 		ctl.Handle("gc", d.collector.HandleControl)
+		ctl.Handle(deploy.RetryOp, deploy.RetryControl(d.st, d.deploySched))
 		wg.Go(func() {
 			if err := ctl.Serve(wctx); err != nil {
 				d.log.Error("control socket stopped", "err", err)

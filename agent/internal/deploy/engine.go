@@ -64,12 +64,7 @@ func (e *Engine) Start(ctx context.Context, runID string) error {
 	if err := x.transition(ctx, store.DeployRunning, -1); err != nil {
 		return err
 	}
-	env := run.Env
-	e.Events.DeployPlanned(protocol.JobPlanned{
-		RunId: run.RunID,
-		Env:   &env,
-		Jobs:  []protocol.JobPlannedJobsElem{{Name: JobName, Needs: []string{}}},
-	})
+	x.planned()
 	return x.execute(ctx, 0, map[string]string{})
 }
 
@@ -86,15 +81,7 @@ func (e *Engine) Resume(ctx context.Context, runID string) error {
 	if err != nil {
 		return fmt.Errorf("deploy: resume %s: %w", runID, err)
 	}
-	outputs := map[string]string{}
-	from := 0
-	for _, st := range steps {
-		if st.Index != from || st.Status != store.StepDone {
-			break
-		}
-		maps.Copy(outputs, st.Outputs)
-		from++
-	}
+	from, outputs := resumePoint(steps)
 	if run.Attempt, err = e.Store.IncrementDeployAttempt(ctx, runID); err != nil {
 		return fmt.Errorf("deploy: resume %s: %w", runID, err)
 	}
@@ -105,10 +92,63 @@ func (e *Engine) Resume(ctx context.Context, runID string) error {
 	return x.execute(ctx, from, outputs)
 }
 
-// Retry runs runID again after an earlier attempt. It is Resume until M2-12
-// gives retries their own semantics.
+// Retry runs runID again after RequestRetry re-queued it, under the attempt
+// RequestRetry gave it. A retry of a Failed run resets the steps and runs
+// from step 0. A retry of an Interrupted run continues at its first step not
+// done, as Resume does, unless a step had failed: then the agent stopped
+// during that step's rollback, so Retry first rolls back from that step,
+// then resets the steps and runs from step 0. A rollback that fails again
+// fails the run. A run not re-queued by a retry yields an error wrapping
+// ErrNotRetryable. Other errors are as for Start.
 func (e *Engine) Retry(ctx context.Context, runID string) error {
-	return e.Resume(ctx, runID)
+	run, err := e.Store.GetDeployRun(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	if run.State != store.DeployQueued || !Retryable(run.RetryOfState) {
+		return fmt.Errorf("deploy: run %s is %s, not a queued retry: %w", runID, run.State, ErrNotRetryable)
+	}
+	steps, err := e.Store.ListSteps(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("deploy: retry %s: %w", runID, err)
+	}
+	retryOf := run.RetryOfState
+	run.RetryOfState = ""
+	x := e.newExecution(run)
+	failed := slices.IndexFunc(steps, func(s store.DeployStep) bool { return s.Status == store.StepFailed })
+	if retryOf == store.DeployInterrupted && failed < 0 {
+		from, outputs := resumePoint(steps)
+		if err := x.begin(ctx, store.DeployRunning, -1); err != nil {
+			return err
+		}
+		return x.execute(ctx, from, outputs)
+	}
+	if retryOf == store.DeployInterrupted {
+		return x.finishRollback(ctx, steps[failed])
+	}
+	if err := e.Store.ResetSteps(ctx, runID); err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	if err := x.begin(ctx, store.DeployRunning, -1); err != nil {
+		return err
+	}
+	x.planned()
+	return x.execute(ctx, 0, map[string]string{})
+}
+
+// resumePoint is the index of the first step not done after the contiguous
+// done steps from 0, and the merged outputs of those done steps.
+func resumePoint(steps []store.DeployStep) (int, map[string]string) {
+	outputs := map[string]string{}
+	from := 0
+	for _, st := range steps {
+		if st.Index != from || st.Status != store.StepDone {
+			break
+		}
+		maps.Copy(outputs, st.Outputs)
+		from++
+	}
+	return from, outputs
 }
 
 func (e *Engine) loadStartable(ctx context.Context, runID string) (store.DeployRun, error) {
@@ -140,38 +180,127 @@ func (e *Engine) newExecution(run store.DeployRun) *execution {
 	return &execution{e: e, run: run, state: run.State, started: e.Clock.Now(), log: newRunLog()}
 }
 
+// begin moves a retried run to state, on step when step >= 0, then clears
+// its retry mark: the run is no longer Queued, so a restart sees it through
+// the Recoverer instead of re-queueing it as a retry.
+func (x *execution) begin(ctx context.Context, state string, step int) error {
+	if err := x.transition(ctx, state, step); err != nil {
+		return err
+	}
+	return x.clearRetry(ctx)
+}
+
+func (x *execution) clearRetry(ctx context.Context) error {
+	if err := x.e.Store.ClearRetryOf(ctx, x.run.RunID); err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	return nil
+}
+
+// planned tells the hub the run's one job.
+func (x *execution) planned() {
+	env := x.run.Env
+	x.e.Events.DeployPlanned(protocol.JobPlanned{
+		RunId: x.run.RunID,
+		Env:   &env,
+		Jobs:  []protocol.JobPlannedJobsElem{{Name: JobName, Needs: []string{}}},
+	})
+}
+
+// finishRollback rolls back from failed, the step whose rollback a restart
+// cut short, with the outputs recorded when it failed. After it succeeds the
+// steps are reset and the run deploys again from step 0; when it fails the
+// run fails.
+func (x *execution) finishRollback(ctx context.Context, failed store.DeployStep) error {
+	e, run := x.e, x.run
+	strat, sc, err := x.plan(ctx, maps.Clone(failed.Outputs))
+	if sc == nil {
+		if err != nil {
+			return err
+		}
+		return x.clearRetry(ctx)
+	}
+	if sc.Outputs == nil {
+		sc.Outputs = map[string]string{}
+	}
+	if failed.Index >= len(x.steps) {
+		if err := x.fail(ctx, fmt.Sprintf("deployments.%s: rollback after restart failed: step %d %s is not in the %d-step plan",
+			run.Env, failed.Index+1, failed.Name, len(x.steps)), -1); err != nil {
+			return err
+		}
+		return x.clearRetry(ctx)
+	}
+	if err := x.begin(ctx, store.DeployRollingBack, failed.Index); err != nil {
+		return err
+	}
+	fmt.Fprintf(x.log, "rolling back step %d/%d %s after restart\n", failed.Index+1, len(x.steps), failed.Name)
+	if err := strat.Rollback(ctx, sc, failed.Index); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("deploy: run %s: rollback: %w", run.RunID, err)
+		}
+		msg := fmt.Sprintf("deployments.%s: rollback after restart failed: %v", run.Env, err)
+		fmt.Fprintln(x.log, msg)
+		return x.fail(ctx, msg, failed.Index)
+	}
+	if err := e.Store.ResetSteps(ctx, run.RunID); err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	if err := x.transition(ctx, store.DeployRunning, -1); err != nil {
+		return err
+	}
+	x.planned()
+	sc.Outputs = map[string]string{}
+	return x.runFrom(ctx, strat, sc, 0)
+}
+
 // execute plans the run and runs its steps from index from.
 func (x *execution) execute(ctx context.Context, from int, outputs map[string]string) error {
+	strat, sc, err := x.plan(ctx, outputs)
+	if sc == nil {
+		return err
+	}
+	return x.runFrom(ctx, strat, sc, from)
+}
+
+// plan looks up the strategy and the deployment config and plans the steps.
+// A nil StepContext means the run went no further: it was failed, and err is
+// nil, or its outcome could not be recorded, and err says why.
+func (x *execution) plan(ctx context.Context, outputs map[string]string) (DeployStrategy, *StepContext, error) {
 	e, run := x.e, x.run
 	strat, ok := e.Strategies[run.Strategy]
 	if !ok {
-		return x.fail(ctx, fmt.Sprintf("deployments.%s.strategy: %s is not a strategy this agent runs; it runs %s",
+		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s.strategy: %s is not a strategy this agent runs; it runs %s",
 			run.Env, run.Strategy, strings.Join(slices.Sorted(maps.Keys(e.Strategies)), ", ")), -1)
 	}
 	cfg, err := e.LoadDeployment(ctx, run)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("deploy: run %s: load config: %w", run.RunID, err)
+			return nil, nil, fmt.Errorf("deploy: run %s: load config: %w", run.RunID, err)
 		}
-		return x.fail(ctx, fmt.Sprintf("deployments.%s: load config: %v", run.Env, err), -1)
+		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s: load config: %v", run.Env, err), -1)
 	}
 	if x.steps, err = strat.Plan(run, cfg); err != nil {
-		return x.fail(ctx, fmt.Sprintf("deployments.%s: plan %s: %v", run.Env, run.Strategy, err), -1)
+		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s: plan %s: %v", run.Env, run.Strategy, err), -1)
 	}
 	exec, err := e.NewExecutor(ctx, run, cfg)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("deploy: run %s: executor: %w", run.RunID, err)
+			return nil, nil, fmt.Errorf("deploy: run %s: executor: %w", run.RunID, err)
 		}
-		return x.fail(ctx, fmt.Sprintf("deployments.%s: executor: %v", run.Env, err), -1)
+		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s: executor: %v", run.Env, err), -1)
 	}
 	if err := e.Checkout(ctx, run); err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("deploy: run %s: checkout: %w", run.RunID, err)
+			return nil, nil, fmt.Errorf("deploy: run %s: checkout: %w", run.RunID, err)
 		}
-		return x.fail(ctx, fmt.Sprintf("deployments.%s: checkout %s@%s: %v", run.Env, run.Repo, shortSHA(run.SHA), err), -1)
+		return nil, nil, x.fail(ctx, fmt.Sprintf("deployments.%s: checkout %s@%s: %v", run.Env, run.Repo, shortSHA(run.SHA), err), -1)
 	}
-	sc := &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: exec, Log: x.log, Clock: e.Clock, Progress: x.progress}
+	return strat, &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: exec, Log: x.log, Clock: e.Clock, Progress: x.progress}, nil
+}
+
+// runFrom runs the planned steps from index from.
+func (x *execution) runFrom(ctx context.Context, strat DeployStrategy, sc *StepContext, from int) error {
+	e, run := x.e, x.run
 	for i := from; i < len(x.steps); i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("deploy: run %s: %w", run.RunID, err)

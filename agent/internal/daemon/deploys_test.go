@@ -15,6 +15,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
@@ -261,7 +262,7 @@ func TestDaemonRefusedTriggerTokenRejects(t *testing.T) {
 	}
 	hub := &refusingHub{t: t, trigger: frame, in: make(chan []byte, 16), closed: make(chan struct{})}
 	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}, st, nil,
-		Options{StateDir: stateDir, Dialer: hub, Source: &fakeSource{}})
+		Options{StateDir: stateDir, Dialer: hub, Source: &fakeSource{}, DeployRunner: noDeployUnits()})
 	intake := d.deploys.(*hubIntake)
 	intake.githubURL, intake.http = gh.URL, gh.Client()
 
@@ -296,5 +297,67 @@ func TestDaemonRefusedTriggerTokenRejects(t *testing.T) {
 	cancel()
 	if err := <-done; err != context.Canceled {
 		t.Errorf("Run = %v, want context.Canceled, not ErrRevoked", err)
+	}
+}
+
+// noDeployUnits is a DeployRunner for a host with no leftover deploy units.
+func noDeployUnits() *execx.Fake {
+	f := &execx.Fake{}
+	f.On("systemctl", []string{"list-units"}, execx.FakeResponse{})
+	return f
+}
+
+// TestDaemonRunInterruptsDeploys: a deploy run an earlier agent left
+// Running is stopped and marked Interrupted before the session starts, and
+// is not queued again.
+func TestDaemonRunInterruptsDeploys(t *testing.T) {
+	stateDir := t.TempDir()
+	st, err := store.Open(filepath.Join(stateDir, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.InsertDeployRun(ctx, store.DeployRun{
+		RunID: "run_dep", Repo: "acme/app", Env: "prod", SHA: headSHA, Ref: "refs/heads/main",
+		Strategy: "compose-bluegreen", State: store.DeployRunning, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BeginStep(ctx, "run_dep", 0, "build", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	units := &execx.Fake{}
+	units.On("systemctl", []string{"list-units"}, execx.FakeResponse{Stdout: "zeroci-run-run_dep-deploy.service loaded active running deploy\n"})
+	units.On("systemctl", []string{"stop"}, execx.FakeResponse{})
+
+	dialer := &idleDialer{dialed: make(chan struct{})}
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_1", Credential: "zc_agent_x"}, st, nil,
+		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}, DeployRunner: units})
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case <-dialer.dialed:
+	case err := <-done:
+		t.Fatalf("Run = %v before dialing", err)
+	}
+	run, err := st.GetDeployRun(ctx, "run_dep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "agent restarted during step 1 build; run zeroci retry run_dep"
+	if run.State != store.DeployInterrupted || run.Error != want {
+		t.Errorf("run = %s %q, want Interrupted %q", run.State, run.Error, want)
+	}
+	if !units.Called("systemctl", "stop", "zeroci-run-run_dep-deploy") {
+		t.Errorf("commands = %+v, want the leftover deploy unit stopped", units.Calls)
+	}
+	cancel()
+	if err := <-done; err != context.Canceled {
+		t.Errorf("Run = %v, want context.Canceled", err)
+	}
+	if run, _ := st.GetDeployRun(context.Background(), "run_dep"); run.State != store.DeployInterrupted || run.Attempt != 1 {
+		t.Errorf("run = %s attempt %d after Run, want still Interrupted at attempt 1", run.State, run.Attempt)
 	}
 }

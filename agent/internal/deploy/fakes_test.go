@@ -44,6 +44,8 @@ type fakeStrategy struct {
 	hook        func(ctx context.Context, sc *StepContext, i int) error
 	planErr     error
 	rollbackErr error
+	// rollbackHook, when set, sees each Rollback call before rollbackErr.
+	rollbackHook func(sc *StepContext, failedIndex int)
 
 	mu        sync.Mutex
 	ran       []stepCall
@@ -82,7 +84,10 @@ func (f *fakeStrategy) runStep(ctx context.Context, sc *StepContext, i int) erro
 	return nil
 }
 
-func (f *fakeStrategy) Rollback(_ context.Context, _ *StepContext, failedIndex int) error {
+func (f *fakeStrategy) Rollback(_ context.Context, sc *StepContext, failedIndex int) error {
+	if f.rollbackHook != nil {
+		f.rollbackHook(sc, failedIndex)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rollbacks = append(f.rollbacks, failedIndex)

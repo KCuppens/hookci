@@ -176,7 +176,7 @@ func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 	}
 	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x"}
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys})
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx
@@ -518,7 +518,7 @@ func TestDaemonDropsReplacedAgentSession(t *testing.T) {
 
 	dialer := &idleDialer{dialed: make(chan struct{})}
 	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "zc_agent_x"}, st, nil,
-		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}})
+		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}, DeployRunner: noDeployUnits()})
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
 	select {

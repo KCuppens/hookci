@@ -85,14 +85,15 @@ func (s *Scheduler) Enqueue(_ context.Context, runID string, retry bool) {
 	s.signal()
 }
 
-// Recover enqueues the stored Queued runs, oldest first.
+// Recover enqueues the stored Queued runs, oldest first. A run re-queued by
+// a retry is enqueued as a retry.
 func (s *Scheduler) Recover(ctx context.Context) error {
 	runs, err := s.Store.ListQueuedDeployRuns(ctx)
 	if err != nil {
 		return fmt.Errorf("deploy: recover queue: %w", err)
 	}
 	for _, r := range runs {
-		s.Enqueue(ctx, r.RunID, false)
+		s.Enqueue(ctx, r.RunID, r.RetryOfState != "")
 	}
 	return nil
 }

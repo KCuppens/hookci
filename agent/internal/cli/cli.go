@@ -76,6 +76,10 @@ func commandTable() map[string]command {
 			summary: "run the checks of the current repo's HEAD: run [job]",
 			run:     cmdRun,
 		},
+		"retry": {
+			summary: "retry a Failed or Interrupted deploy run: retry <run_id> [--state-dir DIR | --installation ID]",
+			run:     cmdRetry,
+		},
 		"status": {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",
 			run:     cmdStatus,

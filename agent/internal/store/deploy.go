@@ -53,6 +53,9 @@ type DeployRun struct {
 	State                                string
 	PrevColor, TargetColor, Error        string
 	CreatedAt, StartedAt, FinishedAt     time.Time
+	// RetryOfState is the state a Queued run was retried from (Failed or
+	// Interrupted), until the engine takes up the retry; "" otherwise.
+	RetryOfState string
 }
 
 // Finished reports whether r is in a final state: Success, Failed,
@@ -76,7 +79,7 @@ type DeployState struct {
 	UpdatedAt                                              time.Time
 }
 
-const deployRunColumns = `run_id, repo, env, sha, ref, strategy, attempt, state, prev_color, target_color, error, created_at, started_at, finished_at`
+const deployRunColumns = `run_id, repo, env, sha, ref, strategy, attempt, state, prev_color, target_color, error, created_at, started_at, finished_at, retry_of_state`
 
 // InsertDeployRun stores a new deploy run. Attempt defaults to 1.
 func (s *Store) InsertDeployRun(ctx context.Context, r DeployRun) error {
@@ -90,10 +93,10 @@ func (s *Store) InsertDeployRun(ctx context.Context, r DeployRun) error {
 		r.CreatedAt = s.now()
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO deploy_runs (`+deployRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO deploy_runs (`+deployRunColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.Repo, r.Env, r.SHA, r.Ref, r.Strategy, r.Attempt, r.State,
 		nullText(r.PrevColor), nullText(r.TargetColor), nullText(r.Error),
-		r.CreatedAt.UnixMilli(), nullMillis(r.StartedAt), nullMillis(r.FinishedAt)); err != nil {
+		r.CreatedAt.UnixMilli(), nullMillis(r.StartedAt), nullMillis(r.FinishedAt), r.RetryOfState); err != nil {
 		return fmt.Errorf("store: insert deploy run %s: %w", r.RunID, err)
 	}
 	return nil
@@ -177,6 +180,38 @@ func (s *Store) IncrementDeployAttempt(ctx context.Context, runID string) (int, 
 		return 0, fmt.Errorf("store: increment deploy run %s attempt: %w", runID, err)
 	}
 	return attempt, nil
+}
+
+// MarkRetryRequested re-queues runID, which must still be in priorState: it
+// sets state Queued, retry_of_state priorState, clears the error and
+// finished_at, and adds one to attempt. A run that is missing or no longer in
+// priorState yields ErrNotFound.
+func (s *Store) MarkRetryRequested(ctx context.Context, runID, priorState string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE deploy_runs SET state = ?, retry_of_state = ?, error = NULL, finished_at = NULL, attempt = attempt + 1
+		 WHERE run_id = ? AND state = ?`,
+		DeployQueued, priorState, runID, priorState)
+	if err != nil {
+		return fmt.Errorf("store: mark retry of deploy run %s: %w", runID, err)
+	}
+	return requireRow(res, fmt.Sprintf("deploy run %s in state %s", runID, priorState))
+}
+
+// ClearRetryOf clears the retry_of_state of runID, or returns ErrNotFound.
+func (s *Store) ClearRetryOf(ctx context.Context, runID string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE deploy_runs SET retry_of_state = '' WHERE run_id = ?`, runID)
+	if err != nil {
+		return fmt.Errorf("store: clear retry of deploy run %s: %w", runID, err)
+	}
+	return requireRow(res, "deploy run "+runID)
+}
+
+// ResetSteps deletes the recorded steps of runID.
+func (s *Store) ResetSteps(ctx context.Context, runID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM deploy_steps WHERE run_id = ?`, runID); err != nil {
+		return fmt.Errorf("store: reset steps of deploy run %s: %w", runID, err)
+	}
+	return nil
 }
 
 // ListDeployRunsInStates returns the deploy runs whose state is one of
@@ -581,7 +616,7 @@ func scanDeployRun(row interface{ Scan(...any) error }) (DeployRun, error) {
 		started, finished     sql.NullInt64
 	)
 	if err := row.Scan(&r.RunID, &r.Repo, &r.Env, &r.SHA, &r.Ref, &r.Strategy, &r.Attempt, &r.State,
-		&prev, &target, &errText, &created, &started, &finished); err != nil {
+		&prev, &target, &errText, &created, &started, &finished, &r.RetryOfState); err != nil {
 		return DeployRun{}, err
 	}
 	r.PrevColor, r.TargetColor, r.Error = prev.String, target.String, errText.String

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -301,6 +302,7 @@ func TestDeployRun_RoundTripAndStateTimes(t *testing.T) {
 	in := testDeployRun("r1", "prod", DeployQueued)
 	in.Attempt = 2
 	in.PrevColor, in.TargetColor = "blue", "green"
+	in.RetryOfState = DeployInterrupted
 	if err := s.InsertDeployRun(ctx, in); err != nil {
 		t.Fatalf("InsertDeployRun: %v", err)
 	}
@@ -366,6 +368,70 @@ func TestIncrementDeployAttempt(t *testing.T) {
 	}
 	if _, err := s.IncrementDeployAttempt(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("IncrementDeployAttempt(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMarkRetryRequested(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.InsertDeployRun(ctx, testDeployRun("r1", "prod", DeployQueued)); err != nil {
+		t.Fatalf("InsertDeployRun: %v", err)
+	}
+	if err := s.SetDeployRunState(ctx, "r1", DeployFailed, "deployments.prod: step health failed: timeout", t0); err != nil {
+		t.Fatalf("SetDeployRunState(Failed): %v", err)
+	}
+	if err := s.MarkRetryRequested(ctx, "r1", DeployFailed); err != nil {
+		t.Fatalf("MarkRetryRequested: %v", err)
+	}
+	got, err := s.GetDeployRun(ctx, "r1")
+	if err != nil {
+		t.Fatalf("GetDeployRun: %v", err)
+	}
+	if got.State != DeployQueued || got.RetryOfState != DeployFailed || got.Error != "" || got.Attempt != 2 || !got.FinishedAt.IsZero() {
+		t.Errorf("after MarkRetryRequested = %+v, want Queued retry of Failed, attempt 2, error and finished_at cleared", got)
+	}
+	if err := s.MarkRetryRequested(ctx, "r1", DeployFailed); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkRetryRequested on a Queued run err = %v, want ErrNotFound", err)
+	}
+	if got, _ := s.GetDeployRun(ctx, "r1"); got.Attempt != 2 {
+		t.Errorf("attempt after refused retry = %d, want 2", got.Attempt)
+	}
+	if err := s.MarkRetryRequested(ctx, "missing", DeployFailed); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkRetryRequested(missing) err = %v, want ErrNotFound", err)
+	}
+
+	if err := s.ClearRetryOf(ctx, "r1"); err != nil {
+		t.Fatalf("ClearRetryOf: %v", err)
+	}
+	if got, _ := s.GetDeployRun(ctx, "r1"); got.RetryOfState != "" || got.State != DeployQueued {
+		t.Errorf("after ClearRetryOf = %+v, want Queued with no retry_of_state", got)
+	}
+	if err := s.ClearRetryOf(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClearRetryOf(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestResetSteps(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, id := range []string{"r1", "r2"} {
+		if err := s.InsertDeployRun(ctx, testDeployRun(id, "prod", DeployFailed)); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", id, err)
+		}
+		for i := range 2 {
+			if err := s.BeginStep(ctx, id, i, fmt.Sprintf("step%d", i), nil, t0); err != nil {
+				t.Fatalf("BeginStep(%s, %d): %v", id, i, err)
+			}
+		}
+	}
+	if err := s.ResetSteps(ctx, "r1"); err != nil {
+		t.Fatalf("ResetSteps: %v", err)
+	}
+	if steps, err := s.ListSteps(ctx, "r1"); err != nil || len(steps) != 0 {
+		t.Errorf("r1 steps after reset = %v, %v; want none", steps, err)
+	}
+	if steps, err := s.ListSteps(ctx, "r2"); err != nil || len(steps) != 2 {
+		t.Errorf("r2 steps = %d, %v; want 2 untouched", len(steps), err)
 	}
 }
 

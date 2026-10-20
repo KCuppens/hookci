@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -459,6 +460,11 @@ func TestScheduler_RetryFlagCallsEngineRetry(t *testing.T) {
 			if err := r.store.FinishStep(ctx, "a", 0, store.StepDone, map[string]string{"build": "out0"}, t0); err != nil {
 				t.Fatalf("FinishStep: %v", err)
 			}
+			if tc.retry {
+				if _, err := PrepareRetry(ctx, r.store, "a"); err != nil {
+					t.Fatalf("PrepareRetry: %v", err)
+				}
+			}
 			r.step("a", succeed)
 			r.step("a", succeed)
 			r.sched.Enqueue(ctx, "a", tc.retry)
@@ -502,6 +508,51 @@ func TestScheduler_RecoverRequeuesQueued(t *testing.T) {
 	r.sched.Wait()
 	r.wantState(t, "p", store.DeploySuccess)
 	r.wantState(t, "s", store.DeploySuccess)
+}
+
+func TestScheduler_RecoverRetryFlag(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agent.db")
+	twoSteps := []fakeStep{{"build", PhaseApply}, {"start", PhaseApply}}
+	first := newQueueRig(t, path, twoSteps)
+	first.insert(t, "retried", "production", t0, store.DeployInterrupted)
+	if err := first.store.BeginStep(ctx, "retried", 0, "build", nil, t0); err != nil {
+		t.Fatalf("BeginStep: %v", err)
+	}
+	if err := first.store.FinishStep(ctx, "retried", 0, store.StepDone, map[string]string{"build": "out0"}, t0); err != nil {
+		t.Fatalf("FinishStep: %v", err)
+	}
+	if _, err := PrepareRetry(ctx, first.store, "retried"); err != nil {
+		t.Fatalf("PrepareRetry: %v", err)
+	}
+	first.insert(t, "fresh", "staging", t0.Add(time.Second), store.DeployQueued)
+	if err := first.store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r := newQueueRig(t, path, twoSteps)
+	if err := r.sched.Recover(ctx); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	r.step("retried", succeed)
+	r.step("fresh", succeed)
+	r.step("fresh", succeed)
+	r.tick(t, ctx, 2)
+	r.sched.Wait()
+	close(r.starts)
+	ran := map[string]int{}
+	for id := range r.starts {
+		ran[id]++
+	}
+	if want := map[string]int{"retried": 1, "fresh": 2}; !maps.Equal(ran, want) {
+		t.Errorf("steps run per deploy = %v, want %v: the retried run resumes, the fresh one starts", ran, want)
+	}
+	if run := r.wantState(t, "retried", store.DeploySuccess); run.Attempt != 2 || run.RetryOfState != "" {
+		t.Errorf("retried run attempt %d retry_of_state %q, want attempt 2 and no retry mark", run.Attempt, run.RetryOfState)
+	}
+	if run := r.wantState(t, "fresh", store.DeploySuccess); run.Attempt != 1 {
+		t.Errorf("fresh run attempt = %d, want 1", run.Attempt)
+	}
 }
 
 // blockingCI holds every CI setup until its context ends.

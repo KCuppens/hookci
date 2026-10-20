@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
@@ -134,6 +136,27 @@ func (d *Daemon) decideDeploy(ctx context.Context, t protocol.Trigger) {
 	}
 	d.client.Flush()
 	if runID != "" {
-		d.deploySched.Enqueue(ctx, runID, false)
+		d.deploySched.Enqueue(ctx, runID, dec.Retry)
 	}
+}
+
+// recoverDeploys settles the deploy runs an earlier agent left behind: it
+// stops their leftover units and marks the ones still going Interrupted,
+// then queues the Queued ones. An Interrupted run waits for `zeroci retry`.
+func (d *Daemon) recoverDeploys(ctx context.Context) error {
+	runner := d.o.DeployRunner
+	if runner == nil {
+		runner = execx.OS{}
+	}
+	rec := &deploy.Recoverer{
+		Store: d.st, Runner: runner, Events: hubDeployEvents{client: d.client, log: d.log},
+		Clock: d.clk.Now, Logger: d.log,
+	}
+	if _, err := rec.Recover(ctx); err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
+	if err := d.deploySched.Recover(ctx); err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
+	return nil
 }
