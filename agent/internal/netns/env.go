@@ -11,7 +11,7 @@ const InNSProxyPort = 3128
 // http://127.0.0.1:<port>, in a fixed order. Loopback is exempt so local
 // services in the namespace are not proxied.
 func ProxyEnv(port int) []string {
-	url := "http://127.0.0.1:" + strconv.Itoa(port)
+	url := proxyURL(port)
 	return []string{
 		"HTTP_PROXY=" + url,
 		"HTTPS_PROXY=" + url,
@@ -23,4 +23,15 @@ func ProxyEnv(port int) []string {
 		"NO_PROXY=localhost,127.0.0.1",
 		"no_proxy=localhost,127.0.0.1",
 	}
+}
+
+// AllProxyEnv returns ALL_PROXY and all_proxy pointing at the same proxy as
+// ProxyEnv, for clients that honour no per-scheme variable.
+func AllProxyEnv(port int) []string {
+	url := proxyURL(port)
+	return []string{"ALL_PROXY=" + url, "all_proxy=" + url}
+}
+
+func proxyURL(port int) string {
+	return "http://127.0.0.1:" + strconv.Itoa(port)
 }

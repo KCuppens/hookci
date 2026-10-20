@@ -1,0 +1,77 @@
+# Agent releases, cut locally by a maintainer with scripts/release.sh.
+# Dry run: goreleaser release --snapshot --clean --skip=sign,publish
+version: 2
+
+project_name: zeroci
+
+builds:
+  - id: zeroci
+    dir: agent
+    main: ./cmd/zeroci
+    binary: zeroci
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/KCuppens/zerocideploy/agent/internal/version.Version={{.Version}}
+      - -X github.com/KCuppens/zerocideploy/agent/internal/version.Commit={{.Commit}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: zeroci
+    formats: [tar.gz]
+    name_template: "zeroci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: packaging/zeroci-agent@.service
+      - src: packaging/zeroci.slice
+
+nfpms:
+  - id: zeroci
+    package_name: zeroci
+    file_name_template: "zeroci_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: ZeroCI
+    homepage: https://github.com/KCuppens/zerocideploy
+    maintainer: Kobe Cuppens <kobecuppens@hotmail.com>
+    description: ZeroCI agent, runs CI checks sent by the ZeroCI hub.
+    license: Proprietary
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+    contents:
+      - src: packaging/zeroci-agent@.service
+        dst: /etc/systemd/system/zeroci-agent@.service
+        type: config
+      - src: packaging/zeroci.slice
+        dst: /etc/systemd/system/zeroci.slice
+        type: config
+    scripts:
+      postinstall: packaging/postinstall.sh
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: agent/internal/selfupdate/trusted_root.json
+
+signs:
+  - id: sums
+    cmd: cosign
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+    signature: "${artifact}.sigstore.json"
+    artifacts: checksum
+
+release:
+  draft: true
+  extra_files:
+    - glob: agent/internal/selfupdate/trusted_root.json
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"

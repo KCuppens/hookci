@@ -21,3 +21,10 @@ func TestProxyEnv(t *testing.T) {
 		t.Errorf("ProxyEnv(3128) =\n%q\nwant\n%q", got, want)
 	}
 }
+
+func TestAllProxyEnv(t *testing.T) {
+	want := []string{"ALL_PROXY=http://127.0.0.1:3128", "all_proxy=http://127.0.0.1:3128"}
+	if got := AllProxyEnv(InNSProxyPort); !slices.Equal(got, want) {
+		t.Errorf("AllProxyEnv(3128) = %q, want %q", got, want)
+	}
+}

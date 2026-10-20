@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -234,20 +233,7 @@ func (m *Mirrors) clone(ctx context.Context, path, sha, dir string, cred *syscal
 	if _, err := m.Git.Run(ctx, "", env, nil, "-c", "safe.directory="+dir, "-C", dir, "checkout", "--detach", "--quiet", sha); err != nil {
 		return err
 	}
-	chown := m.Chown
-	if chown == nil {
-		chown = os.Lchown
-	}
-	err := filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		return chown(p, int(cred.Uid), int(cred.Gid))
-	})
-	if err != nil {
-		return fmt.Errorf("source: hand checkout to job user: %w", err)
-	}
-	return nil
+	return chownTree(dir, cred, m.Chown)
 }
 
 // GC runs git gc --prune=now --auto when no shared clone of repo is active,

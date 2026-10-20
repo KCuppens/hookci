@@ -592,6 +592,10 @@ type ZeroCIConfig struct {
 	// Deployments keyed by environment name, for example production.
 	Deployments ZeroCIConfigDeployments `json:"deployments,omitempty,omitzero" yaml:"deployments,omitempty"`
 
+	// Where job logs go: hub uploads each job log to the hub for signed View log
+	// links; local keeps logs on the agent only.
+	Logs ZeroCIConfigLogs `json:"logs,omitempty,omitzero" yaml:"logs,omitempty"`
+
 	// Notification targets.
 	Notify *ZeroCIConfigNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
 
@@ -605,6 +609,36 @@ type ZeroCIConfig struct {
 // Deployments keyed by environment name, for example production.
 type ZeroCIConfigDeployments map[string]Deployment
 
+type ZeroCIConfigLogs string
+
+const ZeroCIConfigLogsHub ZeroCIConfigLogs = "hub"
+const ZeroCIConfigLogsLocal ZeroCIConfigLogs = "local"
+
+var enumValues_ZeroCIConfigLogs = []interface{}{
+	"hub",
+	"local",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ZeroCIConfigLogs) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_ZeroCIConfigLogs {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigLogs, v)
+	}
+	*j = ZeroCIConfigLogs(v)
+	return nil
+}
+
 // Notification targets.
 type ZeroCIConfigNotify struct {
 	// Slack notifications.
@@ -613,11 +647,82 @@ type ZeroCIConfigNotify struct {
 
 // Slack notifications.
 type ZeroCIConfigNotifySlack struct {
+	// Where the failure alert goes, over the channel's /zeroci watch setting: the
+	// message thread, or a DM to the commit author.
+	Alert *ZeroCIConfigNotifySlackAlert `json:"alert,omitempty,omitzero" yaml:"alert,omitempty"`
+
 	// Slack channel name, with or without the leading #.
 	Channel string `json:"channel" yaml:"channel"`
 
+	// How much the run message says, over the channel's /zeroci watch setting: quiet
+	// lists job results in the message, normal also replies in its thread per
+	// finished job. verbose means normal.
+	Notify *ZeroCIConfigNotifySlackNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
+
 	// Outcomes that send a notification.
 	On []ZeroCIConfigNotifySlackOnElem `json:"on,omitempty,omitzero" yaml:"on,omitempty"`
+}
+
+type ZeroCIConfigNotifySlackAlert string
+
+const ZeroCIConfigNotifySlackAlertChannel ZeroCIConfigNotifySlackAlert = "channel"
+const ZeroCIConfigNotifySlackAlertDm ZeroCIConfigNotifySlackAlert = "dm"
+
+var enumValues_ZeroCIConfigNotifySlackAlert = []interface{}{
+	"channel",
+	"dm",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ZeroCIConfigNotifySlackAlert) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_ZeroCIConfigNotifySlackAlert {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigNotifySlackAlert, v)
+	}
+	*j = ZeroCIConfigNotifySlackAlert(v)
+	return nil
+}
+
+type ZeroCIConfigNotifySlackNotify string
+
+const ZeroCIConfigNotifySlackNotifyNormal ZeroCIConfigNotifySlackNotify = "normal"
+const ZeroCIConfigNotifySlackNotifyQuiet ZeroCIConfigNotifySlackNotify = "quiet"
+const ZeroCIConfigNotifySlackNotifyVerbose ZeroCIConfigNotifySlackNotify = "verbose"
+
+var enumValues_ZeroCIConfigNotifySlackNotify = []interface{}{
+	"quiet",
+	"normal",
+	"verbose",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ZeroCIConfigNotifySlackNotify) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_ZeroCIConfigNotifySlackNotify {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigNotifySlackNotify, v)
+	}
+	*j = ZeroCIConfigNotifySlackNotify(v)
+	return nil
 }
 
 type ZeroCIConfigNotifySlackOnElem string
@@ -688,6 +793,9 @@ func (j *ZeroCIConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["logs"]; !ok || v == nil {
+		plain.Logs = "hub"
 	}
 	if len(plain.Redact) > 50 {
 		return fmt.Errorf("field %s length: must be <= %d", "redact", 50)

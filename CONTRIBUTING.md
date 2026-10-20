@@ -18,23 +18,25 @@ make check
 
 It runs `scripts/check.sh`, which must end with `check: ok`. The script:
 
-1. Regenerates types with `scripts/gen-schema.sh` and fails if anything under `agent/internal/protocol`, `agent/internal/config`, `hub/src/protocol` or `hub/src/config` differs from the index (codegen drift). Stage or commit your changes there before running it.
-2. Checks Go formatting with `gofmt -l`.
-3. Runs `go vet ./...` and `go test ./...` in `agent/`.
-4. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`.
-5. Runs `npx wrangler deploy --dry-run --outdir dist` in `hub/`.
+1. Runs `npm ci` and `npm test` in `schema/`, which validate the fixtures in `schema/testdata/protocol` against the schema with ajv.
+2. Runs `scripts/schema-check.sh` (also `make schema-check`), which regenerates the types into a temp dir and fails if any generated file in the tree differs (codegen drift).
+3. Checks Go formatting with `gofmt -l`.
+4. Runs `go vet ./...` and `go test ./...` in `agent/`.
+5. Runs `scripts/gen-install.sh --check`, `scripts/test-install.sh` and `node scripts/gen-manifests.mjs --check`; the last fails when the dev and staging App manifests in `hub/manifests/generated/` differ from what `node scripts/gen-manifests.mjs` writes from `hub/manifests/`.
+6. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`.
+7. Runs `npx wrangler deploy --dry-run` in `hub/` for production and staging.
 
 The project has no GitHub Actions workflows and never will. It verifies itself with `scripts/check.sh`. Do not add anything under `.github/workflows/`.
 
 ## Regenerating types
 
-`schema/zeroci.schema.json` is the source of truth for the config format and the agent/hub protocol. After changing it, run:
+`schema/zeroci.schema.json` is the source of truth for the config format and the agent/hub protocol. The TypeScript generator is pinned in `schema/package.json`, so run `cd schema && npm ci` once. After changing the schema, run:
 
 ```sh
 make schema
 ```
 
-and commit the regenerated Go and TypeScript files together with the schema change. Generated files are committed and must not be edited by hand.
+and commit the regenerated Go and TypeScript files together with the schema change. Generated files are committed and must not be edited by hand. Each new protocol message gets a `valid-*.json` and an `invalid-*.json` fixture in `schema/testdata/protocol`.
 
 ## Coding conventions
 

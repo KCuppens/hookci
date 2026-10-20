@@ -7,6 +7,9 @@ type Accepted struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Hub trigger identifier.
 	TriggerId string `json:"trigger_id"`
 
@@ -42,6 +45,9 @@ type Annotations struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Number of annotations found, including those not sent in items.
 	Total *int `json:"total,omitempty,omitzero"`
@@ -89,6 +95,37 @@ type Envelope struct {
 	V int `json:"v"`
 }
 
+// Hub reports a protocol or connection error.
+type Error struct {
+	// Machine-readable error code.
+	Code ErrorCode `json:"code"`
+
+	// Human-readable explanation.
+	Message string `json:"message"`
+
+	// Hub outbox sequence number, acknowledged by the agent with ack. Absent on
+	// errors sent outside the outbox.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// How to upgrade the agent, sent with protocol_unsupported.
+	UpgradeHint *string `json:"upgrade_hint,omitempty,omitzero"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type ErrorCode string
+
+const ErrorCodeAuthFailed ErrorCode = "auth_failed"
+const ErrorCodeBadFrame ErrorCode = "bad_frame"
+const ErrorCodeInternal ErrorCode = "internal"
+const ErrorCodeProtocolUnsupported ErrorCode = "protocol_unsupported"
+const ErrorCodeRateLimited ErrorCode = "rate_limited"
+const ErrorCodeRevoked ErrorCode = "revoked"
+
 // Run or job state change.
 type Event struct {
 	// Agent outbox sequence number, acknowledged by the hub.
@@ -100,11 +137,17 @@ type Event struct {
 	// Job name. Absent for run events.
 	Job *string `json:"job,omitempty,omitzero"`
 
+	// local when the repo config keeps job logs on the agent; set on finished jobs.
+	Logs *EventLogs `json:"logs,omitempty,omitzero"`
+
 	// Why the state changed.
 	Reason *string `json:"reason,omitempty,omitzero"`
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// New run or job state.
 	State EventState `json:"state"`
@@ -128,6 +171,10 @@ type Event struct {
 	V int `json:"v"`
 }
 
+type EventLogs string
+
+const EventLogsLocal EventLogs = "local"
+
 type EventState string
 
 const EventStateCancelled EventState = "cancelled"
@@ -141,6 +188,9 @@ const EventStateSuccess EventState = "success"
 const EventStateSuperseded EventState = "superseded"
 const EventStateVerifying EventState = "verifying"
 
+// Any protocol frame, selected by its type.
+type Frame interface{}
+
 // First frame the agent sends after connecting.
 type Hello struct {
 	// Agent identifier, when already registered.
@@ -148,6 +198,10 @@ type Hello struct {
 
 	// Agent build version.
 	AgentVersion string `json:"agent_version"`
+
+	// Highest hub seq the agent has processed. The hub replays outbox frames above
+	// it. Absent means 0.
+	InboundHwm *int `json:"inbound_hwm,omitempty,omitzero"`
 
 	// Protocol version the agent speaks.
 	ProtocolVersion int `json:"protocol_version"`
@@ -159,6 +213,35 @@ type Hello struct {
 	V int `json:"v"`
 }
 
+// Hub tells the agent to stop a run, or a trigger that has no run yet. Carries
+// exactly one of run_id or trigger_id.
+type Interrupt struct {
+	// Why the run or trigger is stopped.
+	Reason InterruptReason `json:"reason"`
+
+	// Agent run identifier.
+	RunId *string `json:"run_id,omitempty,omitzero"`
+
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
+	// Hub trigger identifier.
+	TriggerId *string `json:"trigger_id,omitempty,omitzero"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type InterruptReason string
+
+const InterruptReasonRepair InterruptReason = "repair"
+const InterruptReasonRevoked InterruptReason = "revoked"
+const InterruptReasonSuperseded InterruptReason = "superseded"
+const InterruptReasonUninstalled InterruptReason = "uninstalled"
+
 // Jobs the agent planned for a run.
 type JobPlanned struct {
 	// Deployment environment, for deploy runs.
@@ -169,6 +252,13 @@ type JobPlanned struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
+	// The trusted config's notify.slack block, which takes precedence over the repo's
+	// Slack watches.
+	Slack *JobPlannedSlack `json:"slack,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -186,6 +276,30 @@ type JobPlannedJobsElem struct {
 	Needs []string `json:"needs"`
 }
 
+// The trusted config's notify.slack block, which takes precedence over the repo's
+// Slack watches.
+type JobPlannedSlack struct {
+	// channel or dm.
+	Alert *JobPlannedSlackAlert `json:"alert,omitempty,omitzero"`
+
+	// Slack channel name, with or without the leading #.
+	Channel string `json:"channel"`
+
+	// quiet, normal or verbose; verbose means normal.
+	Notify *JobPlannedSlackNotify `json:"notify,omitempty,omitzero"`
+}
+
+type JobPlannedSlackAlert string
+
+const JobPlannedSlackAlertChannel JobPlannedSlackAlert = "channel"
+const JobPlannedSlackAlertDm JobPlannedSlackAlert = "dm"
+
+type JobPlannedSlackNotify string
+
+const JobPlannedSlackNotifyNormal JobPlannedSlackNotify = "normal"
+const JobPlannedSlackNotifyQuiet JobPlannedSlackNotify = "quiet"
+const JobPlannedSlackNotifyVerbose JobPlannedSlackNotify = "verbose"
+
 // A chunk of job log.
 type Log struct {
 	// Log bytes, base64 encoded.
@@ -199,6 +313,9 @@ type Log struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -218,6 +335,9 @@ type LogSubscribe struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// Message type.
 	Type string `json:"type"`
 
@@ -229,6 +349,9 @@ type LogSubscribe struct {
 type Rejected struct {
 	// Why the trigger was refused.
 	Reason string `json:"reason"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Hub trigger identifier.
 	TriggerId string `json:"trigger_id"`
@@ -248,6 +371,9 @@ type Token struct {
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
+
 	// GitHub installation token.
 	Token string `json:"token"`
 
@@ -265,6 +391,9 @@ type TokenRequest struct {
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
+
+	// Agent outbox sequence number, acknowledged by the hub with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -299,6 +428,9 @@ type Trigger struct {
 
 	// Repository as owner/name.
 	Repo string `json:"repo"`
+
+	// Hub outbox sequence number, acknowledged by the agent with ack.
+	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Commit to check out.
 	Sha string `json:"sha"`
@@ -341,3 +473,34 @@ type TriggerTrust string
 
 const TriggerTrustTrusted TriggerTrust = "trusted"
 const TriggerTrustUntrusted TriggerTrust = "untrusted"
+
+// Hub accepts the agent's hello.
+type Welcome struct {
+	// Agent identifier assigned by the hub.
+	AgentId string `json:"agent_id"`
+
+	// Hub release version.
+	HubVersion string `json:"hub_version"`
+
+	// GitHub App installation the agent belongs to.
+	InstallationId int `json:"installation_id"`
+
+	// Newest released agent version; the agent logs an upgrade hint when it runs an
+	// older one.
+	LatestAgentVersion *string `json:"latest_agent_version,omitempty,omitzero"`
+
+	// Oldest agent version the hub serves; an older agent stops with agent_too_old.
+	MinAgentVersion *string `json:"min_agent_version,omitempty,omitzero"`
+
+	// Newest protocol version the hub accepts.
+	ProtocolMax int `json:"protocol_max"`
+
+	// Oldest protocol version the hub accepts.
+	ProtocolMin int `json:"protocol_min"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}

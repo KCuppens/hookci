@@ -1,0 +1,47 @@
+{
+  "action": "deleted",
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI=",
+    "account": {
+      "login": "acme",
+      "id": 9,
+      "type": "Organization"
+    },
+    "repository_selection": "selected",
+    "app_id": 123456,
+    "app_slug": "zeroci",
+    "target_id": 9,
+    "target_type": "Organization",
+    "permissions": {
+      "checks": "write",
+      "contents": "read",
+      "metadata": "read",
+      "pull_requests": "read"
+    },
+    "events": [
+      "check_run",
+      "pull_request",
+      "push"
+    ],
+    "created_at": "2025-12-01T10:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "single_file_name": null,
+    "suspended_at": null,
+    "suspended_by": null
+  },
+  "repositories": [
+    {
+      "id": 1001,
+      "node_id": "R_1001",
+      "name": "widgets",
+      "full_name": "acme/widgets",
+      "private": true
+    }
+  ],
+  "sender": {
+    "login": "octocat",
+    "id": 1,
+    "type": "User"
+  }
+}

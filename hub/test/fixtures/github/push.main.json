@@ -1,0 +1,83 @@
+{
+  "ref": "refs/heads/main",
+  "before": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+  "after": "8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+  "created": false,
+  "deleted": false,
+  "forced": false,
+  "base_ref": null,
+  "compare": "https://github.com/acme/widgets/compare/1a2b3c4d5e6f...8d3f9a1c5b7e",
+  "commits": [
+    {
+      "id": "8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+      "tree_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+      "distinct": true,
+      "message": "Fix flaky retry test\n\nThe retry test raced the clock.",
+      "timestamp": "2026-03-02T10:15:00Z",
+      "url": "https://github.com/acme/widgets/commit/8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+      "author": {
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "username": "alice"
+      },
+      "committer": {
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "username": "alice"
+      },
+      "added": [],
+      "removed": [],
+      "modified": [
+        "retry_test.go"
+      ]
+    }
+  ],
+  "head_commit": {
+    "id": "8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+    "tree_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "distinct": true,
+    "message": "Fix flaky retry test\n\nThe retry test raced the clock.",
+    "timestamp": "2026-03-02T10:15:00Z",
+    "url": "https://github.com/acme/widgets/commit/8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+    "author": {
+      "name": "Alice Example",
+      "email": "alice@example.com",
+      "username": "alice"
+    },
+    "committer": {
+      "name": "Alice Example",
+      "email": "alice@example.com",
+      "username": "alice"
+    },
+    "added": [],
+    "removed": [],
+    "modified": [
+      "retry_test.go"
+    ]
+  },
+  "repository": {
+    "id": 1001,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": {
+      "login": "acme",
+      "id": 5001,
+      "type": "Organization"
+    },
+    "default_branch": "main"
+  },
+  "pusher": {
+    "name": "alice",
+    "email": "alice@example.com"
+  },
+  "sender": {
+    "login": "alice",
+    "id": 7001,
+    "type": "User"
+  },
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI="
+  }
+}

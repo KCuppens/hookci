@@ -2,6 +2,7 @@ dist/
 hub/node_modules/
 hub/dist/
 hub/.wrangler/
+schema/node_modules/
 *.db
 *.db-wal
 *.db-shm

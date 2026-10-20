@@ -34,6 +34,10 @@ type Run struct {
 	FinishedAt  *time.Time `json:"finished_at"`
 	Reason      string     `json:"reason"`
 	StepIndex   int        `json:"step_index"`
+	// Slack is the trusted configuration's notify.slack block. It is not
+	// stored: CreateRun only puts it on the run's job_planned frame, so runs
+	// read back, and retries made from them, have none.
+	Slack *protocol.JobPlannedSlack `json:"-"`
 }
 
 // RunFilter selects runs for ListRuns. Zero fields do not filter; Limit <= 0
@@ -163,7 +167,7 @@ func (s *Store) insertRun(ctx context.Context, tx *sql.Tx, r Run, jobs []Job) er
 	if err := s.appendEvent(ctx, tx, protocol.Event{RunId: r.ID, State: protocol.EventState(RunQueued)}); err != nil {
 		return err
 	}
-	msg := protocol.JobPlanned{RunId: r.ID, Jobs: planned}
+	msg := protocol.JobPlanned{RunId: r.ID, Jobs: planned, Slack: r.Slack}
 	if r.Env != "" {
 		msg.Env = &r.Env
 	}

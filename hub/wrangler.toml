@@ -1,0 +1,84 @@
+# zeroci-hub Worker. Secrets are set with `wrangler secret put` and typed in
+# src/env.ts; none belong in this file. Database ids and SLACK_APP_ID are
+# placeholders until the Cloudflare resources and Slack Apps are created (M1-29).
+
+name = "zeroci-hub"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+HUB_ORIGIN = "https://ci.webuno.io"
+HUB_VERSION = "dev"
+# RFC 9116 Expires for /.well-known/security.txt: one year past the build date; bump on each release.
+SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
+LATEST_AGENT_VERSION = ""
+MIN_AGENT_VERSION = ""
+GITHUB_APP_SLUG = "zeroci"
+SLACK_APP_ID = "A0000000000"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zeroci-hub"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "zeroci-logs"
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "AgentDO"
+
+[[durable_objects.bindings]]
+name = "SLACK_DO"
+class_name = "SlackWorkspaceDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sh"]
+fallthrough = true
+
+[env.staging]
+name = "zeroci-hub-staging"
+
+[env.staging.vars]
+HUB_ORIGIN = "https://ci-staging.webuno.io"
+HUB_VERSION = "dev"
+SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
+LATEST_AGENT_VERSION = ""
+MIN_AGENT_VERSION = ""
+GITHUB_APP_SLUG = "zeroci-staging"
+SLACK_APP_ID = "A0000000001"
+
+[env.staging.observability]
+enabled = true
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "zeroci-hub-staging"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "LOGS"
+bucket_name = "zeroci-logs-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "AgentDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "SLACK_DO"
+class_name = "SlackWorkspaceDO"

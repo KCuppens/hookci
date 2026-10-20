@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Source is compiled-in. M0: Local. M1: Relay (hub-token fetch into Mirrors).
+// Source is compiled-in. M0: Local. M1: HubSource (hub-token fetch).
 type Source interface {
 	Name() string
 	// Checkout materialises req.SHA into dir (which must not exist or be empty).
@@ -19,10 +19,12 @@ type Source interface {
 
 // Request names the commit to check out.
 type Request struct {
-	Repo  string              // "owner/name" or "local/<dirname>" for Local
-	SHA   string              // full 40-hex sha; Local fills it from HEAD when empty
-	Ref   string              // "refs/heads/main" or "refs/pull/12/head"
-	RunAs *syscall.Credential // nil means current user; root path sets zeroci-run uid/gid
+	Repo    string              // "owner/name" or "local/<dirname>" for Local
+	SHA     string              // full 40-hex sha; Local fills it from HEAD when empty
+	Ref     string              // "refs/heads/main" or "refs/pull/12/head"
+	BaseSHA string              // pull requests: base commit to fetch alongside; HubSource only
+	RunID   string              // run the fetch token is requested for; HubSource only
+	RunAs   *syscall.Credential // nil means current user; root path sets zeroci-run uid/gid
 }
 
 // Checkout describes a materialised working tree.
@@ -31,16 +33,18 @@ type Checkout struct {
 	Dir      string
 	SHA      string
 	Ref      string
-	Dirty    bool // Local only: working tree had uncommitted changes
+	BaseDir  string // HubSource: checkout of Request.BaseSHA, removed by Release; "" when none
+	Dirty    bool   // Local only: working tree had uncommitted changes
 	Duration time.Duration
 	// Release ends the checkout's hold on its mirror, after which GC may
-	// prune the objects it borrowed. It is idempotent; nil when nothing is
-	// held.
+	// prune the objects it borrowed, or removes HubSource's scratch dir. It
+	// is idempotent; nil when nothing is held.
 	Release func()
 }
 
 var (
-	ErrBusy       = errors.New("source: mirror in use")
-	ErrBadSHA     = errors.New("source: sha must be 40 hex chars")
-	ErrNotGitRepo = errors.New("source: not inside a git repository")
+	ErrBusy        = errors.New("source: mirror in use")
+	ErrBadSHA      = errors.New("source: sha must be 40 hex chars")
+	ErrNotGitRepo  = errors.New("source: not inside a git repository")
+	ErrSHAMismatch = errors.New("source: fetched commit is not the requested sha")
 )

@@ -2,13 +2,16 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/KCuppens/zerocideploy/agent/internal/version.Version=$(VERSION) -X github.com/KCuppens/zerocideploy/agent/internal/version.Commit=$(COMMIT)
 
-.PHONY: check schema agent test-integration hub-test
+.PHONY: check schema schema-check agent test-integration hub-test
 
 check:
-	sh scripts/check.sh
+	scripts/check.sh
 
 schema:
 	scripts/gen-schema.sh
+
+schema-check:
+	scripts/schema-check.sh
 
 agent:
 	mkdir -p dist

@@ -33,9 +33,21 @@ func noDeps(run func(ctx context.Context, args []string, stdout, stderr io.Write
 
 func commandTable() map[string]command {
 	return map[string]command{
+		"agent": {
+			summary: "connect to the hub and run the checks it sends: agent [--state-dir DIR | --installation ID]",
+			run:     cmdAgent,
+		},
+		"connect": {
+			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
+			run:     cmdConnect,
+		},
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
 			run:     noDeps(runDetect),
+		},
+		"doctor": {
+			summary: "diagnose this host and its path to the hub: doctor [--hub URL] [--state-root DIR] [--json]",
+			run:     cmdDoctor,
 		},
 		"help": {
 			summary: "show help for zeroci",
@@ -59,6 +71,10 @@ func commandTable() map[string]command {
 		"status": {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",
 			run:     cmdStatus,
+		},
+		"upgrade": {
+			summary: "install a signed release and restart the agents: upgrade [--version vX.Y.Z] [--check] [--allow-downgrade] [--refresh-trust-root]",
+			run:     cmdUpgrade,
 		},
 		"validate": {
 			summary: "validate a zeroci configuration file",
@@ -102,6 +118,10 @@ func signalContext() (context.Context, context.CancelFunc) {
 // dispatch parses the global flags and runs the named command with ctx and
 // the host deps from newDeps.
 func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newDeps func(Globals, io.Writer) Deps) int {
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Fprintln(stdout, version.String())
+		return ExitOK
+	}
 	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }

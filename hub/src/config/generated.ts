@@ -31,6 +31,14 @@ export interface ZeroCIConfig {
        * Outcomes that send a notification.
        */
       on?: ("failure" | "success" | "deploy" | "all")[];
+      /**
+       * How much the run message says, over the channel's /zeroci watch setting: quiet lists job results in the message, normal also replies in its thread per finished job. verbose means normal.
+       */
+      notify?: "quiet" | "normal" | "verbose";
+      /**
+       * Where the failure alert goes, over the channel's /zeroci watch setting: the message thread, or a DM to the commit author.
+       */
+      alert?: "channel" | "dm";
     };
   };
   /**
@@ -39,6 +47,10 @@ export interface ZeroCIConfig {
    * @maxItems 50
    */
   redact?: string[];
+  /**
+   * Where job logs go: hub uploads each job log to the hub for signed View log links; local keeps logs on the agent only.
+   */
+  logs?: "hub" | "local";
 }
 /**
  * Checks that run on pull requests and pushes.

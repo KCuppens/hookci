@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
 
 // TestSecondSignalKills: the first SIGINT cancels the command context; a
@@ -82,6 +84,19 @@ func TestMainVersion(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "zeroci dev") {
 		t.Fatalf("stdout = %q, want to contain %q", stdout.String(), "zeroci dev")
+	}
+}
+
+func TestMainVersionFlag(t *testing.T) {
+	old := version.Version
+	version.Version, version.Commit = "1.2.3", "abcdef0"
+	t.Cleanup(func() { version.Version, version.Commit = old, "" })
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"--version"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("exit = %d; stderr %q", code, stderr.String())
+	}
+	if got, want := stdout.String(), "zeroci 1.2.3 (abcdef0)\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 

@@ -222,3 +222,29 @@ func TestJobTransitionsAndUpdate(t *testing.T) {
 		t.Errorf("TransitionJob with no from err = %v, want no from state", err)
 	}
 }
+
+func TestJobEventLogsLocal(t *testing.T) {
+	tests := []struct {
+		name      string
+		to        JobState
+		local     bool
+		wantLogs  bool
+		wantTailN int
+	}{
+		{"failed with hub logs keeps tail", JobFailed, false, false, 1},
+		{"failed with local logs drops tail", JobFailed, true, true, 0},
+		{"success with local logs", JobSuccess, true, true, 0},
+		{"running never says local", JobRunning, true, false, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := jobEvent("r1", "test", tc.to, JobUpdate{Tail: []string{"boom"}, LogsLocal: tc.local})
+			if got := ev.Logs != nil && *ev.Logs == protocol.EventLogsLocal; got != tc.wantLogs {
+				t.Errorf("logs local = %v, want %v", got, tc.wantLogs)
+			}
+			if len(ev.Tail) != tc.wantTailN {
+				t.Errorf("tail = %v, want %d lines", ev.Tail, tc.wantTailN)
+			}
+		})
+	}
+}

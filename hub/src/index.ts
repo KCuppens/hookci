@@ -1,21 +1,24 @@
-// zeroci-hub: the Cloudflare Worker that agents report to and operators
-// browse. This is a scaffold: only a health check exists so far. Later
-// tickets add the run intake API, SSE/log streaming, and the dashboard UI.
+// zeroci-hub: the Cloudflare Worker that receives GitHub webhooks, holds the
+// agent WebSockets (AgentDO) and reports to Slack and GitHub Checks.
+
+import { app } from "./app";
+import { runCron } from "./cron";
+import type { Env } from "./env";
+import "./slack/actions";
+import "./slack/commands";
+import "./slack/events";
+import "./webhook/authorization";
+import "./webhook/check-run";
+import "./webhook/installation";
+import "./sinks/checks";
+import "./sinks/slack";
+
+export { AgentDO } from "./do/agent";
+export { SlackWorkspaceDO } from "./do/slack-workspace";
 
 export default {
-	async fetch(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-
-		if (request.method === "GET" && url.pathname === "/healthz") {
-			return new Response("ok", {
-				status: 200,
-				headers: { "content-type": "text/plain" },
-			});
-		}
-
-		return new Response("not found", {
-			status: 404,
-			headers: { "content-type": "text/plain" },
-		});
+	fetch: app.fetch,
+	async scheduled(event, env) {
+		await runCron(env, event.cron);
 	},
-} satisfies ExportedHandler;
+} satisfies ExportedHandler<Env>;

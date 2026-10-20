@@ -49,6 +49,16 @@
                 "type": "string",
                 "enum": ["failure", "success", "deploy", "all"]
               }
+            },
+            "notify": {
+              "description": "How much the run message says, over the channel's /zeroci watch setting: quiet lists job results in the message, normal also replies in its thread per finished job. verbose means normal.",
+              "type": "string",
+              "enum": ["quiet", "normal", "verbose"]
+            },
+            "alert": {
+              "description": "Where the failure alert goes, over the channel's /zeroci watch setting: the message thread, or a DM to the commit author.",
+              "type": "string",
+              "enum": ["channel", "dm"]
             }
           }
         }
@@ -61,6 +71,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "logs": {
+      "description": "Where job logs go: hub uploads each job log to the hub for signed View log links; local keeps logs on the agent only.",
+      "type": "string",
+      "enum": ["hub", "local"],
+      "default": "hub"
     }
   },
   "$defs": {
@@ -361,7 +377,7 @@
       }
     },
     "protocol": {
-      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type.",
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.",
       "$defs": {
         "Envelope": {
           "description": "Fields shared by every frame.",
@@ -407,6 +423,11 @@
             "agent_id": {
               "description": "Agent identifier, when already registered.",
               "type": "string"
+            },
+            "inbound_hwm": {
+              "description": "Highest hub seq the agent has processed. The hub replays outbox frames above it. Absent means 0.",
+              "type": "integer",
+              "minimum": 0
             }
           }
         },
@@ -425,6 +446,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "trigger"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "hub_seq": {
               "description": "Hub sequence number, acknowledged by the agent.",
@@ -509,6 +535,11 @@
               "type": "string",
               "const": "accepted"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "trigger_id": {
               "description": "Hub trigger identifier.",
               "type": "string"
@@ -535,6 +566,11 @@
               "type": "string",
               "const": "rejected"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "trigger_id": {
               "description": "Hub trigger identifier.",
               "type": "string"
@@ -560,6 +596,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "job_planned"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -591,6 +632,28 @@
             "env": {
               "description": "Deployment environment, for deploy runs.",
               "type": "string"
+            },
+            "slack": {
+              "description": "The trusted config's notify.slack block, which takes precedence over the repo's Slack watches.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["channel"],
+              "properties": {
+                "channel": {
+                  "description": "Slack channel name, with or without the leading #.",
+                  "type": "string"
+                },
+                "notify": {
+                  "description": "quiet, normal or verbose; verbose means normal.",
+                  "type": "string",
+                  "enum": ["quiet", "normal", "verbose"]
+                },
+                "alert": {
+                  "description": "channel or dm.",
+                  "type": "string",
+                  "enum": ["channel", "dm"]
+                }
+              }
             }
           }
         },
@@ -609,6 +672,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "event"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "agent_seq": {
               "description": "Agent outbox sequence number, acknowledged by the hub.",
@@ -654,6 +722,11 @@
             "reason": {
               "description": "Why the state changed.",
               "type": "string"
+            },
+            "logs": {
+              "description": "local when the repo config keeps job logs on the agent; set on finished jobs.",
+              "type": "string",
+              "enum": ["local"]
             }
           }
         },
@@ -672,6 +745,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "annotations"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "agent_seq": {
               "description": "Agent outbox sequence number, acknowledged by the hub.",
@@ -745,6 +823,11 @@
               "type": "string",
               "const": "token_request"
             },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -771,6 +854,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "token"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -802,6 +890,11 @@
               "type": "string",
               "const": "log_subscribe"
             },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -832,6 +925,11 @@
               "description": "Message type.",
               "type": "string",
               "const": "log"
+            },
+            "seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
+              "type": "integer",
+              "minimum": 1
             },
             "run_id": {
               "description": "Agent run identifier.",
@@ -873,6 +971,146 @@
               "type": "integer"
             }
           }
+        },
+        "Welcome": {
+          "description": "Hub accepts the agent's hello.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "welcome"
+            },
+            "hub_version": {
+              "description": "Hub release version.",
+              "type": "string"
+            },
+            "protocol_min": {
+              "description": "Oldest protocol version the hub accepts.",
+              "type": "integer"
+            },
+            "protocol_max": {
+              "description": "Newest protocol version the hub accepts.",
+              "type": "integer"
+            },
+            "agent_id": {
+              "description": "Agent identifier assigned by the hub.",
+              "type": "string"
+            },
+            "installation_id": {
+              "description": "GitHub App installation the agent belongs to.",
+              "type": "integer"
+            },
+            "latest_agent_version": {
+              "description": "Newest released agent version; the agent logs an upgrade hint when it runs an older one.",
+              "type": "string"
+            },
+            "min_agent_version": {
+              "description": "Oldest agent version the hub serves; an older agent stops with agent_too_old.",
+              "type": "string"
+            }
+          }
+        },
+        "Interrupt": {
+          "description": "Hub tells the agent to stop a run, or a trigger that has no run yet. Carries exactly one of run_id or trigger_id.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "reason"],
+          "oneOf": [{ "required": ["run_id"] }, { "required": ["trigger_id"] }],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "interrupt"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "trigger_id": {
+              "description": "Hub trigger identifier.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why the run or trigger is stopped.",
+              "type": "string",
+              "enum": ["superseded", "revoked", "uninstalled", "repair"]
+            }
+          }
+        },
+        "Error": {
+          "title": "ProtocolErrorFrame",
+          "description": "Hub reports a protocol or connection error.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "code", "message"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "error"
+            },
+            "seq": {
+              "description": "Hub outbox sequence number, acknowledged by the agent with ack. Absent on errors sent outside the outbox.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "code": {
+              "description": "Machine-readable error code.",
+              "type": "string",
+              "enum": ["protocol_unsupported", "auth_failed", "revoked", "rate_limited", "bad_frame", "internal"]
+            },
+            "message": {
+              "description": "Human-readable explanation.",
+              "type": "string"
+            },
+            "upgrade_hint": {
+              "description": "How to upgrade the agent, sent with protocol_unsupported.",
+              "type": "string"
+            }
+          }
+        },
+        "Frame": {
+          "description": "Any protocol frame, selected by its type.",
+          "oneOf": [
+            { "$ref": "#/$defs/protocol/$defs/Hello" },
+            { "$ref": "#/$defs/protocol/$defs/Trigger" },
+            { "$ref": "#/$defs/protocol/$defs/Accepted" },
+            { "$ref": "#/$defs/protocol/$defs/Rejected" },
+            { "$ref": "#/$defs/protocol/$defs/JobPlanned" },
+            { "$ref": "#/$defs/protocol/$defs/Event" },
+            { "$ref": "#/$defs/protocol/$defs/Annotations" },
+            { "$ref": "#/$defs/protocol/$defs/TokenRequest" },
+            { "$ref": "#/$defs/protocol/$defs/Token" },
+            { "$ref": "#/$defs/protocol/$defs/LogSubscribe" },
+            { "$ref": "#/$defs/protocol/$defs/Log" },
+            { "$ref": "#/$defs/protocol/$defs/Ack" },
+            { "$ref": "#/$defs/protocol/$defs/Welcome" },
+            { "$ref": "#/$defs/protocol/$defs/Interrupt" },
+            { "$ref": "#/$defs/protocol/$defs/Error" }
+          ]
         }
       }
     }

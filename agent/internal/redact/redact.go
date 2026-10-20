@@ -1,7 +1,8 @@
 // Package redact masks secrets in job output before it is written anywhere.
 //
-// Redaction works line by line: literal secret values are replaced first
-// (longest first), then the built-in token patterns and the config `redact:`
+// Redaction works line by line: literal secret values and secrets registered
+// with AddSecret are replaced first (longest first), then the built-in token
+// patterns and the config `redact:`
 // patterns. It is best effort on line boundaries: a secret that contains a
 // newline, or that a job prints split across two lines, is not caught.
 package redact
@@ -14,6 +15,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Mask replaces every redacted value.
@@ -76,15 +80,57 @@ func New(literals []string, patterns []*regexp.Regexp) (r *Redactor, warnings []
 	return r, warnings
 }
 
-// Line returns s with every literal and pattern match replaced by Mask.
+// Line returns s with every literal, registered secret (AddSecret) and
+// pattern match replaced by Mask.
 func (r *Redactor) Line(s string) string {
 	for _, v := range r.literals {
 		s = strings.ReplaceAll(s, v, Mask)
+	}
+	if reg := registry.Load(); reg != nil {
+		for _, sec := range *reg {
+			s = strings.ReplaceAll(s, sec.value, Mask)
+		}
 	}
 	for _, p := range r.patterns {
 		s = p.ReplaceAllString(s, Mask)
 	}
 	return s
+}
+
+type secret struct {
+	value string
+	exp   time.Time
+}
+
+var (
+	registryMu sync.Mutex
+	registry   atomic.Pointer[[]secret] // longest first; replaced on every change
+)
+
+// AddSecret makes every Redactor in the process mask v from now on, for
+// values learned at run time such as hub-issued fetch tokens. exp is when v
+// stops being valid; expired values are dropped by later calls. Values
+// shorter than MinSecretLen are ignored.
+func AddSecret(v string, exp time.Time) {
+	if len(v) < MinSecretLen {
+		return
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	var cur []secret
+	if p := registry.Load(); p != nil {
+		cur = *p
+	}
+	now := time.Now()
+	next := make([]secret, 0, len(cur)+1)
+	for _, s := range cur {
+		if s.value != v && s.exp.After(now) {
+			next = append(next, s)
+		}
+	}
+	next = append(next, secret{value: v, exp: exp})
+	slices.SortStableFunc(next, func(a, b secret) int { return len(b.value) - len(a.value) })
+	registry.Store(&next)
 }
 
 // Writer returns a line-buffered io.WriteCloser; partial lines are held until

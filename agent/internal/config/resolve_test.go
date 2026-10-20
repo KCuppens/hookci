@@ -21,6 +21,28 @@ func TestEnvFilesCollected(t *testing.T) {
 	}
 }
 
+func TestLogsMode(t *testing.T) {
+	tests := []struct {
+		name, extra string
+		local       bool
+	}{
+		{"default", "", false},
+		{"hub", "logs: hub\n", false},
+		{"local", "logs: local\n", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, diags := Parse([]byte(oneJob+tc.extra), ParseOptions{})
+			if cfg == nil || cfg.Checks() == nil {
+				t.Fatalf("Parse returned no checks: %v", diags)
+			}
+			if got := cfg.Checks().LogsLocal; got != tc.local {
+				t.Errorf("LogsLocal = %v, want %v", got, tc.local)
+			}
+		})
+	}
+}
+
 func TestJobsTopoSorted(t *testing.T) {
 	src := `version: 1
 checks:

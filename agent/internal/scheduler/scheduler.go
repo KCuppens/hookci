@@ -34,6 +34,9 @@ type JobOutcome struct {
 	ExitCode int
 	Reason   string   // e.g. "timeout", "exit 1", "superseded by <sha>"
 	Tail     []string // last log lines; the store keeps them on failed events
+	// LogsLocal marks a job whose log stays on the agent (`logs: local`); the
+	// job's terminal event tells the hub so alerts say where the log is.
+	LogsLocal bool
 }
 
 // Options configures a Scheduler.
@@ -582,7 +585,7 @@ func (s *Scheduler) settleJob(rs *runState, r result) {
 		}
 	}
 
-	upd := store.JobUpdate{Reason: reason, DurationMS: &r.dur, Tail: r.out.Tail}
+	upd := store.JobUpdate{Reason: reason, DurationMS: &r.dur, Tail: r.out.Tail, LogsLocal: r.out.LogsLocal}
 	if st == store.JobSuccess || st == store.JobFailed {
 		upd.ExitCode = &exit
 	}

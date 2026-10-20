@@ -1,0 +1,6 @@
+{
+  "v": 1,
+  "type": "interrupt",
+  "trigger_id": "trg_01",
+  "reason": "revoked"
+}

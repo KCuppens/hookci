@@ -35,8 +35,9 @@ Commands available now: `version`, `detect`, `validate`, `init`, `run`, `status`
 
 ## Development
 
-- `make check` runs formatting, vet, unit tests, the schema drift check, hub tests and a wrangler dry run. It must print `check: ok`.
-- `make schema` regenerates Go and TypeScript types from `schema/zeroci.schema.json`.
+- `make check` runs the schema fixture tests, the schema drift check, formatting, vet, unit tests, hub tests and a wrangler dry run. It must print `check: ok`.
+- `make schema` regenerates Go and TypeScript types from `schema/zeroci.schema.json`. Run `cd schema && npm ci` once first.
+- `make schema-check` fails if the committed generated types differ from what `make schema` would write.
 - `make test-integration` runs the integration tests. They need root, so run them only on a throwaway VM, never on a workstation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and the sign-off rule ([DCO.md](DCO.md)).
