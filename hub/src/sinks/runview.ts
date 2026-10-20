@@ -75,6 +75,7 @@ export async function loadRunView(
 		target: run.env === null ? "checks" : `deploy:${run.env}`,
 		state: runState(run.state),
 		reason: run.reason !== null && Object.hasOwn(PENDING_REASONS, run.reason) ? (run.reason as PendingReason) : undefined,
+		trustRefused: run.trust_refused ?? undefined,
 		commitTitle: run.commit_title ?? "",
 		authorLogin: run.author_login ?? "",
 		startedAt: run.started_at ?? undefined,

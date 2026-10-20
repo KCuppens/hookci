@@ -8,21 +8,21 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { logKey } from "../logs/keys";
 import { logEvent } from "../observability";
-import { QUOTAS } from "../quotas";
+import { quotaLimit } from "../quotas";
 import { authenticateAgent } from "./agent-auth";
 
 type LogContext<Path extends string> = Context<{ Bindings: Env }, Path>;
 
 const TEXT = "text/plain; charset=utf-8";
 
-/** The request body, refused with 413 log_too_large as soon as it passes QUOTAS.logBytes. */
-async function readCapped(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
+/** The request body, refused with 413 log_too_large as soon as it passes limit bytes. */
+async function readCapped(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 	let size = 0;
 	if (body) {
 		for await (const chunk of body) {
 			size += chunk.byteLength;
-			if (size > QUOTAS.logBytes) throw new HubError("log_too_large", 413);
+			if (size > limit) throw new HubError("log_too_large", 413);
 			chunks.push(chunk);
 		}
 	}
@@ -55,9 +55,10 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	const truncated = c.req.header("x-zeroci-log-truncated");
 	if (truncated !== "0" && truncated !== "1") throw new HubError("bad_log_truncated", 400);
 	const length = Number(c.req.header("content-length") ?? 0);
-	if (bytes > QUOTAS.logBytes || length > QUOTAS.logBytes) throw new HubError("log_too_large", 413);
+	const limit = quotaLimit(env, "logBytes");
+	if (bytes > limit || length > limit) throw new HubError("log_too_large", 413);
 
-	const body = await readCapped(c.req.raw.body);
+	const body = await readCapped(c.req.raw.body, limit);
 	await env.LOGS.put(key, body, { httpMetadata: { contentEncoding: "gzip", contentType: TEXT } });
 	await setJobLog(tenantDb(env.DB, agent.installation_id), runId, job, { key, bytes, truncated: truncated === "1" });
 	logEvent("log_uploaded", { installation_id: agent.installation_id, run_id: runId, job, bytes, gzip_bytes: body.byteLength });

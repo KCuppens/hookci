@@ -220,7 +220,7 @@ func checkTrust(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnostics 
 	if opts.SelfHosted && len(cfg.Deployments) == 0 {
 		return nil
 	}
-	return Diagnostics{li.errorf("checks.trust", "use trust: approve, or self-host the hub without deployments",
+	return Diagnostics{li.errorf("checks.trust", "use trust: collaborators, or self-host the hub without deployments",
 		"trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network")}
 }
 

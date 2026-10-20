@@ -88,24 +88,39 @@ func FromRoot(root ZeroCIConfig) (*Config, Diagnostics) {
 	return build(raw, lineIndex{}, ParseOptions{})
 }
 
+// Policy is the fork policy a configuration declares.
+type Policy struct {
+	Trust          ChecksTrust
+	HasDeployments bool
+}
+
+// DeclaredPolicy reads the policy of a configuration that passes the schema.
+// Unlike Parse it skips the semantic checks, which refuse trust: all, so the
+// agent can record what a repository asks for. ok is false when the file
+// does not decode or fails the schema.
+func DeclaredPolicy(data []byte) (p Policy, ok bool) {
+	raw, lines, diags := decodeYAML(data)
+	if diags.HasErrors() {
+		return Policy{}, false
+	}
+	var root ZeroCIConfig
+	if decodeRoot(raw, lines, &root).HasErrors() {
+		return Policy{}, false
+	}
+	p = Policy{Trust: ChecksTrustCollaborators, HasDeployments: len(root.Deployments) > 0}
+	if root.Checks != nil {
+		p.Trust = root.Checks.Trust
+	}
+	return p, true
+}
+
 // build validates a decoded document and turns it into a Config with its
 // resolved checks.
 func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
-	if diags := validateSchema(raw, lines); diags.HasErrors() {
-		diags.sort()
+	var cfg Config
+	if diags := decodeRoot(raw, lines, &cfg.ZeroCIConfig); diags.HasErrors() {
 		return nil, diags
 	}
-
-	var cfg Config
-	encoded, err := json.Marshal(raw)
-	if err == nil {
-		err = json.Unmarshal(encoded, &cfg.ZeroCIConfig)
-	}
-	if err != nil {
-		return nil, Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
-	}
-	fillDeploymentDefaults(&cfg.ZeroCIConfig)
-
 	diags := checkSemantics(&cfg.ZeroCIConfig, opts, lines)
 	diags.sort()
 	if diags.HasErrors() {
@@ -113,6 +128,24 @@ func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
 	}
 	cfg.checks = resolveChecks(&cfg.ZeroCIConfig, raw)
 	return &cfg, diags
+}
+
+// decodeRoot schema-validates a decoded document and decodes it into root
+// with deployment defaults filled in. Only errors come back.
+func decodeRoot(raw any, lines lineIndex, root *ZeroCIConfig) Diagnostics {
+	if diags := validateSchema(raw, lines); diags.HasErrors() {
+		diags.sort()
+		return diags
+	}
+	encoded, err := json.Marshal(raw)
+	if err == nil {
+		err = json.Unmarshal(encoded, root)
+	}
+	if err != nil {
+		return Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
+	}
+	fillDeploymentDefaults(root)
+	return nil
 }
 
 // Limits on what one document may expand to, so alias cycles and alias

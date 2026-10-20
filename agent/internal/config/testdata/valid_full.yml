@@ -5,7 +5,7 @@ checks:
     pull_request: true
     push:
       branches: [main, release]
-  trust: approve
+  trust: collaborators
   forks: never
   limits:
     cpus: 4

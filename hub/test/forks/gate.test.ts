@@ -41,7 +41,7 @@ describe("fork pull request gate", () => {
   });
 
   it("with forks: never gates as fork_never with no Approve button and no check action", async () => {
-    world.files[POLICY_FILE] = "forks: never\n";
+    world.files[POLICY_FILE] = "checks:\n  forks: never\n";
     await deliver("pull_request", forkPush());
 
     expect(await runs()).toEqual([expect.objectContaining({ state: "gated", reason: "fork_never" })]);

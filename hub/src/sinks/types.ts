@@ -1,5 +1,7 @@
 // What sinks (GitHub checks, Slack, ...) receive about runs and agents.
 
+import type { TrustRefusal } from "../policy/trust";
+
 export type RunState =
 	| "received"
 	| "gated"
@@ -48,6 +50,8 @@ export interface RunView {
 	target: string;
 	state: RunState;
 	reason?: PendingReason;
+	/** Why the base ref's `trust: all` was refused, on a gated fork run. */
+	trustRefused?: TrustRefusal;
 	commitTitle: string;
 	authorLogin: string;
 	authorEmail?: string;

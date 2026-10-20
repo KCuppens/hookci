@@ -1,4 +1,5 @@
 import type { JobPlanned } from "../protocol";
+import type { TrustRefusal } from "../policy/trust";
 import { TERMINAL } from "../slack/badge";
 import type { TenantDb } from "./tenant";
 import type { WatchRow } from "./watches";
@@ -30,6 +31,8 @@ export interface RunRow {
 	slack_channel: string | null;
 	slack_notify: WatchRow["notify"] | null;
 	slack_alert: WatchRow["alert"] | null;
+	/** Why the base ref's `trust: all` was refused for this gated fork run; null when nothing was refused. */
+	trust_refused: TrustRefusal | null;
 }
 
 export interface JobRow {
@@ -42,7 +45,8 @@ export interface JobRow {
 	duration_ms: number | null;
 }
 
-export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert">;
+export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert" | "trust_refused"> &
+	Partial<Pick<RunRow, "trust_refused">>;
 
 const SLACK_NOTIFY: Record<string, WatchRow["notify"]> = { quiet: "quiet", normal: "normal", verbose: "normal" };
 const SLACK_ALERT: Record<string, WatchRow["alert"]> = { channel: "channel", dm: "dm" };
@@ -55,8 +59,8 @@ const PATCH_COLUMNS = ["reason", "agent_id", "started_at", "finished_at", "durat
 export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
 	await t.run(
 		`INSERT INTO runs (installation_id, run_id, repo_id, sha, ref, event, pr_number, env, attempt, trigger_id, agent_id, state, reason,
-			author_login, commit_title, started_at, finished_at, duration_ms, log_key)
-		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`,
+			author_login, commit_title, started_at, finished_at, duration_ms, log_key, trust_refused)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)`,
 		row.run_id,
 		row.repo_id,
 		row.sha,
@@ -75,6 +79,7 @@ export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
 		row.finished_at,
 		row.duration_ms,
 		row.log_key,
+		row.trust_refused ?? null,
 	);
 }
 

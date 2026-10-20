@@ -113,9 +113,9 @@
           }
         },
         "trust": {
-          "description": "Whose pull requests run automatically: repository collaborators, only after approval, or everyone.",
+          "description": "Whose pull requests run automatically: repository collaborators, or everyone (fork pull requests included; only a self-hosted hub without deployments honors it).",
           "type": "string",
-          "enum": ["collaborators", "approve", "all"],
+          "enum": ["collaborators", "all"],
           "default": "collaborators"
         },
         "forks": {

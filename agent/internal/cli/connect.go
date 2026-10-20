@@ -160,6 +160,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		Credential:     resp.Credential,
 		Name:           resp.Name,
 		InstallationID: resp.InstallationID,
+		HubMode:        info.Mode,
 	}
 	if err := agentconf.Save(dir, cfg); err != nil {
 		fmt.Fprintf(errw, "zeroci: %v\n", err)

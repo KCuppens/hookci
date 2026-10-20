@@ -456,6 +456,25 @@ func TestConnectProtocolMismatchSkipsRedeem(t *testing.T) {
 	}
 }
 
+// agent.json keeps the hub's mode, which decides whether trust: all parses.
+func TestConnectStoresHubMode(t *testing.T) {
+	for _, mode := range []string{"shared", "self_hosted"} {
+		t.Run(mode, func(t *testing.T) {
+			hub := newFakePairHub(t, http.StatusOK, redeemOK)
+			info := fmt.Sprintf(`{"name":"zeroci-hub","version":"test","mode":%q,"protocol_versions":[%d,%d],"github_app":{"slug":"zeroci"},"slack":{"enabled":true}}`, mode, protocol.Version, protocol.Version)
+			hub.info.Store(&info)
+			dir := t.TempDir()
+			if code, _, stderr := runConnectCLI(&fakeServices{}, "connect", testPairToken, "--hub", hub.srv.URL, "--state-dir", dir, "--no-service"); code != ExitOK {
+				t.Fatalf("exit = %d stderr = %q", code, stderr)
+			}
+			cfg, err := agentconf.Load(dir)
+			if err != nil || cfg.HubMode != mode {
+				t.Fatalf("agent.json = %+v, %v; want hub_mode %s", cfg, err, mode)
+			}
+		})
+	}
+}
+
 func TestConnectRefusesNonHub(t *testing.T) {
 	hub := newFakePairHub(t, http.StatusOK, redeemOK)
 	info := `{"name":"something-else"}`

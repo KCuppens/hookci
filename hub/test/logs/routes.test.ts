@@ -1,6 +1,8 @@
+import { createExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { upsertInstallation } from "../../src/db/installations";
+import worker from "../../src/index";
 import { QUOTAS } from "../../src/quotas";
 import { clearTables } from "../db/helpers";
 import { gunzip, gzip, seedAgent, seedRun } from "./helpers";
@@ -83,6 +85,17 @@ describe("PUT /v1/logs/:runId/:job", () => {
 
   it("refuses a declared size over the cap with 413 log_too_large", async () => {
     const res = await put(owner, await gzip(LOG), { "x-zeroci-log-bytes": String(QUOTAS.logBytes + 1) });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "log_too_large" });
+  });
+
+  it("keeps the log size cap on a self-hosted hub", async () => {
+    const req = new Request(`https://hub.test/v1/logs/${RUN}/test`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${owner}`, "content-encoding": "gzip", "x-zeroci-log-bytes": String(QUOTAS.logBytes + 1), "x-zeroci-log-truncated": "0" },
+      body: await gzip(LOG),
+    });
+    const res = await worker.fetch(req, { ...env, HUB_MODE: "self_hosted" }, createExecutionContext());
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: "log_too_large" });
   });

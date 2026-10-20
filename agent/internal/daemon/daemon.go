@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
@@ -75,6 +76,9 @@ type Options struct {
 	DeployUser string
 	// HealthClient probes deploy health URLs; nil: the zero http.Client.
 	HealthClient *http.Client
+	// HubInfo reads the hub's /v1/info when the daemon starts; nil fetches
+	// it from the paired hub.
+	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -90,6 +94,9 @@ type Daemon struct {
 	src     source.Source
 	logs    *logupload.Uploader
 	tail    *logtail.Tailer // live log tail of the log viewer
+	// selfHosted is whether the hub reported mode self_hosted, which lets
+	// a .zeroci.yml without deployments declare trust: all.
+	selfHosted atomic.Bool
 
 	wake    chan struct{}
 	mu      sync.Mutex
@@ -128,10 +135,17 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
+	if o.HubInfo == nil {
+		hubURL := conf.HubURL
+		o.HubInfo = func(ctx context.Context) (hubclient.HubInfo, error) {
+			return hubclient.FetchInfo(ctx, http.DefaultClient, hubURL)
+		}
+	}
 	d := &Daemon{
 		agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1),
 		deploys: o.Deploys, deployWake: make(chan struct{}, 1), deploying: map[string]bool{},
 	}
+	d.selfHosted.Store(conf.HubMode == hubModeSelfHosted)
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
@@ -204,6 +218,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		})
 	}
+	wg.Go(func() { d.refreshHubMode(wctx) })
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
 	wg.Go(func() { d.deployWorker(wctx) })
@@ -406,7 +421,14 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 	defer co.Release()
 	discard := func() { _ = os.RemoveAll(dir.Root) }
 
-	p, err := resolvePlan(co)
+	p, err := resolvePlan(co, config.ParseOptions{SelfHosted: d.selfHosted.Load()})
+	if err == nil && p.policy != nil && t.Pr == nil {
+		// The hub only triggers pushes of the default branch, so this is the
+		// configuration fork pull requests are judged by.
+		if err := d.st.SaveRepoConfig(bg, t.Repo, co.SHA, string(p.policy.Trust), p.policy.HasDeployments); err != nil {
+			d.log.Error("record repo config failed", "repo", t.Repo, "err", err)
+		}
+	}
 	switch {
 	case err != nil:
 		discard()

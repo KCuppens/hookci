@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 )
 
@@ -128,5 +130,8 @@ func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
 		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
 		DiskFree:  doctor.HostDiskFree,
 		Writable:  doctor.HostWritable,
+		RepoConfigs: func(ctx context.Context, stateDir string) ([]store.RepoConfig, error) {
+			return store.ReadRepoConfigs(ctx, filepath.Join(stateDir, "agent.db"))
+		},
 	}
 }

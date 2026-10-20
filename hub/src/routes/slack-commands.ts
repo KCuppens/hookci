@@ -9,7 +9,7 @@ import { callSlackDo } from "../do/slack-workspace";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { reportError } from "../observability";
-import { QUOTAS } from "../quotas";
+import { quotaLimit } from "../quotas";
 import { type SlackCommandRequest, type SlackReply, commandFor } from "../slack/registry";
 import { readVerifiedSlackBody } from "../slack/verify";
 import { S } from "../strings";
@@ -32,7 +32,7 @@ export async function slackCommands(c: Context<{ Bindings: Env }>): Promise<Resp
 	if (form.get("ssl_check") === "1") return c.body(null, 200);
 	const cmd = parseCommand(form);
 
-	const rate = await hitIpRate(env.DB, `slackcmd:${cmd.teamId}`, QUOTAS.slackCmdsPerMin, MINUTE_MS, now);
+	const rate = await hitIpRate(env.DB, `slackcmd:${cmd.teamId}`, quotaLimit(env, "slackCmdsPerMin"), MINUTE_MS, now);
 	if (!rate.ok) return c.json({ response_type: "ephemeral", text: S.slack.slowDown } satisfies SlackReply);
 	if (env.ROTATION_IN_PROGRESS) return c.json({ response_type: "ephemeral", text: S.slack.updating } satisfies SlackReply);
 

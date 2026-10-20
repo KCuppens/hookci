@@ -16,8 +16,9 @@ import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
+import type { TrustRefusal } from "../policy/trust";
 import type { Event as EventFrame, Interrupt } from "../protocol";
-import { QUOTAS } from "../quotas";
+import { checkQuota } from "../quotas";
 import { fanOut, sinksFor, sinksForRun } from "../sinks";
 import { loadRunView } from "../sinks/runview";
 import { pruneStoredTails } from "../sinks/slack";
@@ -257,8 +258,15 @@ function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number; trig
 /** Records a fork run that waits for approval (or never runs) and supersedes older work; the agent hears nothing. */
 async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 	const agentId = req.headers.get("x-zeroci-agent-id");
-	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never" }>();
-	if (!agentId || (trig.reason !== "fork_gated" && trig.reason !== "fork_never")) return Response.json({ error: "bad_request" }, { status: 400 });
+	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never"; trustRefused?: TrustRefusal | null }>();
+	const trustRefused = trig.trustRefused ?? null;
+	if (
+		!agentId ||
+		(trig.reason !== "fork_gated" && trig.reason !== "fork_never") ||
+		(trustRefused !== null && trustRefused !== "shared_hub" && trustRefused !== "deploy_bindings")
+	) {
+		return Response.json({ error: "bad_request" }, { status: 400 });
+	}
 	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
 
 	const now = dob.clock.now();
@@ -271,7 +279,7 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 	const triggerId = own.trigger_id;
 	const t = dob.tenant();
 	try {
-		await insertRun(t, newRun(dob, trig, triggerId, "gated", trig.reason));
+		await insertRun(t, { ...newRun(dob, trig, triggerId, "gated", trig.reason), trust_refused: trustRefused });
 	} catch (err) {
 		dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
 		throw err;
@@ -321,7 +329,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			day,
 		);
 		counted = true;
-		capped = (counter?.runs ?? 0) > QUOTAS.runsPerDay;
+		capped = !checkQuota(dob.bindings, "runsPerDay", counter?.runs ?? 0);
 		const state = capped ? "pending" : "received";
 		const reason = capped ? "daily_cap" : null;
 		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason));

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,11 +17,19 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
 // runDoctorCLI runs zeroci doctor in wd, a fresh temp dir when empty,
 // against an empty host whose hub is srv.
 func runDoctorCLI(t *testing.T, srv *httptest.Server, wd string, args ...string) (int, string, string) {
+	t.Helper()
+	return runDoctorCLIOn(t, srv, wd, fstest.MapFS{}, nil, args...)
+}
+
+// runDoctorCLIOn is runDoctorCLI on a host with files hostFS whose
+// installations ran the repositories repos says.
+func runDoctorCLIOn(t *testing.T, srv *httptest.Server, wd string, hostFS fstest.MapFS, repos map[string][]store.RepoConfig, args ...string) (int, string, string) {
 	t.Helper()
 	if wd == "" {
 		wd = t.TempDir()
@@ -35,15 +45,63 @@ func runDoctorCLI(t *testing.T, srv *httptest.Server, wd string, args ...string)
 				HTTP:      srv.Client(),
 				Clock:     clock.NewFake(time.Now()),
 				Exec:      &execx.Fake{},
-				FS:        fstest.MapFS{},
+				FS:        hostFS,
 				Systemd:   &fakeServices{},
 				DiskFree:  func(string) (uint64, error) { return 10 << 30, nil },
 				Writable:  func(string) error { return nil },
+				RepoConfigs: func(_ context.Context, stateDir string) ([]store.RepoConfig, error) {
+					return repos[stateDir], nil
+				},
 			}
 		}
 		return d
 	})
 	return code, stdout.String(), stderr.String()
+}
+
+func TestDoctorForkTrust(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	host := fstest.MapFS{
+		"var/lib/zeroci/42":            {Mode: fs.ModeDir | 0o700},
+		"var/lib/zeroci/42/agent.json": {Data: []byte(`{"hub_url":"` + srv.URL + `","agent_id":"agt_1","credential":"zc_agent_x","installation_id":42}`), Mode: 0o600},
+	}
+	const open = "trust: all lets any fork PR run on this machine without approval"
+	const ignored = " and is ignored by the hub because deployments are configured"
+	tests := []struct {
+		name  string
+		repos []store.RepoConfig
+		want  []string
+	}{
+		{"trust all", []store.RepoConfig{{Repo: "acme/web", Trust: "all"}}, []string{"repo acme/web: " + open + "\n"}},
+		{"trust all with deployments", []store.RepoConfig{{Repo: "acme/web", Trust: "all", HasDeployments: true}}, []string{"repo acme/web: " + open + ignored + "\n"}},
+		{"one line per repo", []store.RepoConfig{
+			{Repo: "acme/api", Trust: "all", HasDeployments: true},
+			{Repo: "acme/docs", Trust: "collaborators"},
+			{Repo: "acme/web", Trust: "all"},
+		}, []string{"repo acme/api: " + open + ignored + "\n", "repo acme/web: " + open + "\n"}},
+		{"collaborators", []store.RepoConfig{{Repo: "acme/web", Trust: "collaborators", HasDeployments: true}}, nil},
+		{"no repos", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, out, stderr := runDoctorCLIOn(t, srv, "", host, map[string][]store.RepoConfig{"/var/lib/zeroci/42": tc.repos}, "--hub", srv.URL)
+			var got []string
+			for _, line := range strings.SplitAfter(out, "\n") {
+				if strings.Contains(line, "fork trust") {
+					got = append(got, line)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("fork trust lines = %q, want %d; stderr:\n%s", got, len(tc.want), stderr)
+			}
+			for i, line := range got {
+				if !strings.HasPrefix(line, "warn ") || !strings.HasSuffix(line, tc.want[i]) {
+					t.Errorf("line %d = %q, want a warn ending %q", i, line, tc.want[i])
+				}
+			}
+		})
+	}
 }
 
 // doctorJSON runs zeroci doctor --json in wd and indexes the results by id.

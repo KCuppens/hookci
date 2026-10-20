@@ -53,6 +53,10 @@ export const S = {
 		configValid: ".zeroci.yml is valid",
 		configInvalid: ".zeroci.yml has errors",
 		annotationsTruncated: (shown: number) => `Only the first ${shown} annotations are shown.`,
+		trustRefused: {
+			shared_hub: "trust: all is not allowed on the shared hub. Fork PRs need approval.",
+			deploy_bindings: "trust: all is ignored because this repo has deploy bindings. Fork PRs need approval.",
+		},
 	},
 	slack: {
 		working: "Working on it...",

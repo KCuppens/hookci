@@ -1,6 +1,7 @@
 // The fork gate: a fork pull request stops as a gated run until a
 // collaborator with write access approves its head SHA, once. Nothing about
-// the run reaches the agent before then.
+// the run reaches the agent before then. Only an honored `trust: all` lets a
+// fork through ungated, and then it still runs untrusted.
 
 import { getRepo } from "../db/repos";
 import { findRunByTrigger, getRun } from "../db/runs";
@@ -13,9 +14,10 @@ import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
 import { logEvent } from "../observability";
+import { effectiveTrust, fetchBaseConfig } from "../policy/trust";
 import type { TriggerRequest } from "../webhook/route";
 import { consumeApproval, isApprovalCurrent, recordApproval } from "./approvals";
-import { isForkPr, loadForkPolicy } from "./policy";
+import { isForkPr } from "./policy";
 
 export type GateReason = "fork_gated" | "fork_never";
 export type ApproveOutcome = "dispatched" | "stale" | "already_used" | "not_gated";
@@ -27,7 +29,8 @@ async function installationGitHub(env: Env, installationId: number) {
 
 /**
  * Records a fork pull request's run as gated on agentId (the agent bound to
- * its repo) instead of triggering it; non-fork triggers pass through.
+ * its repo) instead of triggering it; non-fork triggers, and forks whose base
+ * ref's `trust: all` is honored, pass through. `forks: never` always gates.
  */
 export async function gateForkRun(
 	env: Env,
@@ -35,13 +38,15 @@ export async function gateForkRun(
 	agentId: string,
 ): Promise<{ gated: false } | { gated: true; runId: string; reason: GateReason }> {
 	if (!isForkPr(trigger.pr)) return { gated: false };
-	const gh = await installationGitHub(env, trigger.installationId);
-	const { policy } = await loadForkPolicy(gh, trigger.repo, trigger.baseSha ?? trigger.defaultBranch);
-	const reason: GateReason = policy === "never" ? "fork_never" : "fork_gated";
+	const cfg = await fetchBaseConfig(env, trigger.installationId, trigger.repo, trigger.baseSha ?? trigger.defaultBranch);
+	const trust = await effectiveTrust(env, tenantDb(env.DB, trigger.installationId), trigger.repoId, cfg.trust);
+	if (trust.refused !== null) logEvent("trust_all_refused", { repo: trigger.repo, refused: trust.refused });
+	if (cfg.forks !== "never" && trust.effective === "all") return { gated: false };
+	const reason: GateReason = cfg.forks === "never" ? "fork_never" : "fork_gated";
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId)).fetch("https://do/gate", {
 		method: "POST",
 		headers: { "x-zeroci-agent-id": agentId },
-		body: JSON.stringify({ ...trigger, reason }),
+		body: JSON.stringify({ ...trigger, reason, trustRefused: trust.refused }),
 	});
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `AgentDO /gate answered ${res.status}`);
 	const answer = await res.json<{ trigger_id?: string }>();

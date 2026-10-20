@@ -1,4 +1,4 @@
-invalid_types.yml:3: error: checks.trust: must be one of "collaborators", "approve", "all", got "everyone"
+invalid_types.yml:3: error: checks.trust: must be one of "collaborators", "all", got "everyone"
 invalid_types.yml:5: error: checks.limits.cpus: must be greater than 0, got 0
 invalid_types.yml:6: error: checks.limits.memory: "4GB" is not a memory size
   fix: use a number with a K, M or G suffix, for example 4G or 512M

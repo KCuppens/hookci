@@ -7,6 +7,7 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { gateForkRun } from "../forks/gate";
+import { isForkPr } from "../forks/policy";
 import type { HubTrigger } from "../github/normalize";
 import type { WaitUntil } from "../sinks";
 import { notifyOutcome } from "./outcome";
@@ -57,7 +58,7 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 
 	const gate = await gateForkRun(env, trig, binding.agent_id);
 	if (gate.gated) return { kind: "gated", agentId: binding.agent_id, reason: gate.reason };
-	const body: TriggerRequest = { ...trig, trust: "trusted" };
+	const body: TriggerRequest = { ...trig, trust: isForkPr(trig.pr) ? "untrusted" : "trusted" };
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id));
 	const res = await stub.fetch("https://do/trigger", {
 		method: "POST",

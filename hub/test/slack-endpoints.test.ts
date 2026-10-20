@@ -275,6 +275,17 @@ describe("/slack/commands", () => {
     expect(doCalls).toHaveLength(QUOTAS.slackCmdsPerMin);
   });
 
+  it("lets a self-hosted hub run more than the per-minute command quota", async () => {
+    testClock.advance(60_000 - (testClock.now() % 60_000));
+    registerCommand("status", async () => ({ text: "ok" }));
+
+    for (let i = 0; i <= QUOTAS.slackCmdsPerMin; i++) {
+      const res = await post("/slack/commands", commandBody("status"), { env: { HUB_MODE: "self_hosted" } });
+      expect(await res.json()).toEqual({ response_type: "ephemeral", text: S.slack.working });
+    }
+    expect(doCalls).toHaveLength(QUOTAS.slackCmdsPerMin + 1);
+  });
+
   it("answers with the updating notice while a rotation is in progress", async () => {
     registerCommand("status", async () => ({ text: "ok" }));
 
