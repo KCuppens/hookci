@@ -47,8 +47,9 @@ const migrateIndex = 2
 // its own compose project, gates on health, swaps the proxy route to it,
 // watches a verify window, and writes the color marker last.
 type BlueGreen struct {
-	Store    *store.Store
-	Proxy    proxy.ProxyAdapter
+	Store *store.Store
+	// Proxy returns the adapter of a deployment's route block.
+	Proxy    func(route config.DeploymentRoute) (proxy.ProxyAdapter, error)
 	Health   *health.Checker
 	StateDir string                           // agent state dir; marker default <StateDir>/deploy/<repo>/<env>/active-color
 	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
@@ -330,11 +331,15 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 	run := sc.Run
 	prev := sc.Outputs[outPrevColor]
 	if prev == "" {
+		px, err := b.proxy(sc)
+		if err != nil {
+			return err
+		}
 		file := sc.Cfg.Route.File
 		if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("compose: removing route %s: %w", file, err)
 		}
-		if err := b.Proxy.Reload(ctx); err != nil {
+		if err := px.Reload(ctx); err != nil {
 			return fmt.Errorf("compose: reload after removing route %s: %w", file, err)
 		}
 		return nil
@@ -349,6 +354,10 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 // applyRoute renders the route to color on port and applies it, skipping
 // the write and reload when the route file already holds it.
 func (b *BlueGreen) applyRoute(ctx context.Context, sc *deploy.StepContext, color string, port int) error {
+	px, err := b.proxy(sc)
+	if err != nil {
+		return err
+	}
 	r := sc.Cfg.Route
 	content, err := b.renderRoute(sc.Run, sc.Cfg, color, port)
 	if err != nil {
@@ -362,7 +371,16 @@ func (b *BlueGreen) applyRoute(ctx context.Context, sc *deploy.StepContext, colo
 		fmt.Fprintf(sc.Log, "route %s already points at %s, skipping reload\n", r.File, color)
 		return nil
 	}
-	return proxy.ApplyAndReload(ctx, b.Proxy, r.File, content)
+	return proxy.ApplyAndReload(ctx, px, r.File, content)
+}
+
+// proxy returns the adapter of the run's route block.
+func (b *BlueGreen) proxy(sc *deploy.StepContext) (proxy.ProxyAdapter, error) {
+	px, err := b.Proxy(*sc.Cfg.Route)
+	if err != nil {
+		return nil, fmt.Errorf("deployments.%s.route: %w", sc.Run.Env, err)
+	}
+	return px, nil
 }
 
 // down stops the compose project of color, keeping its images.
@@ -396,7 +414,11 @@ func (b *BlueGreen) envDir(run store.DeployRun) string {
 
 // renderRoute renders the route of run to color on port.
 func (b *BlueGreen) renderRoute(run store.DeployRun, cfg config.Deployment, color string, port int) ([]byte, error) {
-	content, err := b.Proxy.Render(proxy.RouteSpec{
+	px, err := b.Proxy(*cfg.Route)
+	if err != nil {
+		return nil, fmt.Errorf("deployments.%s.route: %w", run.Env, err)
+	}
+	content, err := px.Render(proxy.RouteSpec{
 		Repo: run.Repo, Env: run.Env, Color: color, UpstreamHost: cfg.Route.UpstreamHost, Port: port,
 	})
 	if err != nil {

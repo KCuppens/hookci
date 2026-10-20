@@ -122,6 +122,19 @@ func (s *Store) TriggerRecorded(ctx context.Context, triggerID string) (bool, er
 	return n > 0, nil
 }
 
+// DeployRunAccepted reports whether deploy run runID was created by a deploy
+// trigger the agent answered as accepted.
+func (s *Store) DeployRunAccepted(ctx context.Context, runID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM triggers t JOIN deploy_runs d ON d.run_id = t.run_id WHERE t.run_id = ? AND t.state = ?`,
+		runID, TriggerDone).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("store: deploy run %s accepted: %w", runID, err)
+	}
+	return n > 0, nil
+}
+
 // SetTriggerState moves triggerID to state, or returns ErrNotFound.
 func (s *Store) SetTriggerState(ctx context.Context, triggerID string, state TriggerState) error {
 	return setTriggerState(ctx, s.db, triggerID, state)

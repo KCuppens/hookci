@@ -83,10 +83,12 @@ func newPreviewRig(t *testing.T) *previewRig {
 	r.engine = &deploy.Engine{
 		Store: st,
 		Strategies: strategies.New(strategies.Deps{
-			Store: st, Proxy: r.proxy, StateDir: r.stateDir,
+			Store: st, StateDir: r.stateDir,
+			Proxy:   func(config.DeploymentRoute) (proxy.ProxyAdapter, error) { return r.proxy, nil },
 			WorkDir: func(store.DeployRun) string { return workDir },
 		}),
-		NewExecutor: func(store.DeployRun) deploy.Executor { return r.exec },
+		NewExecutor: func(context.Context, store.DeployRun, config.Deployment) (deploy.Executor, error) { return r.exec, nil },
+		Checkout:    func(context.Context, store.DeployRun) error { return nil },
 	}
 	return r
 }

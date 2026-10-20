@@ -21,6 +21,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
 	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
@@ -118,7 +119,7 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 
 	stateDir := d.Globals.StateDir
 	engine := &deploy.Engine{Strategies: strategies.New(strategies.Deps{
-		Proxy:    &caddy.Adapter{},
+		Proxy:    func(config.DeploymentRoute) (proxy.ProxyAdapter, error) { return &caddy.Adapter{}, nil },
 		StateDir: stateDir,
 		WorkDir:  func(store.DeployRun) string { return top },
 	})}

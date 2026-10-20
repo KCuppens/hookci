@@ -4,6 +4,7 @@ package strategies
 
 import (
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
+	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/compose"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
@@ -14,8 +15,9 @@ import (
 
 // Deps are what the strategies share.
 type Deps struct {
-	Store    *store.Store
-	Proxy    proxy.ProxyAdapter
+	Store *store.Store
+	// Proxy returns the adapter of a deployment's route block.
+	Proxy    func(route config.DeploymentRoute) (proxy.ProxyAdapter, error)
 	Health   *health.Checker
 	Clock    clock.Clock
 	StateDir string                           // agent state dir

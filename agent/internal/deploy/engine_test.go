@@ -345,6 +345,23 @@ func TestEngine_FailsBeforeSteps(t *testing.T) {
 			setup:   func(r *testRig) { r.strat.planErr = errors.New("route.file is not absolute") },
 			wantErr: "deployments.production: plan fake: route.file is not absolute",
 		},
+		{
+			name: "executor refused before checkout",
+			setup: func(r *testRig) {
+				r.engine.NewExecutor = func(context.Context, store.DeployRun, config.Deployment) (Executor, error) {
+					return nil, ErrUntrustedDeploy
+				}
+				r.engine.Checkout = func(context.Context, store.DeployRun) error { return errors.New("checkout ran") }
+			},
+			wantErr: "deployments.production: executor: deploy: run is not trusted",
+		},
+		{
+			name: "checkout error",
+			setup: func(r *testRig) {
+				r.engine.Checkout = func(context.Context, store.DeployRun) error { return errors.New("fetch: repository not found") }
+			},
+			wantErr: "deployments.production: checkout acme/web@abc123: fetch: repository not found",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

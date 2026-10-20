@@ -21,6 +21,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
+	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
@@ -64,6 +65,13 @@ type Options struct {
 	// Deploys decides triggers that name an env; nil checks GitHub with
 	// hub-issued tokens and records accepted runs in the store.
 	Deploys DeployIntake
+	// DeployRunner runs deploy units and proxy reloads; nil: the OS.
+	DeployRunner execx.Runner
+	// DeployUser owns deploy checkouts; "" means deploy.DeployUser, the
+	// account deploy units run as.
+	DeployUser string
+	// HealthClient probes deploy health URLs; nil: the zero http.Client.
+	HealthClient *http.Client
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -140,7 +148,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 			tokens: d.tokens.RequestTrigger,
 		}
 	}
-	d.deploySched = newDeployScheduler(st, o, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
+	d.deploySched = d.newDeployScheduler(credential, hubDeployEvents{client: d.client, log: o.Logger}, githubDeployment("", github, d.tokens.Request))
 	return d
 }
 

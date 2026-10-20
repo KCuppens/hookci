@@ -178,11 +178,14 @@ func newRig(t *testing.T, state string, steps []fakeStep) *testRig {
 	events := &fakeEvents{}
 	return &testRig{
 		engine: &Engine{
-			Store:       st,
-			Strategies:  map[string]DeployStrategy{strat.Name(): strat},
-			Events:      events,
-			Clock:       clk,
-			NewExecutor: func(store.DeployRun) Executor { return &fakeExecutor{} },
+			Store:      st,
+			Strategies: map[string]DeployStrategy{strat.Name(): strat},
+			Events:     events,
+			Clock:      clk,
+			NewExecutor: func(context.Context, store.DeployRun, config.Deployment) (Executor, error) {
+				return &fakeExecutor{}, nil
+			},
+			Checkout: func(context.Context, store.DeployRun) error { return nil },
 			LoadDeployment: func(context.Context, store.DeployRun) (config.Deployment, error) {
 				return config.Deployment{Strategy: "compose-inplace"}, nil
 			},

@@ -85,11 +85,14 @@ func newIPRig(t *testing.T) *ipRig {
 	}
 	r.strat = &InPlace{Health: &health.Checker{Clock: clk}, WorkDir: func(store.DeployRun) string { return r.workdir }}
 	r.engine = &deploy.Engine{
-		Store:       st,
-		Strategies:  map[string]deploy.DeployStrategy{r.strat.Name(): r.strat},
-		Events:      r.events,
-		Clock:       clk,
-		NewExecutor: func(store.DeployRun) deploy.Executor { return r.exec },
+		Store:      st,
+		Strategies: map[string]deploy.DeployStrategy{r.strat.Name(): r.strat},
+		Events:     r.events,
+		Clock:      clk,
+		NewExecutor: func(context.Context, store.DeployRun, config.Deployment) (deploy.Executor, error) {
+			return r.exec, nil
+		},
+		Checkout: func(context.Context, store.DeployRun) error { return nil },
 		LoadDeployment: func(context.Context, store.DeployRun) (config.Deployment, error) {
 			return r.cfg, nil
 		},

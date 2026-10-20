@@ -142,3 +142,31 @@ func TestListTriggersByState(t *testing.T) {
 		t.Errorf("open triggers = %+v, want t1 accepted and t2 running", got)
 	}
 }
+
+func TestDeployRunAccepted(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"run-ok", "run-bare", "run-rejected"} {
+		if err := s.InsertDeployRun(ctx, testDeployRun(id, "prod-"+id, DeployQueued)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.AnswerTrigger(ctx, "trg-ok", "run-ok", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AnswerTrigger(ctx, "trg-rejected", "run-rejected", "untrusted trigger cannot deploy"); err != nil {
+		t.Fatal(err)
+	}
+	// A checks trigger that finished names a checks run, not a deploy run.
+	if _, err := s.AcceptTrigger(ctx, "trg-ci", "run-ci"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTriggerState(ctx, "trg-ci", TriggerDone); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"run-ok": true, "run-bare": false, "run-rejected": false, "run-ci": false} {
+		if got, err := s.DeployRunAccepted(ctx, id); err != nil || got != want {
+			t.Errorf("DeployRunAccepted(%s) = %v, %v; want %v", id, got, err, want)
+		}
+	}
+}

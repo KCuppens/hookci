@@ -35,11 +35,17 @@ type EventSink interface {
 // moves the run through Running, Verifying, RollingBack, Success and Failed.
 // It takes no locks: the caller makes sure one run per environment runs.
 type Engine struct {
-	Store       *store.Store
-	Strategies  map[string]DeployStrategy // keyed by DeployStrategy.Name
-	Events      EventSink
-	Clock       clock.Clock
-	NewExecutor func(run store.DeployRun) Executor
+	Store      *store.Store
+	Strategies map[string]DeployStrategy // keyed by DeployStrategy.Name
+	Events     EventSink
+	Clock      clock.Clock
+	// NewExecutor returns the executor of a run's commands; an error, such
+	// as ErrUntrustedDeploy, fails the run before anything is fetched.
+	NewExecutor func(ctx context.Context, run store.DeployRun, cfg config.Deployment) (Executor, error)
+	// Checkout puts the source of run.SHA where the strategy reads it. Every
+	// pass calls it before the first step, so it must reuse a finished
+	// checkout of an earlier attempt.
+	Checkout func(ctx context.Context, run store.DeployRun) error
 	// LoadDeployment returns the deployments.<env> block of the trusted
 	// config at run.SHA.
 	LoadDeployment func(ctx context.Context, run store.DeployRun) (config.Deployment, error)
@@ -152,7 +158,20 @@ func (x *execution) execute(ctx context.Context, from int, outputs map[string]st
 	if x.steps, err = strat.Plan(run, cfg); err != nil {
 		return x.fail(ctx, fmt.Sprintf("deployments.%s: plan %s: %v", run.Env, run.Strategy, err), -1)
 	}
-	sc := &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: e.NewExecutor(run), Log: x.log, Clock: e.Clock, Progress: x.progress}
+	exec, err := e.NewExecutor(ctx, run, cfg)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("deploy: run %s: executor: %w", run.RunID, err)
+		}
+		return x.fail(ctx, fmt.Sprintf("deployments.%s: executor: %v", run.Env, err), -1)
+	}
+	if err := e.Checkout(ctx, run); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("deploy: run %s: checkout: %w", run.RunID, err)
+		}
+		return x.fail(ctx, fmt.Sprintf("deployments.%s: checkout %s@%s: %v", run.Env, run.Repo, shortSHA(run.SHA), err), -1)
+	}
+	sc := &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: exec, Log: x.log, Clock: e.Clock, Progress: x.progress}
 	for i := from; i < len(x.steps); i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("deploy: run %s: %w", run.RunID, err)

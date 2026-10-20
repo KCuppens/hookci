@@ -63,11 +63,14 @@ func newQueueRig(t *testing.T, dbPath string, steps []fakeStep) *queueRig {
 	r.sched = &Scheduler{
 		Store: st,
 		Engine: &Engine{
-			Store:          st,
-			Strategies:     map[string]DeployStrategy{r.strat.Name(): r.strat},
-			Events:         r.events,
-			Clock:          clk,
-			NewExecutor:    func(store.DeployRun) Executor { return &fakeExecutor{} },
+			Store:      st,
+			Strategies: map[string]DeployStrategy{r.strat.Name(): r.strat},
+			Events:     r.events,
+			Clock:      clk,
+			NewExecutor: func(context.Context, store.DeployRun, config.Deployment) (Executor, error) {
+				return &fakeExecutor{}, nil
+			},
+			Checkout:       func(context.Context, store.DeployRun) error { return nil },
 			LoadDeployment: load,
 		},
 		Events:         r.events,
