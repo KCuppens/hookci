@@ -336,7 +336,15 @@ export const linearDeliverer: Deliverer = {
 				...(r.code ? { code: r.code } : {}),
 			});
 			// Keep the issue already made, so the retry updates it rather than filing a second one.
-			if (ext) await save({ externalId: encodeLinearExternalId(ext), lastHash: null });
+			// A failed save is reported, not thrown: the outbox would turn the throw into a retry
+			// and lose the mapped result.
+			if (ext) {
+				try {
+					await save({ externalId: encodeLinearExternalId(ext), lastHash: null });
+				} catch (err) {
+					reportError(err, { installation_id: item.installationId, sink_id: item.sinkId, run_id: item.runId, event: "linear_issue_save_failed" });
+				}
+			}
 			return mapLinearError(r, clock.now());
 		};
 		const assignee = failed && target.assigneeId ? { assigneeId: target.assigneeId } : {};

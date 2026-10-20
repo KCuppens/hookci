@@ -145,10 +145,16 @@ func TestRunsStatsCmd(t *testing.T) {
 		"| check | 1 | 0 | 0.0% | - | - | 512 s | 9 | $0.0720 | $0.07 |",
 		"| deploy | 1 | 1 | 100.0% | 40.0 s | 40.0 s | 530 s | 9 | $0.0720 | $0.07 |",
 		"hub queue time is excluded",
+		// The file spans minutes, too short to project to a month.
+		"Monthly projection: n/a (window under one day).",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, out)
 		}
+	}
+	code, out, errOut = runsOf(Deps{Clock: d.Clock}, append([]string{"stats", "--input", path}, baseline...)...)
+	if code != ExitOK || !strings.Contains(out, `"monthly_projection_usd": null`) {
+		t.Errorf("stats --input JSON: exit %d, stderr %q, want a null monthly_projection_usd:\n%s", code, errOut, out)
 	}
 	code, _, errOut = runsOf(d, append([]string{"stats", "--input", path, "--repo", "local/app"}, baseline...)...)
 	if code != ExitUsage || !strings.Contains(errOut, "--repo filters the agent database") {

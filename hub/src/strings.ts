@@ -300,6 +300,8 @@ export const S = {
 		telegramTarget: (chatId: string) => `chat ${chatId}`,
 		/** The target of a Linear sink as Slack shows it. */
 		linearTarget: (teamKey: string, assigneeName?: string) => `team ${teamKey}${assigneeName === undefined ? "" : `, assignee ${assigneeName}`}`,
+		/** The team key a Linear sink lists with when its stored target cannot be read. */
+		linearUnknownTeamKey: "?",
 		linearBadToken: "Linear did not accept the API key.",
 		linearUnavailable: "Linear did not answer or is limiting requests. Try again in a minute.",
 		testCommitTitle: "ZeroCI test delivery",

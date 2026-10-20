@@ -215,6 +215,59 @@ func TestRunBeforeHook_RunsAndRecords(t *testing.T) {
 	}
 }
 
+// A shared output_dir can get another environment's dump, or a manual one,
+// while this hook runs. Only the file the command names is this run's.
+func TestRunBeforeHook_RecordsOnlyTheNamedFile(t *testing.T) {
+	r := newHookRig(t, 10)
+	r.changes.files = []string{"packages/db/drizzle/0007_x.sql"}
+	const file = "production-abc1234-20260101T000000Z.dump"
+	others := []string{"staging-abc1234-20260101T000000Z.dump", file + ".partial", "x" + file}
+	write := r.exec.write
+	r.exec.write = func(argv []string) error {
+		for _, name := range others {
+			if err := writeAt(filepath.Join(r.dir, name), hookNow); err != nil {
+				return err
+			}
+		}
+		return write(argv)
+	}
+	if _, err := RunBeforeHook(context.Background(), r.sc, r.deps, "app:abc1234", "shared"); err != nil {
+		t.Fatalf("RunBeforeHook: %v\n%s", err, r.log.String())
+	}
+	var got []string
+	for _, b := range r.backups(t) {
+		got = append(got, filepath.Base(b.Path))
+	}
+	if !slices.Equal(got, []string{file}) || r.sc.Outputs["backup_files"] != file {
+		t.Fatalf("recorded = %v, backup_files = %q; want only %s", got, r.sc.Outputs["backup_files"], file)
+	}
+	for _, name := range others {
+		if _, err := os.Stat(filepath.Join(r.dir, name)); err != nil {
+			t.Errorf("%s: %v, want left alone", name, err)
+		}
+		if !strings.Contains(r.log.String(), name) {
+			t.Errorf("log does not mention the ignored %s:\n%s", name, r.log.String())
+		}
+	}
+}
+
+func TestNamedIn(t *testing.T) {
+	const cmd = `pg_dump -f /backup/prod.dump "$URL" && cp /backup/prod.dump x.dump.gz`
+	for name, want := range map[string]bool{
+		"prod.dump":   true,
+		"x.dump.gz":   true,
+		"x.dump":      false,
+		"od.dump":     false,
+		"prod.dump.1": false,
+		"backup":      true,
+		"dump":        false,
+	} {
+		if got := namedIn(cmd, name); got != want {
+			t.Errorf("namedIn(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestRunBeforeHook_DefaultImageNoNetworkNoEnvFile(t *testing.T) {
 	r := newHookRig(t, 10)
 	if err := r.store.SetDeployState(context.Background(), store.DeployState{Repo: "acme/web", Env: "production"}); err != nil {
@@ -299,7 +352,9 @@ func TestRunBeforeHook_Retention(t *testing.T) {
 	}
 }
 
-func TestRunBeforeHook_RetentionKeepsFilesOutsideDir(t *testing.T) {
+// A record left by an earlier output_dir is beyond the reach of retention:
+// its file stays, and the record is forgotten instead of logged every run.
+func TestRunBeforeHook_RetentionForgetsFilesOutsideDir(t *testing.T) {
 	r := newHookRig(t, 1)
 	ctx := context.Background()
 	outside := filepath.Join(t.TempDir(), "elsewhere.dump")
@@ -325,8 +380,8 @@ func TestRunBeforeHook_RetentionKeepsFilesOutsideDir(t *testing.T) {
 	for _, b := range r.backups(t) {
 		got = append(got, b.Path)
 	}
-	if want := []string{filepath.Join(r.dir, "production-abc1234-20260101T000000Z.dump"), outside}; !slices.Equal(got, want) {
-		t.Fatalf("recorded = %v, want the new backup and the one outside output_dir", got)
+	if want := []string{filepath.Join(r.dir, "production-abc1234-20260101T000000Z.dump")}; !slices.Equal(got, want) {
+		t.Fatalf("recorded = %v, want only the new backup", got)
 	}
 }
 

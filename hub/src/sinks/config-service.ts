@@ -118,8 +118,15 @@ function toPublic(cfg: SinkConfigRow): PublicSinkConfig {
 	if (cfg.kind === "telegram") {
 		target = S.sinks.telegramTarget(cfg.target);
 	} else if (cfg.kind === "linear") {
-		const { teamKey, assigneeName }: { teamKey: string; assigneeName?: string } = JSON.parse(cfg.target);
-		target = assigneeName === undefined ? { teamKey } : { teamKey, assigneeName };
+		// A row that does not parse still lists, so it can be seen and removed.
+		let linear: { teamKey?: unknown; assigneeName?: unknown };
+		try {
+			linear = JSON.parse(cfg.target) ?? {};
+		} catch {
+			linear = {};
+		}
+		const teamKey = typeof linear.teamKey === "string" ? linear.teamKey : S.sinks.linearUnknownTeamKey;
+		target = typeof linear.assigneeName === "string" ? { teamKey, assigneeName: linear.assigneeName } : { teamKey };
 	} else {
 		const url = new URL(cfg.target);
 		const path = url.pathname.length > TARGET_PATH_CHARS ? `${url.pathname.slice(0, TARGET_PATH_CHARS)}...` : url.pathname;

@@ -100,7 +100,7 @@ function view(state: RunState, jobs: RunView["jobs"] = [], target = "deploy:prod
   };
 }
 
-function deliver(v: RunView) {
+function deliver(v: RunView, e: typeof env = env) {
   const item: OutboxDelivery = {
     installationId: INSTALLATION,
     sinkId: cfg.id,
@@ -110,7 +110,7 @@ function deliver(v: RunView) {
     enqueuedAt: 0,
     deliveryId: `d${calls.length}`,
   };
-  return linearDeliverer.deliver(env, cfg, item, 1);
+  return linearDeliverer.deliver(e, cfg, item, 1);
 }
 
 const ops = () => calls.map((c) => op(c.query));
@@ -176,6 +176,29 @@ describe("linearDeliverer", () => {
     expect(await deliver(view("success"))).toMatchObject({ kind: "ok" });
     expect(ops()).toEqual(["issueUpdate"]);
     expect(calls[0]?.variables.input.stateId).toBe("state_done");
+  });
+
+  it("returns the mapped Linear error when saving the created issue fails", async () => {
+    answer = (operation) => (operation === "issueUpdate" ? new Response("unavailable", { status: 503 }) : ok(operation));
+    const DB = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("INSERT INTO sink_messages")) throw new Error("D1_ERROR: database is locked");
+            return target.prepare(sql);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    expect(await deliver(view("success"), { ...env, DB })).toEqual({ kind: "retry", httpStatus: 503 });
+    expect(ops()).toEqual(["issueCreate", "issueUpdate"]);
+    expect(await getSinkMessage(t, cfg.id, `trg_${run}`)).toBeNull();
+    const reported = logged.filter((line) => line.includes("linear_issue_save_failed"));
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toContain("database is locked");
   });
 });
 

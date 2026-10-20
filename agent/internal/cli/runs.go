@@ -27,7 +27,8 @@ time is excluded.
   runs stats (--input FILE.jsonl | --since RFC3339 [--repo OWNER/NAME]) [--until RFC3339]
              --baseline-check SECONDS --baseline-deploy SECONDS --price-per-minute USD [--markdown]
       Prints the report as JSON, or as Markdown with --markdown. With --input
-      the window defaults to the first start and last finish in the file.
+      the window defaults to the first start and last finish in the file. A
+      window under one day gets no monthly projection.
 `
 
 // cmdRuns exports finished runs and reports their stats. Usage errors exit

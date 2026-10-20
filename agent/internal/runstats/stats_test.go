@@ -1,6 +1,7 @@
 package runstats
 
 import (
+	"encoding/json"
 	"math"
 	"os"
 	"strings"
@@ -67,7 +68,7 @@ func TestCompute_Fixture(t *testing.T) {
 	wantDeploy := KindStats{Count: 3, Succeeded: 2, MedianMS: 50_000, P90MS: 55_000, SavedPerRunUSD: 0.072, SavedTotalUSD: 0.216}
 	checkStats(t, "check", rep.Check, wantCheck)
 	checkStats(t, "deploy", rep.Deploy, wantDeploy)
-	if want := 0.576 / 14 * 30; !near(rep.MonthlyProjectionUSD, want) {
+	if want := 0.576 / 14 * 30; !nearPtr(rep.MonthlyProjectionUSD, want) {
 		t.Errorf("MonthlyProjectionUSD = %v, want %v", rep.MonthlyProjectionUSD, want)
 	}
 	if !rep.Since.Equal(fixtureSince) || !rep.Until.Equal(fixtureUntil) || rep.Baseline != fixtureBaseline {
@@ -83,13 +84,40 @@ func TestCompute_Window(t *testing.T) {
 	rep := Compute(runs, fixtureBaseline, since, fixtureUntil)
 	checkStats(t, "check", rep.Check, KindStats{Count: 2, Succeeded: 2, MedianMS: 80_000, P90MS: 100_000, SavedPerRunUSD: 0.072, SavedTotalUSD: 0.144})
 	checkStats(t, "deploy", rep.Deploy, KindStats{Count: 2, Succeeded: 1, MedianMS: 55_000, P90MS: 55_000, SavedPerRunUSD: 0.072, SavedTotalUSD: 0.144})
-	if want := 0.288 / 10 * 30; !near(rep.MonthlyProjectionUSD, want) {
+	if want := 0.288 / 10 * 30; !nearPtr(rep.MonthlyProjectionUSD, want) {
 		t.Errorf("MonthlyProjectionUSD = %v, want %v", rep.MonthlyProjectionUSD, want)
 	}
 
 	empty := Compute(nil, fixtureBaseline, fixtureSince, fixtureSince)
-	if empty.Check.Count != 0 || empty.MonthlyProjectionUSD != 0 {
-		t.Errorf("empty window report = %+v, want zero counts and projection", empty)
+	if empty.Check.Count != 0 || empty.MonthlyProjectionUSD != nil {
+		t.Errorf("empty window report = %+v, want zero counts and no projection", empty)
+	}
+}
+
+// A window of hours holding two runs would project them to a month as if
+// they ran every few hours, so a window under one day gets no projection.
+func TestCompute_NoProjectionUnderOneDay(t *testing.T) {
+	runs := loadFixture(t)
+	// CHECK4 and DEPLOY2 only.
+	since := time.Date(2026, 3, 5, 12, 0, 0, 0, time.UTC)
+	rep := Compute(runs, fixtureBaseline, since, since.Add(23*time.Hour))
+	if rep.Check.Count != 1 || rep.Deploy.Count != 1 || rep.MonthlyProjectionUSD != nil {
+		t.Fatalf("report = %+v, want 1 check, 1 deploy and no projection", rep)
+	}
+	if md := rep.Markdown(); !strings.Contains(md, "Monthly projection: n/a (window under one day).") {
+		t.Errorf("markdown does not mark the projection n/a:\n%s", md)
+	}
+	out, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"monthly_projection_usd":null`) {
+		t.Errorf("JSON = %s, want a null monthly_projection_usd", out)
+	}
+
+	day := Compute(runs, fixtureBaseline, since, since.Add(24*time.Hour))
+	if !nearPtr(day.MonthlyProjectionUSD, 0.144*30) {
+		t.Errorf("one-day window MonthlyProjectionUSD = %v, want %v", day.MonthlyProjectionUSD, 0.144*30)
 	}
 }
 
@@ -111,3 +139,5 @@ func checkStats(t *testing.T, kind string, got, want KindStats) {
 }
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+func nearPtr(a *float64, b float64) bool { return a != nil && near(*a, b) }

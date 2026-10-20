@@ -73,19 +73,21 @@ type KindStats struct {
 }
 
 // Report is the result of Compute over the window [Since, Until].
+// MonthlyProjectionUSD is nil, JSON null, for a window under one day.
 type Report struct {
 	Since                time.Time `json:"since"`
 	Until                time.Time `json:"until"`
 	Baseline             Baseline  `json:"baseline"`
 	Check                KindStats `json:"check"`
 	Deploy               KindStats `json:"deploy"`
-	MonthlyProjectionUSD float64   `json:"monthly_projection_usd"`
+	MonthlyProjectionUSD *float64  `json:"monthly_projection_usd"`
 }
 
 // Compute summarises the runs that finished within [since, until]. Runs of
 // another kind or without a finish time are ignored. Each finished run saves
 // one baseline run, billed per started minute; the monthly projection scales
-// the total saved over the window to 30 days.
+// the total saved over the window to 30 days, and is left out for a window
+// under one day, which would inflate it.
 func Compute(runs []RunRecord, b Baseline, since, until time.Time) Report {
 	rep := Report{Since: since, Until: until, Baseline: b}
 	var checkMS, deployMS []int64
@@ -119,8 +121,9 @@ func Compute(runs []RunRecord, b Baseline, since, until time.Time) Report {
 	}
 	finish(&rep.Check, checkMS, b.CheckSeconds)
 	finish(&rep.Deploy, deployMS, b.DeploySeconds)
-	if days := until.Sub(since).Hours() / 24; days > 0 {
-		rep.MonthlyProjectionUSD = (rep.Check.SavedTotalUSD + rep.Deploy.SavedTotalUSD) / days * 30
+	if days := until.Sub(since).Hours() / 24; days >= 1 {
+		projection := (rep.Check.SavedTotalUSD + rep.Deploy.SavedTotalUSD) / days * 30
+		rep.MonthlyProjectionUSD = &projection
 	}
 	return rep
 }
@@ -176,8 +179,12 @@ func (r Report) Markdown() string {
 	}
 	row(KindCheck, r.Check, r.Baseline.CheckSeconds)
 	row(KindDeploy, r.Deploy, r.Baseline.DeploySeconds)
-	fmt.Fprintf(&sb, "\nSaved in the window: $%.2f. Monthly projection: $%.2f (saved / window days x 30).\n\n",
-		r.Check.SavedTotalUSD+r.Deploy.SavedTotalUSD, r.MonthlyProjectionUSD)
+	projection := "n/a (window under one day)"
+	if r.MonthlyProjectionUSD != nil {
+		projection = fmt.Sprintf("$%.2f (saved / window days x 30)", *r.MonthlyProjectionUSD)
+	}
+	fmt.Fprintf(&sb, "\nSaved in the window: $%.2f. Monthly projection: %s.\n\n",
+		r.Check.SavedTotalUSD+r.Deploy.SavedTotalUSD, projection)
 	sb.WriteString("Durations are the agent's recorded start to finish times; hub queue time is excluded. " +
 		"Median and p90 count successful runs only; minutes and dollars saved count every finished run.\n")
 	return sb.String()

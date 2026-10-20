@@ -196,6 +196,15 @@ describe("Linear configs", () => {
     expect(JSON.stringify(listed)).not.toContain("team_1");
   });
 
+  it("lists a Linear row whose stored target does not parse with an unknown team key", async () => {
+    const { sink: broken } = await linear();
+    const { sink: good } = await linear({ label: "good" });
+    await env.DB.prepare("UPDATE sink_configs SET target = 'not json' WHERE id = ?1").bind(broken.id).run();
+    const listed = await listSinkConfigsForRepo(ta, a.fullName);
+    expect(listed.find((s) => s.id === broken.id)?.target).toStrictEqual({ teamKey: "?" });
+    expect(listed.find((s) => s.id === good.id)?.target).toStrictEqual(good.target);
+  });
+
   it("refuses the eleventh Linear config of a repo with limit_reached", async () => {
     for (let i = 0; i < MAX_SINKS_PER_REPO; i++) await linear();
     expect(await refusal(linear())).toBe("limit_reached");
