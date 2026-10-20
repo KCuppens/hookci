@@ -75,6 +75,7 @@ const PURGE_STATEMENTS = [
 	"DELETE FROM author_map WHERE installation_id = ?1",
 	"DELETE FROM daily_counters WHERE installation_id = ?1",
 	"DELETE FROM fork_approvals WHERE installation_id = ?1",
+	"DELETE FROM deploy_triggers WHERE installation_id = ?1",
 	"DELETE FROM installations WHERE id = ?1",
 ];
 

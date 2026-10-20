@@ -9,6 +9,7 @@
 import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
 import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
+import { recordDeployReply } from "../deploy/chain";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
@@ -215,12 +216,12 @@ function newRun(dob: AgentDO, trig: HubTrigger & { attempt?: number }, triggerId
 	};
 }
 
-function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number }, state: TriggerState, now: number): TriggerRow | undefined {
+function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number; triggerId?: string }, state: TriggerState, now: number): TriggerRow | undefined {
 	return dob.sql
 		.exec<TriggerRow>(
 			`INSERT INTO triggers (trigger_id, idem_key, repo_id, pr_number, ref, target, sha, state, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (idem_key) DO NOTHING RETURNING *`,
-			ulid(now),
+			trig.triggerId ?? ulid(now),
 			idemKey(trig),
 			trig.repoId,
 			trig.pr?.number ?? null,
@@ -328,6 +329,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 	const stillSent = triggerById(dob, triggerId).state === "sent";
 	const { replaced, interrupts } = stillSent ? supersede(dob, own) : { replaced: [], interrupts: [] };
 	if (stillSent) {
+		const env = deployEnv(trig.target);
 		const seq = await dob.send({
 			v: 1,
 			type: "trigger",
@@ -335,7 +337,8 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			repo: trig.repo,
 			sha: trig.sha,
 			ref: trig.ref,
-			event: trig.event,
+			event: trig.retry ? "retry" : trig.event,
+			...(env === null ? {} : { env }),
 			pr: trig.pr && {
 				number: trig.pr.number,
 				head_ref: trig.pr.headRef,
@@ -451,6 +454,7 @@ export function registerRunLifecycle(): () => void {
 
 		registerFrameHandler("accepted", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
+			await recordDeployReply(dob.bindings, frame);
 			dob.sql.exec(
 				"UPDATE triggers SET run_id = ?, state = CASE WHEN state = 'sent' THEN 'accepted' ELSE state END WHERE trigger_id = ?",
 				frame.run_id,
@@ -464,6 +468,7 @@ export function registerRunLifecycle(): () => void {
 
 		registerFrameHandler("rejected", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
+			await recordDeployReply(dob.bindings, frame);
 			// rejected too: a replay of a frame whose D1 write failed must write it again.
 			if (row.state !== "sent" && row.state !== "accepted" && row.state !== "rejected") return;
 			dob.sql.exec("UPDATE triggers SET state = 'rejected' WHERE trigger_id = ?", row.trigger_id);

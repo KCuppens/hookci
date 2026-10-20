@@ -414,6 +414,9 @@ type Trigger struct {
 	// Base commit of the pull request.
 	BaseSha *string `json:"base_sha,omitempty,omitzero"`
 
+	// Deployment environment, for deploy triggers.
+	Env *string `json:"env,omitempty,omitzero"`
+
 	// GitHub event behind the trigger.
 	Event TriggerEvent `json:"event"`
 

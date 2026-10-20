@@ -157,6 +157,10 @@ export interface Trigger {
    */
   event: "pull_request" | "push" | "retry";
   /**
+   * Deployment environment, for deploy triggers.
+   */
+  env?: string;
+  /**
    * Pull request details for pull_request events.
    */
   pr?: {
