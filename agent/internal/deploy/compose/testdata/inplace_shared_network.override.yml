@@ -1,0 +1,9 @@
+networks:
+  caddy:
+    external: true
+services:
+  web:
+    image: myapp:def5678
+    networks:
+      caddy: {}
+      default: {}

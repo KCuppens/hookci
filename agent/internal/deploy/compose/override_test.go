@@ -30,6 +30,10 @@ func TestRenderOverride_Golden(t *testing.T) {
 			ComposeFile: "testdata/container_name.compose.yml", Service: "web",
 			Image: "myapp:def5678", HostPort: 3104, Color: "green", SharedNetwork: "caddy",
 		}},
+		{"inplace_shared_network", OverrideInput{
+			ComposeFile: "testdata/container_name.compose.yml", Service: "web",
+			Image: "myapp:def5678", SharedNetwork: "caddy",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

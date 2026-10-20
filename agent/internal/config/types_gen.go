@@ -287,12 +287,16 @@ type Deployment struct {
 	Retain *DeploymentRetain `json:"retain,omitempty,omitzero" yaml:"retain,omitempty"`
 
 	// Command that restores the previous version. Optional, strategy: script only.
+	// Runs when run fails, with ZEROCI_FAILED_STEP set to the last step run reported.
 	Rollback *string `json:"rollback,omitempty,omitzero" yaml:"rollback,omitempty"`
 
 	// Reverse proxy route switched between colors. Required for compose-bluegreen.
 	Route *DeploymentRoute `json:"route,omitempty,omitzero" yaml:"route,omitempty"`
 
-	// Deploy command. Required for strategy: script.
+	// Deploy command. Required for strategy: script. Each stdout line "::zeroci step
+	// <name>" (name: lowercase letters, digits, "_", "." and "-", up to 40
+	// characters) reports a progress step. A resumed deploy re-runs the command from
+	// the start.
 	Run *string `json:"run,omitempty,omitzero" yaml:"run,omitempty"`
 
 	// How the new version replaces the old one. compose-bluegreen starts the other

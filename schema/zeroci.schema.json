@@ -472,12 +472,12 @@
           }
         },
         "run": {
-          "description": "Deploy command. Required for strategy: script.",
+          "description": "Deploy command. Required for strategy: script. Each stdout line \"::zeroci step <name>\" (name: lowercase letters, digits, \"_\", \".\" and \"-\", up to 40 characters) reports a progress step. A resumed deploy re-runs the command from the start.",
           "type": "string",
           "minLength": 1
         },
         "rollback": {
-          "description": "Command that restores the previous version. Optional, strategy: script only.",
+          "description": "Command that restores the previous version. Optional, strategy: script only. Runs when run fails, with ZEROCI_FAILED_STEP set to the last step run reported.",
           "type": "string",
           "minLength": 1
         }

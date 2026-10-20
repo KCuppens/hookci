@@ -340,11 +340,11 @@ export interface Deployment {
    */
   needs?: string[];
   /**
-   * Deploy command. Required for strategy: script.
+   * Deploy command. Required for strategy: script. Each stdout line "::zeroci step <name>" (name: lowercase letters, digits, "_", "." and "-", up to 40 characters) reports a progress step. A resumed deploy re-runs the command from the start.
    */
   run?: string;
   /**
-   * Command that restores the previous version. Optional, strategy: script only.
+   * Command that restores the previous version. Optional, strategy: script only. Runs when run fails, with ZEROCI_FAILED_STEP set to the last step run reported.
    */
   rollback?: string;
 }

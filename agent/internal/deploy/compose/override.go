@@ -26,7 +26,7 @@ type OverrideInput struct {
 	ComposeFile   string // user compose file (read only, to discover container port and container_name)
 	Service       string
 	Image         string // "<project>:<sha7>"
-	HostPort      int    // from store.AllocatePort
+	HostPort      int    // from store.AllocatePort; 0 keeps the user's ports and container_name
 	Color         string
 	SharedNetwork string // optional external network
 }
@@ -72,38 +72,30 @@ type baseService struct {
 // RenderOverride reads the user compose file and returns the override YAML
 // that pins in.Image, binds the service to 127.0.0.1:<HostPort> on its
 // container port, resets container_name if the base file sets one, and joins
-// the shared network when given. Keys are sorted so the output is stable.
+// the shared network when given. With HostPort 0 (compose-inplace, one
+// project) it keeps the user's ports and container_name. Keys are sorted so
+// the output is stable.
 func RenderOverride(in OverrideInput) ([]byte, error) {
-	raw, err := os.ReadFile(in.ComposeFile)
+	svc, err := readService(in.Env, in.ComposeFile, in.Service)
 	if err != nil {
-		return nil, fmt.Errorf("compose: reading %s: %w", in.ComposeFile, err)
+		return nil, err
 	}
-	var base struct {
-		Services map[string]baseService `yaml:"services"`
-	}
-	if err := yaml.Unmarshal(raw, &base); err != nil {
-		return nil, fmt.Errorf("compose: parsing %s: %w", in.ComposeFile, err)
-	}
-	svc, ok := base.Services[in.Service]
-	if !ok {
-		return nil, fmt.Errorf("deployments.%s.compose.service: service %s not found in %s; set compose.service to a service in that file",
-			in.Env, in.Service, in.ComposeFile)
-	}
-	containerPort, err := firstContainerPort(svc)
-	if err != nil {
-		return nil, fmt.Errorf("deployments.%s.compose.service: service %s %w", in.Env, in.Service, err)
-	}
-	service := map[string]*yaml.Node{
-		"image": scalar("!!str", in.Image),
-		"ports": {
+	service := map[string]*yaml.Node{"image": scalar("!!str", in.Image)}
+	if in.HostPort != 0 {
+		containerPort, err := firstContainerPort(svc)
+		if err != nil {
+			return nil, fmt.Errorf("deployments.%s.compose.service: service %s %w", in.Env, in.Service, err)
+		}
+		service["ports"] = &yaml.Node{
 			Kind:    yaml.SequenceNode,
 			Tag:     "!override",
 			Content: []*yaml.Node{quoted(fmt.Sprintf("127.0.0.1:%d:%d", in.HostPort, containerPort))},
-		},
+		}
+		if svc.ContainerName.Kind != 0 {
+			service["container_name"] = scalar("!reset", "null")
+		}
 	}
-	if svc.ContainerName.Kind != 0 {
-		service["container_name"] = scalar("!reset", "null")
-	}
+
 	top := map[string]*yaml.Node{}
 	if in.SharedNetwork != "" {
 		service["networks"] = mapping(map[string]*yaml.Node{
@@ -126,6 +118,68 @@ func RenderOverride(in OverrideInput) ([]byte, error) {
 		return nil, fmt.Errorf("compose: encoding override: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// readService returns service of the user compose file at path.
+func readService(env, path, service string) (baseService, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return baseService{}, fmt.Errorf("compose: reading %s: %w", path, err)
+	}
+	var base struct {
+		Services map[string]baseService `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(raw, &base); err != nil {
+		return baseService{}, fmt.Errorf("compose: parsing %s: %w", path, err)
+	}
+	svc, ok := base.Services[service]
+	if !ok {
+		return baseService{}, fmt.Errorf("deployments.%s.compose.service: service %s not found in %s; set compose.service to a service in that file",
+			env, service, path)
+	}
+	return svc, nil
+}
+
+// PublishedPort returns the fixed host port the first ports entry of
+// service publishes in the user compose file at path: 3000 for "3000:8080"
+// or "127.0.0.1:3000:8080/tcp", or the published field of a long-syntax
+// entry.
+func PublishedPort(env, path, service string) (int, error) {
+	svc, err := readService(env, path, service)
+	if err != nil {
+		return 0, err
+	}
+	if len(svc.Ports) == 0 {
+		return 0, fmt.Errorf("deployments.%s.compose.service: service %s publishes no port; add ports with a fixed host port, for example \"127.0.0.1:8080:8080\"",
+			env, service)
+	}
+	n := &svc.Ports[0]
+	if n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	var host string
+	switch n.Kind {
+	case yaml.ScalarNode:
+		spec, _, _ := strings.Cut(n.Value, "/")
+		if i := strings.LastIndexByte(spec, ':'); i >= 0 {
+			spec = spec[:i]
+			host = spec[strings.LastIndexByte(spec, ':')+1:]
+		}
+	case yaml.MappingNode:
+		var long struct {
+			Published yaml.Node `yaml:"published"`
+		}
+		if err := n.Decode(&long); err != nil {
+			return 0, fmt.Errorf("deployments.%s.compose.service: service %s has an unreadable ports entry: %w", env, service, err)
+		}
+		host = long.Published.Value
+	}
+	port, err := strconv.Atoi(host)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("deployments.%s.compose.service: service %s publishes no fixed host port in the ports entry at line %d; publish one, for example \"127.0.0.1:8080:8080\"",
+			env, service, n.Line)
+	}
+	return port, nil
 }
 
 // firstContainerPort returns the container port of the first ports entry, or

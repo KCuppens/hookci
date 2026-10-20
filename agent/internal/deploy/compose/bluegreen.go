@@ -86,11 +86,16 @@ func (b *BlueGreen) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.S
 
 // build builds <project>:<sha7> with BuildKit unless the image exists.
 func (b *BlueGreen) build(ctx context.Context, sc *deploy.StepContext) error {
+	return buildImage(ctx, sc, b.WorkDir(sc.Run))
+}
+
+// buildImage builds <project>:<sha7> of the checkout in workdir with
+// BuildKit unless the image exists, and sets the image output.
+func buildImage(ctx context.Context, sc *deploy.StepContext, workdir string) error {
 	image, err := ImageTag(sc.Cfg.Compose.Project, sc.Run.SHA)
 	if err != nil {
 		return err
 	}
-	workdir := b.WorkDir(sc.Run)
 	if err := sc.Exec.Run(ctx, "build", []string{"docker", "image", "inspect", image},
 		deploy.ExecOpts{Dir: workdir, Stdout: io.Discard, Stderr: io.Discard}); err == nil {
 		fmt.Fprintf(sc.Log, "image %s exists, skipping build\n", image)
@@ -413,12 +418,18 @@ func healthSpec(sc *deploy.StepContext) (health.Spec, error) {
 	if err != nil {
 		return health.Spec{}, err
 	}
+	return healthSpecFor(sc, port)
+}
+
+// healthSpecFor is deployments.<env>.health with {port} resolved to port.
+func healthSpecFor(sc *deploy.StepContext, port int) (health.Spec, error) {
 	h := sc.Cfg.Health
 	spec := health.Spec{Env: sc.Run.Env, URL: h.Url, Port: port, Expect: h.Expect, Retries: h.Retries}
 	if spec.Expect == 0 {
 		spec.Expect = defaultExpect
 	}
 	if h.Interval != "" {
+		var err error
 		if spec.Interval, err = time.ParseDuration(h.Interval); err != nil {
 			return health.Spec{}, fmt.Errorf("deployments.%s.health.interval: %w", sc.Run.Env, err)
 		}

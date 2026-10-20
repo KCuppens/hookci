@@ -119,6 +119,9 @@ type execution struct {
 	started time.Time
 	steps   []Step
 	log     *runLog
+
+	progressMu sync.Mutex
+	subSteps   int // sub-steps reported through StepContext.Progress
 }
 
 func (e *Engine) newExecution(run store.DeployRun) *execution {
@@ -143,7 +146,7 @@ func (x *execution) execute(ctx context.Context, from int, outputs map[string]st
 	if x.steps, err = strat.Plan(run, cfg); err != nil {
 		return x.fail(ctx, fmt.Sprintf("deployments.%s: plan %s: %v", run.Env, run.Strategy, err), -1)
 	}
-	sc := &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: e.NewExecutor(run), Log: x.log, Clock: e.Clock}
+	sc := &StepContext{Run: run, Cfg: cfg, Outputs: outputs, Exec: e.NewExecutor(run), Log: x.log, Clock: e.Clock, Progress: x.progress}
 	for i := from; i < len(x.steps); i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("deploy: run %s: %w", run.RunID, err)
@@ -267,6 +270,19 @@ func (x *execution) event(step int) protocol.Event {
 		ev.Step, ev.StepIndex = &name, &index
 	}
 	return ev
+}
+
+// progress emits the event of sub-step name in the current state, with the
+// next 1-based sub-step index and no steps_total. It may run on a command's
+// output goroutine while the step waits for the command.
+func (x *execution) progress(name string) {
+	x.progressMu.Lock()
+	defer x.progressMu.Unlock()
+	x.subSteps++
+	job, index := JobName, x.subSteps
+	x.e.Events.DeployEvent(protocol.Event{
+		RunId: x.run.RunID, Job: &job, State: eventStates[x.state], Step: &name, StepIndex: &index,
+	})
 }
 
 func (x *execution) durationMs() *int {
