@@ -58,7 +58,7 @@ function renderRequestError(body: unknown): string | null {
 
 export async function renderPreview(c: Context<{ Bindings: Env }>): Promise<Response> {
 	const env = c.env;
-	const agent = await authenticateAgent(env.DB, c.req.header("authorization"));
+	const agent = await authenticateAgent(env, c.req.header("authorization"));
 
 	let body: unknown;
 	try {

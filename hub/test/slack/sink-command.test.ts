@@ -6,6 +6,7 @@ import { agentCredentialHash, insertAgent } from "../../src/db/agents";
 import { bind } from "../../src/db/bindings";
 import { tenantDb } from "../../src/db/tenant";
 import worker from "../../src/index";
+import { SUBMIT_ANSWER_MS } from "../../src/slack/sink-command";
 import { SINK_ADD_CALLBACK_ID } from "../../src/slack/sink-modal";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
@@ -18,7 +19,7 @@ const HOOK = "https://hooks.example.com/zeroci";
 const LINEAR_API = "https://linear.test/graphql";
 const LIN_KEY = "lin_api_SLACKSECRET99";
 /** Every Slack method this feature may call. */
-const SINK_SLACK_METHODS = ["views.open", "chat.postEphemeral", "chat.postMessage"];
+const SINK_SLACK_METHODS = ["views.open", "views.update", "chat.postEphemeral", "chat.postMessage"];
 
 let world: CommandWorld;
 let logs: string[];
@@ -41,6 +42,7 @@ beforeEach(async () => {
   });
   await bind(t, REPO.repo_id, "checks", "agt_sink");
   world.slack.respond("POST", "/api/views.open", () => Response.json({ ok: true, view: { id: "V1" } }));
+  world.slack.respond("POST", "/api/views.update", () => Response.json({ ok: true, view: { id: "V1" } }));
   world.slack.respond("POST", "/api/chat.postEphemeral", () => Response.json({ ok: true, message_ts: "1.2" }));
   env.TELEGRAM_API_BASE = TG_API;
   env.LINEAR_API_URL = LINEAR_API;
@@ -60,6 +62,7 @@ afterEach(() => {
   env.TELEGRAM_API_BASE = saved.base;
   env.LINEAR_API_URL = saved.linear;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 /** The string at key of a recorded request body or a parsed JSON object; fails the test when there is none. */
@@ -83,11 +86,17 @@ function filled(fields: Record<string, string>) {
       { [field]: field === "kind" ? { type: "radio_buttons", selected_option: { value } } : { type: "plain_text_input", value } },
     ]),
   );
-  return { ...openedModal(), state: { values } };
+  return { id: "V1", ...openedModal(), state: { values } };
 }
 
-/** Submits view as userId through the signed /slack/interactive endpoint and returns Slack's answer. */
-async function submit(view: unknown, userId = USER): Promise<{ response_action: string; errors?: Record<string, string>; view?: { blocks: unknown[] } }> {
+type SubmitAnswer = {
+  response_action: string;
+  errors?: Record<string, string>;
+  view?: { title?: { text: string }; submit?: unknown; blocks: { text?: unknown }[] };
+};
+
+/** The signed /slack/interactive request that submits view as userId. */
+async function submission(view: unknown, userId = USER): Promise<Request> {
   const payload = { type: "view_submission", team: { id: TEAM }, user: { id: userId, team_id: TEAM }, trigger_id: "1.3.trig", view };
   const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
   const ts = Math.floor(testClock.now() / 1000);
@@ -96,11 +105,23 @@ async function submit(view: unknown, userId = USER): Promise<{ response_action: 
     "x-slack-request-timestamp": String(ts),
     "x-slack-signature": `v0=${hex(await hmacSha256(env.SLACK_SIGNING_SECRET, `v0:${ts}:${body}`))}`,
   });
+  return new Request("https://hub.test/slack/interactive", { method: "POST", headers, body });
+}
+
+/** Submits view as userId and returns Slack's answer, once its background work is done. */
+async function submit(view: unknown, userId = USER): Promise<SubmitAnswer> {
   const ctx = createExecutionContext();
-  const res = await worker.fetch(new Request("https://hub.test/slack/interactive", { method: "POST", headers, body }), env, ctx);
+  const res = await worker.fetch(await submission(view, userId), env, ctx);
   await waitOnExecutionContext(ctx);
   expect(res.status).toBe(200);
   return res.json();
+}
+
+/** The text of the modal an answer turns the Add sink modal into, after checking its title. */
+function modalText(answer: SubmitAnswer, title: string): string {
+  expect(answer.response_action).toBe("update");
+  expect(answer.view?.title?.text).toBe(title);
+  return stringAt(answer.view?.blocks[0]?.text, "text");
 }
 
 /** Every value of every row in every D1 table, as one string. */
@@ -121,12 +142,11 @@ function expectOnlySinkSlackMethods(): void {
   expect(methods.filter((m) => !SINK_SLACK_METHODS.includes(m))).toEqual([]);
 }
 
-/** Adds a webhook sink through the command and the modal; returns its id and the ephemeral result text. */
+/** Adds a webhook sink through the command and the modal; returns its id and the result text the modal shows. */
 async function addWebhook(): Promise<{ id: string; text: string }> {
   await zeroci(world, "sink add acme/api");
-  expect(await submit(filled({ kind: "webhook", webhook_url: HOOK }))).toEqual({ response_action: "clear" });
+  const text = modalText(await submit(filled({ kind: "webhook", webhook_url: HOOK })), S.slack.sinkModal.addedTitle);
   const [row] = await sinkRows();
-  const text = stringAt(slackCalls(world, "chat.postEphemeral").at(-1)?.body, "text");
   return { id: row!.id, text };
 }
 
@@ -191,12 +211,10 @@ describe("secrets in command text", () => {
 });
 
 describe("Add sink submission", () => {
-  it("adds a webhook sink and shows its secret once, ephemeral to the submitter, never in a channel post", async () => {
+  it("adds a webhook sink and shows its secret once, in the submitter's modal, never in a post", async () => {
     const { id, text } = await addWebhook();
 
-    const ephemerals = slackCalls(world, "chat.postEphemeral");
-    expect(ephemerals).toHaveLength(1);
-    expect(ephemerals[0]?.body).toMatchObject({ channel: CHANNEL, user: USER });
+    expect(slackCalls(world, "chat.postEphemeral")).toEqual([]);
     expect(text).toContain(id);
     expect(text).toMatch(/zcwh_/);
     expect(text).toContain(S.slack.sinkSecretOnce);
@@ -209,11 +227,11 @@ describe("Add sink submission", () => {
 
   it("adds a Telegram sink after the service checked the token and chat, and never echoes the token", async () => {
     await zeroci(world, "sink add acme/api");
-    expect(await submit(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT, label: "CI" }))).toEqual({ response_action: "clear" });
+    const answer = await submit(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT, label: "CI" }));
 
     expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "telegram" }]);
     expect(world.gh.calls.map((c) => new URL(c.url).pathname)).toEqual(expect.arrayContaining([`/bot${BOT_TOKEN}/getMe`, `/bot${BOT_TOKEN}/getChat`]));
-    const text = stringAt(slackCalls(world, "chat.postEphemeral")[0]?.body, "text");
+    const text = modalText(answer, S.slack.sinkModal.addedTitle);
     expect(text).toContain(`chat ${CHAT}`);
     expect(text).not.toContain(BOT_TOKEN);
     expect(await wholeDatabase()).not.toContain(BOT_TOKEN);
@@ -236,10 +254,9 @@ describe("Add sink submission", () => {
     linearAnswers([{ id: "team_1", key: "ENG" }]);
     await zeroci(world, "sink add acme/api");
     const answer = await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG", linear_assignee_email: "dana@acme.test" }));
-    expect(answer).toEqual({ response_action: "clear" });
 
     expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "linear" }]);
-    const text = stringAt(slackCalls(world, "chat.postEphemeral")[0]?.body, "text");
+    const text = modalText(answer, S.slack.sinkModal.addedTitle);
     expect(text).toContain(S.sinks.linearTarget("ENG", "Dana"));
     expect(text).not.toContain(LIN_KEY);
     expect((await zeroci(world, "sink list acme/api")).text).toContain("Linear, team ENG, assignee Dana, enabled");
@@ -287,15 +304,65 @@ describe("Add sink submission", () => {
     expect(world.gh.calls.filter((c) => c.url.startsWith(TG_API))).toEqual([]);
   });
 
-  it("shows the result in the modal when Slack refuses the ephemeral post, so the secret is not lost", async () => {
-    world.slack.respond("POST", "/api/chat.postEphemeral", () => Response.json({ ok: false, error: "channel_not_found" }));
+  /**
+   * Submits view with Telegram's getChat held until Slack's answer window has
+   * passed, then lets it answer; returns Slack's answer once the background
+   * work is done.
+   */
+  async function submitPastAnswerWindow(view: unknown): Promise<SubmitAnswer> {
+    let asked!: () => void;
+    let release!: () => void;
+    const getChatAsked = new Promise<void>((resolve) => (asked = resolve));
+    const getChatReleased = new Promise<void>((resolve) => (release = resolve));
+    world.gh.respond("POST", /\/getChat$/, async () => {
+      asked();
+      await getChatReleased;
+      return Response.json({ ok: true, result: { id: Number(CHAT), type: "supergroup", title: "Acme CI" } });
+    });
+    const request = await submission(view);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const ctx = createExecutionContext();
+    const pending = worker.fetch(request, env, ctx);
+    await getChatAsked;
+    vi.advanceTimersByTime(SUBMIT_ANSWER_MS);
+    vi.useRealTimers();
+    const res = await pending;
+    expect(await sinkRows()).toEqual([]);
+    release();
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+    return res.json();
+  }
+
+  it("answers a slow save with a saving view that cannot be submitted again, then shows the result in the modal", async () => {
     await zeroci(world, "sink add acme/api");
 
-    const answer = await submit(filled({ kind: "webhook", webhook_url: HOOK }));
+    const answer = await submitPastAnswerWindow(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT }));
 
-    expect(answer.response_action).toBe("update");
-    expect(JSON.stringify(answer.view)).toMatch(/zcwh_/);
+    expect(modalText(answer, S.slack.sinkModal.title)).toBe(S.slack.sinkModal.saving);
+    expect(answer.view?.submit).toBeUndefined();
+    expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "telegram" }]);
+    const updates = slackCalls(world, "views.update");
+    expect(updates).toHaveLength(1);
+    expect(stringAt(updates[0]?.body, "view_id")).toBe("V1");
+    const result: unknown = JSON.parse(stringAt(updates[0]?.body, "view"));
+    expect(result).toMatchObject({ title: { text: S.slack.sinkModal.addedTitle } });
+    expect(JSON.stringify(result)).toContain(`chat ${CHAT}`);
+    expect(JSON.stringify(result)).not.toContain(BOT_TOKEN);
+    expect(slackCalls(world, "chat.postEphemeral")).toEqual([]);
+  });
+
+  it("posts a slow save's result ephemeral to the submitter when the modal was closed", async () => {
+    world.slack.respond("POST", "/api/views.update", () => Response.json({ ok: false, error: "not_found" }));
+    await zeroci(world, "sink add acme/api");
+
+    await submitPastAnswerWindow(filled({ kind: "telegram", bot_token: BOT_TOKEN, chat_id: CHAT }));
+
     expect(await sinkRows()).toHaveLength(1);
+    const ephemerals = slackCalls(world, "chat.postEphemeral");
+    expect(ephemerals).toHaveLength(1);
+    expect(ephemerals[0]?.body).toMatchObject({ channel: CHANNEL, user: USER });
+    expect(stringAt(ephemerals[0]?.body, "text")).toContain(`chat ${CHAT}`);
   });
 });
 

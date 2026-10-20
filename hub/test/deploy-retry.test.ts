@@ -43,7 +43,7 @@ async function seedTrigger(attempt: number, runId: string, event: "push" | "retr
   )
     .bind(INSTALLATION, REPO.full_name, SHA, attempt, event, `trg_${runId}`, AGENT, runId)
     .run();
-  await upsertDeployRender(env.DB, {
+  await upsertDeployRender(tenantDb(env.DB, INSTALLATION), {
     run_id: runId,
     repo: REPO.full_name,
     env: "staging",

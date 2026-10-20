@@ -14,6 +14,7 @@ import { gateForkRun } from "../../forks/gate";
 import { getPull } from "../../github/api";
 import type { GitHubClient } from "../../github/client";
 import { requireLinkedUser } from "../../identity/link";
+import { reportError } from "../../observability";
 import { loadRunView } from "../../sinks/runview";
 import { S } from "../../strings";
 import type { TriggerRequest } from "../../webhook/route";
@@ -83,7 +84,13 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `trigger for ${binding.agent_id} answered ${res.status}`);
 	const answer = await res.json<{ trigger_id?: string; duplicate?: boolean }>();
 	if (answer.duplicate || !answer.trigger_id) return ephemeral(S.slack.retryDuplicate(repo.fullName, shortSha, attempt));
-	if (!(await agentOnline(env, binding.agent_id))) return ephemeral(S.slack.retryOffline(repo.fullName, shortSha, attempt));
-	const view = await loadRunView(env, repo.installationId, { triggerId: answer.trigger_id });
-	return ephemeral(S.slack.retried(repo.fullName, shortSha, attempt, view?.state ?? "received"));
+	// The attempt is queued from here on, so a failed lookup only loses its current state.
+	try {
+		if (!(await agentOnline(env, binding.agent_id))) return ephemeral(S.slack.retryOffline(repo.fullName, shortSha, attempt));
+		const view = await loadRunView(env, repo.installationId, { triggerId: answer.trigger_id });
+		return ephemeral(S.slack.retried(repo.fullName, shortSha, attempt, view?.state ?? "received"));
+	} catch (err) {
+		reportError(err, { team_id: teamId, installation_id: repo.installationId, command: "retry" });
+		return ephemeral(S.slack.retried(repo.fullName, shortSha, attempt, "received"));
+	}
 });

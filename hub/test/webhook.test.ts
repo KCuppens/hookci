@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hex, hmacSha256 } from "../src/crypto";
 import { bind } from "../src/db/bindings";
-import { markDelivery } from "../src/db/deliveries";
+import { markDelivery, PENDING_STALE_MS } from "../src/db/deliveries";
 import { markDeleted, markSuspended, upsertInstallation } from "../src/db/installations";
 import { tenantDb } from "../src/db/tenant";
 import type { Env } from "../src/env";
@@ -158,6 +158,38 @@ describe("POST /github/webhook deliveries", () => {
     expect(res.status).toBe(202);
     expect(agents.calls).toHaveLength(2);
     expect(await deliveryRow("d-retry")).toMatchObject({ status: "processed", note: null });
+  });
+
+  it("keeps a delivery pending until its handler finishes", async () => {
+    let during: Promise<StoredDelivery | null> | undefined;
+    agents = fakeAgentDOs(() => {
+      during = deliveryRow("d-pending");
+      return new Response(null, { status: 202 });
+    });
+    await deliver("push", pushMain, { id: "d-pending" });
+    expect(await during).toMatchObject({ status: "pending" });
+    expect(await deliveryRow("d-pending")).toMatchObject({ status: "processed", note: null });
+  });
+
+  it("runs a redelivery of a delivery whose handler was cut off, once it has been pending past PENDING_STALE_MS", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await env.DB.prepare(
+      "INSERT INTO deliveries (delivery_id, received_at, expires_at, event, installation_id, status) VALUES ('d-cut', ?1, ?2, 'push', ?3, 'pending')",
+    )
+      .bind(NOW, NOW + 604_800_000, INSTALLATION)
+      .run();
+
+    vi.setSystemTime(NOW + PENDING_STALE_MS);
+    const early = await deliver("push", pushMain, { id: "d-cut" });
+    expect(await early.json()).toEqual({ duplicate: true });
+    expect(agents.calls).toEqual([]);
+
+    vi.setSystemTime(NOW + PENDING_STALE_MS + 1);
+    const late = await deliver("push", pushMain, { id: "d-cut" });
+    expect(late.status).toBe(202);
+    expect(agents.calls).toHaveLength(1);
+    expect(await deliveryRow("d-cut")).toMatchObject({ status: "processed", received_at: NOW + PENDING_STALE_MS + 1 });
   });
 
   it("drops the 601st delivery of an installation within one minute", async () => {

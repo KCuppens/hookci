@@ -37,7 +37,7 @@ async function readCapped(body: ReadableStream<Uint8Array> | null, limit: number
 
 export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<Response> {
 	const env = c.env;
-	const agent = await authenticateAgent(env.DB, c.req.header("authorization"));
+	const agent = await authenticateAgent(env, c.req.header("authorization"));
 
 	const runId = c.req.param("runId");
 	const job = c.req.param("job");

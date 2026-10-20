@@ -1,3 +1,4 @@
+import { HubError } from "../errors";
 import type { JobPlanned } from "../protocol";
 import type { TrustRefusal } from "../policy/trust";
 import { TERMINAL } from "../slack/badge";
@@ -128,25 +129,60 @@ export async function supersedeRun(t: TenantDb, triggerId: string, at: number): 
 	return res.meta.changes > 0;
 }
 
+/** Agent run ids: 1 to 64 letters, digits, dots, dashes or underscores, never "." or "..". */
+export function isRunId(value: unknown): value is string {
+	return typeof value === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(value) && value !== "." && value !== "..";
+}
+
+type RunClaim = Pick<RunRow, "installation_id" | "trigger_id" | "agent_id" | "repo_id" | "sha" | "env" | "attempt">;
+
 /**
  * Gives the run of triggerId the agent's run_id in place of its provisional
  * one (the trigger_id); a second call with the same ids changes nothing more.
  * A run still waiting (received, queued or pending) becomes queued with no
  * reason; any other state is kept. When runId is already an earlier
- * attempt's run (a deploy retry), that run is reopened as queued for
- * triggerId and the provisional row is dropped. False when no such run.
+ * attempt's run of the same deploy (same agent, repo, commit and env, a
+ * lower attempt), that run is reopened as queued for triggerId and the
+ * provisional row is dropped. Throws bad_run_id (400) for a malformed runId
+ * and run_id_taken (409) when runId names any other run, of this
+ * installation or another; both before any write. False when no such run.
  */
 export async function acceptRun(t: TenantDb, triggerId: string, runId: string, agentId: string): Promise<boolean> {
-	const existing = await t.first<{ trigger_id: string }>("SELECT trigger_id FROM runs WHERE installation_id = ?1 AND run_id = ?2", runId);
+	if (!isRunId(runId)) throw new HubError("bad_run_id", 400, `run id ${JSON.stringify(runId)} is not a valid run id`);
+	// Unscoped: run_id is unique across installations, and another tenant's run must refuse the id, not fail the insert.
+	const existing = await t.db
+		.prepare("SELECT installation_id, trigger_id, agent_id, repo_id, sha, env, attempt FROM runs WHERE run_id = ?1")
+		.bind(runId)
+		.first<RunClaim>();
+	if (existing && existing.installation_id !== t.installationId) {
+		throw new HubError("run_id_taken", 409, `run id ${runId} belongs to another installation`);
+	}
 	if (existing && runId !== triggerId) {
 		if (existing.trigger_id !== triggerId) {
+			const provisional = await t.first<RunClaim>(
+				"SELECT installation_id, trigger_id, agent_id, repo_id, sha, env, attempt FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND trigger_id = ?2",
+				triggerId,
+			);
+			// Only a deploy retry reuses a run id: the same agent, repo, commit and env, at a later attempt.
+			const retry =
+				provisional !== null &&
+				provisional.env !== null &&
+				provisional.env === existing.env &&
+				provisional.agent_id === agentId &&
+				existing.agent_id === agentId &&
+				provisional.repo_id === existing.repo_id &&
+				provisional.sha === existing.sha &&
+				provisional.attempt > existing.attempt;
+			if (!retry) {
+				throw new HubError("run_id_taken", 409, `run id ${runId} is another run's, not an earlier attempt of trigger ${triggerId}`);
+			}
 			await t.run(
-				`UPDATE runs SET trigger_id = ?3, agent_id = ?4, state = 'queued', reason = NULL, started_at = NULL, finished_at = NULL, duration_ms = NULL,
-					attempt = COALESCE((SELECT attempt FROM runs WHERE installation_id = ?1 AND run_id = ?3), attempt + 1)
+				`UPDATE runs SET trigger_id = ?3, agent_id = ?4, state = 'queued', reason = NULL, started_at = NULL, finished_at = NULL, duration_ms = NULL, attempt = ?5
 				WHERE installation_id = ?1 AND run_id = ?2`,
 				runId,
 				triggerId,
 				agentId,
+				provisional.attempt,
 			);
 		}
 		await t.run("DELETE FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND trigger_id = ?2", triggerId);
@@ -216,9 +252,27 @@ export async function getJob(t: TenantDb, runId: string, name: string): Promise<
 	);
 }
 
-/** The installation's most recently recorded runs, newest first. */
-export async function listRecentRuns(t: TenantDb, limit = 10): Promise<RunRow[]> {
-	return t.all<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 ORDER BY rowid DESC LIMIT ?2", limit);
+/** The names of the jobs recorded for the installation's run runId. */
+export async function listJobNames(t: TenantDb, runId: string): Promise<string[]> {
+	const rows = await t.all<{ name: string }>(
+		"SELECT j.name FROM jobs j JOIN runs r ON r.run_id = j.run_id WHERE r.installation_id = ?1 AND j.run_id = ?2",
+		runId,
+	);
+	return rows.map((r) => r.name);
+}
+
+/** The most recently recorded runs of the installation's repos repoIds, newest first. */
+export async function listRecentRuns(t: TenantDb, repoIds: number[], limit: number): Promise<RunRow[]> {
+	return t.all<RunRow>(
+		"SELECT * FROM runs WHERE installation_id = ?1 AND repo_id IN (SELECT value FROM json_each(?2)) ORDER BY rowid DESC LIMIT ?3",
+		JSON.stringify(repoIds),
+		limit,
+	);
+}
+
+/** The installation's repos with at least one recorded run. */
+export async function listRunRepoIds(t: TenantDb): Promise<number[]> {
+	return (await t.all<{ repo_id: number }>("SELECT DISTINCT repo_id FROM runs WHERE installation_id = ?1")).map((r) => r.repo_id);
 }
 
 /** The repo's latest run, of the commit whose SHA starts with shaPrefix when given; null when none. */

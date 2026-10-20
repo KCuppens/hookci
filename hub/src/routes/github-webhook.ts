@@ -1,9 +1,10 @@
 // POST /github/webhook: verifies the signature before anything reads the
 // body, dedupes by delivery id, rate limits per installation, answers 202 and
-// runs the event's handler after the response.
+// runs the event's handler after the response. A delivery stays pending until
+// its handler finishes, so one cut off mid-handler is claimed again.
 
 import type { Context } from "hono";
-import { type DeliveryRow, markDelivery, reclaimFailedDelivery, recordDelivery } from "../db/deliveries";
+import { type DeliveryRow, markDelivery, reclaimDelivery, recordDelivery } from "../db/deliveries";
 import { hitIpRate } from "../db/ip-rate";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -30,7 +31,7 @@ function installationIdOf(payload: unknown): number | null {
 async function runHandler(env: Env, ctx: WaitUntil, handler: WebhookHandler, payload: unknown, delivery: DeliveryRow): Promise<void> {
 	try {
 		const result = await handler(env, payload, ctx);
-		if (result.status === "dropped") await markDelivery(env.DB, delivery.delivery_id, "dropped", result.note);
+		await markDelivery(env.DB, delivery.delivery_id, result.status, result.status === "dropped" ? result.note : null);
 	} catch (err) {
 		reportError(err, {
 			delivery_id: delivery.delivery_id,
@@ -64,29 +65,28 @@ export async function githubWebhook(c: Context<{ Bindings: Env }>): Promise<Resp
 
 	const db = c.env.DB;
 	const now = Date.now();
+	const handler = handlerFor(event);
 	const delivery: DeliveryRow = {
 		delivery_id: deliveryId,
 		received_at: now,
 		expires_at: now + DELIVERY_TTL_MS,
 		event,
 		installation_id: installationIdOf(payload),
-		status: "processed",
+		status: handler ? "pending" : "processed",
 		note: null,
 	};
-	if (!(await recordDelivery(db, delivery)) && !(await reclaimFailedDelivery(db, deliveryId))) {
+	if (!(await recordDelivery(db, delivery)) && !(await reclaimDelivery(db, delivery))) {
 		return c.json({ duplicate: true }, 200);
 	}
 
 	if (delivery.installation_id !== null) {
-		const minute = Math.floor(now / MINUTE_MS);
-		const rate = await hitIpRate(db, `inst:${delivery.installation_id}:${minute}`, QUOTAS.webhooksPerInstallationPerMin, MINUTE_MS, now);
+		const rate = await hitIpRate(db, `inst:${delivery.installation_id}`, QUOTAS.webhooksPerInstallationPerMin, MINUTE_MS, now);
 		if (!rate.ok) {
 			await markDelivery(db, deliveryId, "dropped", "rate_limited");
 			return c.body(null, 202);
 		}
 	}
 
-	const handler = handlerFor(event);
 	if (handler) c.executionCtx.waitUntil(runHandler(c.env, c.executionCtx, handler, payload, delivery));
 	return c.body(null, 202);
 }

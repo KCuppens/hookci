@@ -4,7 +4,7 @@
 import { type AgentRow, listAgents } from "../db/agents";
 import { getInstallation } from "../db/installations";
 import { listRepos } from "../db/repos";
-import { listRecentRuns } from "../db/runs";
+import { listRecentRuns, listRunRepoIds } from "../db/runs";
 import { tenantDb } from "../db/tenant";
 import { listLinkedInstallationIds } from "../db/workspaces";
 import type { AgentStatus } from "../do/agent";
@@ -18,7 +18,7 @@ import { S } from "../strings";
 import { slackApi } from "./api";
 import { renderBadge } from "./badge";
 import { type ButtonElement, actions, button, context, header, section } from "./blocks";
-import { commandGitHub, isInstallationAdmin } from "./resolve";
+import { commandGitHub, hasPermission, isInstallationAdmin } from "./resolve";
 import { type SlackView, confirmRevoke } from "./views";
 
 /** Slack rejects views with more blocks than this. */
@@ -77,8 +77,8 @@ function isOlder(a: Version, b: Version): boolean {
 	return a.prerelease && !b.prerelease;
 }
 
-/** The AgentDO's live status, or null when it fails or takes longer than a second. */
-async function liveStatus(env: Env, agentId: string): Promise<AgentStatus | null> {
+/** The AgentDO's live status; null on a non-OK answer, rejects when the call fails or takes longer than a second. */
+export async function liveStatus(env: Env, agentId: string): Promise<AgentStatus | null> {
 	const signal = AbortSignal.timeout(STATUS_TIMEOUT_MS);
 	const timedOut = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId));
@@ -110,29 +110,39 @@ async function homeAgents(env: Env, rows: AgentRow[]): Promise<HomeAgent[]> {
 	});
 }
 
-async function loadInstallation(env: Env, teamId: string, installationId: number, user: LinkedUser | null): Promise<HomeInstallation | null> {
+/**
+ * One installation for a linked user: its agents, and only the watched repos
+ * and recent runs of repos the user can read on GitHub.
+ */
+async function loadInstallation(env: Env, teamId: string, installationId: number, user: LinkedUser): Promise<HomeInstallation | null> {
 	const installation = await getInstallation(env.DB, installationId);
 	if (!installation) return null;
 	const t = tenantDb(env.DB, installationId);
-	const [isAdmin, agentRows, repoRows, watches, runRows] = await Promise.all([
-		user ? isInstallationAdmin(env, commandGitHub(env), installation, user) : Promise.resolve(false),
+	const gh = commandGitHub(env);
+	const [isAdmin, agentRows, repoRows, watches, runRepos] = await Promise.all([
+		isInstallationAdmin(env, gh, installation, user),
 		listAgents(t),
 		listRepos(t),
 		t.all<{ repo_id: number; channel_id: string }>(
 			"SELECT repo_id, channel_id FROM watches WHERE installation_id = ?1 AND team_id = ?2 AND status = 'active' ORDER BY channel_id",
 			teamId,
 		),
-		listRecentRuns(t, RECENT_RUNS),
+		listRunRepoIds(t),
 	]);
 	const channels = new Map<number, string[]>();
 	for (const w of watches) channels.set(w.repo_id, [...(channels.get(w.repo_id) ?? []), w.channel_id]);
+	const withRuns = new Set(runRepos);
+	const shown = repoRows.filter((repo) => channels.has(repo.repo_id) || withRuns.has(repo.repo_id));
+	const access = await Promise.all(shown.map((repo) => hasPermission(env, gh, installationId, repo.full_name, user.githubLogin, "read")));
+	const readable = shown.filter((_, i) => access[i]);
+	const runRows = await listRecentRuns(t, readable.map((repo) => repo.repo_id), RECENT_RUNS);
 	const runs = await Promise.all(runRows.map((run) => loadRunView(env, installationId, { runId: run.run_id })));
 	return {
 		id: installationId,
 		accountLogin: installation.account_login,
 		isAdmin,
 		agents: await homeAgents(env, agentRows),
-		repos: repoRows.flatMap((repo) => {
+		repos: readable.flatMap((repo) => {
 			const list = channels.get(repo.repo_id);
 			return list ? [{ fullName: repo.full_name, channels: list }] : [];
 		}),
@@ -140,11 +150,13 @@ async function loadInstallation(env: Env, teamId: string, installationId: number
 	};
 }
 
+/** An unlinked user gets no installation data: Home shows them only the link prompt. */
 export async function loadHomeData(env: Env, teamId: string, slackUserId: string): Promise<HomeData> {
 	const user = await getLinkedUser(env, teamId, slackUserId);
+	if (!user) return { linked: false, installations: [] };
 	const ids = await listLinkedInstallationIds(env.DB, teamId);
 	const installations = await Promise.all(ids.map((id) => loadInstallation(env, teamId, id, user)));
-	return { linked: user !== null, installations: installations.filter((i): i is HomeInstallation => i !== null) };
+	return { linked: true, installations: installations.filter((i): i is HomeInstallation => i !== null) };
 }
 
 function escapeMrkdwn(s: string): string {
@@ -199,7 +211,7 @@ export function renderHome(data: HomeData, notice?: string): SlackView {
 	const lead: unknown[] = [];
 	if (notice !== undefined) lead.push(section(notice));
 	if (!data.linked) lead.push(section(S.home.linkPrompt));
-	if (data.installations.length === 0) lead.push(section(S.home.noInstallations));
+	else if (data.installations.length === 0) lead.push(section(S.home.noInstallations));
 	const footer = actions(button("home:refresh", S.home.refresh, "refresh"));
 
 	const runs = data.installations.map((i) => Math.min(i.recentRuns.length, RECENT_RUNS));

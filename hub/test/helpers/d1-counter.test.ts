@@ -35,8 +35,8 @@ describe("countingD1", () => {
       counter.db.prepare("INSERT INTO cron_state (key, value, updated_at) VALUES ('x', 'y', 1)"),
       counter.db.prepare("DELETE FROM slack_events WHERE event_id = ?1").bind("Ev1"),
     ]);
-    // slack_events: the first insert (row and index, 2) and the delete (1); the duplicate wrote nothing.
-    expect(counter.byTable()).toEqual({ cron_state: 2, slack_events: 3 });
+    // slack_events: the first insert and the delete, each including the event_id and expires_at index entries; the duplicate wrote nothing.
+    expect(counter.byTable()).toEqual({ cron_state: 2, slack_events: 4 });
     expect(await counter.db.prepare("SELECT value FROM cron_state WHERE key = 'x'").first("value")).toBe("y");
   });
 

@@ -88,6 +88,30 @@ describe("purgeExpired", () => {
     expect(await column("SELECT name AS v FROM check_runs")).toEqual(["zeroci"]);
   });
 
+  it("deletes the deploy renders of expired runs and deploy triggers past retention", async () => {
+    const render = (runId: string) =>
+      env.DB.prepare(
+        "INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, state, started_at, updated_at) VALUES (1, ?1, 'acme/app', 'staging', 'sha', 'succeeded', 1, 1)",
+      ).bind(runId);
+    const deployTrigger = (triggerId: string, createdAt: number) =>
+      env.DB.prepare(
+        `INSERT INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, status, created_at, updated_at)
+        VALUES (1, 'acme/app', ?1, 'staging', 1, 'push', 'refs/heads/main', ?1, 'agt', 'accepted', ?2, ?2)`,
+      ).bind(triggerId, createdAt);
+    await env.DB.batch([
+      insertRun("run-in", RUN_CUTOFF, "sha-in"),
+      insertRun("run-out", RUN_CUTOFF - 1, "sha-out"),
+      render("run-in"),
+      render("run-out"),
+      deployTrigger("in", RUN_CUTOFF),
+      deployTrigger("out", RUN_CUTOFF - 1),
+    ]);
+
+    expect(await purgeExpired(env.DB, NOW)).toBe(3);
+    expect(await column("SELECT run_id AS v FROM deploy_renders")).toEqual(["run-in"]);
+    expect(await column("SELECT trigger_id AS v FROM deploy_triggers")).toEqual(["in"]);
+  });
+
   it("deletes a backlog larger than one 500-row statement", async () => {
     await env.DB.prepare(
       `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1201)

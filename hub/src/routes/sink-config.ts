@@ -59,7 +59,7 @@ function parseAddBody(body: unknown): SinkConfigInput {
 
 /** Authenticates the agent, then runs handler on its installation, answering the service's refusals. */
 async function asAgent(c: SinkContext, handler: (t: TenantDb, actor: SinkActor) => Promise<Response>): Promise<Response> {
-	const agent = await authenticateAgent(c.env.DB, c.req.header("authorization"));
+	const agent = await authenticateAgent(c.env, c.req.header("authorization"));
 	try {
 		return await handler(tenantDb(c.env.DB, agent.installation_id), { type: "agent", id: agent.agent_id });
 	} catch (err) {

@@ -11,7 +11,7 @@ import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { defaultFetcher, type Fetcher } from "../http";
+import { defaultFetcher, type Fetcher, jsonOrNull, PROVIDER_TIMEOUT_MS } from "../http";
 import { getLogTail } from "../logs/tail";
 import { reportError } from "../observability";
 import { formatDuration } from "../slack/badge";
@@ -180,7 +180,7 @@ interface TelegramReply {
 	retryAfter?: number;
 }
 
-/** POSTs body to the bot API method; a network failure throws telegram_unreachable naming the URL without its token. */
+/** POSTs body to the bot API method; a network failure or no answer within PROVIDER_TIMEOUT_MS throws telegram_unreachable naming the URL without its token. */
 async function callTelegram(
 	fetchFn: Fetcher,
 	apiBase: string,
@@ -190,12 +190,18 @@ async function callTelegram(
 ): Promise<{ status: number; reply: TelegramReply }> {
 	const url = `${apiBase}/bot${token}/${method}`;
 	let res: Response;
+	let raw: unknown;
 	try {
-		res = await fetchFn(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+		res = await fetchFn(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+		});
+		raw = await jsonOrNull(res);
 	} catch {
 		throw new HubError("telegram_unreachable", 502, `POST ${redactTelegramUrl(url)} failed`);
 	}
-	const raw: unknown = await res.json().catch(() => null);
 	const description = field(raw, "description");
 	const retryAfter = field(field(raw, "parameters"), "retry_after");
 	return {

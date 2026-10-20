@@ -58,13 +58,12 @@ export async function listPurgeDue(db: D1Database, now: number, limit: number): 
 	return results.map((r) => r.id);
 }
 
-// jobs, slack_messages, slack_job_replies and deploy_renders hang off runs,
-// so they go before it; then every table keyed by installation_id.
+// jobs, slack_messages and slack_job_replies hang off runs, so they go before
+// it; then every table keyed by installation_id.
 const PURGE_STATEMENTS = [
 	"DELETE FROM jobs WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_messages WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_job_replies WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
-	"DELETE FROM deploy_renders WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	...TENANT_TABLES.map((table) => `DELETE FROM ${table} WHERE installation_id = ?1`),
 	"DELETE FROM installations WHERE id = ?1",
 ];

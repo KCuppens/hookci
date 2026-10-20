@@ -18,7 +18,8 @@ import (
 
 // TestInstallerThenDoctor runs the real installer on a disposable VM (root,
 // systemd, network) and checks the host it leaves behind.
-// ZEROCI_INSTALL_VERSION picks the release to install.
+// ZEROCI_INSTALL_VERSION picks the release to install. The installer needs
+// cosign on PATH, or ZEROCI_ALLOW_UNSIGNED=1 in the environment.
 func TestInstallerThenDoctor(t *testing.T) {
 	testutil.RequireIntegration(t)
 	if os.Geteuid() != 0 {

@@ -152,9 +152,10 @@ describe("GET /github/oauth/callback", () => {
     expect(await rows("SELECT installation_id, created_by_github_id FROM pair_tokens")).toEqual([
       { installation_id: ACME, created_by_github_id: GITHUB_USER.id },
     ]);
-    const token = /zeroci connect (zc_pair_[A-Za-z0-9_-]+)/.exec(html)?.[1];
+    const token = /sudo zeroci connect --hub \S+ (zc_pair_[A-Za-z0-9_-]+)/.exec(html)?.[1];
     expect(token).toBeDefined();
     expect(html).toContain(`curl -fsSL ${env.HUB_ORIGIN}/install | sh -s -- ${token}`);
+    expect(html).toContain(`sudo zeroci connect --hub ${env.HUB_ORIGIN} ${token}`);
     expect(html).toContain("expires in 15 minutes");
     expect(html).toContain(`/slack/install?installation_id=${ACME}`);
     expect(res.headers.getSetCookie()).toContain("__Host-zeroci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
@@ -270,7 +271,7 @@ describe("GET /github/oauth/callback", () => {
     const session = sessionCookie(picker);
     const picked = await exports.default.fetch(`https://hub.test/start?installation_id=${UMBRELLA}`, { headers: { cookie: session } });
     expect(picked.status).toBe(200);
-    expect(await picked.text()).toContain("zeroci connect zc_pair_");
+    expect(await picked.text()).toContain(`sudo zeroci connect --hub ${env.HUB_ORIGIN} zc_pair_`);
     expect(await rows("SELECT installation_id, created_by_github_id FROM pair_tokens")).toEqual([
       { installation_id: UMBRELLA, created_by_github_id: GITHUB_USER.id },
     ]);

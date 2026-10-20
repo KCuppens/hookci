@@ -27,6 +27,19 @@ export async function bind(t: TenantDb, repoId: number, target: BindingTarget, a
 	);
 }
 
+/** Routes target work for each of repoIds to agentId in one statement, replacing any previous agent. */
+export async function bindRepos(t: TenantDb, repoIds: readonly number[], target: BindingTarget, agentId: string): Promise<void> {
+	if (repoIds.length === 0) return;
+	await t.run(
+		`INSERT INTO repo_bindings (installation_id, repo_id, target, agent_id)
+		SELECT ?1, value, ?3, ?4 FROM json_each(?2) WHERE true
+		ON CONFLICT (installation_id, repo_id, target) DO UPDATE SET agent_id = excluded.agent_id`,
+		JSON.stringify(repoIds),
+		target,
+		agentId,
+	);
+}
+
 export async function getBinding(t: TenantDb, repoId: number, target: BindingTarget): Promise<BindingRow | null> {
 	return t.first<BindingRow>(
 		"SELECT * FROM repo_bindings WHERE installation_id = ?1 AND repo_id = ?2 AND target = ?3",

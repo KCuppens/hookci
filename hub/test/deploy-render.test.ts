@@ -175,7 +175,7 @@ describe("deploy rendering through the agent", () => {
     expect(formField(updates.at(-1)?.body, "text")).toBe("staging · aaaaaaa · 2m04s · health ok · log");
     expect(blocksOf(updates.at(-1))).toContain(`<${stableLogLink(env, RUN, "deploy")}|log>`);
     expect(blocksOf(updates.at(-1))).not.toContain("/logs/view?");
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ slack_channel: CHANNEL, slack_ts: "1700000000.000001", state: "succeeded" });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ slack_channel: CHANNEL, slack_ts: "1700000000.000001", state: "succeeded" });
   });
 
   it("alert only on final failure", async () => {
@@ -230,7 +230,7 @@ describe("deploy rendering through the agent", () => {
     expect(calls("/api/chat.postMessage")).toHaveLength(1);
     expect(formField(calls("/api/chat.update").at(-1)?.body, "text")).toBe(`staging · aaaaaaa · ${text}`);
     expect(calls("/repos/acme/widgets/check-runs/500").at(-1)?.body).toMatchObject({ status: "completed", conclusion, output: { title } });
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ state });
   });
 
   it("check run informational", async () => {
@@ -248,7 +248,7 @@ describe("deploy rendering through the agent", () => {
       conclusion: "success",
       output: { summary: "staging · aaaaaaa · 2m04s · health ok · log" },
     });
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ check_run_id: 500 });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ check_run_id: 500 });
     expect(world.slack.calls.filter((c) => new URL(c.url).pathname.includes("/deployments"))).toEqual([]);
   });
 
@@ -257,7 +257,7 @@ describe("deploy rendering through the agent", () => {
     await event(socket, { state: "running" });
     await event(socket, { state: "failed", duration_ms: 90000 });
     await drain();
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state: "failed", check_run_id: 500 });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ state: "failed", check_run_id: 500 });
 
     const first = await env.DB.prepare("SELECT agent_id FROM deploy_triggers WHERE run_id = ?1").bind(RUN).first<{ agent_id: string }>();
     const { triggerId } = await dispatchDeployTrigger(env, {
@@ -276,7 +276,7 @@ describe("deploy rendering through the agent", () => {
 
     const runRows = await env.DB.prepare("SELECT run_id, trigger_id, attempt, state, reason, finished_at FROM runs").all();
     expect(runRows.results).toEqual([{ run_id: RUN, trigger_id: triggerId, attempt: 2, state: "queued", reason: null, finished_at: null }]);
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state: "queued", check_run_id: null, step: null });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ state: "queued", check_run_id: null, step: null });
 
     await event(socket, { state: "running" });
     await event(socket, { state: "failed", duration_ms: 30000 });
@@ -284,7 +284,7 @@ describe("deploy rendering through the agent", () => {
 
     expect(await env.DB.prepare("SELECT state FROM runs WHERE run_id = ?1").bind(RUN).first()).toEqual({ state: "failed" });
     expect(calls("/repos/acme/widgets/check-runs")).toHaveLength(2);
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state: "failed", check_run_id: 501, slack_ts: "1700000000.000001" });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ state: "failed", check_run_id: 501, slack_ts: "1700000000.000001" });
     expect(blocksOf(calls("/api/chat.update").at(-1))).toContain(`${RUN}:2`);
   });
 
@@ -314,6 +314,6 @@ describe("deploy rendering through the agent", () => {
     await pumped(event(socket, { state: "failed" }));
     const run = await env.DB.prepare("SELECT state FROM runs WHERE run_id = ?1").bind(RUN).first<{ state: string }>();
     expect(run?.state).toBe("failed");
-    expect(await getDeployRender(env.DB, RUN)).toMatchObject({ state: "failed", slack_ts: null });
+    expect(await getDeployRender(t, RUN)).toMatchObject({ state: "failed", slack_ts: null });
   });
 });

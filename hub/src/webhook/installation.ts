@@ -6,7 +6,7 @@
 // repos are forgotten and their watching channels told.
 
 import { listAgents, pickAgentForNewRepos } from "../db/agents";
-import { bind } from "../db/bindings";
+import { bindRepos } from "../db/bindings";
 import { getInstallation, markDeleted, markSuspended, setInstallationPermissions, upsertInstallation } from "../db/installations";
 import { listRepos, removeRepos, upsertRepos } from "../db/repos";
 import { cancelOpenRuns } from "../db/runs";
@@ -189,7 +189,12 @@ async function onReposAdded(env: Env, payload: InstallationRepositoriesPayload):
 	);
 	const agentId = await pickAgentForNewRepos(t, payload.sender.id);
 	if (agentId === null) return;
-	for (const repo of listed) await bind(t, repo.id, "checks", agentId);
+	await bindRepos(
+		t,
+		listed.map((r) => r.id),
+		"checks",
+		agentId,
+	);
 }
 
 /** Forgets the removed repos and tells each channel that watched any of them, once. */

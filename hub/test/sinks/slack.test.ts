@@ -10,7 +10,7 @@ import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watche
 import { clearOfflineDm } from "../../src/do/agent-hooks";
 import { stableLogLink } from "../../src/logs/links";
 import { slackApi, slackApiFireAndForget } from "../../src/slack/api";
-import { resetChannelCacheForTests } from "../../src/slack/channels";
+import { findChannel, resetChannelCacheForTests } from "../../src/slack/channels";
 import { loadRunView } from "../../src/sinks/runview";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
 import type { JobView, RunView } from "../../src/sinks/types";
@@ -457,12 +457,12 @@ describe("SlackSink", () => {
     const DEPLOYS = "C0DEPLOYS";
     const slack: RunView["slack"] = { channel: "deploys", notify: "quiet", alert: "dm" };
 
-    /** conversations.list answers in two pages: general, then deploys with the bot in it unless told otherwise. */
-    function listChannels(deploys: { name: string; is_member: boolean } = { name: "deploys", is_member: true }): void {
-      world.slack.respond("POST", "/api/conversations.list", ({ body }) =>
+    /** users.conversations answers in two pages: general, then the channel the bot is in named deploysName. */
+    function listChannels(deploysName = "deploys"): void {
+      world.slack.respond("POST", "/api/users.conversations", ({ body }) =>
         formField(body, "cursor") === "page2"
-          ? Response.json({ ok: true, channels: [{ id: DEPLOYS, ...deploys }], response_metadata: { next_cursor: "" } })
-          : Response.json({ ok: true, channels: [{ id: "C0GENERAL", name: "general", is_member: true }], response_metadata: { next_cursor: "page2" } }),
+          ? Response.json({ ok: true, channels: [{ id: DEPLOYS, name: deploysName }], response_metadata: { next_cursor: "" } })
+          : Response.json({ ok: true, channels: [{ id: "C0GENERAL", name: "general" }], response_metadata: { next_cursor: "page2" } }),
       );
     }
 
@@ -488,7 +488,19 @@ describe("SlackSink", () => {
       expect(formField(posts[0]?.body, "thread_ts")).toBeUndefined();
       expect(apiCalls("conversations.open").map((call) => formField(call.body, "users"))).toEqual(["U0ALICE"]);
       expect(text(inChannel("chat.postMessage", "D0ALICE")[0])).toMatch(/^Failed: /);
-      expect(apiCalls("conversations.list")).toHaveLength(2);
+      expect(apiCalls("users.conversations")).toHaveLength(2);
+      expect(apiCalls("conversations.list")).toEqual([]);
+    });
+
+    it("lists the bot's channels once for lookups that miss at the same time", async () => {
+      listChannels();
+      const now = Date.now();
+      const found = await Promise.all([findChannel(env, world.team, "deploys", now), findChannel(env, world.team, "general", now)]);
+      expect(found).toEqual([
+        { kind: "found", id: DEPLOYS },
+        { kind: "found", id: "C0GENERAL" },
+      ]);
+      expect(apiCalls("users.conversations")).toHaveLength(2);
     });
 
     it("keeps the watch's notify and alert where the override sets none", async () => {
@@ -518,11 +530,8 @@ describe("SlackSink", () => {
       expect(text(inChannel("chat.update", DEPLOYS).at(-1))).toMatch(/^Passed: /);
     });
 
-    it.each([
-      { reason: "not_member", deploys: { name: "deploys", is_member: false } },
-      { reason: "not_found", deploys: { name: "releases", is_member: true } },
-    ])("falls back to the watch when the bot cannot post in the named channel ($reason) and logs it once", async ({ reason, deploys }) => {
-      listChannels(deploys);
+    it("falls back to the watch when the bot is not in the named channel and logs it once", async () => {
+      listChannels("releases");
       await watch({ notify: "quiet" });
       const log = vi.spyOn(console, "log");
       const sink = slackSinkFactory(env, INSTALLATION);
@@ -534,7 +543,7 @@ describe("SlackSink", () => {
       expect(inChannel("chat.postMessage", DEPLOYS)).toEqual([]);
       const unresolved = log.mock.calls.filter(([line]) => String(line).includes('"event":"slack_override_unresolved"'));
       expect(unresolved.map(([line]) => JSON.parse(String(line)))).toEqual([
-        expect.objectContaining({ team_id: world.team, channel: "deploys", reason }),
+        expect.objectContaining({ team_id: world.team, channel: "deploys" }),
       ]);
     });
   });

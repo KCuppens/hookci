@@ -218,7 +218,7 @@ export class SlackSink implements Sink {
 				if (found.kind === "found") {
 					id = found.id;
 				} else if (found.firstReport) {
-					logEvent("slack_override_unresolved", { team_id: watch.team_id, channel: slack.channel, reason: found.reason, run_id: runKey });
+					logEvent("slack_override_unresolved", { team_id: watch.team_id, channel: slack.channel, run_id: runKey });
 				}
 			} catch (err) {
 				this.failed(err, { team_id: watch.team_id, channel: slack.channel, run_id: runKey, op: "find_channel" });

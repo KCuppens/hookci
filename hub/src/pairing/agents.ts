@@ -7,7 +7,7 @@ import {
 	agentCredentialHash,
 	getAgentById,
 	revokeAgent as markRevoked,
-	setCredentialHash,
+	setNextCredentialHash,
 } from "../db/agents";
 import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
@@ -22,14 +22,16 @@ export async function callAgentDo(env: Env, agentId: string, path: "repair" | "r
 }
 
 /**
- * Gives a non-revoked agent a new credential and returns it; the old one
- * stops working in the same statement. Only the sha256 is stored.
+ * Issues a non-revoked agent a new credential and returns it. Only its sha256
+ * is stored. The old credential keeps working until the agent first
+ * authenticates with the new one, so an agent that never receives it is not
+ * locked out; authenticateAgent then repairs the agent and drops the old one.
  */
 export async function rotateCredential(env: Env, agentId: string): Promise<string> {
 	const agent = await getAgentById(env.DB, agentId);
 	if (!agent || agent.revoked_at !== null) throw new HubError("unknown_agent", 404, `no active agent ${agentId}`);
 	const credential = randomToken(AGENT_CREDENTIAL_PREFIX, 32);
-	const rotated = await setCredentialHash(tenantDb(env.DB, agent.installation_id), agentId, await agentCredentialHash(credential));
+	const rotated = await setNextCredentialHash(tenantDb(env.DB, agent.installation_id), agentId, await agentCredentialHash(credential));
 	if (!rotated) throw new HubError("unknown_agent", 404, `agent ${agentId} was revoked during rotation`);
 	return credential;
 }

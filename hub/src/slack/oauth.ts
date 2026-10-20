@@ -3,7 +3,7 @@
 
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import type { Fetcher } from "../http";
+import { type Fetcher, jsonOrNull, PROVIDER_TIMEOUT_MS } from "../http";
 
 /** The bot scopes ZeroCI asks for, comma separated as Slack's `scope` parameter wants them. */
 export const SLACK_BOT_SCOPES = "chat:write,commands,channels:read,groups:read,im:write,users:read,users:read.email";
@@ -48,22 +48,29 @@ function exchangeFailed(reason: string): HubError {
 
 /**
  * Exchanges the callback code for a bot token. Slack answers a bad code with
- * 200 and `ok: false`, so that, a non-200 and a malformed body all throw
- * slack_oauth_failed.
+ * 200 and `ok: false`, so that, a non-200, a malformed body and no answer
+ * within PROVIDER_TIMEOUT_MS all throw slack_oauth_failed.
  */
 export async function exchangeSlackCode(env: Env, fetcher: Fetcher, code: string): Promise<SlackOAuthResult> {
-	const res = await fetcher("https://slack.com/api/oauth.v2.access", {
-		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({
-			client_id: env.SLACK_CLIENT_ID,
-			client_secret: env.SLACK_CLIENT_SECRET,
-			code,
-			redirect_uri: `${env.HUB_ORIGIN}/slack/oauth/callback`,
-		}).toString(),
-	});
+	let res: Response;
+	let body: unknown;
+	try {
+		res = await fetcher("https://slack.com/api/oauth.v2.access", {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				client_id: env.SLACK_CLIENT_ID,
+				client_secret: env.SLACK_CLIENT_SECRET,
+				code,
+				redirect_uri: `${env.HUB_ORIGIN}/slack/oauth/callback`,
+			}).toString(),
+			signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+		});
+		body = await jsonOrNull(res);
+	} catch {
+		throw exchangeFailed("Slack unreachable");
+	}
 	if (!res.ok) throw exchangeFailed(`HTTP ${res.status}`);
-	const body: unknown = await res.json().catch(() => null);
 	if (!isObject(body)) throw exchangeFailed("not a JSON object");
 	if (body.ok !== true) throw exchangeFailed(typeof body.error === "string" ? body.error : "ok is not true");
 
@@ -93,14 +100,21 @@ export async function exchangeSlackCode(env: Env, fetcher: Fetcher, code: string
 	};
 }
 
-/** Revokes token with auth.revoke. Throws slack_revoke_failed when Slack does not confirm it. */
+/** Revokes token with auth.revoke. Throws slack_revoke_failed when Slack does not confirm it within PROVIDER_TIMEOUT_MS. */
 export async function revokeSlackToken(fetcher: Fetcher, token: string): Promise<void> {
-	const res = await fetcher("https://slack.com/api/auth.revoke", {
-		method: "POST",
-		headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-		body: "",
-	});
-	const body: unknown = await res.json().catch(() => null);
+	let res: Response;
+	let body: unknown;
+	try {
+		res = await fetcher("https://slack.com/api/auth.revoke", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+			body: "",
+			signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+		});
+		body = await jsonOrNull(res);
+	} catch {
+		throw new HubError("slack_revoke_failed", 502, "Slack auth.revoke failed: Slack unreachable");
+	}
 	if (!res.ok || !isObject(body) || body.ok !== true) {
 		const reason = isObject(body) && typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
 		throw new HubError("slack_revoke_failed", 502, `Slack auth.revoke failed: ${reason}`);

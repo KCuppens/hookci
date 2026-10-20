@@ -23,6 +23,7 @@ interface SlackInputState {
 
 /** The parts of a view_submission's view the parse reads. */
 export interface SlackViewSubmission {
+	id?: string;
 	private_metadata?: string;
 	state?: { values?: Record<string, Record<string, SlackInputState> | undefined> };
 }
@@ -42,7 +43,7 @@ function textInput(field: SinkField, label: string, hint: string, maxLength: num
 	};
 }
 
-/** The modal for adding a sink to repo; channel is where the result is posted, ephemeral to the submitter. */
+/** The modal for adding a sink to repo; channel is where the result is posted, ephemeral to the submitter, when the modal was closed before the result was known. */
 export function buildSinkAddModal(repo: string, channel: string): SlackView {
 	return {
 		type: "modal",
@@ -71,18 +72,25 @@ export function buildSinkAddModal(repo: string, channel: string): SlackView {
 	};
 }
 
-/** What the Add sink modal turns into when the ephemeral result could not be posted, so a webhook's one-time secret is still shown. */
-export function buildSinkAddedModal(text: string): SlackView {
-	return { type: "modal", title: plain(S.slack.sinkModal.addedTitle), close: plain(S.slack.sinkModal.done), blocks: [section(text)] };
+/** What the Add sink modal shows while the submission's checks and save outlast Slack's answer window. It has no submit, so the sink cannot be added twice. */
+export function buildSinkSavingModal(): SlackView {
+	return { type: "modal", title: plain(S.slack.sinkModal.title), close: plain(S.slack.sinkModal.hide), blocks: [section(S.slack.sinkModal.saving)] };
+}
+
+/** What the Add sink modal turns into once the submission is done: the added sink, with a webhook's one-time secret, or why it was not added. */
+export function buildSinkResultModal(added: boolean, text: string): SlackView {
+	const title = added ? S.slack.sinkModal.addedTitle : S.slack.sinkModal.notAddedTitle;
+	return { type: "modal", title: plain(title), close: plain(S.slack.sinkModal.done), blocks: [section(text)] };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Whether view has the shape of a view_submission's view: string metadata and a values map of input states. */
+/** Whether view has the shape of a view_submission's view: string id and metadata, and a values map of input states. */
 export function isSlackViewSubmission(view: unknown): view is SlackViewSubmission {
 	if (!isObject(view)) return false;
+	if (view.id !== undefined && typeof view.id !== "string") return false;
 	if (view.private_metadata !== undefined && typeof view.private_metadata !== "string") return false;
 	if (view.state === undefined) return true;
 	if (!isObject(view.state)) return false;

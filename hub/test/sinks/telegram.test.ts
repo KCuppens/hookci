@@ -203,6 +203,16 @@ describe("telegramDeliverer", () => {
     expect(await message()).toBeNull();
   });
 
+  it("gives a send a timeout and retries one Telegram does not answer in time", async () => {
+    const signals: unknown[] = [];
+    env.__TEST_FETCHER = async (_input, init) => {
+      signals.push(init?.signal);
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    };
+    expect(await deliver(view("running"))).toEqual({ kind: "retry" });
+    expect(signals).toEqual([expect.any(AbortSignal)]);
+  });
+
   it("never prints the bot token, through the outbox either", async () => {
     const logged: unknown[] = [];
     for (const level of ["log", "info", "warn", "error", "debug"] as const) {
@@ -274,5 +284,21 @@ describe("validateTelegramConfig", () => {
       CHAT,
     ).catch((e: unknown) => e);
     expect(err).toMatchObject({ code: "telegram_unreachable", status: 502, message: `POST ${FAKE_TELEGRAM_API}/bot***/getMe failed` });
+  });
+
+  it("throws telegram_unreachable, not bad_token, when the answer's body times out", async () => {
+    const signals: unknown[] = [];
+    const timedOut = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    const err = await validateTelegramConfig(
+      async (_input, init) => {
+        signals.push(init?.signal);
+        return new Response(new ReadableStream({ start: (controller) => controller.error(timedOut) }));
+      },
+      FAKE_TELEGRAM_API,
+      TOKEN,
+      CHAT,
+    ).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "telegram_unreachable", status: 502, message: `POST ${FAKE_TELEGRAM_API}/bot***/getMe failed` });
+    expect(signals).toEqual([expect.any(AbortSignal)]);
   });
 });

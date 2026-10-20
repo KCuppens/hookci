@@ -18,7 +18,7 @@ export async function agentConnect(c: Context<{ Bindings: Env }>): Promise<Respo
 		return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(rate.retryAfterSeconds) });
 	}
 
-	const agent = await authenticateAgent(c.env.DB, c.req.header("authorization"));
+	const agent = await authenticateAgent(c.env, c.req.header("authorization"));
 	const installation = await getInstallation(c.env.DB, agent.installation_id);
 	if (!installation || installation.suspended_at !== null || installation.deleted_at !== null) {
 		throw new HubError("suspended", 403);

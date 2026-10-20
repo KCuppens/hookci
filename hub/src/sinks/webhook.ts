@@ -10,7 +10,7 @@ import { hex, hmacSha256 } from "../crypto";
 import { getSinkMessage, putSinkMessage } from "../db/sinks";
 import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
-import { defaultFetcher } from "../http";
+import { defaultFetcher, PROVIDER_TIMEOUT_MS } from "../http";
 import { TERMINAL } from "../slack/badge";
 import { type Deliverer, type DeliveryResult, registerDeliverer } from "./deliverers";
 import { logJob } from "./runview";
@@ -40,7 +40,6 @@ export interface WebhookPayloadV1 {
 
 export const WEBHOOK_EVENT = "run.updated";
 export const WEBHOOK_USER_AGENT = "ZeroCI-Hookshot/1";
-export const WEBHOOK_TIMEOUT_MS = 10_000;
 export function buildWebhookPayload(run: RunView, deliveryId: string, now: Date): WebhookPayloadV1 {
 	return {
 		v: 1,
@@ -189,7 +188,7 @@ export const webhookDeliverer: Deliverer = {
 			res = await fetcher(check.url.toString(), {
 				method: "POST",
 				redirect: "manual",
-				signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+				signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
 				headers: {
 					"Content-Type": "application/json",
 					"User-Agent": WEBHOOK_USER_AGENT,

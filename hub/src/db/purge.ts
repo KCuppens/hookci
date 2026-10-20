@@ -48,6 +48,7 @@ async function purgeRuns(db: D1Database, cutoffPrefix: string): Promise<number> 
 		await deleteBatched(db, "jobs", `SELECT rowid FROM jobs WHERE run_id IN (${expired})`, cutoffPrefix),
 		await deleteBatched(db, "slack_messages", `SELECT rowid FROM slack_messages WHERE run_id IN (${expired})`, cutoffPrefix),
 		await deleteBatched(db, "slack_job_replies", `SELECT rowid FROM slack_job_replies WHERE run_id IN (${expired})`, cutoffPrefix),
+		await deleteBatched(db, "deploy_renders", `SELECT rowid FROM deploy_renders WHERE run_id IN (${expired})`, cutoffPrefix),
 		// check_runs are keyed by commit; a newer run of the same commit keeps them.
 		await deleteBatched(
 			db,
@@ -72,6 +73,8 @@ export async function purgeExpired(db: D1Database, now: number): Promise<number>
 	const runCutoff = now - QUOTAS.retentionDays * DAY_MS;
 	const purges: [table: string, where: string, bind: number | string][] = [
 		["deliveries", "received_at < ?1", now - DELIVERY_RETENTION_MS],
+		// The redeliver cron looks back 72 hours, so older counts are never read.
+		["hook_redeliveries", "last_at < ?1", now - DELIVERY_RETENTION_MS],
 		// slack_events has no received_at; expires_at is received_at plus a day.
 		["slack_events", "expires_at < ?1", now],
 		["oauth_states", "expires_at < ?1", now],
@@ -81,6 +84,7 @@ export async function purgeExpired(db: D1Database, now: number): Promise<number>
 		["daily_counters", "day < ?1", oldestDay],
 		["sink_messages", "updated_at < ?1", runCutoff],
 		["sink_deliveries", "at < ?1", runCutoff],
+		["deploy_triggers", "created_at < ?1", runCutoff],
 	];
 	let deleted = 0;
 	for (const [table, where, bind] of purges) {

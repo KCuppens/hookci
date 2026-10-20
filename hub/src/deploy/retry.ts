@@ -30,9 +30,17 @@ export async function handleDeployRetry(env: Env, payload: SlackBlockActionPaylo
 	const sep = value.lastIndexOf(":");
 	const runId = value.slice(0, Math.max(sep, 0));
 	const attempt = Number(value.slice(sep + 1));
-	const render = runId ? await getDeployRender(env.DB, runId) : null;
-	const trigger = render && (await env.DB.prepare("SELECT * FROM deploy_triggers WHERE run_id = ?1 ORDER BY attempt DESC LIMIT 1").bind(runId).first<DeployTriggerRow>());
-	if (!render || !trigger || trigger.attempt !== attempt || !(await listLinkedInstallationIds(env.DB, teamId)).includes(trigger.installation_id)) {
+	const linked = await listLinkedInstallationIds(env.DB, teamId);
+	// Only the linked installations' deploys: the run id comes from the button value.
+	const trigger = runId
+		? await env.DB.prepare(
+				"SELECT * FROM deploy_triggers WHERE run_id = ?1 AND installation_id IN (SELECT value FROM json_each(?2)) ORDER BY attempt DESC LIMIT 1",
+			)
+				.bind(runId, JSON.stringify(linked))
+				.first<DeployTriggerRow>()
+		: null;
+	const render = trigger && (await getDeployRender(tenantDb(env.DB, trigger.installation_id), runId));
+	if (!trigger || !render || trigger.attempt !== attempt) {
 		logEvent("tenant_denied", { team_id: teamId, slack_user_id: userId, run_id: runId, reason: "deploy_run_not_linked" });
 		return ephemeral(S.deploy.retryNoRun);
 	}
