@@ -64,6 +64,10 @@ func commandTable() map[string]command {
 				return ExitOK
 			},
 		},
+		"hub": {
+			summary: "set up or upgrade a self-hosted hub on Cloudflare through npx zeroci-hub: hub setup|upgrade [zeroci-hub options]",
+			run:     cmdHub,
+		},
 		"init": {
 			summary: "scaffold a .zeroci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),
@@ -79,6 +83,10 @@ func commandTable() map[string]command {
 		"retry": {
 			summary: "retry a Failed or Interrupted deploy run: retry <run_id> [--state-dir DIR | --installation ID]",
 			run:     cmdRetry,
+		},
+		"sink": {
+			summary: "manage the repo's Telegram and webhook sinks on the hub: sink add telegram|webhook, sink ls, sink rm <id>, sink test <id>",
+			run:     cmdSink,
 		},
 		"status": {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",

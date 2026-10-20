@@ -13,6 +13,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 )
 
@@ -85,6 +86,9 @@ type Env struct {
 	DiskFree func(path string) (uint64, error)
 	// Writable is nil when the doctor's user may create files in dir.
 	Writable func(dir string) error
+	// RepoConfigs is what the default-branch runs of the installation in
+	// stateDir saw each repository's .zeroci.yml declare.
+	RepoConfigs func(ctx context.Context, stateDir string) ([]store.RepoConfig, error)
 }
 
 // Run runs checks in order and returns their results.
@@ -109,6 +113,7 @@ func Default() []Check {
 		gitCheck{},
 		diskSpaceCheck{},
 		hubReachableCheck{},
+		hubInfoCheck{},
 		hubTLSCheck{},
 		clockSkewCheck{},
 		wsUpgradeCheck{},

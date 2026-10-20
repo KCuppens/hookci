@@ -7,6 +7,7 @@ import { tenantDb } from "../src/db/tenant";
 import { addWatch } from "../src/db/watches";
 import { type CheckConclusion, dispatchDeployTrigger, onCheckConcluded } from "../src/deploy/chain";
 import { getDeployRender, renderDeployAlert, renderDeployBadge } from "../src/deploy/render";
+import { stableLogLink } from "../src/logs/links";
 import { clearTables } from "./db/helpers";
 import { type AgentSocket, connect, seedAgent } from "./do/agent-socket";
 import { after, formField, queueStats, useQueueWorld } from "./do/slack-queue-world";
@@ -172,7 +173,8 @@ describe("deploy rendering through the agent", () => {
     for (const update of updates) expect(formField(update.body, "ts")).toBe("1700000000.000001");
     expect(updates.map((u) => formField(u.body, "text"))).toContain("staging · aaaaaaa · 3/8 migrate");
     expect(formField(updates.at(-1)?.body, "text")).toBe("staging · aaaaaaa · 2m04s · health ok · log");
-    expect(blocksOf(updates.at(-1))).toMatch(/<https:[^|]+\|log>/);
+    expect(blocksOf(updates.at(-1))).toContain(`<${stableLogLink(env, RUN, "deploy")}|log>`);
+    expect(blocksOf(updates.at(-1))).not.toContain("/logs/view?");
     expect(await getDeployRender(env.DB, RUN)).toMatchObject({ slack_channel: CHANNEL, slack_ts: "1700000000.000001", state: "succeeded" });
   });
 

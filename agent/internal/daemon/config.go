@@ -33,6 +33,10 @@ type plan struct {
 	// slack is the trusted configuration's notify.slack block for the hub;
 	// nil when it has none.
 	slack *protocol.JobPlannedSlack
+	// policy is what the trusted .zeroci.yml declares about forks, before
+	// the semantic checks judge it; nil when there is no file or it fails
+	// the schema.
+	policy *config.Policy
 }
 
 // resolvePlan picks the checks of co. A pull request (BaseDir set) runs the
@@ -40,7 +44,7 @@ type plan struct {
 // the agent or where Slack hears of it; its own .zeroci.yml, when it
 // differs, is only validated. A base without a .zeroci.yml falls back to
 // detection on the head tree, as does a push without one.
-func resolvePlan(co source.Checkout) (plan, error) {
+func resolvePlan(co source.Checkout, opts config.ParseOptions) (plan, error) {
 	trusted := co.Dir
 	if co.BaseDir != "" {
 		trusted = co.BaseDir
@@ -53,9 +57,12 @@ func resolvePlan(co source.Checkout) (plan, error) {
 	var cfg *config.Config
 	if trustedData != nil {
 		var diags config.Diagnostics
-		cfg, diags = config.Parse(trustedData, config.ParseOptions{})
+		cfg, diags = config.Parse(trustedData, opts)
 		if diags.HasErrors() {
 			p.invalid = diags
+		}
+		if policy, ok := config.DeclaredPolicy(trustedData); ok {
+			p.policy = &policy
 		}
 	} else {
 		det, err := detect.DetectDir(co.Dir)
@@ -81,7 +88,7 @@ func resolvePlan(co source.Checkout) (plan, error) {
 		return plan{}, err
 	}
 	if headData != nil && !bytes.Equal(headData, trustedData) {
-		_, diags := config.Parse(headData, config.ParseOptions{})
+		_, diags := config.Parse(headData, opts)
 		p.head = &diags
 	}
 	return p, nil

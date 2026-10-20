@@ -186,6 +186,14 @@ func TestLogURL(t *testing.T) {
 	}
 }
 
+func TestRedactMatchesUpload(t *testing.T) {
+	token := "ghs_" + strings.Repeat("Z", 36)
+	got := string(Redact([]byte("token " + token + "\ntail " + token)))
+	if strings.Contains(got, token) || got != "token ***\ntail ***" {
+		t.Errorf("Redact = %q; want both tokens masked", got)
+	}
+}
+
 func TestUploadCancelledDuringBackoff(t *testing.T) {
 	hub := &fakeHub{statuses: []int{502}}
 	srv := httptest.NewServer(hub)

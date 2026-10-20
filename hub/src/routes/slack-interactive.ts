@@ -1,6 +1,8 @@
 // POST /slack/interactive: button clicks, menu choices and modal submissions.
 // Acks at once and runs each action's registered handler in the workspace's
-// SlackWorkspaceDO, which posts any reply to response_url.
+// SlackWorkspaceDO, which posts any reply to response_url. The Add sink modal
+// is the exception: its field errors must be in this response, so its
+// submission is handled here before answering.
 
 import type { Context } from "hono";
 import { systemClock } from "../do/clock";
@@ -9,6 +11,8 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { logEvent, reportError } from "../observability";
 import { type SlackActionRequest, actionFor } from "../slack/registry";
+import { handleSinkAddSubmission } from "../slack/sink-command";
+import { SINK_ADD_CALLBACK_ID } from "../slack/sink-modal";
 import { readVerifiedSlackBody } from "../slack/verify";
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -73,6 +77,7 @@ export async function slackInteractive(c: Context<{ Bindings: Env }>): Promise<R
 	if (payload.type === "view_submission") {
 		const actionId = str(payload.view, "callback_id");
 		if (actionId === undefined) throw new HubError("bad_request", 400);
+		if (actionId === SINK_ADD_CALLBACK_ID) return c.json(await handleSinkAddSubmission(env, teamId, userId, payload.view));
 		dispatch({ ...base, actionId, value: str(payload.view, "private_metadata") ?? "", responseUrl: null, view: payload.view });
 		return c.json({ response_action: "clear" });
 	}

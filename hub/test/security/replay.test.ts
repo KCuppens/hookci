@@ -9,8 +9,9 @@ import { hex, hmacSha256 } from "../../src/crypto";
 import { approveForkRun } from "../../src/forks/gate";
 import type { Installation } from "../../src/github/types";
 import worker from "../../src/index";
-import { LOG_URL_TTL_SECONDS, signLogUrl } from "../../src/logs/sign";
+import { LOG_URL_TTL_SEC, signLogUrl } from "../../src/logs/signing";
 import { issueState } from "../../src/oauth/state";
+import { escapeHtml } from "../../src/pages/layout";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { type CommandWorld, INSTALLATION, LOGIN, REPO, setUpCommandWorld, slackCalls, TEAM, USER } from "../commands-helpers";
@@ -18,7 +19,6 @@ import { clearTables } from "../db/helpers";
 import pushMain from "../fixtures/github/push.main.json";
 import { deliver, type ForkWorld, forkPush, HEAD_SHA, outbox, runs, setUpForkWorld } from "../forks/world";
 import { seedTenant } from "../helpers/tenants";
-import { gunzip } from "../logs/helpers";
 
 /** Sends req to the worker and waits for its background work. */
 async function send(req: Request): Promise<Response> {
@@ -239,18 +239,19 @@ describe("fork approval replay", () => {
 });
 
 describe("signed log URL replay", () => {
-  it("answers 410 log_expired once the URL is older than its TTL, while a fresh URL still serves the log", async () => {
+  it("answers the link-expired page once the URL is older than its TTL, while a fresh URL still serves the log", async () => {
     await clearTables();
     const tenant = await seedTenant(env, { installationId: 32, teamId: "T0LOGS" });
-    const stale = await signLogUrl(env, tenant.runId, tenant.job);
-    testClock.advance(LOG_URL_TTL_SECONDS * 1000 + 1);
+    const ref = { installationId: tenant.installationId, runId: tenant.runId, job: tenant.job };
+    const stale = await signLogUrl(env, ref, new Date(testClock.now()));
+    testClock.advance(LOG_URL_TTL_SEC * 1000 + 1);
 
     const expired = await send(new Request(stale));
-    expect(expired.status).toBe(410);
-    expect(await expired.json()).toEqual({ error: "log_expired" });
+    expect(expired.status).toBe(403);
+    expect(await expired.text()).toContain(escapeHtml(S.logViewer.linkExpired));
 
-    const fresh = await send(new Request(await signLogUrl(env, tenant.runId, tenant.job)));
+    const fresh = await send(new Request(await signLogUrl(env, ref, new Date(testClock.now()))));
     expect(fresh.status).toBe(200);
-    expect(await gunzip(await fresh.arrayBuffer())).toBe("tenant 32 secret log\n");
+    expect(await fresh.text()).toContain("tenant 32 secret log\n");
   });
 });

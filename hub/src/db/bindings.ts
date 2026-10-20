@@ -42,6 +42,11 @@ export async function listBindingsForAgent(t: TenantDb, agentId: string): Promis
 	);
 }
 
+/** Whether the repo is bound to an agent for any target. */
+export async function isRepoBound(t: TenantDb, repoId: number): Promise<boolean> {
+	return (await t.first("SELECT 1 FROM repo_bindings WHERE installation_id = ?1 AND repo_id = ?2 LIMIT 1", repoId)) !== null;
+}
+
 /** Binds every repo of the installation to agentId for target (default `checks`). */
 export async function bindAllRepos(t: TenantDb, agentId: string, target: BindingTarget = "checks"): Promise<void> {
 	await t.run(

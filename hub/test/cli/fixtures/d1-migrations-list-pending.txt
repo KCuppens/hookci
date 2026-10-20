@@ -1,0 +1,13 @@
+
+ ⛅️ wrangler 4.151.1
+────────────────────
+Resource location: remote 
+
+Migrations to be applied:
+┌─────────────────────────┐
+│ Name                    │
+├─────────────────────────┤
+│ 0015_sink_retries.sql   │
+├─────────────────────────┤
+│ 0016_agent_versions.sql │
+└─────────────────────────┘

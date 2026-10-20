@@ -22,6 +22,9 @@ type AgentConfig struct {
 	Credential     string `json:"credential"`
 	Name           string `json:"name"`
 	InstallationID int64  `json:"installation_id"`
+	// HubMode is the hub's /v1/info mode at connect, "shared" or
+	// "self_hosted"; anything else is treated as shared.
+	HubMode string `json:"hub_mode,omitempty"`
 	config.AgentConfig
 }
 

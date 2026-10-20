@@ -3,7 +3,7 @@
   "url": "https://DEV-TUNNEL.example",
   "hook_attributes": { "url": "https://DEV-TUNNEL.example/github/webhook", "active": true },
   "redirect_url": "https://DEV-TUNNEL.example/github/oauth/callback",
-  "callback_urls": ["https://DEV-TUNNEL.example/github/oauth/callback", "https://DEV-TUNNEL.example/github/link/callback"],
+  "callback_urls": ["https://DEV-TUNNEL.example/github/oauth/callback", "https://DEV-TUNNEL.example/github/link/callback", "https://DEV-TUNNEL.example/auth/github/callback"],
   "setup_url": "https://DEV-TUNNEL.example/github/oauth/callback",
   "setup_on_update": true,
   "request_oauth_on_install": true,

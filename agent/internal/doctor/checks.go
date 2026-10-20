@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
@@ -327,6 +329,27 @@ func (hubReachableCheck) Run(ctx context.Context, env Env) Result {
 		return fail(title, fmt.Sprintf("GET /healthz answered %d", resp.StatusCode), hubFix(env))
 	}
 	return pass(title, env.HubOrigin+"/healthz answered 200")
+}
+
+// hubInfoCheck names the hub from GET /v1/info: its URL, mode and version.
+// A hub too old to serve /v1/info still runs agents, so failing to read it
+// only warns.
+type hubInfoCheck struct{}
+
+func (hubInfoCheck) ID() string { return "hub_info" }
+
+func (hubInfoCheck) Run(ctx context.Context, env Env) Result {
+	const title = "hub"
+	ctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	info, err := hubclient.FetchInfo(ctx, env.HTTP, env.HubOrigin)
+	if errors.Is(err, hubclient.ErrNotAHub) {
+		return warn(title, err.Error(), "point --hub at a zeroci hub, or pair again with zeroci connect --hub <url>")
+	}
+	if err != nil {
+		return warn(title, err.Error(), hubFix(env))
+	}
+	return pass(title, fmt.Sprintf("%s (%s, version %s)", env.HubOrigin, info.Mode, info.Version))
 }
 
 // hubTLSCheck wants the hub over HTTPS with a trusted certificate that is

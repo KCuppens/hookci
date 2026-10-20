@@ -66,7 +66,7 @@ func TestTrustAllRefusedShared(t *testing.T) {
 	_, diags := parseString(t, trustAll, ParseOptions{})
 	d := findDiag(t, diags, "checks.trust")
 	if d.Message != "trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network" ||
-		d.Fix != "use trust: approve, or self-host the hub without deployments" || d.Line != 3 {
+		d.Fix != "use trust: collaborators, or self-host the hub without deployments" || d.Line != 3 {
 		t.Errorf("diagnostic = %+v", d)
 	}
 }
@@ -85,6 +85,30 @@ func TestTrustAllRefusedSelfHostedWithDeploy(t *testing.T) {
 	_, diags := parseString(t, trustAllWithDeploy, ParseOptions{SelfHosted: true})
 	if d := findDiag(t, diags, "checks.trust"); d.Severity != SeverityError {
 		t.Errorf("diagnostic = %+v, want an error", d)
+	}
+}
+
+func TestDeclaredPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want Policy
+		ok   bool
+	}{
+		{"trust all the semantic checks refuse", trustAllWithDeploy, Policy{Trust: ChecksTrustAll, HasDeployments: true}, true},
+		{"trust all without deployments", trustAll, Policy{Trust: ChecksTrustAll}, true},
+		{"default trust", oneJob, Policy{Trust: ChecksTrustCollaborators}, true},
+		{"no checks", "version: 1\n" + scriptDeploy, Policy{Trust: ChecksTrustCollaborators, HasDeployments: true}, true},
+		{"schema error", "version: 1\nchecks:\n  trust: approve\n", Policy{}, false},
+		{"invalid YAML", "version: [1\n", Policy{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := DeclaredPolicy([]byte(tc.data))
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("DeclaredPolicy = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 

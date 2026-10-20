@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/redact"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
@@ -57,7 +59,7 @@ type redeemResponse struct {
 func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	hub := fs.String("hub", defaultHubURL, "hub base URL")
+	hub := fs.String("hub", "", "hub base URL (default $ZEROCI_HUB_URL, else "+defaultHubURL+")")
 	name := fs.String("name", "", "agent name shown in Slack (default the hostname)")
 	stateDir := fs.String("state-dir", "", "agent state directory (default $ZEROCI_STATE_DIR or "+defaultStateRoot+"/<installation_id>)")
 	force := fs.Bool("force", false, "replace an agent already configured in the state directory")
@@ -93,7 +95,11 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	if *name == "" {
 		*name = hostname
 	}
-	hubURL := strings.TrimRight(*hub, "/")
+	hubURL, err := resolveHubURL(*hub, os.Getenv("ZEROCI_HUB_URL"))
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitUsage
+	}
 	dir := *stateDir
 	if dir == "" {
 		dir = os.Getenv("ZEROCI_STATE_DIR")
@@ -105,6 +111,17 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 			fmt.Fprintf(stderr, "zeroci: %v\n", err)
 			return ExitRunFailed
 		}
+	}
+	// The hub must speak our protocol before the single-use token is spent.
+	info, err := hubclient.FetchInfo(ctx, http.DefaultClient, hubURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		return ExitRunFailed
+	}
+	if !compatible(info.ProtocolVersions, protocol.Version, protocol.Version) {
+		fmt.Fprintf(stderr, "zeroci: hub speaks protocol versions %d..%d, this agent speaks %d; upgrade with `zeroci upgrade`\n",
+			info.ProtocolVersions[0], info.ProtocolVersions[1], protocol.Version)
+		return ExitRunFailed
 	}
 
 	resp, err := redeemPairToken(ctx, hubURL, redeemRequest{
@@ -143,6 +160,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		Credential:     resp.Credential,
 		Name:           resp.Name,
 		InstallationID: resp.InstallationID,
+		HubMode:        info.Mode,
 	}
 	if err := agentconf.Save(dir, cfg); err != nil {
 		fmt.Fprintf(errw, "zeroci: %v\n", err)
@@ -212,6 +230,36 @@ func unitRunning(state string) bool {
 		return true
 	}
 	return false
+}
+
+// resolveHubURL picks the hub from --hub, else $ZEROCI_HUB_URL, else the
+// shared hub. It must be https, except on loopback where a local hub runs
+// over plain http.
+func resolveHubURL(flagURL, envURL string) (string, error) {
+	raw := flagURL
+	if raw == "" {
+		raw = envURL
+	}
+	if raw == "" {
+		raw = defaultHubURL
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("hub URL %q is not an absolute URL", raw)
+	}
+	switch host := u.Hostname(); {
+	case u.Scheme == "https":
+	case u.Scheme == "http" && (host == "localhost" || host == "127.0.0.1" || host == "::1"):
+	default:
+		return "", fmt.Errorf("hub URL %q must use https (plain http only for localhost)", raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
+// compatible reports whether the hub's [oldest, newest] protocol range
+// overlaps the agent's.
+func compatible(hub []int, agentMin, agentMax int) bool {
+	return len(hub) == 2 && hub[0] <= agentMax && agentMin <= hub[1]
 }
 
 // checkNoAgent refuses a state dir that already holds an agent config.

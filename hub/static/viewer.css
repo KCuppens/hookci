@@ -1,0 +1,112 @@
+:root {
+	color-scheme: light dark;
+	--bg: #ffffff;
+	--fg: #1f2328;
+	--muted: #59636e;
+	--pre-bg: #f6f8fa;
+	--border: #d1d9e0;
+	--link: #0969da;
+	--black: #24292f;
+	--red: #cf222e;
+	--green: #116329;
+	--yellow: #7d4e00;
+	--blue: #0550ae;
+	--magenta: #8250df;
+	--cyan: #1b7c83;
+	--white: #6e7781;
+	--bright-black: #57606a;
+	--bright-red: #a40e26;
+	--bright-green: #1a7f37;
+	--bright-yellow: #633c01;
+	--bright-blue: #218bff;
+	--bright-magenta: #a475f9;
+	--bright-cyan: #3192aa;
+	--bright-white: #8c959f;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #0d1117;
+		--fg: #e6edf3;
+		--muted: #9198a1;
+		--pre-bg: #151b23;
+		--border: #3d444d;
+		--link: #4493f8;
+		--black: #484f58;
+		--red: #ff7b72;
+		--green: #3fb950;
+		--yellow: #d29922;
+		--blue: #58a6ff;
+		--magenta: #bc8cff;
+		--cyan: #39c5cf;
+		--white: #b1bac4;
+		--bright-black: #6e7681;
+		--bright-red: #ffa198;
+		--bright-green: #56d364;
+		--bright-yellow: #e3b341;
+		--bright-blue: #79c0ff;
+		--bright-magenta: #d2a8ff;
+		--bright-cyan: #56d4dd;
+		--bright-white: #ffffff;
+	}
+}
+
+body {
+	margin: 0;
+	padding: 1rem;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a {
+	color: var(--link);
+}
+
+h1 {
+	margin: 0 0 0.25rem;
+	font-size: 1.25rem;
+}
+
+.meta {
+	margin: 0 0 1rem;
+	color: var(--muted);
+}
+
+.log {
+	margin: 0;
+	padding: 0.75rem;
+	overflow-x: auto;
+	background: var(--pre-bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	font: 0.8125rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.notice {
+	margin: 1rem 0 0;
+	color: var(--muted);
+}
+
+.c-bold { font-weight: 600; }
+.c-dim { opacity: 0.7; }
+.c-italic { font-style: italic; }
+.c-underline { text-decoration: underline; }
+.c-black { color: var(--black); }
+.c-red { color: var(--red); }
+.c-green { color: var(--green); }
+.c-yellow { color: var(--yellow); }
+.c-blue { color: var(--blue); }
+.c-magenta { color: var(--magenta); }
+.c-cyan { color: var(--cyan); }
+.c-white { color: var(--white); }
+.c-bright-black { color: var(--bright-black); }
+.c-bright-red { color: var(--bright-red); }
+.c-bright-green { color: var(--bright-green); }
+.c-bright-yellow { color: var(--bright-yellow); }
+.c-bright-blue { color: var(--bright-blue); }
+.c-bright-magenta { color: var(--bright-magenta); }
+.c-bright-cyan { color: var(--bright-cyan); }
+.c-bright-white { color: var(--bright-white); }

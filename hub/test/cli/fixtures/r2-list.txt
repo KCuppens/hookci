@@ -1,0 +1,9 @@
+
+ ⛅️ wrangler 4.151.1
+────────────────────
+Listing buckets...
+name:           other-app-assets
+creation_date:  2025-11-02T10:00:00.000Z
+
+name:           zeroci-hub-logs
+creation_date:  2026-01-15T08:31:00.000Z

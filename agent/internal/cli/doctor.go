@@ -50,7 +50,7 @@ func cmdDoctor(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		env.HubOrigin = defaultHubURL
 	}
 	checks := append(doctor.Default(), doctor.DeployChecks(doctor.DeployCheckDeps{Repos: cwdRepos(d)})...)
-	rs := doctor.Run(ctx, env, checks)
+	rs := append(doctor.Run(ctx, env, checks), doctor.ForkTrust(ctx, env)...)
 
 	failed := false
 	if *asJSON {

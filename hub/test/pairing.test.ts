@@ -7,7 +7,7 @@ import { upsertInstallation } from "../src/db/installations";
 import { upsertRepos } from "../src/db/repos";
 import { tenantDb } from "../src/db/tenant";
 import { revokeAgent } from "../src/pairing/agents";
-import { PAIR_TOKEN_TTL_MS, type RedeemResult, createPairToken } from "../src/pairing/tokens";
+import { PAIR_TOKEN_TTL_MS, type RedeemResult, createPairToken, redeemPairToken } from "../src/pairing/tokens";
 import { type TriggerRequest, routeTrigger } from "../src/webhook/route";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
@@ -154,6 +154,17 @@ describe("pairing", () => {
     await expect(newToken()).rejects.toMatchObject({ code: "pair_rate_limited", status: 429 });
     testClock.advance(60 * 60_000);
     await expect(newToken()).resolves.toMatch(/^zc_pair_/);
+  });
+
+  it("a self-hosted hub pairs an eleventh agent and issues an eleventh pair token in the hour", async () => {
+    const selfHosted = { ...env, HUB_MODE: "self_hosted" };
+    for (let i = 0; i < 10; i++) await seedAgent(INSTALLATION);
+    for (let i = 0; i < 10; i++) await newToken();
+    const { token } = await createPairToken(selfHosted, { installationId: INSTALLATION, createdByGithubId: ADMIN });
+    const input = { pair_token: token, name: "builder", hostname: "builder.local", agent_version: "1.4.0", os: "linux", arch: "amd64" };
+    expect(await redeemPairToken(selfHosted, input, "203.0.113.9")).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+    const { n } = (await env.DB.prepare("SELECT count(*) AS n FROM agents").first<{ n: number }>())!;
+    expect(n).toBe(11);
   });
 
   it("re-pair rotates credential and interrupts runs", async () => {

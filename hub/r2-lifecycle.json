@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "id": "zeroci-log-retention",
+      "enabled": true,
+      "conditions": { "prefix": "logs/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 1209600 } }
+    }
+  ]
+}

@@ -11,6 +11,21 @@ import (
 // kindDeploy is the store.Run.Kind of a deploy run.
 const kindDeploy = "deploy"
 
+// hubModeSelfHosted is the /v1/info mode of a self-hosted hub.
+const hubModeSelfHosted = "self_hosted"
+
+// refreshHubMode re-reads the hub's mode, which decides whether a
+// .zeroci.yml may declare trust: all. On failure the mode agent.json stored
+// at connect stays.
+func (d *Daemon) refreshHubMode(ctx context.Context) {
+	info, err := d.o.HubInfo(ctx)
+	if err != nil {
+		d.log.Warn("hub mode refresh failed; keeping the stored mode", "self_hosted", d.selfHosted.Load(), "err", err)
+		return
+	}
+	d.selfHosted.Store(info.Mode == hubModeSelfHosted)
+}
+
 // Step and reason of a deploy job an untrusted run skips.
 const (
 	stepUntrusted         = "untrusted"

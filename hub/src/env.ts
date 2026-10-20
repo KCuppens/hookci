@@ -1,5 +1,6 @@
 import type { AgentDO } from "./do/agent";
 import type { Clock } from "./do/clock";
+import type { SinkOutboxDO } from "./do/sink-outbox";
 import type { SlackWorkspaceDO } from "./do/slack-workspace";
 import type { Fetcher } from "./http";
 
@@ -10,6 +11,7 @@ export interface Env {
 	LOGS: R2Bucket;
 	AGENT_DO: DurableObjectNamespace<AgentDO>;
 	SLACK_DO: DurableObjectNamespace<SlackWorkspaceDO>;
+	SINK_OUTBOX: DurableObjectNamespace<SinkOutboxDO>;
 	HUB_ORIGIN: string;
 	HUB_VERSION: string;
 	/** Newest released agent version, e.g. v0.2.0; empty until the first release. */
@@ -18,8 +20,12 @@ export interface Env {
 	MIN_AGENT_VERSION: string;
 	/** The public GitHub App's URL slug: https://github.com/apps/<slug>. */
 	GITHUB_APP_SLUG: string;
-	/** RFC 9116 Expires for /.well-known/security.txt: an RFC 3339 time one year past the build date. */
-	SECURITY_TXT_EXPIRES: string;
+	/** security.txt Contact, a mailto: or https: URI; empty points reporters at GitHub's private advisories. */
+	SECURITY_CONTACT: string;
+	/** "shared" (default) or "self_hosted"; anything else is treated as shared. */
+	HUB_MODE?: string;
+	/** The Telegram Bot API origin, https://api.telegram.org; tests point it at a fake. */
+	TELEGRAM_API_BASE: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;
@@ -35,11 +41,12 @@ export interface Env {
 	/** JSON `{"current":<version>,"keys":{"<version>":"<base64 32-byte key>"}}`; see parseEncKeys. */
 	TOKEN_ENC_KEYS: string;
 	STATE_SIGNING_KEY: string;
-	/** JSON `{"<version>":"<base64 key>"}`; the highest version is current. */
-	LOG_SIGNING_KEYS: string;
+	/** HMAC key of signed log links, kid=c; LOG_SIGNING_KEY_PREVIOUS (kid=p) still verifies during a rotation. */
+	LOG_SIGNING_KEY: string;
+	LOG_SIGNING_KEY_PREVIOUS?: string;
 	ROTATION_IN_PROGRESS?: string;
 	/** Tests only: replaces the wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;
-	/** Tests only: replaces fetch for GitHub and Slack calls. Never set in wrangler.toml. */
+	/** Tests only: replaces fetch for GitHub, Slack and Telegram calls. Never set in wrangler.toml. */
 	__TEST_FETCHER?: Fetcher;
 }

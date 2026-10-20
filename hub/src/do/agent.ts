@@ -9,11 +9,11 @@ import { markAgentOffline, touchAgent } from "../db/agents";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
+import { LiveTails, SSE_HEADERS, checkLog, offlineStream } from "../logs/live";
 import { reportError } from "../observability";
 import {
 	type Frame,
 	type Interrupt,
-	type LogSubscribe,
 	ProtocolError,
 	type ProtocolErrorFrame,
 	type Token,
@@ -49,7 +49,6 @@ export type OutboundFrame =
 	| Omit<Trigger, "seq" | "hub_seq">
 	| Unsequenced<Interrupt>
 	| Unsequenced<Token>
-	| Unsequenced<LogSubscribe>
 	| Unsequenced<ProtocolErrorFrame>;
 
 export interface AgentStatus {
@@ -147,6 +146,11 @@ export class AgentDO extends DurableObject<Env> {
 	// Inbound messages are handled one at a time, in arrival order, so seq
 	// dedupe and frame handlers never interleave across awaits.
 	private inbox: Promise<void> = Promise.resolve();
+	// Live log tails of this agent's running jobs; in memory, as long as their viewer streams.
+	private readonly tails = new LiveTails({
+		send: (frame) => this.liveSocket()?.send(encodeFrame(frame)),
+		online: () => this.isOnline(),
+	});
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -268,9 +272,21 @@ export class AgentDO extends DurableObject<Env> {
 		const path = new URL(request.url).pathname;
 		if (request.method === "GET" && path === "/connect") return this.acceptSocket(request);
 		if (request.method === "GET" && path === "/status") return Response.json(this.status());
+		if (request.method === "GET" && path === "/tail") return this.openTail(request);
 		const route = request.method === "POST" ? doRoute(path.slice(1)) : undefined;
 		if (route) return route(this, request);
 		return Response.json({ error: "not_found" }, { status: 404 });
+	}
+
+	/** GET /tail?run_id&job&offset: the job's live log as server-sent events. */
+	private openTail(request: Request): Response {
+		const params = new URL(request.url).searchParams;
+		const runId = params.get("run_id");
+		const job = params.get("job");
+		const offset = Number(params.get("offset") ?? "0");
+		if (!runId || !job || !isSeq(offset, 0)) return Response.json({ error: "bad_request" }, { status: 400 });
+		const body = this.isOnline() ? this.tails.open(runId, job, offset, request.signal) : offlineStream();
+		return new Response(body, { headers: SSE_HEADERS });
 	}
 
 	private async acceptSocket(request: Request): Promise<Response> {
@@ -284,6 +300,8 @@ export class AgentDO extends DurableObject<Env> {
 		for (const old of this.ctx.getWebSockets()) {
 			if (old.readyState === WebSocket.OPEN) old.close(CLOSE.replaced, "replaced");
 		}
+		// The replaced connection's subscriptions ended with it.
+		this.tails.offline();
 		const now = this.clock.now();
 		this.setMeta("agent_id", agentId);
 		this.setMeta("installation_id", installationId);
@@ -345,6 +363,16 @@ export class AgentDO extends DurableObject<Env> {
 		} else if (frame.type === "hello") {
 			this.badFrame(ws, state, S.agentHelloRepeated, now);
 			return;
+		} else if (frame.type === "log") {
+			// Live tail chunks are unsequenced; a chunk nobody watches any more stops its stream.
+			const chunk = checkLog(frame);
+			if (!chunk) {
+				this.badFrame(ws, state, S.agentLogFrameInvalid, now);
+				return;
+			}
+			if (!this.tails.deliver(chunk) && !chunk.eof) {
+				ws.send(encodeFrame({ v: 1, type: "log_unsubscribe", run_id: chunk.runId, job: chunk.job }));
+			}
 		} else if (!isAgentFrame(frame)) {
 			this.badFrame(ws, state, S.agentFrameNotFromAgent(frame.type), now);
 			return;
@@ -483,6 +511,7 @@ export class AgentDO extends DurableObject<Env> {
 	/** Called once ws is gone: offline, unless another socket has taken over. */
 	private async socketGone(ws: WebSocket): Promise<void> {
 		if (this.ctx.getWebSockets().some((other) => other !== ws && other.readyState === WebSocket.OPEN)) return;
+		this.tails.offline();
 		await this.markOffline(this.lastActivity(ws));
 	}
 

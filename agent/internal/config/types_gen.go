@@ -102,8 +102,9 @@ type Checks struct {
 	// Steps that run once before the jobs.
 	Setup []SetupStep `json:"setup,omitempty,omitzero" yaml:"setup,omitempty"`
 
-	// Whose pull requests run automatically: repository collaborators, only after
-	// approval, or everyone.
+	// Whose pull requests run automatically: repository collaborators, or everyone
+	// (fork pull requests included; only a self-hosted hub without deployments honors
+	// it).
 	Trust ChecksTrust `json:"trust,omitempty,omitzero" yaml:"trust,omitempty"`
 }
 
@@ -232,12 +233,10 @@ func (j *ChecksServicesPostgres) UnmarshalJSON(value []byte) error {
 type ChecksTrust string
 
 const ChecksTrustAll ChecksTrust = "all"
-const ChecksTrustApprove ChecksTrust = "approve"
 const ChecksTrustCollaborators ChecksTrust = "collaborators"
 
 var enumValues_ChecksTrust = []interface{}{
 	"collaborators",
-	"approve",
 	"all",
 }
 

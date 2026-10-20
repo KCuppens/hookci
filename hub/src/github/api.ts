@@ -93,6 +93,16 @@ export function listInstallationRepos(inst: GitHubRequester): Promise<Repository
 	return paginate<"repositories", Repository>(inst, "/installation/repositories", "repositories");
 }
 
+/** The repository with id repoId as the installation sees it; null when GitHub does not show it to the installation (404). */
+export async function getRepository(inst: GitHubRequester, repoId: number): Promise<Repository | null> {
+	try {
+		return (await inst.request<Repository>("GET", `/repositories/${repoId}`)).data;
+	} catch (err) {
+		if (err instanceof GitHubApiError && err.githubStatus === 404) return null;
+		throw err;
+	}
+}
+
 export async function getCommit(
 	inst: GitHubRequester,
 	owner: string,

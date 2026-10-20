@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,6 +153,12 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 
 // newHarnessWith is newHarnessAt with deploy triggers decided by deploys.
 func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake) *harness {
+	return newHarnessMode(t, src, runner, hubURL, deploys, "")
+}
+
+// newHarnessMode is newHarnessWith for an agent.json that stored hubMode;
+// the start-up refresh of the mode fails, so the stored mode holds.
+func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake, hubMode string) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
 	runner.stateDir = stateDir
@@ -174,9 +181,12 @@ func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 		h.mu.Unlock()
 		return runner, nil
 	}
-	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x"}
+	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x", HubMode: hubMode}
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits()})
+	noHub := func(context.Context) (hubclient.HubInfo, error) {
+		return hubclient.HubInfo{}, errors.New("hub unreachable")
+	}
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx
@@ -340,6 +350,97 @@ func TestDaemonBaseConfigBootstrap(t *testing.T) {
 	}
 }
 
+// A default-branch run records the fork policy its .zeroci.yml declares,
+// even when the agent refuses that configuration; pull requests record
+// nothing.
+func TestDaemonRecordsDefaultBranchPolicy(t *testing.T) {
+	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
+	tests := []struct {
+		name string
+		pr   bool
+		want []store.RepoConfig
+	}{
+		{"push", false, []store.RepoConfig{{Repo: "acme/app", SHA: headSHA, Trust: "all"}}},
+		{"pull request", true, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{})
+			h.send(h.trigger("trg_1", tc.pr))
+			h.waitTrigger("trg_1", store.TriggerRejected)
+			got, err := store.ReadRepoConfigs(h.ctx, filepath.Join(h.d.o.StateDir, "agent.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range got {
+				if got[i].SeenAt.IsZero() {
+					t.Errorf("row %d has no seen_at", i)
+				}
+				got[i].SeenAt = time.Time{}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("repo configs = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// trust: all parses only for an agent of a self-hosted hub, and only
+// without deployments.
+func TestDaemonTrustAllNeedsSelfHostedHub(t *testing.T) {
+	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
+	for _, mode := range []string{"", "shared", "self_hosted"} {
+		t.Run("mode "+mode, func(t *testing.T) {
+			h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{}, "https://hub.invalid", nil, mode)
+			h.send(h.trigger("trg_1", false))
+			if mode == hubModeSelfHosted {
+				h.waitTrigger("trg_1", store.TriggerDone)
+				if !slices.Equal(h.runner.jobs, []string{"unit"}) {
+					t.Fatalf("jobs run = %v, want [unit]", h.runner.jobs)
+				}
+				return
+			}
+			h.waitTrigger("trg_1", store.TriggerRejected)
+			rej := h.frames("rejected")
+			if len(rej) != 1 || rej[0]["reason"] != ReasonConfigInvalid {
+				t.Fatalf("rejected frames = %v, want one config_invalid", rej)
+			}
+		})
+	}
+}
+
+// The daemon takes the hub's current mode at start; a failed refresh keeps
+// the mode agent.json stored.
+func TestDaemonRefreshHubMode(t *testing.T) {
+	tests := []struct {
+		name, stored string
+		info         hubclient.HubInfo
+		err          error
+		want         bool
+	}{
+		{"hub became self-hosted", "shared", hubclient.HubInfo{Mode: "self_hosted"}, nil, true},
+		{"hub became shared", "self_hosted", hubclient.HubInfo{Mode: "shared"}, nil, false},
+		{"refresh fails, self-hosted kept", "self_hosted", hubclient.HubInfo{}, errors.New("down"), true},
+		{"refresh fails, shared kept", "shared", hubclient.HubInfo{}, errors.New("down"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			info := func(context.Context) (hubclient.HubInfo, error) { return tc.info, tc.err }
+			d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", HubMode: tc.stored}, st, nil,
+				Options{StateDir: t.TempDir(), Source: &fakeSource{}, HubInfo: info})
+			d.refreshHubMode(context.Background())
+			if got := d.selfHosted.Load(); got != tc.want {
+				t.Fatalf("self-hosted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDaemonHeadConfigErrorsAnnotated(t *testing.T) {
 	h := newHarness(t, &fakeSource{
 		Head: map[string]string{ConfigFile: "version: 1\nchecks:\n  jobs:\n    unit:\n      needs: [nope]\n"},
@@ -441,6 +542,28 @@ func TestDaemonInterrupt(t *testing.T) {
 	defer h.runner.mu.Unlock()
 	if !h.runner.cancelled {
 		t.Fatal("the running job was not cancelled")
+	}
+}
+
+// TestDaemonLogTailFinished: the live log tail ends a job's stream once the
+// store records the job terminal, or never knew it.
+func TestDaemonLogTailFinished(t *testing.T) {
+	h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{Block: true})
+	h.send(h.trigger("trg_1", false))
+	tr := h.waitTrigger("trg_1", store.TriggerRunning)
+	<-h.runner.running
+
+	if h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(running unit) = true")
+	}
+	if !h.d.jobFinished(tr.RunID, "nope") {
+		t.Error("jobFinished(unknown job) = false")
+	}
+	runID := tr.RunID
+	h.send(protocol.Interrupt{RunId: &runID, Reason: protocol.InterruptReasonSuperseded, Seq: new(9)})
+	h.waitTrigger("trg_1", store.TriggerDone)
+	if !h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(cancelled unit) = false")
 	}
 }
 

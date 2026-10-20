@@ -75,9 +75,9 @@ export interface Checks {
     };
   };
   /**
-   * Whose pull requests run automatically: repository collaborators, only after approval, or everyone.
+   * Whose pull requests run automatically: repository collaborators, or everyone (fork pull requests included; only a self-hosted hub without deployments honors it).
    */
-  trust?: "collaborators" | "approve" | "all";
+  trust?: "collaborators" | "all";
   /**
    * Fork pull requests: gated behind approval, or never run.
    */

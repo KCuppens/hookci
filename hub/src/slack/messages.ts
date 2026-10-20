@@ -3,10 +3,12 @@
 // alert and the agent-offline DM. Every `text` starts with the state in plain
 // words, so a notification or screen reader never relies on the emoji.
 
+import { logJob } from "../sinks/runview";
 import type { AgentView, JobView, RunState, RunView } from "../sinks/types";
 import { S } from "../strings";
 import { BADGE_EMOJI, escapeMrkdwn, formatDuration } from "./badge";
 import { actions, type Block, button, context, section } from "./blocks";
+import { viewLogsButton } from "./view-logs";
 
 export interface SlackMessage {
 	text: string;
@@ -98,8 +100,10 @@ export function renderRunMessage(run: RunView, opts: { notify: "normal" | "quiet
 	if (run.durationMs !== undefined) meta.push(formatDuration(run.durationMs));
 	const current = run.state === "running" ? run.jobs.find((job) => job.name === run.currentJob) : undefined;
 	if (current?.step) meta.push(escapeMrkdwn(S.slack.currentStep(current.name, current.step, current.stepIndex, current.stepsTotal)));
-	if (run.logUrl) meta.push(`<${run.logUrl}|${S.badge.log}>`);
+	const withLog = logJob(run);
+	if (withLog?.logLink) meta.push(`<${withLog.logLink}|${S.badge.log}>`);
 	blocks.push(context(meta.join(SEP)));
+	if (withLog) blocks.push(actions(viewLogsButton(run.runId ?? run.triggerId, withLog.name)));
 
 	if (opts.notify === "quiet" && run.jobs.length > 0) blocks.push(context(run.jobs.map(jobLine).join(SEP)));
 	return { text: runText(run, word), blocks };
@@ -135,10 +139,10 @@ export function tailBlock(tail: readonly string[]): string {
 
 /**
  * The failure alert: one mention at most, the failed job and step, the log
- * tail, link and View log button; for a job whose logs stay on the agent,
- * only a note saying so.
+ * tail, the stable log link and View logs button; for a job whose logs stay
+ * on the agent, only a note saying so.
  */
-export function renderAlert(run: RunView, job: JobView, tail: string[], mention: string | null, logUrl: string | null): SlackMessage {
+export function renderAlert(run: RunView, job: JobView, tail: string[], mention: string | null, logLink: string | null): SlackMessage {
 	const head = [`${BADGE_EMOJI.failed} *${S.slack.state.failed}* ${repoLink(run)}`, shaLink(run)];
 	const ref = where(run);
 	if (ref) head.push(escapeMrkdwn(ref));
@@ -147,8 +151,7 @@ export function renderAlert(run: RunView, job: JobView, tail: string[], mention:
 		blocks.push(context(S.slack.logsLocal));
 	} else {
 		blocks.push(tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail));
-		if (logUrl) blocks.push(context(`<${logUrl}|${S.badge.log}>`));
-		if (logUrl && run.runId) blocks.push(actions(button("log:view", S.slack.viewLog, `${run.runId}:${job.name}`)));
+		if (logLink) blocks.push(context(`<${logLink}|${S.badge.log}>`), actions(viewLogsButton(run.runId ?? run.triggerId, job.name)));
 	}
 	return { text: S.slack.alertText(S.slack.state.failed, escapeMrkdwn(run.repo), run.shortSha, escapeMrkdwn(job.name)), blocks };
 }

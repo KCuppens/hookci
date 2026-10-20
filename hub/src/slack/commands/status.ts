@@ -63,7 +63,7 @@ registerCommand("status", async ({ env, teamId, userId, text }) => {
 		lines.push(S.slack.statusRuns(repo.fullName));
 		const runs = await listRecentRunsForRepo(tenantDb(env.DB, repo.installationId), repo.repoId, RECENT_RUNS);
 		for (const run of runs) {
-			const view = await loadRunView(env.DB, repo.installationId, { runId: run.run_id });
+			const view = await loadRunView(env, repo.installationId, { runId: run.run_id });
 			if (view) lines.push(renderBadge(view).text);
 		}
 		if (runs.length === 0) lines.push(S.slack.statusNoRuns(repo.fullName));

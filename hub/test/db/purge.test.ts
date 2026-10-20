@@ -94,6 +94,17 @@ async function seed(id: number): Promise<void> {
     env.DB.prepare(
       "INSERT INTO deploy_renders (run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at) VALUES (?1, 'acme/repo', 'staging', ?2, 'C1', '1.2', 5, 'running', NULL, NULL, NULL, 1, 1)",
     ).bind(runId, "c".repeat(40)),
+    env.DB.prepare(
+      "INSERT INTO sink_configs (installation_id, id, kind, repo, target, secret_enc, key_version, created_by, created_at) VALUES (?1, ?2, 'webhook', 'acme/repo', 'https://example.com/hook', NULL, NULL, 'agent:agt', 1)",
+    ).bind(id, `snk_${id}`),
+    env.DB.prepare("INSERT INTO sink_messages (installation_id, sink_id, run_id, external_id, last_hash, updated_at) VALUES (?1, ?2, ?3, NULL, 'h', 1)").bind(
+      id,
+      `snk_${id}`,
+      runId,
+    ),
+    env.DB.prepare(
+      "INSERT INTO sink_deliveries (installation_id, sink_id, delivery_id, run_id, attempt, status, http_status, at) VALUES (?1, ?2, 'dlv', ?3, 1, 'ok', 200, 1)",
+    ).bind(id, `snk_${id}`, runId),
   ]);
 }
 

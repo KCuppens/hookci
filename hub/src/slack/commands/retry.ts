@@ -84,6 +84,6 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	const answer = await res.json<{ trigger_id?: string; duplicate?: boolean }>();
 	if (answer.duplicate || !answer.trigger_id) return ephemeral(S.slack.retryDuplicate(repo.fullName, shortSha, attempt));
 	if (!(await agentOnline(env, binding.agent_id))) return ephemeral(S.slack.retryOffline(repo.fullName, shortSha, attempt));
-	const view = await loadRunView(env.DB, repo.installationId, { triggerId: answer.trigger_id });
+	const view = await loadRunView(env, repo.installationId, { triggerId: answer.trigger_id });
 	return ephemeral(S.slack.retried(repo.fullName, shortSha, attempt, view?.state ?? "received"));
 });

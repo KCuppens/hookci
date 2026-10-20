@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { S } from "../../src/strings";
 import { LOGIN, REPO, zeroci } from "../commands-helpers";
@@ -37,10 +38,23 @@ describe("/zeroci retry of a fork pull request run", () => {
   });
 
   it("never runs the retry when the base ref sets forks: never", async () => {
-    world.files[POLICY_FILE] = "forks: never\n";
+    world.files[POLICY_FILE] = "checks:\n  forks: never\n";
 
     expect((await zeroci(world, `retry ${REPO.full_name}`)).text).toBe(S.slack.retryForkNever(REPO.full_name, SHORT_SHA));
     expect(await retryFrames()).toEqual([]);
     expect((await runs()).at(-1)).toMatchObject({ attempt: 2, state: "gated", reason: "fork_never" });
+  });
+
+  it("dispatches the retry at once, as untrusted, when a self-hosted hub honors the base ref's trust: all", async () => {
+    const saved = env.HUB_MODE;
+    env.HUB_MODE = "self_hosted";
+    try {
+      world.files[POLICY_FILE] = "checks:\n  trust: all\n";
+      await zeroci(world, `retry ${REPO.full_name}`);
+      expect(await retryFrames()).toEqual([expect.objectContaining({ trust: "untrusted", sha: HEAD_SHA })]);
+      expect((await runs()).at(-1)).toMatchObject({ attempt: 2, state: "queued" });
+    } finally {
+      env.HUB_MODE = saved;
+    }
   });
 });

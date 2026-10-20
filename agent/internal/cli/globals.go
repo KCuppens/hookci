@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 	"github.com/KCuppens/zerocideploy/agent/internal/netns"
 	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
 	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
 )
 
@@ -94,6 +96,11 @@ type Deps struct {
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
 	// Releases is where upgrade fetches signed releases.
 	Releases Releases
+	// Stdin is where sink add telegram reads the bot token. When it is a
+	// terminal *os.File the token is read without echo.
+	Stdin io.Reader
+	// Hub runs the zeroci-hub CLI for `zeroci hub`.
+	Hub HubDeps
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -113,6 +120,8 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		Services: systemd.Systemctl{Runner: execx.OS{}},
 		Doctor:   hostDoctorEnv,
 		Releases: defaultReleases(),
+		Stdin:    os.Stdin,
+		Hub:      defaultHubDeps(),
 	}
 }
 
@@ -128,5 +137,8 @@ func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
 		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
 		DiskFree:  doctor.HostDiskFree,
 		Writable:  doctor.HostWritable,
+		RepoConfigs: func(ctx context.Context, stateDir string) ([]store.RepoConfig, error) {
+			return store.ReadRepoConfigs(ctx, filepath.Join(stateDir, "agent.db"))
+		},
 	}
 }

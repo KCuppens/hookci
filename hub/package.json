@@ -3,20 +3,34 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "zeroci-hub": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "templates",
+    "manifests"
+  ],
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "build": "wrangler deploy --dry-run --outdir dist"
+    "gen:legal": "node scripts/gen-legal.mjs",
+    "pretest": "npm run gen:legal",
+    "test": "vitest run && vitest run --config vitest.cli.config.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit && tsc -p test/cli --noEmit",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "prepack": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run gen:legal && npm run build:cli && wrangler deploy --dry-run --outdir dist/worker"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.23.0",
     "@cloudflare/workers-types": "5.20261018.1",
+    "@types/node": "24.19.2",
+    "smol-toml": "1.9.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.12",
-    "wrangler": "4.151.1",
-    "yaml": "2.9.1"
+    "vitest": "4.1.12"
   },
   "dependencies": {
-    "hono": "4.13.13"
+    "hono": "4.13.13",
+    "wrangler": "4.151.1",
+    "yaml": "2.9.1"
   }
 }

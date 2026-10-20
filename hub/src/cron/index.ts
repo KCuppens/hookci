@@ -7,7 +7,8 @@ import { reportError } from "../observability";
 import { purgeDeletedInstallations } from "./purge-installations";
 import { reconcileDefaultBranches } from "./reconcile";
 import { redeliverFailed } from "./redeliver";
-import { reencryptTokens } from "./reencrypt";
+import { reencryptSinkSecrets, reencryptTokens } from "./reencrypt";
+import { purgeExpiredLogs } from "./retention";
 
 type CronTask = { name: string; run(env: Env, now: number): Promise<unknown> };
 
@@ -26,7 +27,9 @@ const SCHEDULES: Record<string, readonly CronTask[]> = {
 		{ name: "purge", run: (env, now) => purgeExpired(env.DB, now) },
 		{ name: "purge_installations", run: (env, now) => purgeDeletedInstallations(env, now) },
 		{ name: "reencrypt", run: (env, now) => reencryptTokens(env, now) },
+		{ name: "reencrypt_sinks", run: (env, now) => reencryptSinkSecrets(env, now) },
 	],
+	"17 3 * * *": [{ name: "purge_logs", run: (env, now) => purgeExpiredLogs(env, now) }],
 };
 
 /** Runs the tasks for cron in order; a failing task is reported and does not stop the rest. */

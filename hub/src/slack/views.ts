@@ -5,7 +5,12 @@ import { type SlackConfirm, context, section } from "./blocks";
 
 export interface SlackView {
 	type: "home" | "modal";
+	/** Names the modal's submission, which comes back to /slack/interactive as a view_submission with this id. */
+	callback_id?: string;
+	/** Slack hands this string back unchanged with the submission. */
+	private_metadata?: string;
 	title?: { type: "plain_text"; text: string };
+	submit?: { type: "plain_text"; text: string };
 	close?: { type: "plain_text"; text: string };
 	blocks: unknown[];
 }

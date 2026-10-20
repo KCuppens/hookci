@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "log_subscribe",
+  "seq": 3,
+  "run_id": "01JRUN",
+  "job": "test",
+  "offset": 0
+}

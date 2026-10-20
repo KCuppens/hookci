@@ -1,5 +1,5 @@
 testdata/validate_errors.yml:3: error: checks.trust: trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network
-  fix: use trust: approve, or self-host the hub without deployments
+  fix: use trust: collaborators, or self-host the hub without deployments
 testdata/validate_errors.yml:7: error: checks.jobs.lint.needs[0]: cycle: lint -> test -> lint
   fix: remove one of these needs so the jobs can run in order
 testdata/validate_errors.yml:10: error: checks.jobs.test.needs[1]: unknown job "biuld"

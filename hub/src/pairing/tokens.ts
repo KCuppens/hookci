@@ -12,7 +12,7 @@ import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { QUOTAS } from "../quotas";
+import { checkQuota } from "../quotas";
 import { ulid } from "../ulid";
 import { callAgentDo, rotateCredential } from "./agents";
 
@@ -29,7 +29,8 @@ export type RedeemResult = { agent_id: string; credential: string; installation_
  * Issues a pair token for the installation, valid for 15 minutes. With
  * replacesAgentId, redeeming it rotates that agent's credential instead of
  * pairing a new agent. Throws pair_rate_limited (429) past
- * QUOTAS.pairTokensPerHour tokens for the installation in the last hour.
+ * QUOTAS.pairTokensPerHour tokens for the installation in the last hour,
+ * unless the hub is self-hosted.
  */
 export async function createPairToken(
 	env: Env,
@@ -42,7 +43,7 @@ export async function createPairToken(
 		"SELECT count(*) AS n FROM pair_tokens WHERE installation_id = ?1 AND expires_at > ?2",
 		now - HOUR_MS + PAIR_TOKEN_TTL_MS,
 	);
-	if ((recent?.n ?? 0) >= QUOTAS.pairTokensPerHour) throw new HubError("pair_rate_limited", 429);
+	if (!checkQuota(env, "pairTokensPerHour", (recent?.n ?? 0) + 1)) throw new HubError("pair_rate_limited", 429);
 
 	const token = randomToken(PAIR_TOKEN_PREFIX, 20);
 	const expiresAt = now + PAIR_TOKEN_TTL_MS;
@@ -95,7 +96,7 @@ export async function redeemPairToken(env: Env, input: RedeemInput, ip: string):
 	}
 
 	const active = await countActiveAgents(t);
-	if (active >= QUOTAS.agentsPerInstallation) throw new HubError("agent_limit", 409);
+	if (!checkQuota(env, "agentsPerInstallation", active + 1)) throw new HubError("agent_limit", 409);
 	const agentId = `agt_${ulid(now)}`;
 	const credential = randomToken(AGENT_CREDENTIAL_PREFIX, 32);
 	await insertAgent(t, {

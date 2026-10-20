@@ -24,6 +24,7 @@ var (
 	_ = protocol.TokenRequest{}
 	_ = protocol.Token{}
 	_ = protocol.LogSubscribe{}
+	_ = protocol.LogUnsubscribe{}
 	_ = protocol.Log{}
 	_ = protocol.Ack{}
 	_ = protocol.Welcome{}
@@ -119,6 +120,24 @@ func TestDecodeSeqFields(t *testing.T) {
 	}
 }
 
+func TestDecodeLogTailFrames(t *testing.T) {
+	sub := decode[protocol.LogSubscribe](t, fixture(t, "valid-log-subscribe.json"))
+	if want := (protocol.LogSubscribe{V: protocol.Version, Type: "log_subscribe", RunId: "01JRUN", Job: "test", Offset: 4096}); sub != want {
+		t.Errorf("log_subscribe = %+v; want %+v", sub, want)
+	}
+	unsub := decode[protocol.LogUnsubscribe](t, fixture(t, "valid-log-unsubscribe.json"))
+	if want := (protocol.LogUnsubscribe{V: protocol.Version, Type: "log_unsubscribe", RunId: "01JRUN", Job: "test"}); unsub != want {
+		t.Errorf("log_unsubscribe = %+v; want %+v", unsub, want)
+	}
+	eof := decode[protocol.Log](t, fixture(t, "valid-log-eof.json"))
+	if want := (protocol.Log{V: protocol.Version, Type: "log", RunId: "01JRUN", Job: "test", Offset: 4096, Eof: true}); eof != want {
+		t.Errorf("log eof = %+v; want %+v", eof, want)
+	}
+	if _, err := protocol.DecodeFrame(fixture(t, "invalid-log-no-eof.json")); err == nil || !strings.Contains(err.Error(), "eof") {
+		t.Errorf("DecodeFrame(log without eof) err = %v; want one naming eof", err)
+	}
+}
+
 func TestDecodeFrameRejectsUnknownTypeAndVersion(t *testing.T) {
 	for _, frame := range []string{
 		`{"v":1,"type":"nope"}`,
@@ -192,8 +211,8 @@ func TestDecodeFrameRequiresSchemaFields(t *testing.T) {
 			}
 		}
 	}
-	if messages != 15 {
-		t.Errorf("schema has %d protocol messages; want 15", messages)
+	if messages != 16 {
+		t.Errorf("schema has %d protocol messages; want 16", messages)
 	}
 }
 

@@ -231,6 +231,22 @@ describe("AgentDO run lifecycle", () => {
     expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(501);
   });
 
+  it("a self-hosted hub has no daily cap", async () => {
+    const day = new Date(testClock.now()).toISOString().slice(0, 10);
+    await env.DB.prepare("INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, ?2, 500)").bind(INSTALLATION, day).run();
+    const agent = await seedAgent(INSTALLATION);
+    const saved = env.HUB_MODE;
+    env.HUB_MODE = "self_hosted";
+    cleanups.push(() => {
+      env.HUB_MODE = saved;
+    });
+    const triggerId = await trigger(agent);
+
+    expect(await run(triggerId)).toMatchObject({ state: "queued", reason: null });
+    expect(await outbox(agent)).toEqual([expect.objectContaining({ type: "trigger", trigger_id: triggerId })]);
+    expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(501);
+  });
+
   it("job_planned creates queued jobs", async () => {
     const agent = await seedAgent(INSTALLATION);
     const sock = await online(agent);
