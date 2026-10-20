@@ -18,6 +18,10 @@ export interface HubState {
 	custom_domain?: string;
 	/** Names of the Worker secrets setup has stored; the values are never written down. */
 	secrets_set?: string[];
+	/** Set once the Slack App's signing secret and OAuth client are stored as Worker secrets. */
+	slack_configured?: boolean;
+	/** The version the deployed hub reported on /v1/info when setup last verified it. */
+	hub_version_seen?: string;
 	version: string;
 	steps_done: string[];
 }

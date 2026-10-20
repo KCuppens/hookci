@@ -26,11 +26,11 @@
     "@types/node": "24.19.2",
     "smol-toml": "1.9.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.12",
-    "yaml": "2.9.1"
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "hono": "4.13.13",
-    "wrangler": "4.151.1"
+    "wrangler": "4.151.1",
+    "yaml": "2.9.1"
   }
 }

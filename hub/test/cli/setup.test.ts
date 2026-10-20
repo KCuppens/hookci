@@ -8,10 +8,12 @@ import { packageRoot } from "../../cli/package.js";
 import { type Prompter, scriptedPrompter } from "../../cli/prompts.js";
 import { readTemplate } from "../../cli/render.js";
 import { SETUP_STEPS, SetupError, type SetupOptions, applyLifecycle, preflight, putSecrets, resolveAccount, runSetup } from "../../cli/setup.js";
+import { setupSummary } from "../../cli/slack-step.js";
 import { type HubState, STATE_FILE, loadState } from "../../cli/state.js";
 import type { Exec, ExecResult } from "../../cli/wrangler.js";
 import { type FakeExec, type FakeScript, fakeExec } from "./fake-exec.js";
 import { type FakeGithub, fakeBrowser, startFakeGithub } from "./fake-github.js";
+import { SLACK_ANSWERS, fakeHub } from "./fake-hub.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const OTHER_ACCOUNT = "fedcba9876543210fedcba9876543210";
@@ -44,6 +46,11 @@ const GITHUB_APP_COMMANDS = [
 	["secret", "put", "GITHUB_CLIENT_ID"],
 	["secret", "put", "GITHUB_CLIENT_SECRET"],
 	["deploy"],
+];
+const SLACK_APP_COMMANDS = [
+	["secret", "put", "SLACK_SIGNING_SECRET"],
+	["secret", "put", "SLACK_CLIENT_ID"],
+	["secret", "put", "SLACK_CLIENT_SECRET"],
 ];
 
 const fx: Record<string, string> = {};
@@ -79,9 +86,24 @@ afterEach(async () => {
 	await gh.close();
 });
 
-/** Setup options whose GitHub App step runs against the fake GitHub with a scripted browser. */
+/**
+ * Setup options whose GitHub App step runs against the fake GitHub with a
+ * scripted browser, whose Slack step gets scripted credentials and whose
+ * deployed hub answers /v1/info at once.
+ */
 function options(exec: Exec, over: Partial<SetupOptions> = {}): SetupOptions {
-	return { dir, yes: true, exec, prompter: scriptedPrompter({}), fetchFn: fetch, githubApiBase: gh.url, openBrowser: fakeBrowser("code"), root, ...over };
+	return {
+		dir,
+		yes: true,
+		exec,
+		prompter: scriptedPrompter(SLACK_ANSWERS),
+		fetchFn: fakeHub().fetchFn,
+		sleep: async () => {},
+		githubApiBase: gh.url,
+		openBrowser: fakeBrowser("code"),
+		root,
+		...over,
+	};
 }
 
 /** wrangler on an account with no hub resources yet. */
@@ -137,6 +159,7 @@ describe("runSetup", () => {
 			["secret", "put", "STATE_SIGNING_KEY"],
 			["secret", "put", "LOG_SIGNING_KEY"],
 			...GITHUB_APP_COMMANDS,
+			...SLACK_APP_COMMANDS,
 		]);
 		expect(state).toMatchObject({
 			account_id: ACCOUNT,
@@ -144,11 +167,16 @@ describe("runSetup", () => {
 			d1_database_id: CREATED_DB,
 			r2_bucket: "zeroci-hub-logs",
 			base_url: WORKERS_DEV,
+			slack_configured: true,
+			hub_version_seen: "0.3.0",
 			steps_done: [...SETUP_STEPS],
 		});
 		expect(await loadState(dir)).toEqual(state);
-		// One line per step, plus the GitHub App step's browser URL and install link.
-		expect(log).toHaveLength(SETUP_STEPS.length + 2);
+		// One line per step, the GitHub App step's browser URL and install link,
+		// the Slack step's manifest link, instructions and install link, the
+		// verified version, then the summary.
+		expect(log).toHaveLength(SETUP_STEPS.length + 7);
+		expect(log[log.length - 1]).toBe(setupSummary(state));
 
 		const toml = await renderedToml();
 		expect(toml.name).toBe("zeroci-hub");
@@ -160,12 +188,15 @@ describe("runSetup", () => {
 		expect(existsSync(join(dir, "migrations", "0001_init.sql"))).toBe(true);
 	});
 
-	it("idempotent: a second run issues no wrangler commands", async () => {
+	it("idempotent: a second run issues no wrangler commands and prints the summary again", async () => {
 		const first = await runSetup(options(fakeExec(freshAccount())));
 		const exec = fakeExec([]);
-		const second = await runSetup(options(exec));
+		const log: string[] = [];
+		const second = await runSetup(options(exec, { log: (line) => log.push(line) }));
 		expect(exec.calls).toEqual([]);
 		expect(second).toEqual(first);
+		const doneEarlier = SETUP_STEPS.map((_, i) => expect.stringMatching(new RegExp(`^\\[${i + 1}/${SETUP_STEPS.length}\\] .*: done earlier$`)));
+		expect(log).toEqual([...doneEarlier, setupSummary(first)]);
 	});
 
 	it("resume: a failed migration keeps earlier steps and the rerun starts there", async () => {
@@ -201,7 +232,7 @@ describe("runSetup", () => {
 
 	it("custom domain: renders the route and deploys once with the domain as base URL", async () => {
 		const exec = fakeExec(freshAccount());
-		const prompter = scriptedPrompter({ "Hub name": "acme-ci", [DOMAIN_QUESTION]: "ci.acme.dev" });
+		const prompter = scriptedPrompter({ ...SLACK_ANSWERS, "Hub name": "acme-ci", [DOMAIN_QUESTION]: "ci.acme.dev" });
 		const state = await runSetup(options(exec, { yes: false, prompter }));
 		expect(commands(exec).filter((a) => a[0] === "deploy")).toEqual([["deploy"], ["deploy"]]);
 		expect(commands(exec)).toContainEqual(["d1", "create", "acme-ci-db"]);
@@ -226,7 +257,7 @@ describe("secrets", () => {
 	it("passes each generated value on stdin only and never writes it down", async () => {
 		const exec = fakeExec(freshAccount());
 		const state = await runSetup(options(exec));
-		const puts = exec.calls.filter((c) => c.args[0] === "secret" && !c.args[2]?.startsWith("GITHUB_"));
+		const puts = exec.calls.filter((c) => c.args[0] === "secret" && !/^(GITHUB|SLACK)_/.test(c.args[2] ?? ""));
 		expect(puts.map((c) => c.args[2])).toEqual(["TOKEN_ENC_KEYS", "STATE_SIGNING_KEY", "LOG_SIGNING_KEY"]);
 
 		const [encKeys = "", stateKey = "", logKey = ""] = puts.map((c) => c.stdin ?? "");

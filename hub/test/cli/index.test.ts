@@ -63,12 +63,14 @@ describe("zeroci-hub CLI", () => {
 		}
 	});
 
-	it("parses --dir, --yes, --force-render and --dry-run", () => {
-		expect(parseArgs(["render"])).toEqual({ kind: "run", args: { command: "render", dir: DEFAULT_DIR, yes: false, forceRender: false, dryRun: false } });
-		expect(parseArgs(["render", "--dir", "/tmp/x", "--yes"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/x", yes: true, forceRender: false, dryRun: false } });
-		expect(parseArgs(["--dir=/tmp/y", "render"])).toEqual({ kind: "run", args: { command: "render", dir: "/tmp/y", yes: false, forceRender: false, dryRun: false } });
-		expect(parseArgs(["setup", "--force-render"])).toEqual({ kind: "run", args: { command: "setup", dir: DEFAULT_DIR, yes: false, forceRender: true, dryRun: false } });
-		expect(parseArgs(["upgrade", "--dry-run"])).toEqual({ kind: "run", args: { command: "upgrade", dir: DEFAULT_DIR, yes: false, forceRender: false, dryRun: true } });
+	it("parses --dir, --yes, --force-render, --dry-run and --no-slack", () => {
+		const defaults = { dir: DEFAULT_DIR, yes: false, forceRender: false, dryRun: false, noSlack: false };
+		expect(parseArgs(["render"])).toEqual({ kind: "run", args: { ...defaults, command: "render" } });
+		expect(parseArgs(["render", "--dir", "/tmp/x", "--yes"])).toEqual({ kind: "run", args: { ...defaults, command: "render", dir: "/tmp/x", yes: true } });
+		expect(parseArgs(["--dir=/tmp/y", "render"])).toEqual({ kind: "run", args: { ...defaults, command: "render", dir: "/tmp/y" } });
+		expect(parseArgs(["setup", "--force-render"])).toEqual({ kind: "run", args: { ...defaults, command: "setup", forceRender: true } });
+		expect(parseArgs(["upgrade", "--dry-run"])).toEqual({ kind: "run", args: { ...defaults, command: "upgrade", dryRun: true } });
+		expect(parseArgs(["setup", "--no-slack"])).toEqual({ kind: "run", args: { ...defaults, command: "setup", noSlack: true } });
 		expect(parseArgs(["render", "--dir"])).toEqual({ kind: "usage-error", message: "--dir needs a path" });
 	});
 });

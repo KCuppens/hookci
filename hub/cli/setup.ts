@@ -4,7 +4,8 @@ import { stripVTControlCharacters } from "node:util";
 import { packageRoot, packageVersion } from "./package.js";
 import { parseD1Create, parseD1List, parseDeployUrl, parseR2List, parseWhoami } from "./parse.js";
 import type { Prompter } from "./prompts.js";
-import { githubAppStep } from "./manifest-flow.js";
+import { type SetupContext, githubAppStep } from "./manifest-flow.js";
+import { NO_SLACK_REMINDER, setupSummary, slackAppStep, verifyStep } from "./slack-step.js";
 import { installBundle, readTemplate, renderWranglerToml } from "./render.js";
 import { type HubState, loadState, saveState } from "./state.js";
 import type { Exec, ExecResult } from "./wrangler.js";
@@ -16,6 +17,7 @@ export interface SetupOptions {
 	prompter: Prompter;
 	fetchFn: typeof fetch;
 	randomBytes?: (n: number) => Uint8Array;
+	/** Skip the Slack App step; a later setup run without it adds Slack. */
 	noSlack?: boolean;
 	/** GitHub organization login to own the hub's GitHub App; the signed-in user owns it when unset. */
 	org?: string;
@@ -29,9 +31,24 @@ export interface SetupOptions {
 	log?: (line: string) => void;
 	/** Package root holding the template, dist/worker and migrations; defaults to this package. */
 	root?: string;
+	/** Waits between /v1/info attempts in the verify step; tests skip the wait. */
+	sleep?: (ms: number) => Promise<void>;
 }
 
-export const SETUP_STEPS = ["preflight", "account", "d1", "r2", "r2_lifecycle", "render", "migrate", "deploy", "secrets", "github_app"] as const;
+export const SETUP_STEPS = [
+	"preflight",
+	"account",
+	"d1",
+	"r2",
+	"r2_lifecycle",
+	"render",
+	"migrate",
+	"deploy",
+	"secrets",
+	"github_app",
+	"slack_app",
+	"verify",
+] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
 export type SetupErrorCode =
@@ -46,7 +63,10 @@ export type SetupErrorCode =
 	| "github_app_verify_failed"
 	| "not_set_up"
 	| "downgrade"
-	| "version_mismatch";
+	| "version_mismatch"
+	| "bad_manifest"
+	| "missing_input"
+	| "verify_failed";
 
 const HINTS: Record<SetupErrorCode, string> = {
 	node_too_old: "Install Node.js 20 or newer, then run zeroci-hub setup again.",
@@ -61,6 +81,9 @@ const HINTS: Record<SetupErrorCode, string> = {
 	not_set_up: "run zeroci-hub setup first",
 	downgrade: "Run a zeroci-hub as new as the hub or newer; D1 migrations only move forward.",
 	version_mismatch: "Check npx wrangler deployments list in the state dir, then run zeroci-hub upgrade again.",
+	bad_manifest: "Reinstall zeroci-hub; its Slack manifest must ask for exactly the bot scopes the hub uses.",
+	missing_input: "Copy the value from the Slack App's Basic Information page, then run zeroci-hub setup again.",
+	verify_failed: "Check npx wrangler deployments list in the state dir, then run zeroci-hub setup again; finished steps are skipped.",
 };
 
 export class SetupError extends Error {
@@ -96,6 +119,8 @@ const STEP_LABELS: Record<SetupStep, string> = {
 	deploy: "Deploying the Worker",
 	secrets: "Storing generated Worker secrets",
 	github_app: "Registering the hub's GitHub App",
+	slack_app: "Connecting the hub's Slack App",
+	verify: "Checking the deployed hub",
 };
 
 /** Worker secrets setup generates; GitHub and Slack credentials come from their manifest flows. */
@@ -272,6 +297,10 @@ export async function putSecrets(o: SetupOptions, s: HubState): Promise<HubState
 	return next;
 }
 
+function setupContext(o: SetupOptions, s: HubState): SetupContext {
+	return { options: o, state: s, exec: o.exec, log: o.log ?? (() => {}) };
+}
+
 const STEPS: Record<SetupStep, (o: SetupOptions, s: HubState) => Promise<HubState>> = {
 	preflight: async (o, s) => {
 		await preflight(o);
@@ -285,12 +314,16 @@ const STEPS: Record<SetupStep, (o: SetupOptions, s: HubState) => Promise<HubStat
 	migrate: applyMigrations,
 	deploy: deployWorker,
 	secrets: putSecrets,
-	github_app: (o, s) => githubAppStep({ options: o, state: s, exec: o.exec, log: o.log ?? (() => {}) }),
+	github_app: (o, s) => githubAppStep(setupContext(o, s)),
+	slack_app: (o, s) => slackAppStep(setupContext(o, s)),
+	verify: (o, s) => verifyStep(setupContext(o, s)),
 };
 
 /**
  * Creates or resumes a self-hosted hub in `o.dir`. Each finished step is
  * saved to the state file at once, so a rerun picks up after the last one.
+ * `--no-slack` leaves the Slack step undone for a later run. Ends with what
+ * to do next, also when every step was done earlier.
  */
 export async function runSetup(o: SetupOptions): Promise<HubState> {
 	await mkdir(o.dir, { recursive: true, mode: 0o700 });
@@ -303,9 +336,14 @@ export async function runSetup(o: SetupOptions): Promise<HubState> {
 			continue;
 		}
 		o.log?.(label);
+		if (step === "slack_app" && o.noSlack) {
+			o.log?.(NO_SLACK_REMINDER);
+			continue;
+		}
 		s = await STEPS[step](o, s);
 		if (!s.steps_done.includes(step)) s = { ...s, steps_done: [...s.steps_done, step] };
 		await saveState(o.dir, s);
 	}
+	o.log?.(setupSummary(s));
 	return s;
 }

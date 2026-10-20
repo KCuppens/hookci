@@ -22,6 +22,7 @@ import { type HubState, STATE_FILE, loadState, saveState } from "../../cli/state
 import type { ExecResult } from "../../cli/wrangler.js";
 import { type FakeExec, fakeExec } from "./fake-exec.js";
 import { type FakeGithub, fakeBrowser, startFakeGithub } from "./fake-github.js";
+import { fakeHub } from "./fake-hub.js";
 
 const BASE = "https://zeroci-hub.acme.workers.dev";
 const GITHUB_SECRETS = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
@@ -173,7 +174,7 @@ describe("githubAppStep through runSetup", () => {
 			r2_bucket: "zeroci-hub-logs",
 			base_url: BASE,
 			version: "0.0.0",
-			steps_done: SETUP_STEPS.filter((s) => s !== "github_app"),
+			steps_done: SETUP_STEPS.slice(0, SETUP_STEPS.indexOf("github_app")),
 		};
 		await saveState(dir, before);
 		gh = await startFakeGithub();
@@ -190,8 +191,9 @@ describe("githubAppStep through runSetup", () => {
 			{ match: (a) => a[0] === "deploy", result: ok(deployOut) },
 		]);
 
+	/** Runs setup from the GitHub App step on, without Slack, against a hub that verifies at once. */
 	function options(exec: FakeExec, over: Partial<SetupOptions>): SetupOptions {
-		return { dir, root, yes: true, exec, prompter: scriptedPrompter({}), fetchFn: fetch, githubApiBase: gh.url, ...over };
+		return { dir, root, yes: true, noSlack: true, exec, prompter: scriptedPrompter({}), fetchFn: fakeHub().fetchFn, githubApiBase: gh.url, ...over };
 	}
 
 	it("stores the app's credentials on stdin, redeploys with its slug and prints the install link", async () => {
@@ -218,7 +220,7 @@ describe("githubAppStep through runSetup", () => {
 
 		const stateFile = await readFile(join(dir, STATE_FILE), "utf8");
 		expect(stateFile).not.toContain("PRIVATE KEY");
-		expect(state).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-zeroci", steps_done: [...SETUP_STEPS] });
+		expect(state).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-zeroci", steps_done: SETUP_STEPS.filter((s) => s !== "slack_app") });
 		expect(await loadState(dir)).toEqual(state);
 
 		const lastPut = exec.calls.map((c) => c.args[0]).lastIndexOf("secret");
