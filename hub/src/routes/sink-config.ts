@@ -24,6 +24,7 @@ type SinkContext = Context<{ Bindings: Env }>;
 const FIELDS = {
 	telegram: { required: ["kind", "repo", "bot_token", "chat_id"], optional: ["label"] },
 	webhook: { required: ["kind", "repo", "url"], optional: ["label"] },
+	linear: { required: ["kind", "repo", "api_key", "team_key"], optional: ["assignee_email", "label"] },
 } as const;
 
 function invalid(field: string, reason: string): SinkConfigError {
@@ -34,7 +35,7 @@ function invalid(field: string, reason: string): SinkConfigError {
 function parseAddBody(body: unknown): SinkConfigInput {
 	if (typeof body !== "object" || body === null || Array.isArray(body)) throw invalid("body", "must be a JSON object");
 	const b = body as Record<string, unknown>;
-	if (b.kind !== "telegram" && b.kind !== "webhook") throw invalid("kind", "must be telegram or webhook");
+	if (b.kind !== "telegram" && b.kind !== "webhook" && b.kind !== "linear") throw invalid("kind", "must be telegram, webhook or linear");
 	const fields = FIELDS[b.kind];
 	const allowed: readonly string[] = [...fields.required, ...fields.optional];
 	const unknown = Object.keys(b).find((key) => !allowed.includes(key));
@@ -43,9 +44,17 @@ function parseAddBody(body: unknown): SinkConfigInput {
 		if (Object.hasOwn(b, key) ? typeof b[key] !== "string" : (fields.required as readonly string[]).includes(key)) throw invalid(key, "required string");
 	}
 	const label = typeof b.label === "string" ? { label: b.label } : {};
-	return b.kind === "telegram"
-		? { kind: "telegram", repo: b.repo as string, botToken: b.bot_token as string, chatId: b.chat_id as string, ...label }
-		: { kind: "webhook", repo: b.repo as string, url: b.url as string, ...label };
+	const repo = b.repo as string;
+	switch (b.kind) {
+		case "telegram":
+			return { kind: "telegram", repo, botToken: b.bot_token as string, chatId: b.chat_id as string, ...label };
+		case "webhook":
+			return { kind: "webhook", repo, url: b.url as string, ...label };
+		case "linear": {
+			const assignee = typeof b.assignee_email === "string" ? { assigneeEmail: b.assignee_email } : {};
+			return { kind: "linear", repo, apiKey: b.api_key as string, teamKey: b.team_key as string, ...assignee, ...label };
+		}
+	}
 }
 
 /** Authenticates the agent, then runs handler on its installation, answering the service's refusals. */

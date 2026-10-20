@@ -15,12 +15,14 @@ const TG_API = "https://tg.test";
 const BOT_TOKEN = `123456789:AAH${"s".repeat(32)}`;
 const CHAT = "-1001234567890";
 const HOOK = "https://hooks.example.com/zeroci";
+const LINEAR_API = "https://linear.test/graphql";
+const LIN_KEY = "lin_api_SLACKSECRET99";
 /** Every Slack method this feature may call. */
 const SINK_SLACK_METHODS = ["views.open", "chat.postEphemeral", "chat.postMessage"];
 
 let world: CommandWorld;
 let logs: string[];
-const savedBase = env.TELEGRAM_API_BASE;
+const saved = { base: env.TELEGRAM_API_BASE, linear: env.LINEAR_API_URL };
 
 beforeEach(async () => {
   world = await setUpCommandWorld();
@@ -41,6 +43,7 @@ beforeEach(async () => {
   world.slack.respond("POST", "/api/views.open", () => Response.json({ ok: true, view: { id: "V1" } }));
   world.slack.respond("POST", "/api/chat.postEphemeral", () => Response.json({ ok: true, message_ts: "1.2" }));
   env.TELEGRAM_API_BASE = TG_API;
+  env.LINEAR_API_URL = LINEAR_API;
   world.gh.respond("POST", /\/getMe$/, () => Response.json({ ok: true, result: { id: 123456789, is_bot: true, username: "acme_ci_bot" } }));
   world.gh.respond("POST", /\/getChat$/, () => Response.json({ ok: true, result: { id: Number(CHAT), type: "supergroup", title: "Acme CI" } }));
   world.gh.respond("POST", "/zeroci", () => new Response("ok"));
@@ -54,7 +57,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   world.restore();
-  env.TELEGRAM_API_BASE = savedBase;
+  env.TELEGRAM_API_BASE = saved.base;
+  env.LINEAR_API_URL = saved.linear;
   vi.restoreAllMocks();
 });
 
@@ -171,6 +175,8 @@ describe("secrets in command text", () => {
     ["a bot token in place of the repo", `sink add ${BOT_TOKEN}`],
     ["a webhook URL", `sink add acme/api ${HOOK}?token=q`],
     ["a bot token after list", `sink list ${BOT_TOKEN}`],
+    ["a Linear API key in place of the repo", "sink add lin_api_abc123"],
+    ["a Linear OAuth token after add", "sink add acme/api lin_oauth_xyz789"],
   ])("refuses %s and keeps it out of D1 and the logs", async (_, text) => {
     const secret = text.split(" ").at(-1)!;
     const reply = await zeroci(world, text);
@@ -212,6 +218,48 @@ describe("Add sink submission", () => {
     expect(text).not.toContain(BOT_TOKEN);
     expect(await wholeDatabase()).not.toContain(BOT_TOKEN);
     expect(logs.join("\n")).not.toContain(BOT_TOKEN);
+  });
+
+  /** Answers Linear's GraphQL calls; teams is what the team lookup finds. */
+  function linearAnswers(teams: unknown[], status = 200): void {
+    world.gh.respond("POST", "/graphql", (req) => {
+      if (status !== 200) return new Response("{}", { status });
+      const query = stringAt(req.body, "query");
+      if (query.includes("teams(")) return Response.json({ data: { teams: { nodes: teams } } });
+      if (query.includes("users(")) return Response.json({ data: { users: { nodes: [{ id: "user_1", name: "Dana", url: "https://linear.app/u/dana" }] } } });
+      if (query.includes("team(")) return Response.json({ data: { team: { states: { nodes: [] } } } });
+      return Response.json({ data: { viewer: { id: "me" } } });
+    });
+  }
+
+  it("adds a Linear sink and shows its team and assignee, never the key", async () => {
+    linearAnswers([{ id: "team_1", key: "ENG" }]);
+    await zeroci(world, "sink add acme/api");
+    const answer = await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG", linear_assignee_email: "dana@acme.test" }));
+    expect(answer).toEqual({ response_action: "clear" });
+
+    expect(await sinkRows()).toEqual([{ id: expect.any(String), kind: "linear" }]);
+    const text = stringAt(slackCalls(world, "chat.postEphemeral")[0]?.body, "text");
+    expect(text).toContain(S.sinks.linearTarget("ENG", "Dana"));
+    expect(text).not.toContain(LIN_KEY);
+    expect((await zeroci(world, "sink list acme/api")).text).toContain("Linear, team ENG, assignee Dana, enabled");
+    expect(await wholeDatabase()).not.toContain(LIN_KEY);
+    expect(logs.join("\n")).not.toContain(LIN_KEY);
+  });
+
+  it("shows an unknown Linear team on the team field and a refused key on the key field", async () => {
+    await zeroci(world, "sink add acme/api");
+    linearAnswers([]);
+    expect(await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG" }))).toEqual({
+      response_action: "errors",
+      errors: { linear_team: S.sinks.errors.team_not_found },
+    });
+    linearAnswers([], 401);
+    expect(await submit(filled({ kind: "linear", linear_api_key: LIN_KEY, linear_team: "ENG" }))).toEqual({
+      response_action: "errors",
+      errors: { linear_api_key: S.sinks.linearBadToken },
+    });
+    expect(await sinkRows()).toEqual([]);
   });
 
   it("checks the submitter's role again: a maintainer demoted to write before submitting adds nothing", async () => {

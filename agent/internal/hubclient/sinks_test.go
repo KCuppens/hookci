@@ -2,10 +2,12 @@ package hubclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -57,7 +59,7 @@ func TestListSinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkCall(t, got, http.MethodGet, "/v1/agent/sinks?repo=acme%2Fweb", "")
-	if len(sinks) != 1 || sinks[0].ID != "snk_1" || sinks[0].Target != "https://hooks.example.com/zeroci" || sinks[0].Label != nil || sinks[0].DisabledAt != nil {
+	if len(sinks) != 1 || sinks[0].ID != "snk_1" || sinks[0].Target.String() != "https://hooks.example.com/zeroci" || sinks[0].Label != nil || sinks[0].DisabledAt != nil {
 		t.Errorf("sinks = %+v, want snk_1", sinks)
 	}
 }
@@ -97,6 +99,40 @@ func TestAddSinkWebhook(t *testing.T) {
 	checkCall(t, got, http.MethodPost, "/v1/agent/sinks", `{"kind":"webhook","repo":"acme/web","url":"https://hooks.example.com/zeroci"}`)
 	if res.Sink.ID != "snk_1" || res.GeneratedSecret != "whsec_abc" {
 		t.Errorf("AddSink = %+v, want snk_1 with secret whsec_abc", res)
+	}
+}
+
+func TestAddSinkLinear(t *testing.T) {
+	c, got := sinkHub(t, http.StatusCreated, `{"sink":{"id":"snk_3","kind":"linear","repo":"acme/web","label":null,"target":{"teamKey":"ENG","assigneeName":"Dana"},"created_at":"x","disabled_at":null,"last_error":null}}`)
+
+	res, err := c.AddSink(context.Background(), AddSinkRequest{Kind: "linear", Repo: "acme/web", LinearAPIKey: "lin_api_abc", TeamKey: "ENG", AssigneeEmail: "dana@acme.test"})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkCall(t, got, http.MethodPost, "/v1/agent/sinks", `{"kind":"linear","repo":"acme/web","api_key":"lin_api_abc","team_key":"ENG","assignee_email":"dana@acme.test"}`)
+	if strings.Contains(got.body, "bot_token") || strings.Contains(got.body, "chat_id") {
+		t.Errorf("body %q has Telegram fields", got.body)
+	}
+	if res.Sink.Target != (SinkTarget{TeamKey: "ENG", AssigneeName: "Dana"}) || res.Sink.Target.String() != "team=ENG assignee=Dana" {
+		t.Errorf("Target = %+v (%s), want team ENG assigned to Dana", res.Sink.Target, res.Sink.Target)
+	}
+}
+
+func TestSinkTargetJSONRoundTrip(t *testing.T) {
+	for _, in := range []string{`"chat -100"`, `{"teamKey":"ENG"}`, `{"teamKey":"ENG","assigneeName":"Dana"}`} {
+		var target SinkTarget
+		if err := json.Unmarshal([]byte(in), &target); err != nil {
+			t.Fatalf("Unmarshal(%s): %v", in, err)
+		}
+		out, err := json.Marshal(target)
+		if err != nil || string(out) != in {
+			t.Errorf("round trip of %s = %s, %v", in, out, err)
+		}
+	}
+	var target SinkTarget
+	if err := json.Unmarshal([]byte(`{"teamKey":"ENG"}`), &target); err != nil || target.String() != "team=ENG" {
+		t.Errorf("String() = %q, %v; want team=ENG", target.String(), err)
 	}
 }
 

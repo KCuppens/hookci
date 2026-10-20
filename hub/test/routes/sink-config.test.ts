@@ -83,6 +83,27 @@ describe("/v1/agent/sinks", () => {
     expect(await res.json()).toEqual({ sink: expect.objectContaining({ kind: "telegram", target: "chat -100", label: null }) });
   });
 
+  it("adds a Linear sink from snake_case fields and refuses a Telegram field on it", async () => {
+    const apiKey = "lin_api_ROUTEKEY42";
+    env.__TEST_FETCHER = async (_input, init) => {
+      const query = String(JSON.parse(String(init?.body)).query);
+      if (query.includes("teams(")) return Response.json({ data: { teams: { nodes: [{ id: "team_1", key: "ENG" }] } } });
+      if (query.includes("users(")) return Response.json({ data: { users: { nodes: [{ id: "usr_1", name: "Ada", url: "https://linear.app/u/ada" }] } } });
+      if (query.includes("team(")) return Response.json({ data: { team: { states: { nodes: [] } } } });
+      return Response.json({ data: { viewer: { id: "me" } } });
+    };
+    const body = { kind: "linear", repo: a.fullName, api_key: apiKey, team_key: "ENG", assignee_email: "ada@example.com", label: "deploys" };
+    const res = await call("POST", "/v1/agent/sinks", a.credential, body);
+    expect(res.status).toBe(201);
+    const text = await res.text();
+    expect(text).not.toContain(apiKey);
+    expect(JSON.parse(text)).toEqual({ sink: expect.objectContaining({ kind: "linear", target: { teamKey: "ENG", assigneeName: "Ada" }, label: "deploys" }) });
+
+    const withChat = await call("POST", "/v1/agent/sinks", a.credential, { ...body, chat_id: "-100" });
+    expect(withChat.status).toBe(400);
+    expect(await withChat.json()).toMatchObject({ error: "invalid", message: "chat_id: not a linear field" });
+  });
+
   it("answers 400 with the code and message of a refused config", async () => {
     const res = await addHook(a, "http://hooks.example.com/x");
     expect(res.status).toBe(400);

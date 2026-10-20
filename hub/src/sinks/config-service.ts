@@ -1,7 +1,8 @@
-// Adding, listing, removing and test-firing the Telegram and webhook sinks of
-// a repo, for the agent API (routes/sink-config.ts) and the Slack command.
-// Secrets go in encrypted and never come back out: a webhook's generated
-// secret is returned once by addSinkConfig, and listings carry a redacted target.
+// Adding, listing, removing and test-firing the Telegram, webhook and Linear
+// sinks of a repo, for the agent API (routes/sink-config.ts) and the Slack
+// command. Secrets go in encrypted and never come back out: a webhook's
+// generated secret is returned once by addSinkConfig, and listings carry a
+// redacted target.
 
 import { isRepoBound } from "../db/bindings";
 import { hitIpRate } from "../db/ip-rate";
@@ -17,13 +18,15 @@ import { quotaLimit } from "../quotas";
 import { S } from "../strings";
 import { ulid } from "../ulid";
 import { type DeliveryResult, delivererFor } from "./deliverers";
+import { LINEAR_VIEWER, linearGraphql, mapLinearError, validateLinearConfig } from "./linear";
 import { validateTelegramConfig } from "./telegram";
 import type { RunView } from "./types";
 import { generateWebhookSecret, validateWebhookUrl } from "./webhook";
 
 export type SinkConfigInput =
 	| { kind: "telegram"; repo: string; botToken: string; chatId: string; label?: string }
-	| { kind: "webhook"; repo: string; url: string; label?: string };
+	| { kind: "webhook"; repo: string; url: string; label?: string }
+	| { kind: "linear"; repo: string; apiKey: string; teamKey: string; assigneeEmail?: string; label?: string };
 
 export type SinkConfigErrorCode =
 	| "invalid_repo"
@@ -34,7 +37,9 @@ export type SinkConfigErrorCode =
 	| "private_host"
 	| "self"
 	| "invalid"
-	| "limit_reached";
+	| "limit_reached"
+	| "team_not_found"
+	| "assignee_not_found";
 
 /** A refused add, list or remove; message is safe to show the user and never holds the input's secrets. */
 export class SinkConfigError extends Error {
@@ -66,8 +71,12 @@ export interface PublicSinkConfig {
 	kind: SinkKind;
 	repo: string;
 	label: string | null;
-	/** `chat <chat id>` for Telegram; the webhook URL's origin and at most 24 characters of its path, without the query. */
-	target: string;
+	/**
+	 * `chat <chat id>` for Telegram; the webhook URL's origin and at most 24
+	 * characters of its path, without the query; the team key and assignee
+	 * name for Linear, without the team id or any key.
+	 */
+	target: string | { teamKey: string; assigneeName?: string };
 	created_at: string;
 	disabled_at: string | null;
 	/** Why the hub disabled the sink; null while it is enabled. */
@@ -79,6 +88,8 @@ export const MAX_SINKS_PER_REPO = 10;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BOT_TOKEN = /^\d+:[A-Za-z0-9_-]+$/;
 const CHAT_ID = /^(-?\d{1,20}|@[A-Za-z0-9_]{5,32})$/;
+/** A Linear team key, as in ENG for ENG-123. */
+export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]{0,9}$/;
 const LABEL_MAX_CHARS = 64;
 const TARGET_PATH_CHARS = 24;
 const HOUR_MS = 3_600_000;
@@ -103,9 +114,12 @@ async function admitWrite(env: Env, t: TenantDb): Promise<void> {
 }
 
 function toPublic(cfg: SinkConfigRow): PublicSinkConfig {
-	let target: string;
+	let target: PublicSinkConfig["target"];
 	if (cfg.kind === "telegram") {
 		target = S.sinks.telegramTarget(cfg.target);
+	} else if (cfg.kind === "linear") {
+		const { teamKey, assigneeName }: { teamKey: string; assigneeName?: string } = JSON.parse(cfg.target);
+		target = assigneeName === undefined ? { teamKey } : { teamKey, assigneeName };
 	} else {
 		const url = new URL(cfg.target);
 		const path = url.pathname.length > TARGET_PATH_CHARS ? `${url.pathname.slice(0, TARGET_PATH_CHARS)}...` : url.pathname;
@@ -131,7 +145,8 @@ function audit(event: string, t: TenantDb, actor: SinkActor, cfg: SinkConfigRow,
  * Validates input against its provider and stores it for a repo the
  * installation has bound to an agent. A webhook gets a new signing secret,
  * returned here once and never again. Every call counts against
- * sinkConfigWritesPerHour. Telegram answering 5xx throws telegram_unreachable.
+ * sinkConfigWritesPerHour. Telegram answering 5xx throws telegram_unreachable;
+ * Linear rate limiting or answering 5xx refuses with invalid and a retry hint.
  */
 export async function addSinkConfig(
 	env: Env,
@@ -159,11 +174,20 @@ export async function addSinkConfig(
 		if (!check.ok) throw refuse(check.code);
 		target = input.chatId;
 		secret = input.botToken;
-	} else {
+	} else if (input.kind === "webhook") {
 		const check = validateWebhookUrl(input.url, new URL(env.HUB_ORIGIN).hostname);
 		if (!check.ok) throw refuse(check.code);
 		target = check.url.toString();
 		secret = generatedSecret = generateWebhookSecret();
+	} else {
+		if (!LINEAR_TEAM_KEY.test(input.teamKey)) throw refuse("team_not_found");
+		const check = await validateLinearConfig(env.__TEST_FETCHER ?? defaultFetcher, env.LINEAR_API_URL, input.apiKey, input.teamKey, input.assigneeEmail);
+		if (!check.ok) {
+			if (check.retry) throw new SinkConfigError(check.code, S.sinks.linearUnavailable);
+			throw check.code === "bad_token" ? new SinkConfigError("bad_token", S.sinks.linearBadToken) : refuse(check.code);
+		}
+		target = JSON.stringify(check.target);
+		secret = input.apiKey;
 	}
 
 	const createdBy = actor.type === "agent" ? `agent:${actor.id}` : `slack:${actor.id}`;
@@ -194,7 +218,9 @@ export async function removeSinkConfig(env: Env, t: TenantDb, actor: SinkActor, 
 /**
  * Sends a synthetic successful run to the config, disabled or not, straight
  * through its deliverer: no outbox, no retry, and no sink_messages or
- * sink_deliveries rows. Throws not_found when the installation has no such config.
+ * sink_deliveries rows. A Linear config only asks Linear who the key
+ * belongs to, so no test issue is filed. Throws not_found when the
+ * installation has no such config.
  */
 export async function sendTestDelivery(env: Env, t: TenantDb, actor: SinkActor, id: string): Promise<DeliveryResult> {
 	const cfg = await getSinkConfigWithSecret(env, t, id);
@@ -203,6 +229,12 @@ export async function sendTestDelivery(env: Env, t: TenantDb, actor: SinkActor, 
 	if (!deliverer) throw new HubError("sink_deliverer_missing", 500, `no deliverer for sink kind ${cfg.kind}`);
 
 	const now = (env.__TEST_CLOCK ?? systemClock).now();
+	if (cfg.kind === "linear") {
+		const viewer = cfg.secret === null ? null : await linearGraphql(env.__TEST_FETCHER ?? defaultFetcher, env.LINEAR_API_URL, cfg.secret, LINEAR_VIEWER, {});
+		const result: DeliveryResult = viewer === null ? { kind: "fail" } : viewer.ok ? { kind: "ok" } : mapLinearError(viewer, now);
+		audit("sink_config.tested", t, actor, cfg, { result: result.kind });
+		return result;
+	}
 	const runId = `test_${ulid(now)}`;
 	const run: RunView = {
 		installationId: t.installationId,

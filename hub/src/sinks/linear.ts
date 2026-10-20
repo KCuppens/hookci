@@ -223,6 +223,82 @@ export function mapLinearError(r: Extract<LinearGqlResult<unknown>, { ok: false 
 	return { kind: "fail", httpStatus: r.httpStatus };
 }
 
+/** How a Linear sink config checked out; retry marks a refusal caused by a rate limit or an unreachable Linear. */
+export type LinearValidation =
+	| { ok: true; target: LinearTarget }
+	| { ok: false; code: "bad_token" | "team_not_found" | "assignee_not_found" | "invalid"; retry?: true };
+
+/** Asks who an API key belongs to; the cheapest call that proves the key works. */
+export const LINEAR_VIEWER = "query { viewer { id } }";
+const TEAM_BY_KEY = "query($key: String!) { teams(filter: { key: { eq: $key } }) { nodes { id key } } }";
+const USER_BY_EMAIL = "query($email: String!) { users(filter: { email: { eq: $email } }) { nodes { id name url } } }";
+const COMPLETED_STATES = 'query($teamId: String!) { team(id: $teamId) { states(filter: { type: { eq: "completed" } }) { nodes { id position } } } }';
+
+/** The nodes list at path in a GraphQL answer; empty when it is missing. */
+function nodesAt(data: unknown, ...path: string[]): unknown[] {
+	const list = field(
+		path.reduce((v, name) => field(v, name), data),
+		"nodes",
+	);
+	return Array.isArray(list) ? list : [];
+}
+
+function validationRefusal(r: Extract<LinearGqlResult<unknown>, { ok: false }>): LinearValidation {
+	// The wait mapLinearError computes does not matter here, only what kind of failure it is.
+	const mapped = mapLinearError(r, 0);
+	if (mapped.kind === "retry") return { ok: false, code: "invalid", retry: true };
+	return { ok: false, code: mapped.kind === "fail" && mapped.disable === UNAUTHORIZED ? "bad_token" : "invalid" };
+}
+
+/**
+ * Checks a Linear API key, team key and optional assignee email before a
+ * sink is saved and resolves them to the target the deliverer needs: the
+ * viewer for the key, the team by key, the user by email, then the team's
+ * completed state with the lowest position, if it has one. Any refusal
+ * stops the check, so no partial target comes back.
+ */
+export async function validateLinearConfig(
+	fetchFn: Fetcher,
+	apiUrl: string,
+	apiKey: string,
+	teamKey: string,
+	assigneeEmail?: string,
+): Promise<LinearValidation> {
+	const call = (query: string, variables: Record<string, unknown>) => linearGraphql<unknown>(fetchFn, apiUrl, apiKey, query, variables);
+	const viewer = await call(LINEAR_VIEWER, {});
+	if (!viewer.ok) return validationRefusal(viewer);
+
+	const teams = await call(TEAM_BY_KEY, { key: teamKey });
+	if (!teams.ok) return validationRefusal(teams);
+	const teamId = field(nodesAt(teams.data, "teams")[0], "id");
+	if (typeof teamId !== "string") return { ok: false, code: "team_not_found" };
+	const target: LinearTarget = { teamId, teamKey };
+
+	if (assigneeEmail !== undefined) {
+		const users = await call(USER_BY_EMAIL, { email: assigneeEmail });
+		if (!users.ok) return validationRefusal(users);
+		const user = nodesAt(users.data, "users")[0];
+		const assigneeId = field(user, "id");
+		if (typeof assigneeId !== "string") return { ok: false, code: "assignee_not_found" };
+		target.assigneeId = assigneeId;
+		const name = field(user, "name");
+		const url = field(user, "url");
+		if (typeof name === "string") target.assigneeName = name;
+		if (typeof url === "string") target.assigneeUrl = url;
+	}
+
+	const states = await call(COMPLETED_STATES, { teamId });
+	if (!states.ok) return validationRefusal(states);
+	let lowest: { id: string; position: number } | undefined;
+	for (const node of nodesAt(states.data, "team", "states")) {
+		const id = field(node, "id");
+		const position = field(node, "position");
+		if (typeof id === "string" && typeof position === "number" && (lowest === undefined || position < lowest.position)) lowest = { id, position };
+	}
+	if (lowest !== undefined) target.completedStateId = lowest.id;
+	return { ok: true, target };
+}
+
 /** A mutation that came back with success false: Linear refused the input. */
 function refused(httpStatus: number): Extract<LinearGqlResult<unknown>, { ok: false }> {
 	return { ok: false, httpStatus, message: "success false" };

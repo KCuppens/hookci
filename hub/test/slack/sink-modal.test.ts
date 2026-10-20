@@ -23,12 +23,13 @@ describe("buildSinkAddModal", () => {
     expect(view.title?.text.length).toBeLessThanOrEqual(24);
   });
 
-  it("has a kind choice of Telegram or Webhook and one input per field, keyed by field", () => {
+  it("has a kind choice of Telegram, Webhook or Linear and one input per field, keyed by field", () => {
     const blocks = buildSinkAddModal("acme/api", "C0CHAN").blocks as { type: string; block_id?: string; element?: { action_id: string; options?: { value: string }[] } }[];
     const inputs = blocks.filter((b) => b.type === "input");
-    expect(inputs.map((b) => b.block_id)).toEqual(["kind", "bot_token", "chat_id", "webhook_url", "label"]);
-    expect(inputs.map((b) => b.element?.action_id)).toEqual(["kind", "bot_token", "chat_id", "webhook_url", "label"]);
-    expect(inputs[0]?.element?.options?.map((o) => o.value)).toEqual(["telegram", "webhook"]);
+    const fields = ["kind", "bot_token", "chat_id", "webhook_url", "linear_api_key", "linear_team", "linear_assignee_email", "label"];
+    expect(inputs.map((b) => b.block_id)).toEqual(fields);
+    expect(inputs.map((b) => b.element?.action_id)).toEqual(fields);
+    expect(inputs[0]?.element?.options?.map((o) => o.value)).toEqual(["telegram", "webhook", "linear"]);
   });
 });
 
@@ -55,6 +56,39 @@ describe("parseSinkAddSubmission", () => {
 
   it("names the missing URL of a webhook sink, whatever the Telegram fields hold", () => {
     expect(parseSinkAddSubmission(submitted({ kind: "webhook", bot_token: BOT_TOKEN }))).toEqual({ errors: { webhook_url: S.slack.sinkModal.needWebhookUrl } });
+  });
+
+  it("turns a Linear submission into the config service's input, ignoring the other kinds' fields", () => {
+    const parsed = parseSinkAddSubmission(
+      submitted({
+        kind: "linear",
+        linear_api_key: " lin_api_abc123 ",
+        linear_team: "ENG",
+        linear_assignee_email: " dana@acme.test ",
+        bot_token: BOT_TOKEN,
+        webhook_url: "https://hooks.example.com/zeroci",
+        label: "deploys",
+      }),
+    );
+    expect(parsed).toEqual({
+      repo: "acme/api",
+      channel: "C0CHAN",
+      input: { kind: "linear", repo: "acme/api", apiKey: "lin_api_abc123", teamKey: "ENG", assigneeEmail: "dana@acme.test", label: "deploys" },
+    });
+    expect(parseSinkAddSubmission(submitted({ kind: "linear", linear_api_key: "lin_api_abc123", linear_team: "ENG" }))).toEqual({
+      repo: "acme/api",
+      channel: "C0CHAN",
+      input: { kind: "linear", repo: "acme/api", apiKey: "lin_api_abc123", teamKey: "ENG" },
+    });
+  });
+
+  it("names a missing API key and team, and a lowercase team, of a Linear sink", () => {
+    expect(parseSinkAddSubmission(submitted({ kind: "linear", chat_id: "-100" }))).toEqual({
+      errors: { linear_api_key: S.slack.sinkModal.needLinearApiKey, linear_team: S.slack.sinkModal.needLinearTeam },
+    });
+    expect(parseSinkAddSubmission(submitted({ kind: "linear", linear_api_key: "lin_api_abc123", linear_team: "eng" }))).toEqual({
+      errors: { linear_team: S.slack.sinkModal.badLinearTeam },
+    });
   });
 
   it("asks for a kind when none is chosen", () => {

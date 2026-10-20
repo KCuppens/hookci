@@ -27,6 +27,7 @@ type sinkHub struct {
 func newSinkDeps(t *testing.T, h *sinkHub, stdin string) Deps {
 	t.Helper()
 	t.Setenv(telegramTokenEnv, "")
+	t.Setenv(linearAPIKeyEnv, "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testCredential {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -152,13 +153,94 @@ func TestSinkListTable(t *testing.T) {
 	}
 }
 
+const (
+	linearTestKey  = "lin_api_clisecret42"
+	linearSinkJSON = `{"sink":{"id":"snk_3","kind":"linear","repo":"o/r","label":null,"target":{"teamKey":"ENG","assigneeName":"Dana"},"created_at":"x","disabled_at":null,"last_error":null}}`
+)
+
+func TestSinkAddLinearTakesKeyFromEnvOrStdin(t *testing.T) {
+	for _, viaEnv := range []bool{true, false} {
+		h := &sinkHub{status: http.StatusCreated, answer: linearSinkJSON}
+		stdin := linearTestKey + "\n"
+		if viaEnv {
+			stdin = ""
+		}
+		d := newSinkDeps(t, h, stdin)
+		if viaEnv {
+			t.Setenv(linearAPIKeyEnv, linearTestKey)
+		}
+		code, stdout, stderr := runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG", "--assignee", "dana@acme.test", "--label", "deploys")
+		if code != ExitOK {
+			t.Fatalf("env %v: exit = %d; stderr:\n%s", viaEnv, code, stderr)
+		}
+		want := map[string]any{"kind": "linear", "repo": "o/r", "api_key": linearTestKey, "team_key": "ENG", "assignee_email": "dana@acme.test", "label": "deploys"}
+		if len(h.bodies) != 1 || len(h.bodies[0]) != len(want) {
+			t.Fatalf("env %v: bodies = %v, want %v", viaEnv, h.bodies, want)
+		}
+		for k, v := range want {
+			if h.bodies[0][k] != v {
+				t.Errorf("env %v: body[%s] = %v, want %v", viaEnv, k, h.bodies[0][k], v)
+			}
+		}
+		if !strings.Contains(stdout, "snk_3") || !strings.Contains(stdout, "team=ENG assignee=Dana") {
+			t.Errorf("env %v: stdout = %q", viaEnv, stdout)
+		}
+		if strings.Contains(stdout+stderr, linearTestKey) {
+			t.Fatalf("env %v: key leaked: stdout %q stderr %q", viaEnv, stdout, stderr)
+		}
+	}
+}
+
+func TestSinkAddLinearWithoutKeyExits2(t *testing.T) {
+	h := &sinkHub{status: http.StatusCreated, answer: linearSinkJSON}
+	d := newSinkDeps(t, h, "")
+	code, _, stderr := runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG")
+	if code != ExitUsage || !strings.Contains(stderr, "ZEROCI_LINEAR_API_KEY not set and no key on stdin") {
+		t.Fatalf("exit = %d, stderr %q", code, stderr)
+	}
+	code, _, stderr = runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG", "--api-key", linearTestKey)
+	if code != ExitUsage || strings.Contains(stderr, linearTestKey) {
+		t.Fatalf("--api-key: exit = %d, stderr %q", code, stderr)
+	}
+	if len(h.bodies) != 0 {
+		t.Fatalf("hub called: %v", h.bodies)
+	}
+}
+
+func TestSinkAddLinearNamesUnknownTeamAndAssignee(t *testing.T) {
+	tests := []struct{ code, want string }{
+		{"team_not_found", "Linear team ENG not found for this API key"},
+		{"assignee_not_found", "No Linear user with email dana@acme.test"},
+	}
+	for _, tc := range tests {
+		h := &sinkHub{status: http.StatusBadRequest, answer: `{"error":"` + tc.code + `","message":"x"}`}
+		d := newSinkDeps(t, h, linearTestKey+"\n")
+		code, stdout, stderr := runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG", "--assignee", "dana@acme.test")
+		if code != ExitRunFailed || !strings.Contains(stderr, tc.want) {
+			t.Errorf("%s: exit = %d, stderr %q", tc.code, code, stderr)
+		}
+		if strings.Contains(stdout+stderr, linearTestKey) {
+			t.Fatalf("%s: key leaked: %q", tc.code, stderr)
+		}
+	}
+}
+
+func TestSinkListTableShowsLinearTeam(t *testing.T) {
+	row := `{"id":"snk_3","kind":"linear","repo":"o/r","label":"deploys","target":{"teamKey":"ENG"},"created_at":"x","disabled_at":null,"last_error":null}`
+	d := newSinkDeps(t, &sinkHub{status: http.StatusOK, answer: `{"sinks":[` + row + `]}`}, "")
+	code, stdout, _ := runSink(d, "ls", "--repo", "o/r")
+	if code != ExitOK || !strings.Contains(stdout, "linear") || !strings.Contains(stdout, "team=ENG") || !strings.Contains(stdout, "deploys") {
+		t.Fatalf("exit = %d, stdout:\n%s", code, stdout)
+	}
+}
+
 func TestSinkUnknownSubcommandExits2(t *testing.T) {
 	d := newSinkDeps(t, &sinkHub{status: http.StatusOK}, "")
 	if code, _, _ := runSink(d, "frobnicate"); code != ExitUsage {
 		t.Fatalf("exit = %d, want %d", code, ExitUsage)
 	}
-	if code, _, _ := runSink(d, "add", "linear"); code != ExitUsage {
-		t.Fatalf("add linear exit = %d, want %d", code, ExitUsage)
+	if code, _, _ := runSink(d, "add", "email"); code != ExitUsage {
+		t.Fatalf("add email exit = %d, want %d", code, ExitUsage)
 	}
 }
 

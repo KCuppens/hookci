@@ -142,6 +142,100 @@ describe("addSinkConfig", () => {
   });
 });
 
+describe("Linear configs", () => {
+  const LIN_KEY = "lin_api_CONFIGSECRET77";
+  const DANA = { id: "user_1", name: "Dana", url: "https://linear.app/acme/profiles/dana" };
+  const savedUrl = env.LINEAR_API_URL;
+  let queries: string[];
+  let teams: unknown[];
+  let users: unknown[];
+  let reply: ((query: string) => Response) | null;
+  const linear = (extra: { teamKey?: string; assigneeEmail?: string; label?: string } = {}) =>
+    addSinkConfig(env, ta, actor, { kind: "linear", repo: a.fullName, apiKey: LIN_KEY, teamKey: "ENG", ...extra });
+
+  beforeEach(() => {
+    queries = [];
+    teams = [{ id: "team_1", key: "ENG" }];
+    users = [DANA];
+    reply = null;
+    env.LINEAR_API_URL = "https://linear.test/graphql";
+    env.__TEST_FETCHER = async (_input, init) => {
+      const query = String(JSON.parse(String(init?.body)).query);
+      queries.push(query);
+      if (reply) return reply(query);
+      if (query.includes("teams(")) return Response.json({ data: { teams: { nodes: teams } } });
+      if (query.includes("users(")) return Response.json({ data: { users: { nodes: users } } });
+      if (query.includes("team(")) return Response.json({ data: { team: { states: { nodes: [{ id: "state_done", position: 0 }] } } } });
+      return Response.json({ data: { viewer: { id: "me" } } });
+    };
+  });
+
+  afterEach(() => {
+    env.LINEAR_API_URL = savedUrl;
+  });
+
+  it("stores the key encrypted and lists only the team key and assignee name", async () => {
+    const { sink, generatedSecret } = await linear({ assigneeEmail: "dana@acme.test", label: "deploys" });
+    expect(generatedSecret).toBeUndefined();
+    expect(sink).toMatchObject({ kind: "linear", label: "deploys", target: { teamKey: "ENG", assigneeName: "Dana" } });
+    const row = await env.DB.prepare("SELECT * FROM sink_configs WHERE id = ?1").bind(sink.id).first<Record<string, unknown>>();
+    expect(JSON.stringify(row)).not.toContain(LIN_KEY);
+    expect(JSON.parse(String(row?.target))).toEqual({
+      teamId: "team_1",
+      teamKey: "ENG",
+      assigneeId: "user_1",
+      assigneeName: "Dana",
+      assigneeUrl: DANA.url,
+      completedStateId: "state_done",
+    });
+    const listed = await listSinkConfigsForRepo(ta, a.fullName);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.kind).toBe("linear");
+    expect(listed[0]?.target).toStrictEqual({ teamKey: "ENG", assigneeName: "Dana" });
+    expect(JSON.stringify(listed)).not.toContain(LIN_KEY);
+    expect(JSON.stringify(listed)).not.toContain("team_1");
+  });
+
+  it("refuses the eleventh Linear config of a repo with limit_reached", async () => {
+    for (let i = 0; i < MAX_SINKS_PER_REPO; i++) await linear();
+    expect(await refusal(linear())).toBe("limit_reached");
+  });
+
+  it("refuses an unknown team or assignee and a malformed team key, storing nothing", async () => {
+    teams = [];
+    expect(await refusal(linear())).toBe("team_not_found");
+    teams = [{ id: "team_1", key: "ENG" }];
+    users = [];
+    expect(await refusal(linear({ assigneeEmail: "nobody@acme.test" }))).toBe("assignee_not_found");
+    queries = [];
+    expect(await refusal(linear({ teamKey: "eng" }))).toBe("team_not_found");
+    expect(queries).toEqual([]);
+    expect(await count("sink_configs")).toBe(0);
+  });
+
+  it("refuses a rejected key with bad_token and a rate limit with invalid and a retry hint", async () => {
+    reply = () => new Response("{}", { status: 401 });
+    const badKey = await linear().catch((e: unknown) => e);
+    expect(badKey).toMatchObject({ code: "bad_token", message: "Linear did not accept the API key." });
+    reply = (query) => (query.includes("users(") ? new Response("{}", { status: 429 }) : Response.json({ data: { teams: { nodes: teams }, team: { states: { nodes: [] } } } }));
+    const limited = await linear({ assigneeEmail: "dana@acme.test" }).catch((e: unknown) => e);
+    expect(limited).toMatchObject({ code: "invalid", message: "Linear did not answer or is limiting requests. Try again in a minute." });
+    expect(String((limited as Error).message)).not.toContain(LIN_KEY);
+    expect(await count("sink_configs")).toBe(0);
+  });
+
+  it("tests a Linear config with the viewer query only", async () => {
+    const { sink } = await linear();
+    queries = [];
+    expect(await sendTestDelivery(env, ta, actor, sink.id)).toEqual({ kind: "ok" });
+    expect(queries).toEqual(["query { viewer { id } }"]);
+    reply = () => new Response("{}", { status: 401 });
+    expect(await sendTestDelivery(env, ta, actor, sink.id)).toEqual({ kind: "fail", httpStatus: 401, disable: "linear_unauthorized" });
+    expect(await count("sink_messages")).toBe(0);
+    expect(await count("sink_deliveries")).toBe(0);
+  });
+});
+
 describe("tenant isolation", () => {
   it("keeps one installation's configs from another's list, remove and test", async () => {
     const { sink } = await addSinkConfig(env, ta, actor, { kind: "webhook", repo: a.fullName, url: HOOK });

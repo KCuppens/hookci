@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSinkConfig, getSinkConfigWithSecret, getSinkMessage, type SinkConfigWithSecret } from "../../src/db/sinks";
 import { tenantDb } from "../../src/db/tenant";
+import type { Fetcher } from "../../src/http";
 import type { OutboxDelivery } from "../../src/sinks/deliverers";
 import {
   decodeLinearExternalId,
@@ -10,6 +11,7 @@ import {
   linearDeliverer,
   linearGraphql,
   mapLinearError,
+  validateLinearConfig,
 } from "../../src/sinks/linear";
 import type { RunState, RunView } from "../../src/sinks/types";
 
@@ -48,6 +50,12 @@ function ok(operation: string): Response {
   return Response.json({ data: { commentCreate: { success: true, comment: { id: `cmt_${calls.length}` } } } });
 }
 
+const recording: Fetcher = async (_input, init) => {
+  const body = JSON.parse(String(init?.body)) as Call;
+  calls.push(body);
+  return answer(op(body.query));
+};
+
 beforeEach(async () => {
   calls = [];
   answer = ok;
@@ -59,11 +67,7 @@ beforeEach(async () => {
   }
   saved = { fetcher: env.__TEST_FETCHER, url: env.LINEAR_API_URL };
   env.LINEAR_API_URL = API_URL;
-  env.__TEST_FETCHER = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Call;
-    calls.push(body);
-    return answer(op(body.query));
-  };
+  env.__TEST_FETCHER = recording;
   const row = await createSinkConfig(env, t, { kind: "linear", repo: "o/r", target: JSON.stringify(TARGET), secret: API_KEY, createdBy: "slack:T1:U1" });
   const found = await getSinkConfigWithSecret(env, t, row.id);
   if (!found) throw new Error("sink config missing");
@@ -216,6 +220,75 @@ describe("mapLinearError", () => {
 
   it("fails other GraphQL errors without disabling", async () => {
     expect(await mapped(Response.json({ errors: [{ message: "bad input", extensions: { code: "INVALID_INPUT" } }] }))).toEqual({ kind: "fail", httpStatus: 200 });
+  });
+});
+
+describe("validateLinearConfig", () => {
+  const DANA = { id: "user_1", name: "Dana", url: "https://linear.app/acme/profiles/dana" };
+  let teams: unknown[];
+  let users: unknown[];
+  let states: unknown[];
+
+  beforeEach(() => {
+    teams = [{ id: "team_1", key: "ENG" }];
+    users = [DANA];
+    states = [
+      { id: "state_late", position: 3 },
+      { id: "state_done", position: 1 },
+    ];
+    answer = (operation) => {
+      if (operation === "viewer") return Response.json({ data: { viewer: { id: "me" } } });
+      if (operation === "teams") return Response.json({ data: { teams: { nodes: teams } } });
+      if (operation === "users") return Response.json({ data: { users: { nodes: users } } });
+      return Response.json({ data: { team: { states: { nodes: states } } } });
+    };
+  });
+
+  const validate = (assigneeEmail?: string) => validateLinearConfig(recording, API_URL, API_KEY, "ENG", assigneeEmail);
+
+  it("resolves the team, the assignee and the completed state with the lowest position", async () => {
+    expect(await validate("dana@acme.test")).toEqual({ ok: true, target: TARGET });
+    expect(calls.map((c) => op(c.query))).toEqual(["viewer", "teams", "users", "team"]);
+    expect(calls.map((c) => c.variables)).toEqual([{}, { key: "ENG" }, { email: "dana@acme.test" }, { teamId: "team_1" }]);
+  });
+
+  it("makes exactly 3 calls and stores no assignee without an email", async () => {
+    expect(await validate()).toEqual({ ok: true, target: { teamId: "team_1", teamKey: "ENG", completedStateId: "state_done" } });
+    expect(calls.map((c) => op(c.query))).toEqual(["viewer", "teams", "team"]);
+  });
+
+  it("leaves completedStateId out when the team has no completed state", async () => {
+    states = [];
+    const result = await validate();
+    expect(result).toEqual({ ok: true, target: { teamId: "team_1", teamKey: "ENG" } });
+  });
+
+  it("answers bad_token when Linear refuses the key, and asks nothing more", async () => {
+    answer = () => new Response("{}", { status: 401 });
+    expect(await validate("dana@acme.test")).toEqual({ ok: false, code: "bad_token" });
+    answer = () => Response.json({ errors: [{ message: "bad key", extensions: { code: "AUTHENTICATION_ERROR" } }] });
+    expect(await validate("dana@acme.test")).toEqual({ ok: false, code: "bad_token" });
+    expect(calls.map((c) => op(c.query))).toEqual(["viewer", "viewer"]);
+  });
+
+  it("answers team_not_found when no team has the key", async () => {
+    teams = [];
+    expect(await validate("dana@acme.test")).toEqual({ ok: false, code: "team_not_found" });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("answers assignee_not_found when no user has the email", async () => {
+    users = [];
+    expect(await validate("nobody@acme.test")).toEqual({ ok: false, code: "assignee_not_found" });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("answers invalid with a retry hint when Linear rate limits or fails", async () => {
+    const base = answer;
+    answer = (operation) => (operation === "team" ? new Response("{}", { status: 429 }) : base(operation));
+    expect(await validate()).toEqual({ ok: false, code: "invalid", retry: true });
+    answer = () => new Response("down", { status: 503 });
+    expect(await validate()).toEqual({ ok: false, code: "invalid", retry: true });
   });
 });
 
