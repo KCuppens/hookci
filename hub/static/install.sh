@@ -170,6 +170,9 @@ main() {
 	if ! id zeroci-run >/dev/null 2>&1; then
 		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-run
 	fi
+	if ! id zeroci-deploy >/dev/null 2>&1; then
+		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-deploy
+	fi
 	run $sudo install -m 0644 -o root -g root "$tmp/zeroci.slice" /etc/systemd/system/zeroci.slice
 	run $sudo install -m 0644 -o root -g root "$tmp/agent.service" /etc/systemd/system/zeroci-agent@.service
 	if [ -n "$ZEROCI_INSTALL_DRY_RUN" ]; then

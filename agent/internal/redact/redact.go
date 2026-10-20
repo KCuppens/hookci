@@ -80,6 +80,14 @@ func New(literals []string, patterns []*regexp.Regexp) (r *Redactor, warnings []
 	return r, warnings
 }
 
+// With returns a redactor that masks everything r masks plus literals.
+// Literal values shorter than MinSecretLen are skipped.
+func (r *Redactor) With(literals []string) *Redactor {
+	out, _ := New(slices.Concat(r.literals, literals), nil)
+	out.patterns = r.patterns
+	return out
+}
+
 // Line returns s with every literal, registered secret (AddSecret) and
 // pattern match replaced by Mask.
 func (r *Redactor) Line(s string) string {
