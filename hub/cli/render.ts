@@ -10,6 +10,7 @@ export interface RenderInput {
 	accountId: string;
 	d1DatabaseId: string;
 	r2Bucket: string;
+	/** Empty only for the first setup deploy, before wrangler has printed the workers.dev URL. */
 	baseUrl: string;
 	/** The package version, served by the Worker as HUB_VERSION (/healthz, /v1/info). */
 	hubVersion: string;
@@ -24,7 +25,7 @@ export const DEFAULT_GITHUB_API_URL = "https://api.github.com";
 
 const PLACEHOLDER = /\{\{([A-Za-z][A-Za-z0-9]*)\}\}/g;
 /** Placeholders that may render as empty. */
-const OPTIONAL_PLACEHOLDERS: Record<string, true> = { securityContact: true, routes: true };
+const OPTIONAL_PLACEHOLDERS: Record<string, true> = { securityContact: true, routes: true, baseUrl: true };
 
 /** Escapes a value for use inside a TOML basic string; JSON string escapes are a subset TOML accepts. */
 function tomlEscape(value: string): string {
@@ -99,12 +100,13 @@ export const PLACEHOLDER_INPUT = {
 export async function renderStateDir(dir: string, prompter: Prompter, root = packageRoot()): Promise<boolean> {
 	const state = await loadState(dir);
 	const toml = renderWranglerToml(await readTemplate(root), {
-		name: PLACEHOLDER_INPUT.name,
+		name: state?.name ?? PLACEHOLDER_INPUT.name,
 		accountId: state?.account_id || PLACEHOLDER_INPUT.accountId,
 		d1DatabaseId: state?.d1_database_id ?? PLACEHOLDER_INPUT.d1DatabaseId,
 		r2Bucket: state?.r2_bucket ?? PLACEHOLDER_INPUT.r2Bucket,
 		baseUrl: state?.base_url ?? PLACEHOLDER_INPUT.baseUrl,
 		hubVersion: packageVersion(),
+		customDomain: state?.custom_domain,
 	});
 	const path = join(dir, "wrangler.toml");
 	if (existsSync(path) && (await readFile(path, "utf8")) !== toml && !(await prompter.confirm(`Overwrite ${path}?`, false))) return false;

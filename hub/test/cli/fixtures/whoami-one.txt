@@ -1,0 +1,13 @@
+
+ ⛅️ wrangler 4.151.1
+────────────────────
+Getting User settings...
+👋 You are logged in with an OAuth Token, associated with the email ops@acme.dev.
+┌──────────────┬──────────────────────────────────┐
+│ Account Name │ Account ID                       │
+├──────────────┼──────────────────────────────────┤
+│ Acme Inc     │ 0123456789abcdef0123456789abcdef │
+└──────────────┴──────────────────────────────────┘
+🔓 Token Permissions:
+Scope (Access)
+- account (read)

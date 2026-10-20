@@ -11,6 +11,11 @@ export interface HubState {
 	r2_bucket?: string;
 	base_url?: string;
 	github_app_id?: number;
+	/** Hub name: the Worker name and the prefix of the D1 database and R2 bucket. */
+	name?: string;
+	custom_domain?: string;
+	/** Names of the Worker secrets setup has stored; the values are never written down. */
+	secrets_set?: string[];
 	version: string;
 	steps_done: string[];
 }

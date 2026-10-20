@@ -1,0 +1,16 @@
+
+ ⛅️ wrangler 4.151.1
+────────────────────
+✅ Successfully created DB 'zeroci-hub-db' in region WEUR
+Created your new D1 database.
+
+To access your new D1 Database in your Worker, add the following snippet to your configuration file:
+{
+  "d1_databases": [
+    {
+      "binding": "zeroci_hub_db",
+      "database_name": "zeroci-hub-db",
+      "database_id": "5b0c7f4e-2a1d-4c3b-9e8f-1a2b3c4d5e6f"
+    }
+  ]
+}
