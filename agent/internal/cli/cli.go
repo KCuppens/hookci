@@ -80,6 +80,10 @@ func commandTable() map[string]command {
 			summary: "retry a Failed or Interrupted deploy run: retry <run_id> [--state-dir DIR | --installation ID]",
 			run:     cmdRetry,
 		},
+		"sink": {
+			summary: "manage the repo's Telegram and webhook sinks on the hub: sink add telegram|webhook, sink ls, sink rm <id>, sink test <id>",
+			run:     cmdSink,
+		},
 		"status": {
 			summary: "list recent runs, or one run's jobs: status [run] [--json]",
 			run:     cmdStatus,

@@ -96,6 +96,9 @@ type Deps struct {
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
 	// Releases is where upgrade fetches signed releases.
 	Releases Releases
+	// Stdin is where sink add telegram reads the bot token. When it is a
+	// terminal *os.File the token is read without echo.
+	Stdin io.Reader
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -115,6 +118,7 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		Services: systemd.Systemctl{Runner: execx.OS{}},
 		Doctor:   hostDoctorEnv,
 		Releases: defaultReleases(),
+		Stdin:    os.Stdin,
 	}
 }
 
