@@ -8,16 +8,17 @@
 
 import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
-import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, updateRunState, upsertJob } from "../db/runs";
+import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
-import { logEvent } from "../observability";
+import { logEvent, reportError } from "../observability";
 import type { Event as EventFrame, Interrupt } from "../protocol";
 import { QUOTAS } from "../quotas";
 import { fanOut, sinksFor } from "../sinks";
 import { loadRunView } from "../sinks/runview";
+import { pruneStoredTails } from "../sinks/slack";
 import type { Annotation, RunView, Sink } from "../sinks/types";
 import { S } from "../strings";
 import { ulid } from "../ulid";
@@ -30,6 +31,8 @@ import { registerDoRoute } from "./agent-routes";
 
 /** A trigger still `sent` this long while the agent is offline leaves its run pending with agent_offline. */
 export const OFFLINE_PENDING_MS = 10 * 60_000;
+/** A finished trigger row, and a failed job's stored tail, is kept this long. */
+export const TRIGGER_RETENTION_MS = 14 * 24 * 60 * 60_000;
 
 type TriggerState = "sent" | "gated" | "accepted" | "rejected" | "superseded" | "done";
 
@@ -132,9 +135,22 @@ function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 
 /** Loads the run and hands it to fn for every sink, unless no sink is configured. */
 async function fanOutRun(dob: AgentDO, runId: string, fn: (sink: Sink, run: RunView) => Promise<void>): Promise<void> {
+	await fanOutView(dob, { runId }, fn);
+}
+
+/** fanOutRun for the run of triggerId, whether or not the agent has renamed it yet. */
+async function fanOutTrigger(dob: AgentDO, triggerId: string, fn: (sink: Sink, run: RunView) => Promise<void>): Promise<void> {
+	await fanOutView(dob, { triggerId }, fn);
+}
+
+async function fanOutView(
+	dob: AgentDO,
+	key: { runId: string } | { triggerId: string },
+	fn: (sink: Sink, run: RunView) => Promise<void>,
+): Promise<void> {
 	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
 	if (sinks.length === 0) return;
-	const run = await loadRunView(dob.bindings.DB, dob.installationId, { runId });
+	const run = await loadRunView(dob.bindings.DB, dob.installationId, key);
 	if (run) fanOut(dob.state, sinks, (sink) => fn(sink, run));
 }
 
@@ -242,10 +258,10 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 
 	const { replaced, interrupts } = supersede(dob, own);
 	for (const interrupt of interrupts) await dob.send(interrupt);
-	for (const row of replaced) await updateRunState(t, row.run_id ?? row.trigger_id, "superseded", { finished_at: now });
+	for (const row of replaced) await supersedeRun(t, row.trigger_id, now);
 	await Promise.all([
 		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail })),
-		...replaced.map((row) => fanOutRun(dob, row.run_id ?? row.trigger_id, runUpdate)),
+		...replaced.map((row) => fanOutTrigger(dob, row.trigger_id, runUpdate)),
 	]);
 	return Response.json({ trigger_id: triggerId }, { status: 202 });
 }
@@ -275,22 +291,29 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 
 	const t = dob.tenant();
 	let capped: boolean;
+	const day = new Date(now).toISOString().slice(0, 10);
+	let counted = false;
 	try {
-		const day = new Date(now).toISOString().slice(0, 10);
 		const counter = await t.first<{ runs: number }>(
 			`INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, ?2, 1)
 			ON CONFLICT (installation_id, day) DO UPDATE SET runs = runs + 1 RETURNING runs`,
 			day,
 		);
+		counted = true;
 		capped = (counter?.runs ?? 0) > QUOTAS.runsPerDay;
 		const state = capped ? "pending" : "received";
 		const reason = capped ? "daily_cap" : null;
 		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason));
 		else await updateRunState(t, triggerId, state, { reason });
 	} catch (err) {
-		// Free the idempotency key (or the approval) so the webhook or approver can try again.
+		// Free the idempotency key (or the approval) so the webhook or approver can try again, and give back its count.
 		if (trig.runId === undefined) dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
 		else dob.sql.exec("UPDATE triggers SET state = 'gated' WHERE trigger_id = ?", triggerId);
+		if (counted) {
+			await t
+				.run("UPDATE daily_counters SET runs = runs - 1 WHERE installation_id = ?1 AND day = ?2 AND runs > 0", day)
+				.catch((undo: unknown) => reportError(undo, { installation_id: dob.installationId ?? 0, op: "daily_counter_undo" }));
+		}
 		throw err;
 	}
 
@@ -327,11 +350,12 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 	}
 	for (const interrupt of interrupts) await dob.send(interrupt);
 
-	await updateRunState(t, triggerId, stillSent ? "queued" : "superseded", stillSent ? {} : { finished_at: now });
-	for (const row of replaced) await updateRunState(t, row.run_id ?? row.trigger_id, "superseded", { finished_at: now });
+	if (stillSent) await updateRunState(t, triggerId, "queued");
+	else await supersedeRun(t, triggerId, now);
+	for (const row of replaced) await supersedeRun(t, row.trigger_id, now);
 	await Promise.all([
-		fanOutRun(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail, approvedBy: trig.approvedBy })),
-		...replaced.map((row) => fanOutRun(dob, row.run_id ?? row.trigger_id, runUpdate)),
+		fanOutTrigger(dob, triggerId, (sink, run) => sink.onRunUpdate({ ...run, authorEmail: trig.authorEmail, approvedBy: trig.approvedBy })),
+		...replaced.map((row) => fanOutTrigger(dob, row.trigger_id, runUpdate)),
 	]);
 
 	if (stillSent && !dob.isOnline() && (await dob.state.storage.getAlarm()) === null) {
@@ -353,13 +377,25 @@ async function onRepair(dob: AgentDO): Promise<Response> {
 	return Response.json({ ok: true });
 }
 
-/** The agent was revoked or its installation removed: stop its runs, tell it why and close the socket. */
+/** The agent was revoked or its installation removed: stop its runs, tell it why, close the socket and drop what it left queued. */
 async function onRevoke(dob: AgentDO, req: Request): Promise<Response> {
 	const { reason } = await req.json<{ reason: "revoked" | "uninstalled" }>();
 	if (reason !== "revoked" && reason !== "uninstalled") return Response.json({ error: "bad_request" }, { status: 400 });
 	await interruptAccepted(dob, reason);
 	dob.disconnect(CLOSE.revoked, "revoked", { v: 1, type: "error", code: "revoked", message: S.agentRevoked });
+	// The agent never connects again, so its outbox, triggers and stored tails are dead weight.
+	dob.sql.exec("DELETE FROM outbox");
+	dob.sql.exec("DELETE FROM triggers");
+	await pruneStoredTails(dob.state.storage, Number.POSITIVE_INFINITY);
 	return Response.json({ ok: true });
+}
+
+/** Drops triggers finished more than TRIGGER_RETENTION_MS ago and the tails of runs that never ended. */
+export async function pruneFinished(dob: AgentDO, now: number): Promise<boolean> {
+	const before = now - TRIGGER_RETENTION_MS;
+	dob.sql.exec("DELETE FROM triggers WHERE state IN ('done', 'superseded', 'rejected') AND created_at < ?", before);
+	await pruneStoredTails(dob.state.storage, before);
+	return false;
 }
 
 async function onInterrupt(dob: AgentDO, req: Request): Promise<Response> {
@@ -422,13 +458,14 @@ export function registerRunLifecycle(): () => void {
 			);
 			// Replaced after the agent already had it: stop the run it just started.
 			if (row.state === "superseded") await dob.send({ v: 1, type: "interrupt", run_id: frame.run_id, reason: "superseded" });
-			await acceptRun(dob.tenant(), row.run_id ?? row.trigger_id, frame.run_id, dob.agentId);
+			await acceptRun(dob.tenant(), row.trigger_id, frame.run_id, dob.agentId);
 			await fanOutRun(dob, frame.run_id, runUpdate);
 		}),
 
 		registerFrameHandler("rejected", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
-			if (row.state !== "sent" && row.state !== "accepted") return;
+			// rejected too: a replay of a frame whose D1 write failed must write it again.
+			if (row.state !== "sent" && row.state !== "accepted" && row.state !== "rejected") return;
 			dob.sql.exec("UPDATE triggers SET state = 'rejected' WHERE trigger_id = ?", row.trigger_id);
 			const runId = row.run_id ?? row.trigger_id;
 			await updateRunState(dob.tenant(), runId, "skipped", { reason: frame.reason, finished_at: dob.clock.now() });
@@ -504,6 +541,7 @@ export function registerRunLifecycle(): () => void {
 		}),
 
 		registerAlarmTask(pendOfflineRuns),
+		registerAlarmTask(pruneFinished),
 		registerOfflineHook(notifyAgentOffline),
 	];
 	return () => {

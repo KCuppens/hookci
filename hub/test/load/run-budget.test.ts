@@ -26,7 +26,8 @@ const STEPS = 10;
 const AGENT_ALARM_WINDOW_MS = 30_000;
 
 type Frame = Record<string, unknown>;
-type SlackCall = { team: string; method: string; at: number };
+/** One Slack API call; thread is whether it went to a thread (thread_ts set). */
+type SlackCall = { team: string; method: string; thread: boolean; at: number };
 
 let at = 0;
 const clock = {
@@ -39,8 +40,8 @@ const slack = createFakeSlack();
 const gh = createFakeGitHub();
 const slackCalls: SlackCall[] = [];
 let lastFrameAt = 0;
-// Simulated ms per tick. The waited Slack calls time out after 10 s of real
-// time, so under load each tick must cover more simulated time than it costs.
+// Simulated ms per tick. Waited Slack calls hold their frame's handler until
+// the queue drains them, so each tick must move the clock enough to drain.
 let tickMs = 250;
 let saved: Pick<Env, "DB" | "__TEST_CLOCK" | "__TEST_FETCHER" | "GITHUB_APP_PRIVATE_KEY">;
 
@@ -58,7 +59,8 @@ beforeEach(async () => {
     const url = new URL(req.url);
     if (url.hostname !== "slack.com") return gh.fetcher(req);
     const team = /^Bearer xoxb-(\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "(none)";
-    slackCalls.push({ team, method: url.pathname.replace("/api/", ""), at: clock.now() });
+    const thread = new URLSearchParams(await req.clone().text()).has("thread_ts");
+    slackCalls.push({ team, method: url.pathname.replace("/api/", ""), thread, at: clock.now() });
     return slack.fetcher(req);
   };
 
@@ -91,19 +93,41 @@ async function alarmIfDue(stub: DurableObjectStub): Promise<void> {
   if (due !== null && due <= clock.now()) await runDurableObjectAlarm(stub);
 }
 
+/** Agent alarms still running, by agent id. */
+const agentAlarms = new Map<string, Promise<void>>();
+
 /**
- * Moves the clock one tick a second at a time, running every due Slack queue
- * alarm each second: the per-channel bucket holds one token, so one alarm sends
- * at most one post per channel however far the clock moved. Then, while the
- * agents have spoken recently, runs every due AgentDO alarm (the checks coalescer flush).
+ * Moves the clock one tick, stopping at each Slack queue alarm due within it
+ * to run every alarm then due, as the runtime would: the per-channel bucket
+ * holds one token, so one alarm sends at most one post per channel however far
+ * the clock moved. Then, while the agents have spoken recently, starts every
+ * due AgentDO alarm (the checks coalescer flush) that is not still running.
+ * Agent alarms are not awaited: their Slack posts wait on queue alarms that
+ * only later ticks run, while the runtime runs each DO's alarm on its own.
  */
 async function tick(agents: readonly Agent[], teams: readonly string[]): Promise<void> {
   const queues = teams.map((team) => env.SLACK_DO.get(env.SLACK_DO.idFromName(team)));
-  for (let moved = 0; moved < tickMs; moved += 1_000) {
-    clock.advance(Math.min(1_000, tickMs - moved));
+  const end = clock.now() + tickMs;
+  for (;;) {
+    const alarms = await Promise.all(queues.map((stub) => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm())));
+    const next = Math.min(...alarms.map((at) => (at === null ? Infinity : Math.max(at, clock.now()))));
+    if (next > end) break;
+    clock.advance(next - clock.now());
     await Promise.all(queues.map(alarmIfDue));
+    // At least a second per round, so an alarm a send leaves due (a retry) cannot spin the loop.
+    clock.advance(Math.min(1_000, end - clock.now()));
+    if (clock.now() >= end) break;
   }
-  if (clock.now() - lastFrameAt < AGENT_ALARM_WINDOW_MS) await Promise.all(agents.map((agent) => alarmIfDue(agent.stub)));
+  clock.advance(end - clock.now());
+  if (clock.now() - lastFrameAt < AGENT_ALARM_WINDOW_MS) {
+    for (const agent of agents) {
+      if (agentAlarms.has(agent.agentId)) continue;
+      agentAlarms.set(
+        agent.agentId,
+        alarmIfDue(agent.stub).finally(() => agentAlarms.delete(agent.agentId)),
+      );
+    }
+  }
   // The sinks' fan-out runs in the DO's waitUntil after each frame's ack and
   // signals nothing the test can await, so each tick yields real time to it.
   // Promise.withResolvers needs lib es2024, which the hub's tsconfig does not include.
@@ -131,7 +155,7 @@ async function settle(agents: readonly Agent[], teams: readonly string[]): Promi
     const stats = await Promise.all(
       teams.map(async (team) => (await env.SLACK_DO.get(env.SLACK_DO.idFromName(team)).fetch("https://do/queue-stats")).json<SlackQueueStats>()),
     );
-    quiet = calls === seen && stats.every((s) => s.depth === 0) ? quiet + 1 : 0;
+    quiet = calls === seen && agentAlarms.size === 0 && stats.every((s) => s.depth === 0) ? quiet + 1 : 0;
     seen = calls;
   }
   expect(quiet).toBe(8);
@@ -307,6 +331,12 @@ describe("D1 writes and Slack calls under load", () => {
     expect(all).toHaveLength(50);
     const states = await runStates(env.DB, all);
     expect(states.map((r) => r.state)).toEqual(all.map(() => "success"));
+    // Under the burst no post is lost: per workspace, each run's message and its job's reply, once.
+    for (const team of teams) {
+      const posts = slackCalls.filter((c) => c.team === team && c.method === "chat.postMessage");
+      expect(posts.filter((c) => !c.thread), team).toHaveLength(10);
+      expect(posts.filter((c) => c.thread), team).toHaveLength(10);
+    }
 
     const quota = QUOTAS.slackWorkspacePerMin;
     const perMinute = new Map<string, number>();

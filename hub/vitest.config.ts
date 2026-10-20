@@ -1,8 +1,7 @@
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { configDefaults, defineConfig } from "vitest/config";
-
-const LOAD_TEST = "test/load/run-budget.test.ts";
+import { defineConfig } from "vitest/config";
 
 // Fixed values for the secrets typed in src/env.ts, so tests never need real ones.
 const testKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -20,6 +19,12 @@ const testSecrets = {
   LOG_SIGNING_KEYS: JSON.stringify({ "1": testKey }),
 };
 
+// Miniflare keeps D1 and Durable Object storage in a directory under
+// os.tmpdir() and commits every D1 statement, reads included, with an fsync.
+// On a disk that costs ~10 ms a statement and the run-budget load test took
+// over 90 s; in RAM it is ~0.5 ms. os.tmpdir() reads TMPDIR when Miniflare
+// starts, after this file is loaded.
+if (existsSync("/dev/shm")) process.env.TMPDIR = "/dev/shm";
 export default defineConfig({
   plugins: [
     cloudflareTest(async () => ({
@@ -37,11 +42,5 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
-    // The run-budget load test races Slack's 10 s real-time wait against a
-    // simulated clock, so it runs alone, after every other file.
-    projects: [
-      { extends: true, test: { name: "unit", exclude: [...configDefaults.exclude, LOAD_TEST] } },
-      { extends: true, test: { name: "load", include: [LOAD_TEST], sequence: { groupOrder: 1 } } },
-    ],
   },
 });

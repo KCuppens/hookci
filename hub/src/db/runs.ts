@@ -1,6 +1,10 @@
 import type { JobPlanned } from "../protocol";
+import { TERMINAL } from "../slack/badge";
 import type { TenantDb } from "./tenant";
 import type { WatchRow } from "./watches";
+
+/** `state NOT IN (...)` for runs that may still change. */
+const OPEN = `state NOT IN (${[...TERMINAL].map((s) => `'${s}'`).join(", ")})`;
 
 export interface RunRow {
 	run_id: string;
@@ -95,7 +99,7 @@ export async function hasRunForSha(t: TenantDb, repoId: number, sha: string): Pr
 	return (await t.first("SELECT 1 FROM runs WHERE installation_id = ?1 AND repo_id = ?2 AND sha = ?3 LIMIT 1", repoId, sha)) !== null;
 }
 
-/** Sets the run state and the patched columns; false when the run is not this installation's. */
+/** Sets the state and the patched columns of a run not yet finished; false when no such run of this installation. */
 export async function updateRunState(t: TenantDb, runId: string, state: string, patch: RunPatch = {}): Promise<boolean> {
 	const set = ["state = ?3"];
 	const binds: unknown[] = [runId, state];
@@ -105,22 +109,33 @@ export async function updateRunState(t: TenantDb, runId: string, state: string, 
 		binds.push(value);
 		set.push(`${column} = ?${binds.length + 1}`);
 	}
-	const res = await t.run(`UPDATE runs SET ${set.join(", ")} WHERE installation_id = ?1 AND run_id = ?2`, ...binds);
+	const res = await t.run(`UPDATE runs SET ${set.join(", ")} WHERE installation_id = ?1 AND run_id = ?2 AND ${OPEN}`, ...binds);
+	return res.meta.changes > 0;
+}
+
+/** Marks the run of triggerId superseded, whatever its run_id is now, unless it already finished. */
+export async function supersedeRun(t: TenantDb, triggerId: string, at: number): Promise<boolean> {
+	const res = await t.run(
+		`UPDATE runs SET state = 'superseded', finished_at = ?3 WHERE installation_id = ?1 AND trigger_id = ?2 AND ${OPEN}`,
+		triggerId,
+		at,
+	);
 	return res.meta.changes > 0;
 }
 
 /**
- * Gives the run the agent's run_id in place of its provisional one (the
- * trigger_id). A run still waiting (received, queued or pending) becomes
- * queued with no reason; any other state is kept. False when no such run.
+ * Gives the run of triggerId the agent's run_id in place of its provisional
+ * one (the trigger_id); a second call with the same ids changes nothing more.
+ * A run still waiting (received, queued or pending) becomes queued with no
+ * reason; any other state is kept. False when no such run.
  */
-export async function acceptRun(t: TenantDb, provisionalRunId: string, runId: string, agentId: string): Promise<boolean> {
+export async function acceptRun(t: TenantDb, triggerId: string, runId: string, agentId: string): Promise<boolean> {
 	const res = await t.run(
 		`UPDATE runs SET run_id = ?3, agent_id = ?4,
 			reason = CASE WHEN state IN ('received', 'queued', 'pending') THEN NULL ELSE reason END,
 			state = CASE WHEN state IN ('received', 'queued', 'pending') THEN 'queued' ELSE state END
-		WHERE installation_id = ?1 AND run_id = ?2`,
-		provisionalRunId,
+		WHERE installation_id = ?1 AND trigger_id = ?2`,
+		triggerId,
 		runId,
 		agentId,
 	);
@@ -137,9 +152,9 @@ export async function markRunPending(t: TenantDb, runId: string, reason: string)
 	return res.meta.changes > 0;
 }
 
-/** Cancels every pending run of the installation, finishing them at. */
-export async function cancelPendingRuns(t: TenantDb, at: number): Promise<void> {
-	await t.run("UPDATE runs SET state = 'cancelled', finished_at = ?2 WHERE installation_id = ?1 AND state = 'pending'", at);
+/** Cancels every run of the installation that has not finished, finishing them at. */
+export async function cancelOpenRuns(t: TenantDb, at: number): Promise<void> {
+	await t.run(`UPDATE runs SET state = 'cancelled', finished_at = ?2 WHERE installation_id = ?1 AND ${OPEN}`, at);
 }
 
 /**

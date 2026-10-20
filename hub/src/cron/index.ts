@@ -25,7 +25,7 @@ const SCHEDULES: Record<string, readonly CronTask[]> = {
 		{ name: "reconcile", run: (env, now) => reconcileDefaultBranches(env, now) },
 		{ name: "purge", run: (env, now) => purgeExpired(env.DB, now) },
 		{ name: "purge_installations", run: (env, now) => purgeDeletedInstallations(env, now) },
-		{ name: "reencrypt", run: (env) => reencryptTokens(env) },
+		{ name: "reencrypt", run: (env, now) => reencryptTokens(env, now) },
 	],
 };
 

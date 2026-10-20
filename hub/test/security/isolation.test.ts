@@ -102,6 +102,12 @@ async function gateForkRun(t: Tenant): Promise<string> {
   });
   expect(res.status).toBe(202);
   const { trigger_id } = await res.json<{ trigger_id: string }>();
+  // The gate posts the run to t's channel from the AgentDO's waitUntil. The fake
+  // Slack refuses the post, so its claim on slack_messages is released once done.
+  await vi.waitFor(async () => {
+    expect(slack.calls.map((c) => c.url)).toContain("https://slack.com/api/chat.postMessage");
+    expect(await env.DB.prepare("SELECT run_id FROM slack_messages WHERE run_id = ?1").bind(trigger_id).all()).toMatchObject({ results: [] });
+  });
   return trigger_id;
 }
 

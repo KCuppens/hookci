@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { type DeliveryRow, handledDeliveryIds, markDelivery, recordDelivery } from "../../src/db/deliveries";
+import { type DeliveryRow, deliveryStatuses, markDelivery, recordDelivery } from "../../src/db/deliveries";
 import { clearTables } from "./helpers";
 
 beforeEach(clearTables);
@@ -29,14 +29,20 @@ describe("recordDelivery", () => {
   });
 });
 
-describe("handledDeliveryIds", () => {
-  it("returns the processed and dropped ids among those asked for, not failed or unknown ones", async () => {
+describe("deliveryStatuses", () => {
+  it("returns the recorded status of each id asked for, leaving out unknown ones", async () => {
     await recordDelivery(env.DB, delivery("processed", NOW + HOUR));
     await recordDelivery(env.DB, { ...delivery("dropped", NOW + HOUR), status: "dropped" });
     await recordDelivery(env.DB, { ...delivery("failed", NOW + HOUR), status: "failed" });
     await recordDelivery(env.DB, delivery("other", NOW + HOUR));
 
-    expect(await handledDeliveryIds(env.DB, ["processed", "dropped", "failed", "unknown"])).toEqual(new Set(["processed", "dropped"]));
-    expect(await handledDeliveryIds(env.DB, [])).toEqual(new Set());
+    expect(await deliveryStatuses(env.DB, ["processed", "dropped", "failed", "unknown"])).toEqual(
+      new Map([
+        ["processed", "processed"],
+        ["dropped", "dropped"],
+        ["failed", "failed"],
+      ]),
+    );
+    expect(await deliveryStatuses(env.DB, [])).toEqual(new Map());
   });
 });

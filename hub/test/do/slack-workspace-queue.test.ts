@@ -157,4 +157,47 @@ describe("SlackWorkspaceDO queue", () => {
     await slackApiFireAndForget(env, world.team, "chat.update", update("y.0", "x"), { priority: "terminal" });
     expect(await queueStats(world)).toMatchObject({ depth: 501, dropped_total: 1 });
   });
+
+  it("caps alerts at 600 and refuses a terminal call past that", { timeout: 60_000 }, async () => {
+    await pause(30, "alert");
+    await Promise.all(
+      Array.from({ length: 599 }, (_, i) => slackApiFireAndForget(env, world.team, "chat.update", update(`${i + 1}.0`, "x"), { priority: "alert" })),
+    );
+    expect(await queueStats(world)).toMatchObject({ depth: 600, dropped_total: 0 });
+    await slackApiFireAndForget(env, world.team, "chat.update", update("y.0", "x"), { priority: "terminal" });
+    expect(await queueStats(world)).toMatchObject({ depth: 600, dropped_total: 1 });
+  });
+
+  it("answers queue_timeout to a waited call still queued after 10 s and never sends it", async () => {
+    await pause(30);
+    const pending = slackApi(env, world.team, "chat.postMessage", { channel: "C1", text: "late" }).catch((err: unknown) => err);
+    await vi.waitFor(async () => expect((await queueStats(world)).depth).toBe(2));
+    await after(world, 9_999);
+    expect(await queueStats(world)).toMatchObject({ depth: 2 });
+    await after(world, 1);
+    expect(await pending).toMatchObject({ code: "slack_api", message: "queue_timeout" });
+    expect(await queueStats(world)).toMatchObject({ depth: 1 });
+    await after(world, 60_000);
+    expect(calls("chat.postMessage")).toHaveLength(0);
+  });
+
+  it("answers a waited call with Slack's ts when the send outlasts its 10 s", async () => {
+    world.slack.respond("POST", "/api/chat.postMessage", () => {
+      world.clock.advance(15_000);
+      return Response.json({ ok: true, ts: "9.0" });
+    });
+    expect(await slackApi(env, world.team, "chat.postMessage", { channel: "C1", text: "slow" })).toMatchObject({ ok: true, ts: "9.0" });
+    expect(calls("chat.postMessage")).toHaveLength(1);
+  });
+
+  it("does not send again a waited call whose send failed after its 10 s", async () => {
+    world.slack.respond("POST", "/api/chat.postMessage", () => {
+      world.clock.advance(15_000);
+      return new Response("down", { status: 503 });
+    });
+    await expect(slackApi(env, world.team, "chat.postMessage", { channel: "C1", text: "slow" })).rejects.toMatchObject({ message: "queue_timeout" });
+    await after(world, 60_000);
+    expect(calls("chat.postMessage")).toHaveLength(1);
+    expect(await queueStats(world)).toMatchObject({ depth: 0 });
+  });
 });

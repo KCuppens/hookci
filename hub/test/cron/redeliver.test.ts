@@ -92,6 +92,15 @@ describe("redeliverFailed", () => {
     expect(redeliveredIds()).toEqual([1]);
   });
 
+  it("redelivers a delivery GitHub saw answered 202 when the hub recorded its handling as failed", async () => {
+    await env.DB.prepare("INSERT INTO deliveries (delivery_id, received_at, expires_at, event, installation_id, status) VALUES ('g-1', ?1, ?2, 'push', 42, 'failed')")
+      .bind(NOW - HOUR, NOW + HOUR)
+      .run();
+    serveHookDeliveries(gh, [delivery(1, "g-1", "ok")]);
+    await redeliverFailed(env, app, NOW);
+    expect(redeliveredIds()).toEqual([1]);
+  });
+
   it("skips a guid whose newest attempt succeeded", async () => {
     serveHookDeliveries(gh, [{ ...delivery(12, "g-a", "ok"), redelivery: true }, delivery(11, "g-b", "failed"), delivery(10, "g-a", "failed")], 1);
     expect(await redeliverFailed(env, app, NOW)).toEqual({ scanned: 3, redelivered: 1 });

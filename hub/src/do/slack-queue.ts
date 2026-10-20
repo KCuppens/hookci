@@ -20,13 +20,19 @@ export interface SlackCall {
 	attempts: number;
 	/** Not sent before this time; set by the retry backoff after a 5xx or network error. */
 	notBefore?: number;
+	/**
+	 * Opaque to the queue: the sink's claim on the post this call makes. Once
+	 * the call's waiter gives up, the queue keeps the call and hands its result
+	 * to completeQueuedSlackPost instead.
+	 */
+	claim?: string;
 }
 
 export interface SlackCallResult {
 	ok: boolean;
 	/** Slack's JSON answer when ok. */
 	data?: unknown;
-	/** Slack's error code, or the queue's own (workspace_inactive, queue_full, queue_timeout). */
+	/** Slack's error code, or the queue's own (workspace_inactive, queue_full, queue_timeout, queue_deferred). */
 	error?: string;
 	/** A later call with the same coalesceKey replaced this one before it was sent. */
 	coalesced?: boolean;

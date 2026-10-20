@@ -132,6 +132,8 @@ describe("installation deleted", () => {
     expect(await rows("SELECT state, reason, finished_at IS NOT NULL AS finished FROM runs WHERE reason = 'no_agent'")).toEqual([
       { state: "cancelled", reason: "no_agent", finished: 1 },
     ]);
+    // The accepted run_a was queued; uninstall leaves no run open, whatever state it was in.
+    expect(await rows("SELECT state FROM runs WHERE state IN ('received', 'queued', 'pending', 'running')")).toEqual([]);
 
     await github.installation(INSTALLATION);
     expect(mints(gh)).toBe(2);

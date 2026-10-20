@@ -8,6 +8,7 @@ import { createCheckStateTable } from "../checks/coalesce";
 import { markAgentOffline, touchAgent } from "../db/agents";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import type { Env } from "../env";
+import { HubError } from "../errors";
 import { reportError } from "../observability";
 import {
 	type Frame,
@@ -361,6 +362,12 @@ export class AgentDO extends DurableObject<Env> {
 						await handler(this, frame);
 					} catch (err) {
 						reportError(err, { agent_id: this.agentId, installation_id: this.installationId, frame_type: frame.type, seq: frame.seq });
+						// A frame refused for good (unknown trigger, foreign run) is acked; sending it again would fail the same way.
+						// Any other failure leaves it unacked: the agent reconnects and sends the frame again.
+						if (!(err instanceof HubError && err.status < 500)) {
+							ws.close(CLOSE.handlerFailed, "handler_failed");
+							return;
+						}
 					}
 				}
 				this.setHwm("in", frame.seq);

@@ -41,14 +41,14 @@ export async function reclaimFailedDelivery(db: D1Database, deliveryId: string):
 	return res.meta.changes === 1;
 }
 
-/** The ids among deliveryIds recorded as processed or dropped, that is, not failed. */
-export async function handledDeliveryIds(db: D1Database, deliveryIds: readonly string[]): Promise<Set<string>> {
-	if (deliveryIds.length === 0) return new Set();
+/** The recorded status of each of deliveryIds the hub has recorded; unknown ids are absent. */
+export async function deliveryStatuses(db: D1Database, deliveryIds: readonly string[]): Promise<Map<string, DeliveryStatus>> {
+	if (deliveryIds.length === 0) return new Map();
 	const { results } = await db
-		.prepare("SELECT delivery_id FROM deliveries WHERE delivery_id IN (SELECT value FROM json_each(?1)) AND status <> 'failed'")
+		.prepare("SELECT delivery_id, status FROM deliveries WHERE delivery_id IN (SELECT value FROM json_each(?1))")
 		.bind(JSON.stringify(deliveryIds))
-		.all<{ delivery_id: string }>();
-	return new Set(results.map((r) => r.delivery_id));
+		.all<{ delivery_id: string; status: DeliveryStatus }>();
+	return new Map(results.map((r) => [r.delivery_id, r.status]));
 }
 
 /** Records a Slack event id until expiresAt; false when it was already recorded. */

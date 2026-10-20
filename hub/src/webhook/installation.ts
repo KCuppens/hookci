@@ -9,7 +9,7 @@ import { listAgents, pickAgentForNewRepos } from "../db/agents";
 import { bind } from "../db/bindings";
 import { getInstallation, markDeleted, markSuspended, setInstallationPermissions, upsertInstallation } from "../db/installations";
 import { listRepos, removeRepos, upsertRepos } from "../db/repos";
-import { cancelPendingRuns } from "../db/runs";
+import { cancelOpenRuns } from "../db/runs";
 import { tenantDb } from "../db/tenant";
 import { listWatchesForRepos } from "../db/watches";
 import { systemClock } from "../do/clock";
@@ -145,7 +145,7 @@ async function onDeleted(env: Env, installationId: number, now: number): Promise
 		}
 	}
 	invalidateInstallation(installationId);
-	await cancelPendingRuns(t, now);
+	await cancelOpenRuns(t, now);
 }
 
 export async function onInstallationEvent(env: Env, payload: InstallationPayload): Promise<void> {

@@ -58,11 +58,23 @@ describe("reencryptTokens", () => {
   });
 
   it("moves at most limit rows per pass and returns how many it moved", async () => {
-    expect(await reencryptTokens(env, 2)).toBe(2);
+    expect(await reencryptTokens(env, 0, 2)).toBe(2);
     expect(Object.values(await versions()).sort()).toEqual([1, 2, 2]);
-    expect(await reencryptTokens(env, 2)).toBe(1);
-    expect(await reencryptTokens(env, 2)).toBe(0);
+    expect(await reencryptTokens(env, 0, 2)).toBe(1);
+    expect(await reencryptTokens(env, 0, 2)).toBe(0);
     expect(await versions()).toEqual({ T0001: 2, T0002: 2, T0003: 2 });
+  });
+
+  it("does not let rows that keep failing hold back the rows after them", async () => {
+    const broken = await getWorkspace(env.DB, "T0001");
+    const ct = broken?.bot_token_ct?.slice() ?? new Uint8Array();
+    ct[ct.length - 1] = (ct[ct.length - 1] ?? 0) ^ 0x01;
+    await env.DB.prepare("UPDATE workspaces SET bot_token_ct = ?1 WHERE team_id = 'T0001'").bind(ct).run();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    for (let pass = 0; pass < 3; pass++) await reencryptTokens(env, 0, 1);
+
+    expect(await versions()).toEqual({ T0001: 1, T0002: 2, T0003: 2 });
   });
 
   it("skips a row it cannot decrypt and still moves the rest", async () => {
@@ -72,7 +84,7 @@ describe("reencryptTokens", () => {
     await env.DB.prepare("UPDATE workspaces SET bot_token_ct = ?1 WHERE team_id = 'T0002'").bind(ct).run();
     const errors = vi.spyOn(console, "error");
 
-    expect(await reencryptTokens(env)).toBe(2);
+    expect(await reencryptTokens(env, 0)).toBe(2);
 
     expect(await versions()).toEqual({ T0001: 2, T0002: 1, T0003: 2 });
     expect(errors.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("T0002"));

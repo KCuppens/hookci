@@ -3,11 +3,14 @@
 // pass finds nothing left to move.
 
 import { decryptToken, encryptToken, parseEncKeys } from "../crypto";
+import { getCronState, setCronState } from "../db/cron-state";
 import type { Env } from "../env";
 import { logEvent, reportError } from "../observability";
 import { workspaceAad } from "../slack/tokens";
 
 const BATCH = 100;
+/** cron_state key: the team_id the last batch ended at, so a row that keeps failing cannot hold back the rows after it. */
+const CURSOR_KEY = "reencrypt_after";
 
 interface StaleToken {
 	team_id: string;
@@ -18,17 +21,21 @@ interface StaleToken {
 
 /**
  * Re-encrypts up to limit tokens that are not under the current key version
- * and returns how many it moved. The update only applies while the row still
- * has the version it was read with, so a reinstall in between wins. A row that
- * fails is reported and skipped.
+ * and returns how many it moved. Batches walk team_id order from where the
+ * last one ended and start over after the last row. The update only applies
+ * while the row still has the version it was read with, so a reinstall in
+ * between wins. A row that fails is reported and skipped.
  */
-export async function reencryptTokens(env: Env, limit = BATCH): Promise<number> {
+export async function reencryptTokens(env: Env, now: number, limit = BATCH): Promise<number> {
 	const keys = parseEncKeys(env.TOKEN_ENC_KEYS);
+	const after = (await getCronState(env.DB, CURSOR_KEY)) ?? "";
 	const { results } = await env.DB.prepare(
-		"SELECT team_id, bot_token_ct, key_version FROM workspaces WHERE key_version != ?1 AND bot_token_ct IS NOT NULL LIMIT ?2",
+		`SELECT team_id, bot_token_ct, key_version FROM workspaces
+		WHERE key_version != ?1 AND bot_token_ct IS NOT NULL AND team_id > ?3 ORDER BY team_id LIMIT ?2`,
 	)
-		.bind(keys.current, limit)
+		.bind(keys.current, limit, after)
 		.all<StaleToken>();
+	await setCronState(env.DB, CURSOR_KEY, results.length < limit ? "" : (results.at(-1)?.team_id ?? ""), now);
 	let count = 0;
 	for (const row of results) {
 		try {

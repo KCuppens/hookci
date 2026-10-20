@@ -1,5 +1,5 @@
 import { getRedeliveryCursor, setRedeliveryCursor } from "../db/cron-state";
-import { handledDeliveryIds } from "../db/deliveries";
+import { deliveryStatuses } from "../db/deliveries";
 import type { Env } from "../env";
 import { listHookDeliveries, redeliverHook } from "../github/api";
 import type { GitHubRequester } from "../github/client";
@@ -13,11 +13,13 @@ const MAX_REDELIVERIES = 50;
 /**
  * Asks GitHub to send again the webhook deliveries the hub failed to accept
  * (app is the app requester). It pages /app/hook/deliveries newest first down
- * to the redelivery cursor or LOOKBACK_MS ago. A guid is redelivered when its
- * newest attempt failed and the hub has not recorded it as processed or
- * dropped. The cursor moves to the newest id seen, unless MAX_REDELIVERIES ran
- * out or a redelivery request failed: then it stays, and the next tick scans
- * the same range again, where the redelivered guids show as handled.
+ * to the redelivery cursor or LOOKBACK_MS ago. A guid is redelivered when the
+ * hub recorded it as failed (it answered 202 and then its handler threw, so
+ * GitHub saw success), or when its newest attempt failed and the hub has not
+ * recorded it as processed or dropped. The cursor moves to the newest id seen,
+ * unless MAX_REDELIVERIES ran out or a redelivery request failed: then it
+ * stays, and the next tick scans the same range again, where the redelivered
+ * guids show as handled.
  */
 export async function redeliverFailed(env: Env, app: GitHubRequester, now: number): Promise<{ scanned: number; redelivered: number }> {
 	const cursor = await getRedeliveryCursor(env.DB);
@@ -38,17 +40,21 @@ export async function redeliverFailed(env: Env, app: GitHubRequester, now: numbe
 		scanned += fresh.length;
 		newestId ??= fresh[0]?.id ?? null;
 
-		const failed = fresh.filter((d) => {
+		const newest = fresh.filter((d) => {
 			if (seen.has(d.guid)) return false;
 			seen.add(d.guid);
-			return d.status_code >= 500 || d.status !== "OK";
+			return true;
 		});
-		const handled = await handledDeliveryIds(
+		const statuses = await deliveryStatuses(
 			env.DB,
-			failed.map((d) => d.guid),
+			newest.map((d) => d.guid),
 		);
+		const failed = newest.filter((d) => {
+			const status = statuses.get(d.guid);
+			if (status === "failed") return true;
+			return status === undefined && (d.status_code >= 500 || d.status !== "OK");
+		});
 		for (const d of failed) {
-			if (handled.has(d.guid)) continue;
 			if (attempted === MAX_REDELIVERIES) {
 				leftOver = true;
 				break scan;

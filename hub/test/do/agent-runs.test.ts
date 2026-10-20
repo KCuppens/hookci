@@ -3,7 +3,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bind } from "../../src/db/bindings";
 import { upsertInstallation } from "../../src/db/installations";
+import { updateRunState } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
+import { pruneFinished, TRIGGER_RETENTION_MS } from "../../src/do/agent-runs";
 import { registerSinkFactory } from "../../src/sinks";
 import type { Sink } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -449,5 +451,93 @@ describe("AgentDO run lifecycle", () => {
     await vi.waitFor(() =>
       expect(reported(errors)).toContainEqual(expect.objectContaining({ sink: "broken", level: "error", error: expect.objectContaining({ message: "sink down" }) })),
     );
+  });
+
+  it("a frame whose handler fails is not acked and closes the socket, so the replay is handled", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    const triggerId = await trigger(agent);
+    await sock.next();
+
+    await env.DB.prepare("CREATE TRIGGER fail_run_update BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT, 'd1 down'); END").run();
+    try {
+      sock.send({ v: 1, seq: 1, type: "accepted", trigger_id: triggerId, run_id: "run_a" });
+      expect(await sock.closed).toMatchObject({ code: 1011 });
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_run_update").run();
+    }
+
+    const again = await online(agent);
+    expect(await again.next()).toMatchObject({ type: "trigger", trigger_id: triggerId });
+    await again.request({ type: "accepted", trigger_id: triggerId, run_id: "run_a" });
+    expect(await run("run_a")).toMatchObject({ trigger_id: triggerId, state: "queued" });
+  });
+
+  it("a replayed accepted frame with a new seq leaves the run as it was", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    const triggerId = await acceptedRun(agent, sock, "run_a");
+
+    await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_a" });
+    expect(await runs()).toEqual([expect.objectContaining({ run_id: "run_a", trigger_id: triggerId, state: "queued" })]);
+  });
+
+  it("a late state update does not overwrite a superseded run", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    await trigger(agent, { sha: SHA_2 });
+    expect(await run("run_a")).toMatchObject({ state: "superseded" });
+
+    expect(await updateRunState(tenantDb(env.DB, INSTALLATION), "run_a", "success")).toBe(false);
+    expect(await run("run_a")).toMatchObject({ state: "superseded" });
+  });
+
+  it("gives the daily run back when recording the run fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const day = new Date(testClock.now()).toISOString().slice(0, 10);
+    const agent = await seedAgent(INSTALLATION);
+    await env.DB.prepare("CREATE TRIGGER fail_run_insert BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'd1 down'); END").run();
+    try {
+      await expect(postTrigger(agent)).rejects.toThrow("d1 down");
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_run_insert").run();
+    }
+    expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(0);
+  });
+
+  it("prunes finished triggers and stored tails past retention", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    const rejected = await trigger(agent);
+    await sock.next();
+    await sock.request({ type: "rejected", trigger_id: rejected, reason: "no_config" });
+    const open = await trigger(agent, { sha: SHA_2 });
+    await runInDurableObject(agent.stub, (dob) => dob.state.storage.put("slack:tail:old", { at: testClock.now() }));
+
+    await runInDurableObject(agent.stub, (dob) => pruneFinished(dob, testClock.now() + TRIGGER_RETENTION_MS + 1));
+
+    const left = await runInDurableObject(agent.stub, async (dob) => ({
+      triggers: dob.sql.exec<{ trigger_id: string }>("SELECT trigger_id FROM triggers").toArray().map((r) => r.trigger_id),
+      tails: [...(await dob.state.storage.list({ prefix: "slack:tail:" })).keys()],
+    }));
+    expect(left).toEqual({ triggers: [open], tails: [] });
+  });
+
+  it("revoke drops the outbox, triggers and stored tails", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    await trigger(agent);
+    await runInDurableObject(agent.stub, (dob) => dob.state.storage.put("slack:tail:r", { at: testClock.now() }));
+
+    const res = await agent.stub.fetch("https://do/revoke", { method: "POST", body: JSON.stringify({ reason: "revoked" }) });
+    expect(res.ok).toBe(true);
+
+    const left = await runInDurableObject(agent.stub, async (dob) => ({
+      outbox: dob.sql.exec("SELECT 1 FROM outbox").toArray().length,
+      triggers: dob.sql.exec("SELECT 1 FROM triggers").toArray().length,
+      tails: (await dob.state.storage.list({ prefix: "slack:tail:" })).size,
+    }));
+    expect(left).toEqual({ outbox: 0, triggers: 0, tails: 0 });
   });
 });

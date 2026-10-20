@@ -11,6 +11,7 @@ import { HubError } from "../errors";
 import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
 import { QUOTAS } from "../quotas";
+import { completeQueuedSlackPost } from "../sinks/slack";
 import { getBotToken } from "../slack/tokens";
 import { S } from "../strings";
 import { ulid } from "../ulid";
@@ -33,7 +34,7 @@ import { type SlackSendOutcome, sendSlack } from "./slack-send";
 export interface SlackCallRequest {
 	teamId: string;
 	call: SlackCall;
-	/** Answer with the call's result (within WAIT_MS) instead of `{ ok: true, queued: true }`. */
+	/** Answer with the call's result instead of `{ ok: true, queued: true }`; see SlackOutbound.waiters. */
 	wait: boolean;
 }
 
@@ -48,6 +49,9 @@ export interface SlackQueueStats {
 	dropped_total: number;
 }
 
+/** A queue this much over slackQueueMax refuses even alert and terminal calls. */
+const HARD_MAX = Math.ceil(QUOTAS.slackQueueMax * 1.2);
+/** How long a waited call may stay queued before its waiter gets queue_timeout, or queue_deferred for a call with a claim. */
 const WAIT_MS = 10_000;
 const MINUTE_MS = 60_000;
 const RETRY_BASE_MS = 1_000;
@@ -67,6 +71,12 @@ const CHANNEL_POSTS: Record<string, true> = { "chat.postMessage": true, "chat.up
 
 type Outcome = SlackSendOutcome | { kind: "inactive"; error: string };
 
+interface Waiter {
+	resolve: (result: SlackCallResult) => void;
+	/** Past this, a call still queued is answered queue_timeout and taken off the queue, or queue_deferred and kept when it carries a claim. */
+	deadline: number;
+}
+
 type MetaKey = "schema_version" | "team_id" | "paused_until" | "rate_limited_total" | "dropped_total";
 
 type QueueRow = {
@@ -79,6 +89,7 @@ type QueueRow = {
 	enqueued_at: number;
 	attempts: number;
 	not_before: number;
+	claim: string | null;
 };
 
 // Step i moves the schema from version i to i + 1. Append, never edit.
@@ -89,6 +100,12 @@ const MIGRATIONS: ((sql: SqlStorage) => void)[] = [
 			coalesce_key TEXT, channel TEXT, enqueued_at INTEGER NOT NULL, attempts INTEGER NOT NULL, not_before INTEGER NOT NULL DEFAULT 0)`,
 		);
 		sql.exec("CREATE UNIQUE INDEX queue_coalesce_key ON queue (coalesce_key) WHERE coalesce_key IS NOT NULL");
+	},
+	(sql) => {
+		sql.exec("ALTER TABLE queue ADD COLUMN waited INTEGER NOT NULL DEFAULT 0");
+	},
+	(sql) => {
+		sql.exec("ALTER TABLE queue ADD COLUMN claim TEXT");
 	},
 ];
 
@@ -104,6 +121,7 @@ function toCall(row: QueueRow): SlackCall {
 	if (row.coalesce_key !== null) call.coalesceKey = row.coalesce_key;
 	if (row.channel !== null) call.channel = row.channel;
 	if (row.not_before > 0) call.notBefore = row.not_before;
+	if (row.claim !== null) call.claim = row.claim;
 	return call;
 }
 
@@ -111,8 +129,18 @@ export class SlackOutbound {
 	private readonly sql: SqlStorage;
 	private readonly workspaceBucket: TokenBucket;
 	private readonly channelBuckets = new Map<string, TokenBucket>();
-	/** Resolves the caller waiting on a call id: wait:true calls and calls sent at once. */
-	private readonly waiters = new Map<string, (result: SlackCallResult) => void>();
+	/**
+	 * The callers waiting on a call id: wait:true calls and calls sent at once.
+	 * A call still queued at its waiter's deadline is answered queue_timeout and
+	 * taken off the queue, so it is never sent; one with a claim is answered
+	 * queue_deferred and stays queued, and the sink that claimed it gets its
+	 * result through completeQueuedSlackPost. A call in flight is always
+	 * answered with Slack's answer, however late. Either way a caller never
+	 * gives up on a call that is sent later without handing it on.
+	 */
+	private readonly waiters = new Map<string, Waiter>();
+	/** Ids of the calls being sent: off the queue, past every deadline and dropAll. */
+	private readonly inFlight = new Set<string>();
 	/** When each send of the last minute went out. */
 	private sentAt: number[] = [];
 	private draining: Promise<void> | null = null;
@@ -134,15 +162,15 @@ export class SlackOutbound {
 		return this.env.__TEST_CLOCK ?? systemClock;
 	}
 
-	/** Queues req.call and starts a drain; with req.wait, answers once the call is sent, failed, coalesced or timed out. */
+	/** Queues req.call and starts a drain; with req.wait, answers once the call is sent, failed, coalesced, dropped or timed out in the queue. */
 	async call(req: SlackCallRequest): Promise<SlackCallResult> {
 		if (this.meta("team_id") !== req.teamId) this.setMeta("team_id", req.teamId);
 		const { call } = req;
 		if (Object.hasOwn(SEND_AT_ONCE, call.method)) return this.sendAtOnce(req.teamId, call);
-		const result = req.wait ? new Promise<SlackCallResult>((resolve) => this.waiters.set(call.id, resolve)) : null;
+		const result = req.wait ? this.waitFor(call.id, this.clock.now() + WAIT_MS) : null;
 		this.enqueue(call);
 		this.ctx.waitUntil(this.kick());
-		return result === null ? { ok: true, queued: true } : this.awaitResult(call.id, result);
+		return result ?? { ok: true, queued: true };
 	}
 
 	stats(): SlackQueueStats {
@@ -176,6 +204,9 @@ export class SlackOutbound {
 			const version = Number(this.meta("schema_version") ?? 0);
 			for (const step of MIGRATIONS.slice(version)) step(this.sql);
 			this.setMeta("schema_version", String(MIGRATIONS.length));
+			// Waiters live in memory: the callers of these calls lost their answer when the last instance went away.
+			// A deferred call is no longer waited and stays: its claim gets the result.
+			this.sql.exec("DELETE FROM queue WHERE waited = 1");
 		});
 	}
 
@@ -191,29 +222,54 @@ export class SlackOutbound {
 		this.setMeta(key, String(Number(this.meta(key) ?? 0) + 1));
 	}
 
-	private settle(id: string, result: SlackCallResult): void {
-		const resolve = this.waiters.get(id);
-		this.waiters.delete(id);
-		resolve?.(result);
+	private waitFor(id: string, deadline: number): Promise<SlackCallResult> {
+		return new Promise<SlackCallResult>((resolve) => this.waiters.set(id, { resolve, deadline }));
 	}
 
-	private async awaitResult(id: string, result: Promise<SlackCallResult>): Promise<SlackCallResult> {
-		let timer = 0;
-		const timeout = new Promise<null>((resolve) => {
-			timer = setTimeout(() => resolve(null), WAIT_MS);
-		});
-		const settled = await Promise.race([result, timeout]);
-		clearTimeout(timer);
-		if (settled !== null) return settled;
-		// Still queued: take it back so it does not go out after the caller gave up.
+	private settle(id: string, result: SlackCallResult): void {
+		const waiter = this.waiters.get(id);
 		this.waiters.delete(id);
-		this.sql.exec("DELETE FROM queue WHERE id = ?", id);
-		return { ok: false, error: "queue_timeout" };
+		waiter?.resolve(result);
+	}
+
+	/** Answers call's waiter, or once its waiter gave up, hands the result to the sink that claimed the post. */
+	private finish(call: Pick<SlackCall, "id" | "claim">, result: SlackCallResult): void {
+		if (this.waiters.has(call.id) || call.claim === undefined) {
+			this.settle(call.id, result);
+			return;
+		}
+		// Not awaited: completing may queue calls on this workspace, which this drain sends.
+		this.ctx.waitUntil(
+			completeQueuedSlackPost(this.env, call.claim, result).catch((err: unknown) => reportError(err, { team_id: this.meta("team_id") ?? "" })),
+		);
+	}
+
+	/**
+	 * Answers the queued calls whose waiter's deadline has passed: a call with a
+	 * claim stays queued and is answered queue_deferred, any other is taken off
+	 * the queue and answered queue_timeout.
+	 */
+	private expireWaiters(now: number): void {
+		for (const [id, waiter] of this.waiters) {
+			if (waiter.deadline > now || this.inFlight.has(id)) continue;
+			const deferred = this.sql.exec("UPDATE queue SET waited = 0 WHERE id = ? AND claim IS NOT NULL", id).rowsWritten > 0;
+			if (!deferred) this.sql.exec("DELETE FROM queue WHERE id = ?", id);
+			this.settle(id, { ok: false, error: deferred ? "queue_deferred" : "queue_timeout" });
+		}
+	}
+
+	/** The earliest deadline of a waiter whose call is queued, or null. */
+	private nextDeadline(): number | null {
+		let next: number | null = null;
+		for (const [id, waiter] of this.waiters) {
+			if (!this.inFlight.has(id) && (next === null || waiter.deadline < next)) next = waiter.deadline;
+		}
+		return next;
 	}
 
 	private insert(call: SlackCall): void {
 		this.sql.exec(
-			"INSERT INTO queue (id, method, body, priority, coalesce_key, channel, enqueued_at, attempts, not_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO queue (id, method, body, priority, coalesce_key, channel, enqueued_at, attempts, not_before, waited, claim) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			call.id,
 			call.method,
 			JSON.stringify(call.body),
@@ -223,6 +279,8 @@ export class SlackOutbound {
 			call.enqueuedAt,
 			call.attempts,
 			call.notBefore ?? 0,
+			this.waiters.has(call.id) ? 1 : 0,
+			call.claim ?? null,
 		);
 	}
 
@@ -247,20 +305,23 @@ export class SlackOutbound {
 			return;
 		}
 		const depth = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM queue").one().n;
-		if (depth >= QUOTAS.slackQueueMax && !this.makeRoom(call)) return;
+		if (depth >= QUOTAS.slackQueueMax && !this.makeRoom(call, depth)) return;
 		this.insert(call);
 	}
 
-	/** Drops the oldest normal call for incoming; alert and terminal calls always get in. False when incoming itself is dropped. */
-	private makeRoom(incoming: SlackCall): boolean {
+	/**
+	 * Drops the oldest normal call for incoming; alert and terminal calls get
+	 * in over slackQueueMax up to HARD_MAX. False when incoming itself is dropped.
+	 */
+	private makeRoom(incoming: SlackCall, depth: number): boolean {
 		const oldest = this.sql
-			.exec<{ id: string }>("SELECT id FROM queue WHERE priority = ? ORDER BY enqueued_at LIMIT 1", PRIORITY_RANK.normal)
+			.exec<{ id: string; claim: string | null }>("SELECT id, claim FROM queue WHERE priority = ? ORDER BY enqueued_at LIMIT 1", PRIORITY_RANK.normal)
 			.toArray()[0];
-		if (oldest === undefined && incoming.priority !== "normal") return true;
-		const dropped = oldest?.id ?? incoming.id;
-		this.sql.exec("DELETE FROM queue WHERE id = ?", dropped);
+		if (oldest === undefined && incoming.priority !== "normal" && depth < HARD_MAX) return true;
+		const dropped = oldest === undefined ? incoming : { id: oldest.id, claim: oldest.claim ?? undefined };
+		this.sql.exec("DELETE FROM queue WHERE id = ?", dropped.id);
 		this.bump("dropped_total");
-		this.settle(dropped, { ok: false, error: "queue_full" });
+		this.finish(dropped, { ok: false, error: "queue_full" });
 		return oldest !== undefined;
 	}
 
@@ -298,17 +359,19 @@ export class SlackOutbound {
 				token = undefined;
 			}
 			const now = this.clock.now();
+			this.expireWaiters(now);
 			const queue = this.sql.exec<QueueRow>("SELECT * FROM queue").toArray().map(toCall);
 			const buckets = this.buckets();
 			const next = pickNext(queue, buckets, now);
 			if (next === null) {
 				const wake = nextWakeAt(queue, buckets, now);
-				if (wake === null) {
+				const deadline = this.nextDeadline();
+				if (wake === null && deadline === null) {
 					// A one-token channel bucket with its token is the same as none.
 					for (const [channel, bucket] of this.channelBuckets) if (bucket.nextAvailableAt(now) <= now) this.channelBuckets.delete(channel);
 					await this.ctx.storage.deleteAlarm();
 				} else {
-					await this.ctx.storage.setAlarm(wake);
+					await this.ctx.storage.setAlarm(Math.min(wake ?? Infinity, deadline ?? Infinity));
 				}
 				if (this.again) continue;
 				return;
@@ -328,10 +391,15 @@ export class SlackOutbound {
 			if (channel !== undefined) this.channelBucket(channel, now).take(now);
 			// Off the queue while in flight, so a newer update for the same key queues behind it.
 			this.sql.exec("DELETE FROM queue WHERE id = ?", next.id);
-			const outcome = await this.send(token, next);
-			// Purged while in flight: the waiter already failed, and a retry would send the call again.
-			if (generation !== this.generation) continue;
-			await this.handle(teamId, next, outcome, true);
+			this.inFlight.add(next.id);
+			try {
+				const outcome = await this.send(token, next);
+				if (generation === this.generation) await this.handle(teamId, next, outcome, true);
+				// Purged while in flight: answer with what Slack did, and never retry.
+				else this.finish(next, outcome.kind === "ok" ? { ok: true, data: outcome.data } : { ok: false, error: "workspace_inactive" });
+			} finally {
+				this.inFlight.delete(next.id);
+			}
 		}
 	}
 
@@ -345,13 +413,18 @@ export class SlackOutbound {
 	}
 
 	private async sendAtOnce(teamId: string, call: SlackCall): Promise<SlackCallResult> {
-		const result = new Promise<SlackCallResult>((resolve) => this.waiters.set(call.id, resolve));
-		const token = await this.botToken(teamId);
-		if (typeof token === "string") {
-			this.workspaceBucket.spend(this.clock.now());
-			await this.handle(teamId, call, await this.send(token, call), false);
-		} else {
-			await this.handle(teamId, call, token, false);
+		const result = this.waitFor(call.id, Infinity);
+		this.inFlight.add(call.id);
+		try {
+			const token = await this.botToken(teamId);
+			if (typeof token === "string") {
+				this.workspaceBucket.spend(this.clock.now());
+				await this.handle(teamId, call, await this.send(token, call), false);
+			} else {
+				await this.handle(teamId, call, token, false);
+			}
+		} finally {
+			this.inFlight.delete(call.id);
 		}
 		return result;
 	}
@@ -371,30 +444,32 @@ export class SlackOutbound {
 		return sendSlack(token, call.method, call.body, this.env.__TEST_FETCHER ?? defaultFetcher);
 	}
 
-	/** Settles call by outcome; with retry, a 429, 5xx or network error queues it again instead of failing it. */
+	/** Finishes call by outcome; with retry, a 429, 5xx or network error queues it again instead of failing it. */
 	private async handle(teamId: string, call: SlackCall, outcome: Outcome, retry: boolean): Promise<void> {
 		const now = this.clock.now();
 		switch (outcome.kind) {
 			case "ok":
-				this.settle(call.id, { ok: true, data: outcome.data });
+				this.finish(call, { ok: true, data: outcome.data });
 				return;
 			case "rate_limited":
 				this.setMeta("paused_until", String(now + outcome.retryAfter * 1_000));
 				this.bump("rate_limited_total");
 				logEvent("slack_rate_limited", { teamId, retryAfter: outcome.retryAfter });
 				if (retry) this.retry(teamId, call, "ratelimited", undefined);
-				else this.settle(call.id, { ok: false, error: "ratelimited" });
+				else this.finish(call, { ok: false, error: "ratelimited" });
 				return;
 			case "retryable":
 				if (retry) this.retry(teamId, call, outcome.error, now + RETRY_BASE_MS * 2 ** call.attempts);
-				else this.settle(call.id, { ok: false, error: outcome.error });
+				else this.finish(call, { ok: false, error: outcome.error });
 				return;
 			case "inactive":
 				this.dropAll(outcome.error);
+				this.finish(call, { ok: false, error: outcome.error });
 				return;
 			case "failed":
 				if (Object.hasOwn(REVOKED_ERRORS, outcome.error)) {
 					this.dropAll("workspace_inactive");
+					this.finish(call, { ok: false, error: "workspace_inactive" });
 					logEvent("slack_workspace_revoked", { teamId, error: outcome.error });
 					await setWorkspaceStatus(this.env.DB, teamId, "revoked");
 					return;
@@ -403,7 +478,7 @@ export class SlackOutbound {
 					await this.channelGone(teamId, call.body.channel, outcome.error);
 				}
 				if (!this.waiters.has(call.id)) logEvent("slack_call_failed", { teamId, method: call.method, error: outcome.error });
-				this.settle(call.id, { ok: false, error: outcome.error });
+				this.finish(call, { ok: false, error: outcome.error });
 				return;
 		}
 	}
@@ -436,7 +511,7 @@ export class SlackOutbound {
 		const attempts = call.attempts + 1;
 		if (attempts >= QUOTAS.slackMaxAttempts) {
 			reportError(new HubError("slack_call_dropped", 502, `${call.method} failed ${attempts} times: ${error}`), { team_id: teamId, method: call.method });
-			this.settle(call.id, { ok: false, error });
+			this.finish(call, { ok: false, error });
 			return;
 		}
 		const again: SlackCall = { ...call, attempts, notBefore };
@@ -451,9 +526,10 @@ export class SlackOutbound {
 		this.settle(call.id, { ok: true, coalesced: true });
 	}
 
-	/** Empties the queue and fails every waiter with error. */
+	/** Empties the queue and fails every queued call with error. Calls in flight are not queued: Slack's answer finishes them. */
 	private dropAll(error: string): void {
+		const dropped = this.sql.exec<{ id: string; claim: string | null }>("SELECT id, claim FROM queue").toArray();
 		this.sql.exec("DELETE FROM queue");
-		for (const id of [...this.waiters.keys()]) this.settle(id, { ok: false, error });
+		for (const row of dropped) this.finish({ id: row.id, claim: row.claim ?? undefined }, { ok: false, error });
 	}
 }

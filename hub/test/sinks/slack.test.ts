@@ -2,13 +2,14 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { upsertInstallation } from "../../src/db/installations";
-import { acceptRun, insertRun, type NewRun } from "../../src/db/runs";
+import { acceptRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
+import { upsertRepos } from "../../src/db/repos";
 import { getSlackMessage } from "../../src/db/slack-messages";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, type NewWatch } from "../../src/db/watches";
 import { clearOfflineDm } from "../../src/do/agent-hooks";
 import { verifyLogSig } from "../../src/logs/sign";
-import { slackApi } from "../../src/slack/api";
+import { slackApi, slackApiFireAndForget } from "../../src/slack/api";
 import { resetChannelCacheForTests } from "../../src/slack/channels";
 import { type SlackSink, slackSinkFactory } from "../../src/sinks/slack";
 import type { JobView, RunView } from "../../src/sinks/types";
@@ -109,6 +110,24 @@ async function inAgent(agent: Agent, fn: (sink: SlackSink, storage: DurableObjec
   );
 }
 
+/** Holds the workspace's queue for seconds: the first chat.update answers 429, later ones succeed. */
+async function holdQueue(seconds: number): Promise<void> {
+  let held = false;
+  world.slack.respond("POST", "/api/chat.update", ({ body }) => {
+    if (held) return Response.json({ ok: true, ts: formField(body, "ts") });
+    held = true;
+    return new Response("", { status: 429, headers: { "retry-after": String(seconds) } });
+  });
+  await slackApiFireAndForget(env, world.team, "chat.update", { channel: CHANNEL, ts: "0.0", text: "hold" });
+  await vi.waitFor(async () => expect((await queueStats(world)).rate_limited_total).toBe(1));
+}
+
+/** The ts stored for job's thread reply in the watched channel. */
+async function replyTs(job: string): Promise<string | undefined> {
+  const row = await env.DB.prepare("SELECT ts FROM slack_job_replies WHERE run_id = 'run_1' AND channel_id = ?1 AND job = ?2").bind(CHANNEL, job).first<{ ts: string }>();
+  return row?.ts;
+}
+
 describe("SlackSink", () => {
   let nextTs: number;
 
@@ -175,6 +194,57 @@ describe("SlackSink", () => {
     expect(apiCalls("chat.postMessage")).toHaveLength(1);
     expect(text(apiCalls("chat.update").at(-1))).toMatch(/^Running: /);
     expect(await getSlackMessage(t, "run_2", world.team, CHANNEL)).toMatchObject({ ts: "1700000000.000001" });
+  });
+
+  it("posts a run's first message held in the queue past 10 s once, then brings it up to what the run did meanwhile", async () => {
+    await watch();
+    await upsertRepos(t, [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "main" }]);
+    await holdQueue(30);
+    const sink = slackSinkFactory(env, INSTALLATION);
+    const first = sink.onRunUpdate(runView({ state: "running" }));
+    await vi.waitFor(async () => expect((await queueStats(world)).depth).toBe(2));
+    await after(world, 10_000);
+    await first;
+    expect(apiCalls("chat.postMessage")).toEqual([]);
+
+    // The run passes while its first post waits.
+    await upsertJob(t, { run_id: "run_1", name: "test", state: "success", step: null, step_index: null, steps_total: null, duration_ms: 1500 });
+    expect(await updateRunState(t, "run_1", "success")).toBe(true);
+    await after(world, 20_000);
+    await vi.waitFor(async () => {
+      await after(world, 1000);
+      expect(apiCalls("chat.postMessage").map(text)).toEqual([
+        expect.stringMatching(/^Running: /),
+        S.slack.jobReplyText("Passed", "test", "acme/widgets", SHORT),
+      ]);
+      expect(text(apiCalls("chat.update").at(-1))).toMatch(/^Passed: acme\/widgets/);
+    });
+    expect(await getSlackMessage(t, "run_1", world.team, CHANNEL)).toMatchObject({ ts: "1700000000.000001" });
+    expect(await replyTs("test")).toBe("1700000000.000002");
+
+    await sink.onJobUpdate(runView({ state: "success", jobs: [{ name: "test", state: "success" }] }), { name: "test", state: "success" });
+    await drain();
+    expect(apiCalls("chat.postMessage")).toHaveLength(2);
+  });
+
+  it("posts a job's thread reply held in the queue past 10 s once and keeps its ts", async () => {
+    await watch();
+    const sink = slackSinkFactory(env, INSTALLATION);
+    await sink.onRunUpdate(runView({ state: "running" }));
+    await holdQueue(30);
+    const job: JobView = { name: "test", state: "success" };
+    const replying = sink.onJobUpdate(runView({ jobs: [job] }), job);
+    await vi.waitFor(async () => expect((await queueStats(world)).depth).toBe(3));
+    await after(world, 10_000);
+    await replying;
+    await sink.onJobUpdate(runView({ jobs: [job] }), job);
+
+    await after(world, 20_000);
+    await drain();
+    const [, ...replies] = apiCalls("chat.postMessage");
+    expect(replies.map(text)).toEqual([S.slack.jobReplyText("Passed", "test", "acme/widgets", SHORT)]);
+    expect(formField(replies[0]?.body, "thread_ts")).toBe("1700000000.000001");
+    await vi.waitFor(async () => expect(await replyTs("test")).toBe("1700000000.000002"));
   });
 
   it("replies once per finished job in the thread on a normal watch", async () => {

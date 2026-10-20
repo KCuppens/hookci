@@ -20,6 +20,8 @@ export const CLOSE = {
 	revoked: 4401,
 	pingTimeout: 4408,
 	rateLimited: 4429,
+	/** A frame's handler threw; the frame stays unacked for the agent to resend. */
+	handlerFailed: 1011,
 } as const;
 
 /** Largest accepted frame, in bytes. */
