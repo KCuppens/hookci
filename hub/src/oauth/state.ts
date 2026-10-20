@@ -26,7 +26,7 @@ function setCookie(name: string, value: string, maxAgeSeconds: number): string {
 }
 
 /** The value of cookie name in a Cookie request header, or null. */
-export function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
+function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
 	if (!cookieHeader) return null;
 	for (const part of cookieHeader.split(";")) {
 		const eq = part.indexOf("=");
@@ -52,6 +52,13 @@ function isPayload(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The payload of a stored state; throws oauth_state_invalid when it is not a JSON object. */
+function parsePayload(raw: string | null | undefined): Record<string, unknown> {
+	const payload: unknown = raw ? JSON.parse(raw) : null;
+	if (!isPayload(payload)) throw new HubError("oauth_state_invalid", 400);
+	return payload;
+}
+
 /** The nonce of state when its signature holds for kind; throws oauth_state_invalid otherwise. */
 async function signedNonce(env: Env, kind: OAuthKind, state: string): Promise<string> {
 	const [nonce, signature, ...rest] = state.split(".");
@@ -60,20 +67,49 @@ async function signedNonce(env: Env, kind: OAuthKind, state: string): Promise<st
 	return nonce;
 }
 
-/**
- * Checks, without using it, that state is a known, unused, unexpired state of
- * kind, and returns the Set-Cookie value binding this browser to it until it
- * expires. For a state issued outside the browser, as in a Slack link.
- * Throws oauth_state_invalid (400) otherwise.
- */
-export async function checkState(env: Env, kind: OAuthKind, state: string, now: number): Promise<string> {
-	const nonce = await signedNonce(env, kind, state);
+/** The known, unused, unexpired state row of kind for nonce; throws oauth_state_invalid otherwise. */
+async function liveState(env: Env, kind: OAuthKind, nonce: string, now: number): Promise<{ expires_at: number; payload: string | null }> {
 	const row = await env.DB.prepare(
-		"SELECT expires_at FROM oauth_states WHERE nonce_hash = ?1 AND kind = ?2 AND used_at IS NULL AND expires_at > ?3",
+		"SELECT expires_at, payload FROM oauth_states WHERE nonce_hash = ?1 AND kind = ?2 AND used_at IS NULL AND expires_at > ?3",
 	)
 		.bind(await sha256Hex(nonce), kind, now)
-		.first<{ expires_at: number }>();
+		.first<{ expires_at: number; payload: string | null }>();
 	if (!row) throw new HubError("oauth_state_invalid", 400);
+	return row;
+}
+
+/**
+ * For a state issued outside the browser, as in a Slack link: checks without
+ * using it that state is a known, unused, unexpired state of kind, and returns
+ * its payload with a Set-Cookie value marking that this browser was shown the
+ * confirmation page. The mark is an HMAC of the nonce, not the nonce, so it
+ * cannot finish OAuth; confirmState trades it for the nonce. Throws
+ * oauth_state_invalid (400).
+ */
+export async function previewState(
+	env: Env,
+	kind: OAuthKind,
+	state: string,
+	now: number,
+): Promise<{ payload: Record<string, unknown>; cookie: string }> {
+	const nonce = await signedNonce(env, kind, state);
+	const row = await liveState(env, kind, nonce, now);
+	const maxAge = Math.ceil((row.expires_at - now) / 1000);
+	return { payload: parsePayload(row.payload), cookie: setCookie(STATE_COOKIE, await sign(env, `preview.${kind}.${nonce}`), maxAge) };
+}
+
+/**
+ * For the confirmation page's POST: requires the mark previewState set for
+ * this state, and returns the Set-Cookie value binding this browser to the
+ * state until it expires. A cross-site POST carries no SameSite=Lax cookie, so
+ * only a POST from the page passes. Throws oauth_state_invalid (400) otherwise.
+ */
+export async function confirmState(env: Env, kind: OAuthKind, state: string, cookieHeader: string | null, now: number): Promise<string> {
+	const nonce = await signedNonce(env, kind, state);
+	if (!timingSafeEqual(readCookie(cookieHeader, STATE_COOKIE) ?? "", await sign(env, `preview.${kind}.${nonce}`))) {
+		throw new HubError("oauth_state_invalid", 400);
+	}
+	const row = await liveState(env, kind, nonce, now);
 	return setCookie(STATE_COOKIE, nonce, Math.ceil((row.expires_at - now) / 1000));
 }
 
@@ -89,19 +125,15 @@ export async function consumeState(
 	cookieHeader: string | null,
 	now: number,
 ): Promise<Record<string, unknown>> {
-	const invalid = new HubError("oauth_state_invalid", 400);
 	const nonce = await signedNonce(env, kind, state);
-	if (!timingSafeEqual(readCookie(cookieHeader, STATE_COOKIE) ?? "", nonce)) throw invalid;
+	if (!timingSafeEqual(readCookie(cookieHeader, STATE_COOKIE) ?? "", nonce)) throw new HubError("oauth_state_invalid", 400);
 	const row = await env.DB.prepare(
 		`UPDATE oauth_states SET used_at = ?3
 		WHERE nonce_hash = ?1 AND kind = ?2 AND used_at IS NULL AND expires_at > ?3 RETURNING payload`,
 	)
 		.bind(await sha256Hex(nonce), kind, now)
 		.first<{ payload: string | null }>();
-	if (!row?.payload) throw invalid;
-	const payload: unknown = JSON.parse(row.payload);
-	if (!isPayload(payload)) throw invalid;
-	return payload;
+	return parsePayload(row?.payload);
 }
 
 /** Set-Cookie value that removes the state cookie once its state is consumed. */

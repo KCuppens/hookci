@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { upsertInstallation } from "../src/db/installations";
 import { getWorkspace, setWorkspaceStatus } from "../src/db/workspaces";
 import { issueSession } from "../src/oauth/state";
+import { escapeHtml } from "../src/pages/layout";
 import { S } from "../src/strings";
 import { getBotToken } from "../src/slack/tokens";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
+import { createFakeGitHub, serveInstallationTokens } from "./fakes/github";
 import type { FakeService } from "./fakes/http";
 import { createFakeSlack } from "./fakes/slack";
+import { generateAppKey } from "./github/helpers";
 
 const ACME = 42;
 const OTHER = 43;
@@ -21,6 +24,9 @@ const SCOPES = "chat:write,commands,channels:read,groups:read,im:write,users:rea
 let slack: FakeService;
 let grant: Record<string, unknown>;
 let revokedWith: (string | null)[];
+/** Logins GitHub reports as admins of every organization. */
+let orgAdmins: Set<string>;
+let appKey: string;
 const restore: (() => void)[] = [];
 
 function oauthAccess(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -41,7 +47,7 @@ function oauthAccess(overrides: Record<string, unknown> = {}): Record<string, un
 
 beforeEach(async () => {
   await clearTables();
-  await upsertInstallation(env.DB, { id: ACME, account_login: "acme", account_type: "Organization", created_at: 1 });
+  await upsertInstallation(env.DB, { id: ACME, account_login: "acme", account_type: "Organization", account_id: ACME * 10, created_at: 1 });
   slack = createFakeSlack();
   grant = oauthAccess();
   revokedWith = [];
@@ -50,10 +56,20 @@ beforeEach(async () => {
     revokedWith.push(headers.get("authorization"));
     return Response.json({ ok: true, revoked: true });
   });
-  const saved = env.__TEST_FETCHER;
-  env.__TEST_FETCHER = slack.fetcher;
+  orgAdmins = new Set([GITHUB_USER.login]);
+  const gh = createFakeGitHub();
+  serveInstallationTokens(gh, testClock.now());
+  gh.respond("GET", "/orgs/:org/memberships/:login", ({ params }) =>
+    orgAdmins.has(params.login ?? "") ? Response.json({ state: "active", role: "admin" }) : Response.json({ message: "Not Found" }, { status: 404 }),
+  );
+  appKey ??= (await generateAppKey()).pem;
+  const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+  env.GITHUB_APP_PRIVATE_KEY = appKey;
+  env.__TEST_FETCHER = (input, init) =>
+    (new URL(input instanceof Request ? input.url : String(input)).host === "slack.com" ? slack : gh).fetcher(input, init);
   restore.push(() => {
-    env.__TEST_FETCHER = saved;
+    env.__TEST_FETCHER = saved.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = saved.key;
   });
 });
 
@@ -153,6 +169,16 @@ describe("GET /slack/install", () => {
     expect(res.status).toBe(403);
     expect(await res.text()).toContain(S.pages.slackStartTitle);
   });
+
+  it("refuses a session holder who is not an admin of the installation's account, issuing no state", async () => {
+    orgAdmins.clear();
+    const res = await slackInstall(await sessionCookie());
+    expect(res.status).toBe(403);
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await res.text()).toContain(escapeHtml(S.pages.errors.installation_admin_required));
+    expect(await rows("SELECT kind FROM oauth_states")).toEqual([]);
+  });
 });
 
 describe("GET /slack/oauth/callback", () => {
@@ -195,7 +221,7 @@ describe("GET /slack/oauth/callback", () => {
   });
 
   it("links one workspace to a second installation without touching the first link", async () => {
-    await upsertInstallation(env.DB, { id: OTHER, account_login: "other", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: OTHER, account_login: "other", account_type: "Organization", account_id: OTHER * 10, created_at: 1 });
     expect((await install()).status).toBe(200);
     const res = await slackInstall(await sessionCookie([OTHER]), OTHER);
     const state = new URL(res.headers.get("location") ?? "").searchParams.get("state") ?? "";

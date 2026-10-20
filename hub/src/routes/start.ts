@@ -3,17 +3,20 @@
 // page polls until an agent connects.
 
 import type { Context } from "hono";
-import { getInstallation } from "../db/installations";
+import { getInstallation, type InstallationRow } from "../db/installations";
 import { tenantDb } from "../db/tenant";
 import { type Clock, systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
+import type { GitHubClient } from "../github/client";
+import type { LinkedUser } from "../identity/link";
 import { issueSession, issueState, readSession } from "../oauth/state";
 import { logEvent } from "../observability";
 import { errorPage } from "../pages/error";
-import { installedPage } from "../pages/installed";
+import { installedNotAdminPage, installedPage } from "../pages/installed";
 import { startPage } from "../pages/start";
 import { createPairToken, PAIR_TOKEN_TTL_MS } from "../pairing/tokens";
+import { commandGitHub, isInstallationAdmin } from "../slack/resolve";
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -24,10 +27,8 @@ export function installationIdParam(c: AppContext): number | null {
 }
 
 export interface FinishInstall {
-	installationId: number;
-	accountLogin: string;
-	githubUserId: number;
-	githubLogin: string;
+	installation: Pick<InstallationRow, "id" | "account_login" | "account_type" | "account_id">;
+	user: LinkedUser;
 	/** Every installation the user can access; the new session covers them all. */
 	accessibleIds: number[];
 	/** Set-Cookie values to send besides the session. */
@@ -35,22 +36,30 @@ export interface FinishInstall {
 	now: number;
 }
 
-/** Mints the pair token for the installation and renders the success page with a fresh session cookie. */
-export async function finishInstall(env: Env, f: FinishInstall): Promise<Response> {
-	const { token } = await createPairToken(env, { installationId: f.installationId, createdByGithubId: f.githubUserId });
+/**
+ * Renders the success page with a fresh session cookie. Only an admin of the
+ * installation's account gets a pair token and the Add to Slack link: GitHub
+ * lists an installation to anyone who can read one of its repos.
+ */
+export async function finishInstall(env: Env, gh: GitHubClient, f: FinishInstall): Promise<Response> {
+	const { id: installationId, account_login: accountLogin } = f.installation;
 	const session = await issueSession(
 		env,
-		{ installationIds: f.accessibleIds, githubUserId: f.githubUserId, githubLogin: f.githubLogin },
+		{ installationIds: f.accessibleIds, githubUserId: f.user.githubUserId, githubLogin: f.user.githubLogin },
 		f.now,
 	);
-	logEvent("github_install", { installation_id: f.installationId, github_user_id: f.githubUserId });
+	const cookies = [...f.cookies, session];
+	const admin = await isInstallationAdmin(env, gh, f.installation, f.user, true);
+	logEvent("github_install", { installation_id: installationId, github_user_id: f.user.githubUserId, admin });
+	if (!admin) return installedNotAdminPage(accountLogin, cookies);
+	const { token } = await createPairToken(env, { installationId, createdByGithubId: f.user.githubUserId });
 	return installedPage({
-		installationId: f.installationId,
-		accountLogin: f.accountLogin,
+		installationId,
+		accountLogin,
 		pairToken: token,
 		hubOrigin: env.HUB_ORIGIN,
 		expiresInMinutes: PAIR_TOKEN_TTL_MS / 60_000,
-		cookies: [...f.cookies, session],
+		cookies,
 	});
 }
 
@@ -60,11 +69,9 @@ async function finishPicked(env: Env, clock: Clock, installationId: number, cook
 	const installation = session ? await getInstallation(env.DB, installationId) : null;
 	if (!session || !installation || installation.deleted_at !== null) return errorPage("github_no_access", 403);
 	try {
-		return await finishInstall(env, {
-			installationId,
-			accountLogin: installation.account_login,
-			githubUserId: session.githubUserId,
-			githubLogin: session.githubLogin,
+		return await finishInstall(env, commandGitHub(env), {
+			installation,
+			user: session,
 			accessibleIds: session.installationIds,
 			cookies: [],
 			now,

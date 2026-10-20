@@ -44,7 +44,7 @@ function fakeAgentDOs(): Env["AGENT_DO"] {
 }
 
 async function addInstallation(id: number): Promise<void> {
-  await upsertInstallation(env.DB, { id, account_login: `org${id}`, account_type: "Organization", created_at: NOW - 30 * DAY });
+  await upsertInstallation(env.DB, { id, account_login: `org${id}`, account_type: "Organization", account_id: id * 10, created_at: NOW - 30 * DAY });
 }
 
 /** Adds repos named org<installation>/r<id> on main, each bound to AGENT for checks. */

@@ -33,6 +33,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/start/status", auth: "session" },
   { method: "GET", path: "/github/oauth/callback", auth: "oauth_state" },
   { method: "GET", path: "/github/link/start", auth: "oauth_state" },
+  { method: "POST", path: "/github/link/start", auth: "oauth_state" },
   { method: "GET", path: "/github/link/callback", auth: "oauth_state" },
   { method: "GET", path: "/slack/install", auth: "session" },
   { method: "GET", path: "/slack/oauth/callback", auth: "oauth_state" },

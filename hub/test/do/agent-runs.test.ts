@@ -119,7 +119,7 @@ describe("AgentDO run lifecycle", () => {
 
   beforeEach(async () => {
     await clearTables();
-    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     sink = recordSink();
     cleanups.push(sink.undo);
   });

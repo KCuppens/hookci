@@ -1,8 +1,8 @@
 // GET /slack/install and GET /slack/oauth/callback: add the Slack bot to a
 // workspace and link it to a GitHub installation. Only a browser holding a
-// session from the GitHub install of that installation may start; the state
-// carries who that was, so the callback links the Slack user who approved the
-// install to that GitHub user.
+// session from the GitHub install of that installation, for an admin of its
+// account, may start; the state carries who that was, so the callback links
+// the Slack user who approved the install to that GitHub user.
 
 import type { Context } from "hono";
 import { getInstallation } from "../db/installations";
@@ -18,6 +18,7 @@ import { logEvent, reportError } from "../observability";
 import { errorPage } from "../pages/error";
 import { slackGridUnsupportedPage, slackInstalledPage, slackStartFromGitHubPage } from "../pages/slack-installed";
 import { QUOTAS } from "../quotas";
+import { commandGitHub, isInstallationAdmin } from "../slack/resolve";
 import { exchangeSlackCode, grantedScopesMatch, revokeSlackToken, slackAuthorizeUrl } from "../slack/oauth";
 import { storeWorkspace } from "../slack/tokens";
 import { installationIdParam } from "./start";
@@ -26,7 +27,11 @@ type AppContext = Context<{ Bindings: Env }>;
 
 const RATE_WINDOW_MS = 600_000;
 
-/** Redirects to Slack's consent page, or shows the start-from-GitHub page when the browser has no session for the installation. */
+/**
+ * Redirects to Slack's consent page, or shows the start-from-GitHub page when
+ * the browser has no session for the installation. Only an admin of the
+ * installation's account may link it to a workspace.
+ */
 export async function slackInstall(c: AppContext): Promise<Response> {
 	const env = c.env;
 	const now = (env.__TEST_CLOCK ?? systemClock).now();
@@ -35,6 +40,14 @@ export async function slackInstall(c: AppContext): Promise<Response> {
 	const session = await readSession(env, c.req.header("cookie"), installationId, now);
 	const installation = session ? await getInstallation(env.DB, installationId) : null;
 	if (!session || !installation || installation.deleted_at !== null) return slackStartFromGitHubPage();
+	try {
+		if (!(await isInstallationAdmin(env, commandGitHub(env), installation, session, true))) {
+			return errorPage("installation_admin_required", 403);
+		}
+	} catch (err) {
+		if (err instanceof HubError) return errorPage(err.code, err.status);
+		throw err;
+	}
 	const { state, cookie } = await issueState(
 		env,
 		"slack_install",

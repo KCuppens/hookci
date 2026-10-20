@@ -35,6 +35,8 @@ function installation(id: number, login: string, appId = APP_ID): Installation {
 let gh: FakeService;
 let userInstallations: Installation[];
 let appKey: string;
+/** Logins GitHub reports as admins of every organization. */
+let orgAdmins: Set<string>;
 const restore: (() => void)[] = [];
 
 beforeEach(async () => {
@@ -51,6 +53,10 @@ beforeEach(async () => {
   gh.respond("GET", "/user", () => Response.json(GITHUB_USER));
   gh.respond("POST", "/app/installations/:id/access_tokens", ({ params }) =>
     Response.json({ token: `ghs_inst_${params.id}`, expires_at: new Date(testClock.now() + 3_600_000).toISOString() }, { status: 201 }),
+  );
+  orgAdmins = new Set([GITHUB_USER.login]);
+  gh.respond("GET", "/orgs/:org/memberships/:login", ({ params }) =>
+    orgAdmins.has(params.login ?? "") ? Response.json({ state: "active", role: "admin" }) : Response.json({ message: "Not Found" }, { status: 404 }),
   );
   gh.respond("GET", "/installation/repositories", ({ headers }) => {
     const id = Number(/^Bearer ghs_inst_(\d+)$/.exec(headers.get("authorization") ?? "")?.[1]);
@@ -88,7 +94,19 @@ async function beginInstall(): Promise<{ state: string; cookie: string }> {
 function callback(query: Record<string, string>, cookie?: string, ip = "198.51.100.7"): Promise<Response> {
   const headers: Record<string, string> = { "cf-connecting-ip": ip };
   if (cookie !== undefined) headers.cookie = cookie;
-  return exports.default.fetch(`https://hub.test/github/oauth/callback?${new URLSearchParams(query)}`, { headers });
+  return exports.default.fetch(`https://hub.test/github/oauth/callback?${new URLSearchParams(query)}`, { headers, redirect: "manual" });
+}
+
+/** The re-authorization a stateless callback answers with: the state GitHub gets back and the cookie bound to it. */
+function reauthorized(res: Response): { state: string; cookie: string } {
+  expect(res.status).toBe(303);
+  const location = new URL(res.headers.get("location") ?? "");
+  expect(`${location.origin}${location.pathname}`).toBe("https://github.com/login/oauth/authorize");
+  const state = location.searchParams.get("state") ?? "";
+  expect(Object.fromEntries(location.searchParams)).toEqual({ client_id: env.GITHUB_CLIENT_ID, state, redirect_uri: `${env.HUB_ORIGIN}/github/oauth/callback` });
+  const setCookie = res.headers.getSetCookie();
+  expect(setCookie).toEqual([expect.stringMatching(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/)]);
+  return { state, cookie: cookiePair(setCookie[0] ?? "") };
 }
 
 /** /start, then the callback GitHub sends after the user installs the app. */
@@ -186,14 +204,30 @@ describe("GET /github/oauth/callback", () => {
     expect(await rows("SELECT token_hash FROM pair_tokens")).toHaveLength(1);
   });
 
-  it("requires our state once /start set its cookie, but accepts a GitHub-initiated install", async () => {
-    const { cookie } = await beginInstall();
-    expect((await callback({ code: "oauth-code", setup_action: "install" }, cookie)).status).toBe(400);
-    expect(await rows("SELECT id FROM installations")).toEqual([]);
+  it("re-authorizes a GitHub-initiated install under a fresh state and never uses the code it came with", async () => {
+    const { cookie: started } = await beginInstall();
+    for (const cookie of [started, undefined]) {
+      const { state, cookie: bound } = reauthorized(await callback({ code: "attacker-code", setup_action: "install", installation_id: String(ACME) }, cookie));
+      expect(gh.calls).toEqual([]);
+      expect(await rows("SELECT id FROM installations")).toEqual([]);
 
-    const res = await callback({ code: "oauth-code", setup_action: "install", installation_id: String(ACME) });
-    expect(res.status).toBe(200);
-    expect(await rows("SELECT installation_id FROM pair_tokens")).toEqual([{ installation_id: ACME }]);
+      const res = await callback({ code: "oauth-code", state }, bound);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("zc_pair_");
+      expect(await rows("SELECT installation_id FROM pair_tokens")).toEqual([{ installation_id: ACME }]);
+      await clearTables();
+      gh.calls.length = 0;
+    }
+  });
+
+  it("refuses a callback with neither our state nor GitHub's install redirect", async () => {
+    const queries: Record<string, string>[] = [{ code: "oauth-code" }, { code: "oauth-code", setup_action: "request", installation_id: String(ACME) }];
+    for (const query of queries) {
+      const res = await callback(query);
+      expect(res.status).toBe(400);
+      expect(res.headers.get("location")).toBeNull();
+    }
+    expect(gh.calls).toEqual([]);
   });
 
   it("returns 429 for the 21st callback from one IP within 10 minutes", async () => {
@@ -204,7 +238,8 @@ describe("GET /github/oauth/callback", () => {
   });
 
   it("renders the permissions-updated page for setup_action=update without a pair token", async () => {
-    const res = await callback({ code: "oauth-code", setup_action: "update", installation_id: String(ACME) });
+    const { state, cookie } = reauthorized(await callback({ code: "oauth-code", setup_action: "update", installation_id: String(ACME) }));
+    const res = await callback({ code: "oauth-code", state }, cookie);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Permissions updated");
@@ -239,6 +274,21 @@ describe("GET /github/oauth/callback", () => {
     expect(await rows("SELECT installation_id, created_by_github_id FROM pair_tokens")).toEqual([
       { installation_id: UMBRELLA, created_by_github_id: GITHUB_USER.id },
     ]);
+  });
+
+  it("shows a member who is not an org admin the install without a pair token, here or through /start", async () => {
+    orgAdmins.clear();
+    const res = await install();
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Only an admin of acme");
+    expect(html).not.toContain("zc_pair_");
+    expect(html).not.toContain("/slack/install");
+
+    const picked = await exports.default.fetch(`https://hub.test/start?installation_id=${ACME}`, { headers: { cookie: sessionCookie(res) } });
+    expect(picked.status).toBe(200);
+    expect(await picked.text()).not.toContain("zc_pair_");
+    expect(await rows("SELECT token_hash FROM pair_tokens")).toEqual([]);
   });
 });
 

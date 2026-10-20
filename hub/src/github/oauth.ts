@@ -10,6 +10,22 @@ export interface OAuthToken {
 }
 
 /**
+ * Sends the browser to GitHub's user authorization for state, binding it to
+ * the state with cookie (a Set-Cookie value). GitHub returns the browser to
+ * HUB_ORIGIN + callbackPath with a code and the state.
+ */
+export function redirectToAuthorize(env: Env, state: string, callbackPath: string, cookie: string): Response {
+	const authorize = new URL("https://github.com/login/oauth/authorize");
+	authorize.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
+	authorize.searchParams.set("state", state);
+	authorize.searchParams.set("redirect_uri", `${env.HUB_ORIGIN}${callbackPath}`);
+	return new Response(null, {
+		status: 303,
+		headers: { Location: authorize.toString(), "Set-Cookie": cookie, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+	});
+}
+
+/**
  * Exchanges an OAuth callback code for a user-to-server token. GitHub answers
  * a bad or expired code with 200 and an `error` field, so both that and a
  * non-200 throw github_oauth_failed.

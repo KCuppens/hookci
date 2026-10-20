@@ -97,7 +97,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
   };
   const t = tenantDb(env.DB, installationId);
 
-  await upsertInstallation(env.DB, { id: installationId, account_login: `org${n}`, account_type: "Organization", created_at: 1 });
+  await upsertInstallation(env.DB, { id: installationId, account_login: `org${n}`, account_type: "Organization", account_id: installationId * 10, created_at: 1 });
   const { ct, keyVersion } = await encryptToken(parseEncKeys(env.TOKEN_ENC_KEYS), `xoxb-${teamId}`, workspaceAad(teamId));
   await upsertWorkspace(env.DB, {
     team_id: teamId,
@@ -190,7 +190,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     created_by: tenant.slackUserId,
   });
   await putCheckRun(t, { repo_id: tenant.repoId, head_sha: tenant.headSha, name: "zeroci", check_run_id: 50_000 + n });
-  await recordApproval(t, { repoId: tenant.repoId, prNumber: tenant.prNumber, headSha: tenant.headSha, approvedByGithubId: tenant.githubUserId });
+  await recordApproval(t, { repoId: tenant.repoId, prNumber: tenant.prNumber, headSha: tenant.headSha, attempt: 1, approvedByGithubId: tenant.githubUserId });
   await recordDelivery(env.DB, {
     delivery_id: `dlv-${n}`,
     received_at: 1,

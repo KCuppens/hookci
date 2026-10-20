@@ -59,7 +59,7 @@ export async function setUpCommandWorld(): Promise<CommandWorld> {
     created_at: 1,
   });
   for (const id of [INSTALLATION, OTHER_INSTALLATION]) {
-    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
   }
   await linkWorkspace(tenantDb(env.DB, INSTALLATION), TEAM, "U0ADMIN", 1);
   await upsertRepos(tenantDb(env.DB, INSTALLATION), [REPO]);

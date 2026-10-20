@@ -5,6 +5,8 @@ export interface InstallationRow {
 	id: number;
 	account_login: string;
 	account_type: "User" | "Organization";
+	/** GitHub id of the account; stable across login renames. */
+	account_id: number;
 	/** JSON object of granted app permissions, e.g. `{"checks":"write"}`. */
 	permissions: string;
 	suspended_at: number | null;
@@ -13,17 +15,17 @@ export interface InstallationRow {
 	created_at: number;
 }
 
-export type NewInstallation = Pick<InstallationRow, "id" | "account_login" | "account_type" | "created_at">;
+export type NewInstallation = Pick<InstallationRow, "id" | "account_login" | "account_type" | "account_id" | "created_at">;
 
 /** Inserts or refreshes an installation; a reinstall clears deleted_at and purge_after. */
 export async function upsertInstallation(db: D1Database, row: NewInstallation): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO installations (id, account_login, account_type, created_at) VALUES (?1, ?2, ?3, ?4)
+			`INSERT INTO installations (id, account_login, account_type, account_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
 			ON CONFLICT (id) DO UPDATE SET account_login = excluded.account_login, account_type = excluded.account_type,
-				deleted_at = NULL, purge_after = NULL`,
+				account_id = excluded.account_id, deleted_at = NULL, purge_after = NULL`,
 		)
-		.bind(row.id, row.account_login, row.account_type, row.created_at)
+		.bind(row.id, row.account_login, row.account_type, row.account_id, row.created_at)
 		.run();
 }
 

@@ -28,7 +28,7 @@ async function adminInstallation(env: Env, teamId: string, user: LinkedUser, val
 		logEvent("tenant_denied", { team_id: teamId, github_login: user.githubLogin, installation_id: id, reason: "installation_not_linked" });
 		return ephemeral(S.slack.forbidden);
 	}
-	if (!(await isInstallationAdmin(env, commandGitHub(env), installation, user.githubLogin, true))) return ephemeral(S.slack.forbidden);
+	if (!(await isInstallationAdmin(env, commandGitHub(env), installation, user, true))) return ephemeral(S.slack.forbidden);
 	return installation;
 }
 

@@ -21,16 +21,19 @@ async function approvals(): Promise<{ head_sha: string; approved_by_github_id: n
 beforeEach(async () => {
   (await setUpCommandWorld()).restore();
   for (const [sha, by] of [["a1", APPROVER], ["b2", APPROVER], ["c3", OTHER]] as const) {
-    await recordApproval(db(), { repoId: REPO.repo_id, prNumber: 9, headSha: sha, approvedByGithubId: by });
+    await recordApproval(db(), { repoId: REPO.repo_id, prNumber: 9, headSha: sha, attempt: 1, approvedByGithubId: by });
   }
-  await consumeApproval(db(), { repoId: REPO.repo_id, prNumber: 9, headSha: "a1" });
+  await consumeApproval(db(), { repoId: REPO.repo_id, prNumber: 9, headSha: "a1", attempt: 1 });
 });
 
 describe("fork approvals", () => {
-  it("spends an approval once", async () => {
-    const key = { repoId: REPO.repo_id, prNumber: 9, headSha: "b2" };
+  it("spends an approval once per attempt", async () => {
+    const key = { repoId: REPO.repo_id, prNumber: 9, headSha: "b2", attempt: 1 };
     expect(await consumeApproval(db(), key)).toBe(true);
     expect(await consumeApproval(db(), key)).toBe(false);
+    expect(await consumeApproval(db(), { ...key, attempt: 2 })).toBe(false);
+    await recordApproval(db(), { ...key, attempt: 2, approvedByGithubId: APPROVER });
+    expect(await consumeApproval(db(), { ...key, attempt: 2 })).toBe(true);
   });
 
   it("deleteApprovalsByUser removes the user's unused approvals and keeps used ones", async () => {

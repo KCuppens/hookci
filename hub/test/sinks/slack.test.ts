@@ -113,7 +113,7 @@ describe("SlackSink", () => {
   let nextTs: number;
 
   beforeEach(async () => {
-    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     await insertRun(t, RUN_ROW);
     nextTs = 1;
     world.slack.respond("POST", "/api/chat.postMessage", ({ body }) => {

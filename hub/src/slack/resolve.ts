@@ -80,25 +80,27 @@ export async function requireRepoAccess(
 }
 
 /**
- * Whether githubLogin administers the installation's account: the owner of a
- * user account, or an admin of an organization. Organization roles are cached
- * like repo roles, up to 5 minutes; fresh looks the role up again.
+ * Whether user administers the installation's account: the owner of a user
+ * account, matched by GitHub user id because logins can be renamed and
+ * reused, or an admin of an organization. Organization roles are cached like
+ * repo roles, up to 5 minutes; fresh looks the role up again. A stale
+ * organization login fails closed: GitHub answers 404 for it.
  */
 export async function isInstallationAdmin(
 	env: Env,
 	gh: GitHubClient,
-	installation: Pick<InstallationRow, "id" | "account_login" | "account_type">,
-	githubLogin: string,
+	installation: Pick<InstallationRow, "id" | "account_login" | "account_type" | "account_id">,
+	user: LinkedUser,
 	fresh = false,
 ): Promise<boolean> {
-	if (installation.account_type === "User") return installation.account_login.toLowerCase() === githubLogin.toLowerCase();
+	if (installation.account_type === "User") return installation.account_id === user.githubUserId;
 	// "@" never appears in a repo name, so the org entry cannot collide with a repo's.
 	const role = await cachedPermission(
 		installation.id,
 		`@org/${installation.account_login}`,
-		githubLogin,
+		user.githubLogin,
 		(env.__TEST_CLOCK ?? systemClock).now(),
-		async () => ((await isOrgAdmin(await gh.installation(installation.id), installation.account_login, githubLogin)) ? "admin" : "none"),
+		async () => ((await isOrgAdmin(await gh.installation(installation.id), installation.account_login, user.githubLogin)) ? "admin" : "none"),
 		fresh,
 	);
 	return role === "admin";

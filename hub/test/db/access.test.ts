@@ -65,14 +65,20 @@ function run(runId: string, triggerId: string): NewRun {
 
 describe("installations", () => {
   it("a reinstall clears deleted_at and purge_after and keeps created_at", async () => {
-    await upsertInstallation(env.DB, { id: 1, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id: 1, account_login: "acme", account_type: "Organization", account_id: 10, created_at: 1 });
     await markDeleted(env.DB, 1, 50, 100);
-    await upsertInstallation(env.DB, { id: 1, account_login: "acme-renamed", account_type: "Organization", created_at: 60 });
-    expect(await getInstallation(env.DB, 1)).toMatchObject({ account_login: "acme-renamed", created_at: 1, deleted_at: null, purge_after: null });
+    await upsertInstallation(env.DB, { id: 1, account_login: "acme-renamed", account_type: "Organization", account_id: 11, created_at: 60 });
+    expect(await getInstallation(env.DB, 1)).toMatchObject({
+      account_login: "acme-renamed",
+      account_id: 11,
+      created_at: 1,
+      deleted_at: null,
+      purge_after: null,
+    });
   });
 
   it("markSuspended sets and clears suspended_at", async () => {
-    await upsertInstallation(env.DB, { id: 1, account_login: "acme", account_type: "User", created_at: 1 });
+    await upsertInstallation(env.DB, { id: 1, account_login: "acme", account_type: "User", account_id: 10, created_at: 1 });
     await markSuspended(env.DB, 1, 5);
     expect(await getInstallation(env.DB, 1)).toMatchObject({ suspended_at: 5 });
     await markSuspended(env.DB, 1, null);
@@ -80,7 +86,7 @@ describe("installations", () => {
   });
 
   it("listPurgeDue returns installations whose purge_after has passed, oldest first", async () => {
-    for (const id of [1, 2, 3, 4]) await upsertInstallation(env.DB, { id, account_login: `o${id}`, account_type: "User", created_at: 1 });
+    for (const id of [1, 2, 3, 4]) await upsertInstallation(env.DB, { id, account_login: `o${id}`, account_type: "User", account_id: id * 10, created_at: 1 });
     await markDeleted(env.DB, 1, 10, 300);
     await markDeleted(env.DB, 2, 10, 200);
     await markDeleted(env.DB, 3, 10, 999);

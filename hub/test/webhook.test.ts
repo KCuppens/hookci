@@ -82,7 +82,7 @@ function reportedErrors(spy: { mock: { calls: unknown[][] } }): Record<string, u
 beforeEach(async () => {
   await clearTables();
   agents = fakeAgentDOs();
-  await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: NOW });
+  await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: NOW });
 });
 
 afterEach(() => {

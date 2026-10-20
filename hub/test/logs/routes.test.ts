@@ -21,7 +21,7 @@ beforeEach(async () => {
   await clearTables();
   await env.LOGS.delete(KEY);
   for (const id of [INSTALLATION, OTHER]) {
-    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", created_at: 1 });
+    await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
   }
   owner = await seedAgent(INSTALLATION, "agt_owner");
   stranger = await seedAgent(OTHER, "agt_stranger");
@@ -131,6 +131,14 @@ describe("GET /logs/:runId/:job", () => {
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(res.headers.get("x-robots-tag")).toBe("noindex");
     expect(await gunzip(await res.arrayBuffer())).toBe(LOG);
+  });
+
+  it("forbids sniffing and sandboxes the log, which holds output a fork pull request controls", async () => {
+    const res = await exports.default.fetch(await signLogUrl(env, RUN, "test"), { encodeResponseBody: "manual" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("sandbox");
+    expect(res.headers.get("content-disposition")).toBe("inline");
   });
 
   it("answers 410 log_expired once the link is 15 minutes old", async () => {

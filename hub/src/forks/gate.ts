@@ -67,7 +67,7 @@ export async function approveForkRun(
 	const pull = await getPull(await installationGitHub(env, a.installationId), owner, name, run.pr_number);
 	if (pull.head.sha !== a.headSha) return "stale";
 
-	const key = { repoId: run.repo_id, prNumber: run.pr_number, headSha: a.headSha };
+	const key = { repoId: run.repo_id, prNumber: run.pr_number, headSha: a.headSha, attempt: run.attempt };
 	if (run.state !== "gated" || run.reason !== "fork_gated") {
 		return (await isApprovalCurrent(t, key, pull.head.sha)) ? "already_used" : "not_gated";
 	}

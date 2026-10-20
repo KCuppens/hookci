@@ -10,7 +10,7 @@ import { listLinkedInstallationIds } from "../db/workspaces";
 import type { AgentStatus } from "../do/agent";
 import { PROTOCOL_MAX } from "../do/agent-protocol";
 import type { Env } from "../env";
-import { getLinkedUser } from "../identity/link";
+import { getLinkedUser, type LinkedUser } from "../identity/link";
 import { reportError } from "../observability";
 import { loadRunView } from "../sinks/runview";
 import type { AgentView, RunView } from "../sinks/types";
@@ -110,12 +110,12 @@ async function homeAgents(env: Env, rows: AgentRow[]): Promise<HomeAgent[]> {
 	});
 }
 
-async function loadInstallation(env: Env, teamId: string, installationId: number, githubLogin: string | null): Promise<HomeInstallation | null> {
+async function loadInstallation(env: Env, teamId: string, installationId: number, user: LinkedUser | null): Promise<HomeInstallation | null> {
 	const installation = await getInstallation(env.DB, installationId);
 	if (!installation) return null;
 	const t = tenantDb(env.DB, installationId);
 	const [isAdmin, agentRows, repoRows, watches, runRows] = await Promise.all([
-		githubLogin ? isInstallationAdmin(env, commandGitHub(env), installation, githubLogin) : Promise.resolve(false),
+		user ? isInstallationAdmin(env, commandGitHub(env), installation, user) : Promise.resolve(false),
 		listAgents(t),
 		listRepos(t),
 		t.all<{ repo_id: number; channel_id: string }>(
@@ -143,7 +143,7 @@ async function loadInstallation(env: Env, teamId: string, installationId: number
 export async function loadHomeData(env: Env, teamId: string, slackUserId: string): Promise<HomeData> {
 	const user = await getLinkedUser(env, teamId, slackUserId);
 	const ids = await listLinkedInstallationIds(env.DB, teamId);
-	const installations = await Promise.all(ids.map((id) => loadInstallation(env, teamId, id, user?.githubLogin ?? null)));
+	const installations = await Promise.all(ids.map((id) => loadInstallation(env, teamId, id, user)));
 	return { linked: user !== null, installations: installations.filter((i): i is HomeInstallation => i !== null) };
 }
 

@@ -46,7 +46,7 @@ function update(ts: string): Record<string, unknown> {
 
 /** Links the workspace to an installation and watches two repos from two channels. */
 async function seedWatches(): Promise<void> {
-  await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", created_at: 1 });
+  await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
   const t = tenantDb(env.DB, INSTALLATION);
   await upsertRepos(t, [
     { repo_id: 1001, full_name: "acme/widgets", default_branch: "main" },

@@ -41,7 +41,7 @@ describe("countingD1", () => {
   });
 
   it("sees the writes a Durable Object makes once it replaces env.DB", async () => {
-    await upsertInstallation(real, { id: 42, account_login: "acme", account_type: "Organization", created_at: 1 });
+    await upsertInstallation(real, { id: 42, account_login: "acme", account_type: "Organization", account_id: 42 * 10, created_at: 1 });
     const agent = await seedAgent(42);
     const counter = countingD1(real);
     env.DB = counter.db;

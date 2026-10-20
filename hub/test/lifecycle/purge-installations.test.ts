@@ -17,7 +17,7 @@ const GRACE = 44;
 
 /** Seeds an installation with a repo, an agent, a run, a watch and two log objects. */
 async function seedTenant(id: number): Promise<void> {
-  await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", created_at: 1 });
+  await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
   const t = tenantDb(env.DB, id);
   await upsertRepos(t, [{ repo_id: id * 100, full_name: `acct${id}/app`, default_branch: "main" }]);
   await insertAgent(t, {
@@ -106,7 +106,7 @@ describe("purge_installations cron", () => {
     const now = testClock.now();
     const ids = [1, 2, 3, 4, 5, 6, 7];
     for (const id of ids) {
-      await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "User", created_at: 1 });
+      await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "User", account_id: id * 10, created_at: 1 });
       await markDeleted(env.DB, id, 1, now - 1000 + id);
     }
     expect(await purgeDeletedInstallations(env, now)).toEqual([1, 2, 3, 4, 5]);

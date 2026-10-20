@@ -108,14 +108,33 @@ function get(url: string, cookie?: string, ip = "198.51.100.7"): Promise<Respons
   return exports.default.fetch(url, { headers, redirect: "manual" });
 }
 
-/** GET the Link button URL; returns the state GitHub gets and the cookie the browser keeps. */
-async function startLink(url: string): Promise<{ state: string; cookie: string }> {
-  const res = await get(url);
-  expect(res.status).toBe(302);
-  const location = new URL(res.headers.get("location") ?? "");
+/** POSTs the confirmation page's form for state t, as the page's button does. */
+function confirm(t: string, cookie?: string): Promise<Response> {
+  const headers: Record<string, string> = { "cf-connecting-ip": "198.51.100.7", "content-type": "application/x-www-form-urlencoded" };
+  if (cookie !== undefined) headers.cookie = cookie;
+  return exports.default.fetch(`${env.HUB_ORIGIN}/github/link/start`, {
+    method: "POST",
+    headers,
+    body: new URLSearchParams({ t }).toString(),
+    redirect: "manual",
+  });
+}
+
+/** The name=value part of the response's state cookie. */
+function stateCookie(res: Response): string {
   const setCookie = res.headers.get("set-cookie") ?? "";
   expect(setCookie).toMatch(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
-  return { state: location.searchParams.get("state") ?? "", cookie: setCookie.split(";")[0] ?? "" };
+  return setCookie.split(";")[0] ?? "";
+}
+
+/** Opens the Link button URL and confirms on the page; returns the state GitHub gets and the cookie the browser keeps. */
+async function startLink(url: string): Promise<{ state: string; cookie: string }> {
+  const shown = await get(url);
+  expect(shown.status).toBe(200);
+  const res = await confirm(new URL(url).searchParams.get("t") ?? "", stateCookie(shown));
+  expect(res.status).toBe(303);
+  const location = new URL(res.headers.get("location") ?? "");
+  return { state: location.searchParams.get("state") ?? "", cookie: stateCookie(res) };
 }
 
 function callback(state: string, cookie: string): Promise<Response> {
@@ -159,12 +178,22 @@ describe("/zeroci me", () => {
   });
 });
 
-describe("GET /github/link/start", () => {
-  it("redirects to GitHub user authorization without a scope, and does not use up the state", async () => {
+describe("/github/link/start", () => {
+  it("names the Slack workspace and user on a page, and goes to GitHub only from that page's POST", async () => {
     const url = linkButtonUrl(await zeroci("me"));
-    const t = new URL(url).searchParams.get("t");
-    const res = await get(url);
-    expect(res.status).toBe(302);
+    const t = new URL(url).searchParams.get("t") ?? "";
+    const shown = await get(url);
+    expect(shown.status).toBe(200);
+    const html = await shown.text();
+    expect(html).toContain(S.pages.linkConfirm("Acme", USER));
+    expect(html).toContain(`<form method="post" action="/github/link/start"><input type="hidden" name="t" value="${t}">`);
+    const mark = stateCookie(shown);
+    expect(mark).not.toBe(`__Host-zeroci_oauth=${t.split(".")[0]}`);
+    expect((await get(url)).status).toBe(200);
+
+    const res = await confirm(t, mark);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("cache-control")).toBe("no-store");
     const location = new URL(res.headers.get("location") ?? "");
     expect(`${location.origin}${location.pathname}`).toBe("https://github.com/login/oauth/authorize");
     expect(Object.fromEntries(location.searchParams)).toEqual({
@@ -172,14 +201,36 @@ describe("GET /github/link/start", () => {
       state: t,
       redirect_uri: `${env.HUB_ORIGIN}/github/link/callback`,
     });
-    expect((await get(url)).status).toBe(302);
+    expect(stateCookie(res)).toBe(`__Host-zeroci_oauth=${t.split(".")[0]}`);
+  });
+
+  it("refuses a POST that lacks the page's cookie, as from a form on another site", async () => {
+    const url = linkButtonUrl(await zeroci("me"));
+    const t = new URL(url).searchParams.get("t") ?? "";
+    const other = stateCookie(await get(linkButtonUrl(await zeroci("me"))));
+    stateCookie(await get(url));
+    for (const cookie of [undefined, other, `__Host-zeroci_oauth=${t.split(".")[0]}`]) {
+      const res = await confirm(t, cookie);
+      expect(res.status).toBe(400);
+      expect(res.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("does not finish a link with only the page's cookie, skipping the POST", async () => {
+    const url = linkButtonUrl(await zeroci("me"));
+    const mark = stateCookie(await get(url));
+    expect((await callback(new URL(url).searchParams.get("t") ?? "", mark)).status).toBe(400);
+    expect(await userLinks()).toEqual([]);
+    expect(gh.calls).toEqual([]);
   });
 
   it("refuses an unknown, expired or used state", async () => {
     expect((await get(`${env.HUB_ORIGIN}/github/link/start?t=forged.state`)).status).toBe(400);
     const url = linkButtonUrl(await zeroci("me"));
+    const mark = stateCookie(await get(url));
     testClock.advance(10 * 60 * 1000 + 1);
     expect((await get(url)).status).toBe(400);
+    expect((await confirm(new URL(url).searchParams.get("t") ?? "", mark)).status).toBe(400);
   });
 
   it("returns 429 for the 21st request from one IP within 10 minutes", async () => {
@@ -187,6 +238,7 @@ describe("GET /github/link/start", () => {
     const url = `${env.HUB_ORIGIN}/github/link/start?t=forged.state`;
     for (let i = 1; i <= 20; i++) expect((await get(url)).status).toBe(400);
     expect((await get(url)).status).toBe(429);
+    expect((await confirm("forged.state")).status).toBe(429);
     expect((await get(url, undefined, "198.51.100.8")).status).toBe(400);
   });
 });

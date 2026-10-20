@@ -101,6 +101,9 @@ export const S = {
 		retried: (repo: string, shortSha: string, attempt: number, state: string) => `Retrying ${repo} at ${shortSha} as attempt ${attempt}: ${state}.`,
 		retryOffline: (repo: string, shortSha: string, attempt: number) => `Retry of ${repo} at ${shortSha} is attempt ${attempt}, but the agent is offline: checks did not run.`,
 		retryDuplicate: (repo: string, shortSha: string, attempt: number) => `Attempt ${attempt} of ${repo} at ${shortSha} was already started.`,
+		retryGated: (repo: string, shortSha: string, attempt: number) =>
+			`Attempt ${attempt} of ${repo} at ${shortSha} comes from a fork, so it waits for a maintainer with write access to approve the run.`,
+		retryForkNever: (repo: string, shortSha: string) => `${repo} does not run checks for fork pull requests, so ${shortSha} was not retried.`,
 		badTarget: "The target must be checks or deploy:<env>.",
 		agentNotFound: (name: string) => `No active agent named ${name} in the GitHub installation that owns this repository.`,
 		agentAmbiguous: (name: string) => `More than one agent is named ${name}; use its agent id instead.`,
@@ -224,6 +227,7 @@ export const S = {
 		installedOn: (account: string) => `ZeroCI is installed on ${account}.`,
 		installedRunOne: "Run one of these on the machine that will run your builds:",
 		installedExpiry: (minutes: number) => `This pair token works once and expires in ${minutes} minutes.`,
+		installedNotAdmin: (account: string) => `Only an admin of ${account} can pair an agent or add ZeroCI to Slack. Ask one of them to do it.`,
 		addToSlack: "Add to Slack",
 		agentWaiting: "Waiting for your agent...",
 		agentConnected: "Agent connected",
@@ -244,6 +248,10 @@ export const S = {
 		slackOpenApp: "Open ZeroCI in Slack",
 		slackGridTitle: "Enterprise Grid is not supported yet",
 		slackGridBody: "ZeroCI cannot be installed on an Enterprise Grid organization yet, so nothing was saved. Install it on a single Slack workspace instead.",
+		linkConfirmTitle: "Link your GitHub account",
+		linkConfirm: (workspace: string, slackUserId: string) =>
+			`This links the GitHub account you sign in with next to Slack user ${slackUserId} in the ${workspace} workspace. ZeroCI then lets that Slack user act with your GitHub permissions. Continue only if you clicked Link in your own /zeroci me reply.`,
+		linkConfirmButton: "Continue to GitHub",
 		linkedTitle: "GitHub account linked",
 		linkedAs: (login: string) => `Linked as ${login}. You can close this tab.`,
 		privacyTitle: "ZeroCI privacy policy",
@@ -304,6 +312,7 @@ export const S = {
 			pair_rate_limited: "Too many pair tokens for this installation in the last hour. Try again later.",
 			slack_oauth_failed: "Slack did not complete the install.",
 			slack_scope_mismatch: "Slack granted ZeroCI a different set of permissions than it asks for. Nothing was saved; add ZeroCI to Slack again.",
+			installation_admin_required: "Only an admin of the GitHub account ZeroCI is installed on can add ZeroCI to Slack.",
 		},
 	},
 } as const;

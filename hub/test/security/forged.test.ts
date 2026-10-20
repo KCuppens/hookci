@@ -168,7 +168,7 @@ async function forgedState(kind: string): Promise<{ state: string; cookie: strin
   return { state: `${nonce}.${base64url(await hmacSha256(WRONG_SECRET, `${kind}.${nonce}`))}`, cookie: `__Host-zeroci_oauth=${nonce}` };
 }
 
-/** Each OAuth route's state parameter, and the state kind the route checks. */
+/** Each OAuth route's state parameter, and the state kind the route checks; POST /github/link/start takes the same form field. */
 const OAUTH_ROUTES: Record<string, { param: string; kind: string }> = {
   "/github/oauth/callback": { param: "state", kind: "github_install" },
   "/github/link/start": { param: "t", kind: "github_link" },
@@ -176,10 +176,16 @@ const OAUTH_ROUTES: Record<string, { param: string; kind: string }> = {
   "/slack/oauth/callback": { param: "state", kind: "slack_install" },
 };
 
-function oauthRequest(path: string, query: Record<string, string>, cookie: string | null): Request {
+/** A GET with fields in the query, or a POST with them as a form body. */
+function oauthRequest(method: string, path: string, fields: Record<string, string>, cookie: string | null): Request {
   const headers = new Headers({ "cf-connecting-ip": "203.0.113.7" });
   if (cookie !== null) headers.set("cookie", cookie);
-  return new Request(`${ORIGIN}${path}?${new URLSearchParams(query).toString()}`, { headers });
+  const encoded = new URLSearchParams(fields).toString();
+  if (method === "POST") {
+    headers.set("content-type", "application/x-www-form-urlencoded");
+    return new Request(`${ORIGIN}${path}`, { method, headers, body: encoded });
+  }
+  return new Request(`${ORIGIN}${path}?${encoded}`, { headers });
 }
 
 /** A session cookie for the tenant with a signature made under a key the hub does not hold. */
@@ -350,14 +356,14 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
     },
   ],
 
-  oauth_state: ({ path }) => {
+  oauth_state: ({ method, path }) => {
     const route = OAUTH_ROUTES[path];
     if (!route) throw new Error(`no OAuth route for ${path}`);
     return [
       {
         kind: "missing",
         name: "no state",
-        request: async () => oauthRequest(path, path === "/github/link/start" ? {} : { code: "forged-code" }, null),
+        request: async () => oauthRequest(method, path, path === "/github/link/start" ? {} : { code: "forged-code" }, null),
         expected: { status: 400, page: "oauth_state_invalid" },
       },
       {
@@ -365,7 +371,7 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
         name: "a state signed with a key the hub never had, with its cookie",
         request: async () => {
           const { state, cookie } = await forgedState(route.kind);
-          return oauthRequest(path, { code: "forged-code", [route.param]: state }, cookie);
+          return oauthRequest(method, path, { code: "forged-code", [route.param]: state }, cookie);
         },
         expected: { status: 400, page: "oauth_state_invalid" },
       },

@@ -1,13 +1,16 @@
 // /zeroci retry <owner/repo> [sha]: runs the repo's latest run, or the
 // latest run of the commit, again as the next attempt through the bound
-// agent's AgentDO. No trigger is stored, so the trigger is rebuilt from the
-// D1 run row, the repo row and, for pull requests, the pull request on GitHub.
+// agent's AgentDO. A fork pull request's attempt passes the fork gate like a
+// new fork run: it waits as gated until a writer approves it. No trigger is
+// stored, so the trigger is rebuilt from the D1 run row, the repo row and, for
+// pull requests, the pull request on GitHub.
 
 import { type BindingTarget, getBinding } from "../../db/bindings";
 import { findLatestRun, type RunRow } from "../../db/runs";
 import { tenantDb } from "../../db/tenant";
 import type { Env } from "../../env";
 import { HubError } from "../../errors";
+import { gateForkRun } from "../../forks/gate";
 import { getPull } from "../../github/api";
 import type { GitHubClient } from "../../github/client";
 import { requireLinkedUser } from "../../identity/link";
@@ -65,8 +68,13 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	const target: BindingTarget = run.env === null ? "checks" : `deploy:${run.env}`;
 	const binding = await getBinding(t, repo.repoId, target);
 	if (!binding) return ephemeral(S.slack.retryNoAgent(repo.fullName, target));
-
 	const trigger = await rebuildTrigger(gh, repo, run, target);
+	const shortSha = run.sha.slice(0, 7);
+	const attempt = run.attempt + 1;
+	const gate = await gateForkRun(env, trigger, binding.agent_id);
+	if (gate.gated) {
+		return ephemeral(gate.reason === "fork_never" ? S.slack.retryForkNever(repo.fullName, shortSha) : S.slack.retryGated(repo.fullName, shortSha, attempt));
+	}
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id)).fetch("https://do/trigger", {
 		method: "POST",
 		headers: { "x-zeroci-agent-id": binding.agent_id },
@@ -74,8 +82,6 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	});
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `trigger for ${binding.agent_id} answered ${res.status}`);
 	const answer = await res.json<{ trigger_id?: string; duplicate?: boolean }>();
-	const shortSha = run.sha.slice(0, 7);
-	const attempt = run.attempt + 1;
 	if (answer.duplicate || !answer.trigger_id) return ephemeral(S.slack.retryDuplicate(repo.fullName, shortSha, attempt));
 	if (!(await agentOnline(env, binding.agent_id))) return ephemeral(S.slack.retryOffline(repo.fullName, shortSha, attempt));
 	const view = await loadRunView(env.DB, repo.installationId, { triggerId: answer.trigger_id });

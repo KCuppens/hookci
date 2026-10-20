@@ -88,6 +88,10 @@ export async function viewLog(c: LogContext<"/logs/:runId/:job">): Promise<Respo
 			"Content-Encoding": "gzip",
 			"Cache-Control": "private, no-store",
 			"X-Robots-Tag": "noindex",
+			// The log holds output a fork pull request controls: never render it as a document on the hub origin.
+			"X-Content-Type-Options": "nosniff",
+			"Content-Security-Policy": "sandbox",
+			"Content-Disposition": "inline",
 		},
 		encodeBody: "manual",
 	});

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../../src/db/agents";
+import { upsertInstallation } from "../../src/db/installations";
 import { tenantDb } from "../../src/db/tenant";
 import "../../src/index";
 import { createPairToken } from "../../src/pairing/tokens";
@@ -108,6 +109,18 @@ describe("home:add_agent", () => {
     expect(await press("home:add_agent", String(INSTALLATION))).toEqual({ response_type: "ephemeral", text: S.slack.slowDown });
     expect(await pressOnHome("home:add_agent", String(INSTALLATION))).toEqual([notice(S.slack.slowDown)]);
     expect(slackCalls(world, "views.open").length).toBe(0);
+  });
+
+  it("on a personal account admits the owner by GitHub user id, not by login", async () => {
+    // The login matches but belongs to a new holder after a rename: refused.
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: LOGIN, account_type: "User", account_id: 9999, created_at: 1 });
+    expect(await press("home:add_agent", String(INSTALLATION))).toEqual({ response_type: "ephemeral", text: S.slack.forbidden });
+    expect(await pairTokens()).toBe(0);
+
+    // The owner renamed away from the stored login but keeps the account id: admitted.
+    await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "old-login", account_type: "User", account_id: 7001, created_at: 1 });
+    expect(await press("home:add_agent", String(INSTALLATION))).toBeNull();
+    expect(await pairTokens()).toBe(1);
   });
 });
 

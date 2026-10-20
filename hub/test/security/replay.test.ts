@@ -136,6 +136,7 @@ describe("OAuth state replay", () => {
     world.gh.respond("POST", "/login/oauth/access_token", () => Response.json({ access_token: "ghu_replay", token_type: "bearer", scope: "" }));
     world.gh.respond("GET", "/user/installations", () => Response.json({ total_count: 1, installations: [installation] }));
     world.gh.respond("GET", "/user", () => Response.json({ id: 7001, login: LOGIN }));
+    world.gh.respond("GET", "/orgs/:org/memberships/:login", () => Response.json({ state: "active", role: "admin" }));
     world.gh.respond("GET", "/installation/repositories", () =>
       Response.json({ total_count: 1, repositories: [{ id: REPO.repo_id, full_name: REPO.full_name, default_branch: REPO.default_branch }] }),
     );

@@ -52,7 +52,7 @@ describe("runCron", () => {
     gh.respond("GET", "/app/hook/deliveries", () => Response.json({ message: "Bad credentials" }, { status: 401 }));
     serveInstallationTokens(gh, NOW);
     serveBranchHeads(gh, { "acme/api": { sha: "sha-missed", committedAt: NOW - 30 * MINUTE } });
-    await upsertInstallation(env.DB, { id: 42, account_login: "acme", account_type: "Organization", created_at: NOW - 30 * DAY });
+    await upsertInstallation(env.DB, { id: 42, account_login: "acme", account_type: "Organization", account_id: 42 * 10, created_at: NOW - 30 * DAY });
     const t = tenantDb(env.DB, 42);
     await upsertRepos(t, [{ repo_id: 7, full_name: "acme/api", default_branch: "main" }]);
     await bind(t, 7, "checks", AGENT);

@@ -23,7 +23,7 @@ async function seed(id: number): Promise<void> {
   const repoId = id * 10;
   const runId = `run-${id}`;
   const agentId = `agent-${id}`;
-  await upsertInstallation(env.DB, { id, account_login: `org${id}`, account_type: "Organization", created_at: 1 });
+  await upsertInstallation(env.DB, { id, account_login: `org${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
   await upsertRepos(t, [{ repo_id: repoId, full_name: `org${id}/app`, default_branch: "main" }]);
   await insertAgent(t, {
     agent_id: agentId,
@@ -84,7 +84,7 @@ async function seed(id: number): Promise<void> {
     ).bind(id),
     env.DB.prepare("INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, '2025-01-01', 3)").bind(id),
     env.DB.prepare(
-      "INSERT INTO fork_approvals (installation_id, repo_id, pr_number, head_sha, approved_by_github_id, approved_at) VALUES (?1, ?2, 5, ?3, 7, 1)",
+      "INSERT INTO fork_approvals (installation_id, repo_id, pr_number, head_sha, attempt, approved_by_github_id, approved_at) VALUES (?1, ?2, 5, ?3, 1, 7, 1)",
     ).bind(id, repoId, "b".repeat(40)),
     env.DB.prepare("INSERT INTO slack_messages (run_id, team_id, channel_id, ts, alert_ts) VALUES (?1, 'T1', 'C1', '1.0', NULL)").bind(runId),
     env.DB.prepare("INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES (?1, 'T1', 'C1', 'build', '1.1')").bind(runId),

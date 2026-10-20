@@ -1,23 +1,27 @@
-// GET /github/link/start and GET /github/link/callback: the browser half of
-// /zeroci me. Start binds the browser to the state from the Slack button and
-// sends it to GitHub's user authorization; the callback records which GitHub
-// user that is for the Slack user in the state, then revokes the user token.
-// The token lives only for this request: never stored, never logged.
+// GET and POST /github/link/start and GET /github/link/callback: the browser half of
+// /zeroci me. GET start shows which Slack user the state from the Slack button
+// links and marks the browser; the page's POST trades that mark for the state
+// cookie and sends the browser to GitHub's user authorization. A link sent by
+// someone else, or a form on another site, cannot skip the page: the mark is
+// not the nonce, and a cross-site POST carries no SameSite=Lax cookie. The
+// callback records which GitHub user that is for the Slack user in the state,
+// then revokes the user token. The token lives only for this request: never
+// stored, never logged.
 
 import type { Context } from "hono";
 import { hitIpRate } from "../db/ip-rate";
-import { upsertUserLink } from "../db/workspaces";
+import { getWorkspace, upsertUserLink } from "../db/workspaces";
 import { type Clock, systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { deleteUserToken, getUser } from "../github/api";
 import { GitHubClient } from "../github/client";
-import { exchangeCode } from "../github/oauth";
+import { exchangeCode, redirectToAuthorize } from "../github/oauth";
 import { defaultFetcher } from "../http";
-import { CLEAR_STATE_COOKIE, checkState, consumeState } from "../oauth/state";
+import { CLEAR_STATE_COOKIE, confirmState, consumeState, previewState } from "../oauth/state";
 import { logEvent, reportError } from "../observability";
 import { errorPage } from "../pages/error";
-import { linkedPage } from "../pages/linked";
+import { linkConfirmPage, linkedPage } from "../pages/linked";
 import { QUOTAS } from "../quotas";
 
 type AppContext = Context<{ Bindings: Env }>;
@@ -34,23 +38,35 @@ export async function githubLinkStart(c: AppContext): Promise<Response> {
 	const env = c.env;
 	const now = (env.__TEST_CLOCK ?? systemClock).now();
 	if (!(await underIpLimit(c, "github_link_start", now))) return errorPage("rate_limited", 429);
-	const state = c.req.query("t");
-	let cookie: string;
 	try {
+		const state = c.req.query("t");
 		if (state === undefined) throw new HubError("oauth_state_invalid", 400, "link start without t");
-		cookie = await checkState(env, "github_link", state, now);
+		const { payload, cookie } = await previewState(env, "github_link", state, now);
+		const { team_id: teamId, slack_user_id: slackUserId } = payload;
+		if (typeof teamId !== "string" || typeof slackUserId !== "string") {
+			throw new HubError("oauth_state_invalid", 400, "github_link state lacks the Slack team or user");
+		}
+		const workspace = (await getWorkspace(env.DB, teamId))?.team_name ?? teamId;
+		return linkConfirmPage(state, workspace, slackUserId, cookie);
 	} catch (err) {
 		if (err instanceof HubError) return errorPage(err.code, err.status);
 		throw err;
 	}
-	const authorize = new URL("https://github.com/login/oauth/authorize");
-	authorize.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
-	authorize.searchParams.set("state", state);
-	authorize.searchParams.set("redirect_uri", `${env.HUB_ORIGIN}/github/link/callback`);
-	return new Response(null, {
-		status: 302,
-		headers: { Location: authorize.toString(), "Set-Cookie": cookie, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
-	});
+}
+
+export async function githubLinkConfirm(c: AppContext): Promise<Response> {
+	const env = c.env;
+	const now = (env.__TEST_CLOCK ?? systemClock).now();
+	if (!(await underIpLimit(c, "github_link_start", now))) return errorPage("rate_limited", 429);
+	const state = (await c.req.parseBody()).t;
+	try {
+		if (typeof state !== "string") throw new HubError("oauth_state_invalid", 400, "link confirm without t");
+		const cookie = await confirmState(env, "github_link", state, c.req.header("cookie") ?? null, now);
+		return redirectToAuthorize(env, state, "/github/link/callback", cookie);
+	} catch (err) {
+		if (err instanceof HubError) return errorPage(err.code, err.status);
+		throw err;
+	}
 }
 
 /** Revokes the user token; a failure is reported, not shown, since the link is already stored. */

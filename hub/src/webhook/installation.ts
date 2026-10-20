@@ -27,6 +27,7 @@ import { registerHandler } from "./handlers";
 const PURGE_GRACE_MS = 86_400_000;
 
 export interface InstallationAccount {
+	id: number;
 	login: string;
 	type: "User" | "Organization";
 }
@@ -47,12 +48,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** True for an installation on a User or Organization account, with string permissions. */
+/** True for an installation on a User or Organization account, with an account id and string permissions. */
 export function isSyncableInstallation(value: unknown): value is SyncableInstallation {
 	return (
 		isObject(value) &&
 		Number.isSafeInteger(value.id) &&
 		isObject(value.account) &&
+		Number.isSafeInteger(value.account.id) &&
 		typeof value.account.login === "string" &&
 		(value.account.type === "User" || value.account.type === "Organization") &&
 		isObject(value.permissions) &&
@@ -105,7 +107,13 @@ function githubClient(env: Env): GitHubClient {
  * sees. Idempotent.
  */
 export async function syncInstallation(env: Env, github: GitHubClient, inst: SyncableInstallation, now: number): Promise<void> {
-	await upsertInstallation(env.DB, { id: inst.id, account_login: inst.account.login, account_type: inst.account.type, created_at: now });
+	await upsertInstallation(env.DB, {
+		id: inst.id,
+		account_login: inst.account.login,
+		account_type: inst.account.type,
+		account_id: inst.account.id,
+		created_at: now,
+	});
 	await setInstallationPermissions(env.DB, inst.id, inst.permissions);
 	const listed = await listInstallationRepos(await github.installation(inst.id));
 	const t = tenantDb(env.DB, inst.id);

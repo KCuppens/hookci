@@ -49,6 +49,15 @@ export function installedPage(v: InstalledView): Response {
 	);
 }
 
+/** Shown to a user who can see the installation but does not administer its account: no pair token, no Add to Slack link. */
+export function installedNotAdminPage(accountLogin: string, cookies: string[]): Response {
+	return page(
+		S.pages.installedTitle,
+		`<p>${escapeHtml(S.pages.installedOn(accountLogin))}</p>\n<p>${escapeHtml(S.pages.installedNotAdmin(accountLogin))}</p>`,
+		{ cookies },
+	);
+}
+
 /** Shown for setup_action=update: GitHub changed permissions or repositories; no new pair token. */
 export function updatedPage(accountLogin: string, cookies: string[]): Response {
 	return page(S.pages.updatedTitle, `<p>${escapeHtml(S.pages.updatedBody(accountLogin))}</p>`, { cookies });
