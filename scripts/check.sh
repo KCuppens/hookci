@@ -11,6 +11,8 @@ scripts/schema-check.sh
 scripts/gen-install.sh --check
 scripts/test-install.sh
 node scripts/gen-manifests.mjs --check
+node scripts/check-marketplace.mjs
+node --test scripts/check-marketplace.test.mjs
 
 (
 	cd hub
