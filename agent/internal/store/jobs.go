@@ -3,187 +3,179 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
-var (
-	ErrJobNotFound = errors.New("job not found")
-)
+// maxTailLines caps the log tail carried by a failed job's event.
+const maxTailLines = 40
 
-// Job represents an individual check job execution record within a run.
+// Job is one persisted job of a run.
 type Job struct {
-	ID         string            `json:"id"`
-	RunID      string            `json:"run_id"`
-	Name       string            `json:"name"`
-	State      protocol.JobState `json:"state"`
-	StartedAt  *time.Time        `json:"started_at,omitempty"`
-	FinishedAt *time.Time        `json:"finished_at,omitempty"`
-	ExitCode   *int              `json:"exit_code,omitempty"`
-	Error      string            `json:"error,omitempty"`
+	RunID      string     `json:"run_id"`
+	Name       string     `json:"name"`
+	State      JobState   `json:"state"`
+	Needs      []string   `json:"needs"`
+	ExitCode   *int       `json:"exit_code"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	DurationMS *int64     `json:"duration_ms"`
+	Unit       string     `json:"unit"`
+	Reason     string     `json:"reason"`
 }
 
-// GetJob returns a job by runID and job name.
-func (db *DB) GetJob(ctx context.Context, runID, name string) (*Job, error) {
-	row := db.sql.QueryRowContext(ctx, `
-		SELECT id, run_id, name, state, started_at, finished_at, exit_code, error
-		FROM jobs
-		WHERE run_id = ? AND name = ?
-	`, runID, name)
+// JobUpdate carries the columns and event fields TransitionJob records.
+// ExitCode, DurationMS, Unit and Reason are stored when set. Tail is sent
+// only on failure, trimmed to its last 40 lines. Step is sent when set, and
+// StepIndex/StepsTotal when StepsTotal > 0.
+type JobUpdate struct {
+	ExitCode   *int
+	DurationMS *int64
+	Unit       string
+	Reason     string
+	Tail       []string
+	Step       string
+	StepIndex  int
+	StepsTotal int
+}
 
-	var (
-		j          Job
-		stateStr   string
-		startedAt  sql.NullTime
-		finishedAt sql.NullTime
-		exitCode   sql.NullInt32
-	)
+const jobColumns = `run_id, name, state, needs, exit_code, started_at, finished_at, duration_ms, unit, reason`
 
-	err := row.Scan(&j.ID, &j.RunID, &j.Name, &stateStr, &startedAt, &finishedAt, &exitCode, &j.Error)
+// Jobs returns the jobs of runID in creation order.
+func (s *Store) Jobs(ctx context.Context, runID string) ([]Job, error) {
+	return queryJobs(ctx, s.db, runID)
+}
+
+// TransitionJob moves job from one of `from` to `to` with the same rules and
+// errors as Transition, records u, and appends an outbox "event" row in the
+// same transaction.
+func (s *Store) TransitionJob(ctx context.Context, runID, job string, from []JobState, to JobState, u JobUpdate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrJobNotFound
+		return fmt.Errorf("store: transition job %s/%s: %w", runID, job, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.transitionJob(ctx, tx, runID, job, from, to, u); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: transition job %s/%s: %w", runID, job, err)
+	}
+	return nil
+}
+
+// transitionJob is TransitionJob inside the caller's transaction.
+func (s *Store) transitionJob(ctx context.Context, tx *sql.Tx, runID, job string, from []JobState, to JobState, u JobUpdate) error {
+	what := "job " + runID + "/" + job
+	if len(from) == 0 {
+		return fmt.Errorf("%w: %s: no from state", ErrInvalidTransition, what)
+	}
+	now := s.timestamp()
+	set := "state = ?, exit_code = coalesce(?, exit_code), duration_ms = coalesce(?, duration_ms)," +
+		" unit = CASE WHEN ? = '' THEN unit ELSE ? END, reason = CASE WHEN ? = '' THEN reason ELSE ? END"
+	args := []any{to, u.ExitCode, u.DurationMS, u.Unit, u.Unit, u.Reason, u.Reason}
+	if to == JobRunning {
+		set += ", started_at = ?"
+		args = append(args, now)
+	}
+	if to.Terminal() {
+		set += ", finished_at = ?"
+		args = append(args, now)
+	}
+	args = append(args, runID, job)
+	for _, f := range from {
+		if !validJob(f, to) {
+			return fmt.Errorf("%w: job %s -> %s", ErrInvalidTransition, f, to)
 		}
-		return nil, fmt.Errorf("get job %s in run %s: %w", name, runID, err)
+		args = append(args, f)
 	}
-
-	j.State = protocol.JobState(stateStr)
-	if startedAt.Valid {
-		j.StartedAt = &startedAt.Time
+	res, err := tx.ExecContext(ctx,
+		`UPDATE jobs SET `+set+` WHERE run_id = ? AND name = ? AND state IN (`+placeholders(len(from))+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("store: transition %s: %w", what, err)
 	}
-	if finishedAt.Valid {
-		j.FinishedAt = &finishedAt.Time
+	if err := checkUpdated(ctx, tx, res, `SELECT state FROM jobs WHERE run_id = ? AND name = ?`, []any{runID, job}, what, from); err != nil {
+		return err
 	}
-	if exitCode.Valid {
-		code := int(exitCode.Int32)
-		j.ExitCode = &code
-	}
-
-	return &j, nil
+	return s.appendEvent(ctx, tx, jobEvent(runID, job, to, u))
 }
 
-// ListJobs returns all jobs associated with a run.
-func (db *DB) ListJobs(ctx context.Context, runID string) ([]*Job, error) {
-	rows, err := db.sql.QueryContext(ctx, `
-		SELECT id, run_id, name, state, started_at, finished_at, exit_code, error
-		FROM jobs
-		WHERE run_id = ?
-		ORDER BY id ASC
-	`, runID)
+func jobEvent(runID, job string, to JobState, u JobUpdate) protocol.Event {
+	ev := protocol.Event{RunId: runID, Job: &job, State: protocol.EventState(to)}
+	if u.DurationMS != nil {
+		d := int(*u.DurationMS)
+		ev.DurationMs = &d
+	}
+	if to == JobFailed && len(u.Tail) > 0 {
+		tail := u.Tail
+		if len(tail) > maxTailLines {
+			tail = tail[len(tail)-maxTailLines:]
+		}
+		ev.Tail = tail
+	}
+	if u.Step != "" {
+		ev.Step = &u.Step
+	}
+	if u.StepsTotal > 0 {
+		ev.StepIndex = &u.StepIndex
+		ev.StepsTotal = &u.StepsTotal
+	}
+	return ev
+}
+
+func insertJob(ctx context.Context, tx *sql.Tx, runID, name string, needs []string) error {
+	enc, err := json.Marshal(needs)
 	if err != nil {
-		return nil, fmt.Errorf("list jobs for run %s: %w", runID, err)
+		return fmt.Errorf("store: encode needs of job %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO jobs (run_id, name, state, needs) VALUES (?, ?, ?, ?)`, runID, name, JobQueued, string(enc)); err != nil {
+		return fmt.Errorf("store: insert job %s/%s: %w", runID, name, err)
+	}
+	return nil
+}
+
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func queryJobs(ctx context.Context, db querier, runID string) ([]Job, error) {
+	rows, err := db.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE run_id = ? ORDER BY rowid`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("store: jobs of %s: %w", runID, err)
 	}
 	defer rows.Close()
-
-	var jobs []*Job
+	var jobs []Job
 	for rows.Next() {
 		var (
-			j          Job
-			stateStr   string
-			startedAt  sql.NullTime
-			finishedAt sql.NullTime
-			exitCode   sql.NullInt32
+			j                 Job
+			needs             string
+			exit, duration    sql.NullInt64
+			started, finished sql.NullString
 		)
-
-		if err := rows.Scan(&j.ID, &j.RunID, &j.Name, &stateStr, &startedAt, &finishedAt, &exitCode, &j.Error); err != nil {
-			return nil, fmt.Errorf("scan job: %w", err)
+		if err := rows.Scan(&j.RunID, &j.Name, &j.State, &needs, &exit, &started, &finished, &duration, &j.Unit, &j.Reason); err != nil {
+			return nil, fmt.Errorf("store: scan job: %w", err)
 		}
-		j.State = protocol.JobState(stateStr)
-		if startedAt.Valid {
-			j.StartedAt = &startedAt.Time
+		if err := json.Unmarshal([]byte(needs), &j.Needs); err != nil {
+			return nil, fmt.Errorf("store: decode needs of job %s: %w", j.Name, err)
 		}
-		if finishedAt.Valid {
-			j.FinishedAt = &finishedAt.Time
+		if exit.Valid {
+			v := int(exit.Int64)
+			j.ExitCode = &v
 		}
-		if exitCode.Valid {
-			code := int(exitCode.Int32)
-			j.ExitCode = &code
+		if duration.Valid {
+			j.DurationMS = &duration.Int64
 		}
-		jobs = append(jobs, &j)
+		if j.StartedAt, err = parseNullTime(started); err != nil {
+			return nil, err
+		}
+		if j.FinishedAt, err = parseNullTime(finished); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
 	}
-
 	return jobs, rows.Err()
-}
-
-// TransitionJob transitions a job's state within a transaction, writes the
-// transition event to the outbox, and manages exit code and timestamps.
-func (db *DB) TransitionJob(ctx context.Context, runID, name string, from, to protocol.JobState, exitCode *int, errMsg string) error {
-	if !IsValidJobTransition(from, to) {
-		return &ErrInvalidTransition{Entity: "job", From: string(from), To: string(to)}
-	}
-
-	tx, err := db.sql.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin job transition tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	row := tx.QueryRowContext(ctx, `
-		SELECT state, started_at, finished_at
-		FROM jobs
-		WHERE run_id = ? AND name = ?
-	`, runID, name)
-
-	var (
-		currState  string
-		startedAt  sql.NullTime
-		finishedAt sql.NullTime
-	)
-
-	if err := row.Scan(&currState, &startedAt, &finishedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrJobNotFound
-		}
-		return fmt.Errorf("query job %s in run %s: %w", name, runID, err)
-	}
-
-	if protocol.JobState(currState) != from {
-		return fmt.Errorf("%w: current is %s, expected %s", ErrConflictState, currState, from)
-	}
-
-	now := time.Now().UTC()
-	var newStartedAt, newFinishedAt any
-	if startedAt.Valid {
-		newStartedAt = startedAt.Time
-	} else if to == protocol.JobStateRunning {
-		newStartedAt = now
-	}
-
-	if finishedAt.Valid {
-		newFinishedAt = finishedAt.Time
-	} else if IsJobTerminal(to) {
-		newFinishedAt = now
-	}
-
-	var exitVal any
-	if exitCode != nil {
-		exitVal = *exitCode
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		UPDATE jobs
-		SET state = ?, started_at = ?, finished_at = ?, exit_code = ?, error = CASE WHEN ? != '' THEN ? ELSE error END
-		WHERE run_id = ? AND name = ?
-	`, string(to), newStartedAt, newFinishedAt, exitVal, errMsg, errMsg, runID, name)
-	if err != nil {
-		return fmt.Errorf("update job state: %w", err)
-	}
-
-	payload := JobTransitionPayload{
-		RunID:     runID,
-		JobName:   name,
-		FromState: string(from),
-		ToState:   string(to),
-		ExitCode:  exitCode,
-		Error:     errMsg,
-		Timestamp: now,
-	}
-	if err := writeOutboxTx(ctx, tx, runID, EventJobTransition, payload); err != nil {
-		return fmt.Errorf("write job outbox event: %w", err)
-	}
-
-	return tx.Commit()
 }

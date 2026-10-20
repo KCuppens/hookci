@@ -3,161 +3,195 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"strconv"
 	"time"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 )
 
-// Standard outbox event types.
+// HWM directions.
 const (
-	EventRunTransition = "run.transition"
-	EventJobTransition = "job.transition"
+	HWMIn       = "in"
+	HWMOutAcked = "out_acked"
 )
 
-// OutboxEvent represents a queued transition or notification event.
-type OutboxEvent struct {
-	Seq       int64     `json:"seq"`
-	RunID     string    `json:"run_id"`
-	EventType string    `json:"event_type"`
-	Payload   string    `json:"payload"`
-	CreatedAt time.Time `json:"created_at"`
+// Outbox kinds written by the store. The kind is the protocol frame type.
+const (
+	KindEvent       = "event"
+	KindJobPlanned  = "job_planned"
+	KindAnnotations = "annotations"
+)
+
+// OutboxItem is one queued frame for the hub. Seq is the frame's agent_seq.
+type OutboxItem struct {
+	Seq       int64
+	Kind      string
+	Payload   []byte
+	CreatedAt time.Time
 }
 
-// RunTransitionPayload is the JSON payload stored for a run.transition event.
-type RunTransitionPayload struct {
-	RunID     string    `json:"run_id"`
-	Repo      string    `json:"repo"`
-	Ref       string    `json:"ref"`
-	FromState string    `json:"from_state"`
-	ToState   string    `json:"to_state"`
-	Error     string    `json:"error,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// JobTransitionPayload is the JSON payload stored for a job.transition event.
-type JobTransitionPayload struct {
-	RunID     string    `json:"run_id"`
-	JobName   string    `json:"job_name"`
-	FromState string    `json:"from_state"`
-	ToState   string    `json:"to_state"`
-	ExitCode  *int      `json:"exit_code,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-func writeOutboxTx(ctx context.Context, tx *sql.Tx, runID, eventType string, payload any) error {
-	var payloadStr string
-	switch p := payload.(type) {
-	case string:
-		payloadStr = p
-	case []byte:
-		payloadStr = string(p)
-	default:
-		b, err := json.Marshal(p)
-		if err != nil {
-			return fmt.Errorf("marshal outbox payload: %w", err)
-		}
-		payloadStr = string(b)
-	}
-
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO outbox (run_id, event_type, payload, created_at)
-		VALUES (?, ?, ?, ?)
-	`, runID, eventType, payloadStr, time.Now().UTC())
+// AppendOutbox appends payload as a frame of the given kind and returns its seq.
+func (s *Store) AppendOutbox(ctx context.Context, kind string, payload []byte) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO outbox (kind, payload, created_at) VALUES (?, ?, ?)`, kind, payload, s.timestamp())
 	if err != nil {
-		return fmt.Errorf("insert outbox row: %w", err)
+		return 0, fmt.Errorf("store: append outbox: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// Pending returns up to limit outbox items with seq > after in seq order.
+// A limit of zero or less returns every pending item.
+func (s *Store) Pending(ctx context.Context, after int64, limit int) ([]OutboxItem, error) {
+	if limit <= 0 {
+		limit = -1
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT seq, kind, payload, created_at FROM outbox WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: pending outbox: %w", err)
+	}
+	defer rows.Close()
+	var items []OutboxItem
+	for rows.Next() {
+		var (
+			it      OutboxItem
+			created string
+		)
+		if err := rows.Scan(&it.Seq, &it.Kind, &it.Payload, &created); err != nil {
+			return nil, fmt.Errorf("store: pending outbox: %w", err)
+		}
+		if it.CreatedAt, err = parseTime(created); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// Ack deletes every item with seq <= upto and raises the out_acked HWM to upto.
+func (s *Store) Ack(ctx context.Context, upto int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: ack: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE seq <= ?`, upto); err != nil {
+		return fmt.Errorf("store: ack: %w", err)
+	}
+	if err := setHWM(ctx, tx, HWMOutAcked, upto); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: ack: %w", err)
 	}
 	return nil
 }
 
-// FetchOutbox returns events from the outbox with seq > afterSeq, ordered by seq asc up to limit.
-func (db *DB) FetchOutbox(ctx context.Context, afterSeq int64, limit int) ([]OutboxEvent, error) {
-	if limit <= 0 {
-		limit = 100
+// GetHWM returns the high-water mark for dir ("in" or "out_acked"), 0 if unset.
+func (s *Store) GetHWM(ctx context.Context, dir string) (int64, error) {
+	if err := checkDirection(dir); err != nil {
+		return 0, err
 	}
-
-	rows, err := db.sql.QueryContext(ctx, `
-		SELECT seq, run_id, event_type, payload, created_at
-		FROM outbox
-		WHERE seq > ?
-		ORDER BY seq ASC
-		LIMIT ?
-	`, afterSeq, limit)
+	var seq int64
+	err := s.db.QueryRowContext(ctx, `SELECT seq FROM hwm WHERE direction = ?`, dir).Scan(&seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("query outbox: %w", err)
+		return 0, fmt.Errorf("store: get hwm %s: %w", dir, err)
 	}
-	defer rows.Close()
-
-	var events []OutboxEvent
-	for rows.Next() {
-		var ev OutboxEvent
-		if err := rows.Scan(&ev.Seq, &ev.RunID, &ev.EventType, &ev.Payload, &ev.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan outbox row: %w", err)
-		}
-		events = append(events, ev)
-	}
-
-	return events, rows.Err()
+	return seq, nil
 }
 
-// AckOutbox acknowledges all outbox events up to and including ackSeq.
-// It deletes acked rows and persists the high-water mark in meta.
-func (db *DB) AckOutbox(ctx context.Context, ackSeq int64) error {
-	tx, err := db.sql.BeginTx(ctx, nil)
+// SetHWM raises the high-water mark for dir to seq. Lower values are ignored.
+func (s *Store) SetHWM(ctx context.Context, dir string, seq int64) error {
+	return setHWM(ctx, s.db, dir, seq)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func setHWM(ctx context.Context, db execer, dir string, seq int64) error {
+	if err := checkDirection(dir); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO hwm (direction, seq) VALUES (?, ?)
+		 ON CONFLICT (direction) DO UPDATE SET seq = max(seq, excluded.seq)`, dir, seq); err != nil {
+		return fmt.Errorf("store: set hwm %s: %w", dir, err)
+	}
+	return nil
+}
+
+func checkDirection(dir string) error {
+	if dir != HWMIn && dir != HWMOutAcked {
+		return fmt.Errorf("store: unknown hwm direction %q", dir)
+	}
+	return nil
+}
+
+// AppendSeqFrame appends a frame of the given kind whose agent_seq equals its
+// outbox seq: build receives the seq and returns the message to marshal. It
+// returns the seq.
+func (s *Store) AppendSeqFrame(ctx context.Context, kind string, build func(seq int) any) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin ack tx: %w", err)
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
 	}
 	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE seq <= ?`, ackSeq); err != nil {
-		return fmt.Errorf("delete acked outbox: %w", err)
+	seq, err := s.appendSeqFrame(ctx, tx, kind, build)
+	if err != nil {
+		return 0, err
 	}
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO meta (key, value) VALUES ('hwm_out_acked', ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value
-		WHERE CAST(excluded.value AS INTEGER) > CAST(meta.value AS INTEGER)
-	`, strconv.FormatInt(ackSeq, 10)); err != nil {
-		return fmt.Errorf("update hwm_out_acked: %w", err)
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
 	}
-
-	return tx.Commit()
+	return seq, nil
 }
 
-// GetHWM returns the incoming hub sequence and outgoing acknowledged sequence numbers.
-func (db *DB) GetHWM(ctx context.Context) (inSeq int64, outAckedSeq int64, err error) {
-	rows, err := db.sql.QueryContext(ctx, `SELECT key, value FROM meta WHERE key IN ('hwm_in', 'hwm_out_acked')`)
-	if err != nil {
-		return 0, 0, fmt.Errorf("query hwm meta: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return 0, 0, fmt.Errorf("scan hwm meta: %w", err)
-		}
-		n, _ := strconv.ParseInt(v, 10, 64)
-		if k == "hwm_in" {
-			inSeq = n
-		} else if k == "hwm_out_acked" {
-			outAckedSeq = n
-		}
-	}
-
-	return inSeq, outAckedSeq, rows.Err()
+// appendEvent writes ev as an "event" frame whose agent_seq is the row's seq.
+func (s *Store) appendEvent(ctx context.Context, tx *sql.Tx, ev protocol.Event) error {
+	_, err := s.appendSeqFrame(ctx, tx, KindEvent, func(seq int) any {
+		ev.AgentSeq = seq
+		return ev
+	})
+	return err
 }
 
-// SetHWMIn records the highest sequence number seen from the hub.
-func (db *DB) SetHWMIn(ctx context.Context, inSeq int64) error {
-	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO meta (key, value) VALUES ('hwm_in', ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value
-		WHERE CAST(excluded.value AS INTEGER) > CAST(meta.value AS INTEGER)
-	`, strconv.FormatInt(inSeq, 10))
+// appendSeqFrame inserts a placeholder, reads the seq, then stores the frame
+// build makes for that seq, all inside tx.
+func (s *Store) appendSeqFrame(ctx context.Context, tx *sql.Tx, kind string, build func(seq int) any) (int64, error) {
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO outbox (kind, payload, created_at) VALUES (?, x'', ?)`, kind, s.timestamp())
 	if err != nil {
-		return fmt.Errorf("update hwm_in: %w", err)
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
+	}
+	seq, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
+	}
+	payload, err := protocol.Marshal(kind, build(int(seq)))
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE outbox SET payload = ? WHERE seq = ?`, payload, seq); err != nil {
+		return 0, fmt.Errorf("store: append %s: %w", kind, err)
+	}
+	return seq, nil
+}
+
+// appendFrame writes msg as a frame of type kind inside tx.
+func (s *Store) appendFrame(ctx context.Context, tx *sql.Tx, kind string, msg any) error {
+	payload, err := protocol.Marshal(kind, msg)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO outbox (kind, payload, created_at) VALUES (?, ?, ?)`, kind, payload, s.timestamp()); err != nil {
+		return fmt.Errorf("store: append %s: %w", kind, err)
 	}
 	return nil
 }

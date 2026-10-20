@@ -1,150 +1,92 @@
+// Package sink carries run and job lifecycle events out of the agent. Sinks
+// are fed by Pump from the store outbox in agent_seq order, so every sink sees
+// the same event stream.
 package sink
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
-	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
 )
 
-// Sink defines the destination interface for consuming state transitions and outbox events.
+// Kind says what an Event describes.
+type Kind string
+
+const (
+	KindRun         Kind = "run"
+	KindJob         Kind = "job"
+	KindStep        Kind = "step"
+	KindAnnotations Kind = "annotations"
+)
+
+// Event is one lifecycle event, decoded from an outbox row.
+type Event struct {
+	Seq         int64 // agent_seq from the outbox
+	Kind        Kind
+	RunID       string
+	Repo        string
+	SHA         string
+	Job         string // empty for run events
+	State       string // store.RunState or store.JobState value
+	Step        string
+	StepIndex   int // counts from 0, as in the protocol
+	StepsTotal  int
+	DurationMS  int64
+	Reason      string
+	Tail        []string             // <=40, already redacted
+	Annotations []logpipe.Annotation // only for KindAnnotations
+	// AnnotationsTotal counts the job's annotations including those left out
+	// of Annotations; 0 means len(Annotations).
+	AnnotationsTotal int
+	At               time.Time
+}
+
+// Sink receives events. Emit may be called from several goroutines.
 type Sink interface {
-	Emit(ctx context.Context, ev store.OutboxEvent) error
-	Drain(ctx context.Context, db *store.DB) error
+	Name() string
+	Emit(ctx context.Context, e Event) error
 	Close() error
 }
 
-// StdoutSink writes formatted state machine transitions to an output stream (e.g. stdout).
-type StdoutSink struct {
-	mu     sync.Mutex
-	writer io.Writer
+// Multi fans every event out to each sink in order.
+type Multi []Sink
+
+// Name returns "multi".
+func (m Multi) Name() string { return "multi" }
+
+// Emit delivers e to every sink, even after one fails, and joins the errors.
+func (m Multi) Emit(ctx context.Context, e Event) error {
+	var errs []error
+	for _, s := range m {
+		if err := s.Emit(ctx, e); err != nil {
+			errs = append(errs, fmt.Errorf("sink %s: %w", s.Name(), err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
-// NewStdout constructs a StdoutSink directing output to w (defaults to os.Stdout if nil).
-func NewStdout(w io.Writer) *StdoutSink {
-	if w == nil {
-		w = os.Stdout
+// Close closes every sink and joins the errors.
+func (m Multi) Close() error {
+	var errs []error
+	for _, s := range m {
+		if err := s.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("sink %s: %w", s.Name(), err))
+		}
 	}
-	return &StdoutSink{writer: w}
+	return errors.Join(errs...)
 }
 
-// Emit formats and writes a single outbox event to the output writer.
-func (s *StdoutSink) Emit(ctx context.Context, ev store.OutboxEvent) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Nop discards every event.
+type Nop struct{}
 
-	var line string
-	switch ev.EventType {
-	case store.EventRunTransition:
-		var p store.RunTransitionPayload
-		if err := json.Unmarshal([]byte(ev.Payload), &p); err == nil {
-			errStr := ""
-			if p.Error != "" {
-				errStr = fmt.Sprintf(" error=%q", p.Error)
-			}
-			line = fmt.Sprintf("[run %s] %s -> %s (repo=%s ref=%s)%s\n",
-				p.RunID, p.FromState, p.ToState, p.Repo, p.Ref, errStr)
-		} else {
-			line = fmt.Sprintf("[run %s] %s: %s\n", ev.RunID, ev.EventType, ev.Payload)
-		}
+// Name returns "nop".
+func (Nop) Name() string { return "nop" }
 
-	case store.EventJobTransition:
-		var p store.JobTransitionPayload
-		if err := json.Unmarshal([]byte(ev.Payload), &p); err == nil {
-			statusStr := ""
-			if p.ExitCode != nil {
-				statusStr = fmt.Sprintf(" exit_code=%d", *p.ExitCode)
-			}
-			if p.Error != "" {
-				statusStr += fmt.Sprintf(" error=%q", p.Error)
-			}
-			line = fmt.Sprintf("[job %s/%s] %s -> %s%s\n",
-				p.RunID, p.JobName, p.FromState, p.ToState, statusStr)
-		} else {
-			line = fmt.Sprintf("[job %s] %s: %s\n", ev.RunID, ev.EventType, ev.Payload)
-		}
+// Emit discards e.
+func (Nop) Emit(context.Context, Event) error { return nil }
 
-	default:
-		line = fmt.Sprintf("[%s seq=%d] run=%s payload=%s\n",
-			ev.EventType, ev.Seq, ev.RunID, ev.Payload)
-	}
-
-	_, err := io.WriteString(s.writer, line)
-	return err
-}
-
-// DrainOnce fetches unacked events from the SQLite outbox, emits them to the sink,
-// and acknowledges them in the database. Returns count of events processed.
-func (s *StdoutSink) DrainOnce(ctx context.Context, db *store.DB) (int, error) {
-	events, err := db.FetchOutbox(ctx, 0, 100)
-	if err != nil {
-		return 0, fmt.Errorf("fetch outbox: %w", err)
-	}
-	if len(events) == 0 {
-		return 0, nil
-	}
-
-	var lastSeq int64
-	for _, ev := range events {
-		if err := s.Emit(ctx, ev); err != nil {
-			return 0, fmt.Errorf("emit event seq %d: %w", ev.Seq, err)
-		}
-		if ev.Seq > lastSeq {
-			lastSeq = ev.Seq
-		}
-	}
-
-	if lastSeq > 0 {
-		if err := db.AckOutbox(ctx, lastSeq); err != nil {
-			return len(events), fmt.Errorf("ack outbox seq %d: %w", lastSeq, err)
-		}
-	}
-
-	return len(events), nil
-}
-
-// Drain drains all currently pending outbox rows until empty.
-func (s *StdoutSink) Drain(ctx context.Context, db *store.DB) error {
-	for {
-		count, err := s.DrainOnce(ctx, db)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			return nil
-		}
-	}
-}
-
-// DrainLoop runs Drain at regular intervals until ctx is cancelled.
-func (s *StdoutSink) DrainLoop(ctx context.Context, db *store.DB, interval time.Duration) error {
-	if interval <= 0 {
-		interval = 50 * time.Millisecond
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		_ = s.Drain(ctx, db)
-		select {
-		case <-ctx.Done():
-			// Final drain before exiting
-			_ = s.Drain(context.Background(), db)
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-// Close flushes or cleans up sink resources.
-func (s *StdoutSink) Close() error {
-	if closer, ok := s.writer.(io.Closer); ok && s.writer != os.Stdout && s.writer != os.Stderr {
-		return closer.Close()
-	}
-	return nil
-}
+// Close does nothing.
+func (Nop) Close() error { return nil }

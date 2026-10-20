@@ -1,0 +1,18 @@
+version: 1
+checks:
+  jobs:
+    lint:
+      run: npm run lint
+      needs: [lint]
+    test:
+      run: npm test
+      needs: [biuld]
+    a:
+      run: echo a
+      needs: [b]
+    b:
+      run: echo b
+      needs: [c]
+    c:
+      run: echo c
+      needs: [a]

@@ -1,168 +1,113 @@
 package source
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
 )
 
-// LocalSource implements Source for a local directory or repository on disk.
-type LocalSource struct {
-	Runner       execx.Runner
-	SrcDir       string
-	Ref          string
-	SyncWorktree bool
+// Local is the source for `zeroci run`: it checks out the committed HEAD of
+// the git repository containing Dir through a mirror, never the dirty tree,
+// so local runs match what the hub would run.
+type Local struct {
+	Git     Git
+	Dir     string // the directory zeroci was invoked in
+	Mirrors *Mirrors
+	Warn    io.Writer // receives "warning: working tree has uncommitted changes; zeroci runs the committed HEAD <sha7>"
 }
 
-// NewLocalSource constructs a LocalSource.
-func NewLocalSource(runner execx.Runner, srcDir, ref string) *LocalSource {
-	if runner == nil {
-		runner = execx.OS{}
-	}
-	return &LocalSource{
-		Runner:       runner,
-		SrcDir:       srcDir,
-		Ref:          ref,
-		SyncWorktree: true,
-	}
-}
+// Name implements Source.
+func (l *Local) Name() string { return "local" }
 
-// Prepare checks out the source into targetDir. If SrcDir is a git repository,
-// it uses git clone --shared for instant copy-on-write object sharing, and copies
-// any uncommitted changes if SyncWorktree is enabled. If not a git repo, it copies
-// directory contents.
-func (s *LocalSource) Prepare(ctx context.Context, targetDir string) (*Checkout, error) {
-	if s.SrcDir == "" {
-		return nil, fmt.Errorf("source directory cannot be empty")
-	}
+// Checkout implements Source. It fetches the commit into the mirror of
+// LocalStorageRepo("local/<basename of toplevel>") and clones it into dir.
+// The returned Checkout holds the mirror until its Release is called.
+func (l *Local) Checkout(ctx context.Context, req Request, dir string) (Checkout, error) {
+	start := time.Now()
+	env := gitEnv()
 
-	absSrc, err := filepath.Abs(s.SrcDir)
+	out, err := l.Git.Run(ctx, l.Dir, env, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, fmt.Errorf("resolve src dir: %w", err)
-	}
-
-	gitDir := filepath.Join(absSrc, ".git")
-	isGit := false
-	if fi, err := os.Stat(gitDir); err == nil && (fi.IsDir() || !fi.IsDir()) { // git submodules or worktrees have .git as file
-		isGit = true
-	}
-
-	if !isGit {
-		// Non-git directory: copy directory contents recursively
-		if err := copyDir(absSrc, targetDir); err != nil {
-			return nil, fmt.Errorf("copy non-git dir: %w", err)
+		var exitErr *execx.ExitError
+		if errors.As(err, &exitErr) {
+			return Checkout{}, fmt.Errorf("%w: %s", ErrNotGitRepo, l.Dir)
 		}
-		return &Checkout{
-			Dir:    targetDir,
-			Commit: "local",
-		}, nil
+		return Checkout{}, err
 	}
+	top := strings.TrimSpace(string(out))
 
-	// Git repository: use shared clone
-	if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
-		return nil, fmt.Errorf("create target parent dir: %w", err)
-	}
-
-	cloneCmd := execx.Cmd{
-		Name: "git",
-		Args: []string{"clone", "--shared", absSrc, targetDir},
-	}
-	if err := s.Runner.Run(ctx, cloneCmd); err != nil {
-		return nil, fmt.Errorf("git clone --shared: %w", err)
-	}
-
-	if s.Ref != "" {
-		checkoutCmd := execx.Cmd{
-			Name: "git",
-			Args: []string{"-C", targetDir, "checkout", s.Ref},
-		}
-		if err := s.Runner.Run(ctx, checkoutCmd); err != nil {
-			return nil, fmt.Errorf("git checkout %s: %w", s.Ref, err)
-		}
-	}
-
-	var stdout bytes.Buffer
-	revCmd := execx.Cmd{
-		Name:   "git",
-		Args:   []string{"-C", targetDir, "rev-parse", "HEAD"},
-		Stdout: &stdout,
-	}
-	if err := s.Runner.Run(ctx, revCmd); err != nil {
-		return nil, fmt.Errorf("git rev-parse HEAD: %w", err)
-	}
-	commit := strings.TrimSpace(stdout.String())
-
-	// If SyncWorktree is enabled, copy dirty/uncommitted modifications into targetDir
-	if s.SyncWorktree {
-		if err := s.syncDirty(ctx, absSrc, targetDir); err != nil {
-			return nil, fmt.Errorf("sync dirty worktree: %w", err)
-		}
-	}
-
-	return &Checkout{
-		Dir:    targetDir,
-		Commit: commit,
-	}, nil
-}
-
-func (s *LocalSource) syncDirty(ctx context.Context, srcDir, targetDir string) error {
-	var stdout bytes.Buffer
-	diffCmd := execx.Cmd{
-		Name:   "git",
-		Args:   []string{"-C", srcDir, "diff", "HEAD"},
-		Stdout: &stdout,
-	}
-	if err := s.Runner.Run(ctx, diffCmd); err == nil && stdout.Len() > 0 {
-		applyCmd := execx.Cmd{
-			Name:  "git",
-			Args:  []string{"-C", targetDir, "apply", "--whitespace=nowarn"},
-			Stdin: &stdout,
-		}
-		_ = s.Runner.Run(ctx, applyCmd)
-	}
-	return nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		return copyFile(path, target, info.Mode())
-	})
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
+	out, err = l.Git.Run(ctx, top, env, nil, "rev-parse", "HEAD")
 	if err != nil {
-		return err
+		return Checkout{}, err
 	}
-	defer in.Close()
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+	head := strings.TrimSpace(string(out))
+	sha := req.SHA
+	if sha == "" {
+		sha = head
+	}
+	if !shaRe.MatchString(sha) {
+		return Checkout{}, fmt.Errorf("%w: %q", ErrBadSHA, sha)
 	}
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	out, err = l.Git.Run(ctx, top, env, nil, "status", "--porcelain")
 	if err != nil {
-		return err
+		return Checkout{}, err
 	}
-	defer out.Close()
+	dirty := len(strings.TrimSpace(string(out))) > 0
+	if dirty && l.Warn != nil {
+		fmt.Fprintf(l.Warn, "warning: working tree has uncommitted changes; zeroci runs the committed HEAD %s\n", sha[:7])
+	}
 
-	_, err = io.Copy(out, in)
-	return err
+	repo := LocalRepo(top)
+	stored := LocalStorageRepo(repo)
+	if _, err := l.Mirrors.Ensure(ctx, stored, top); err != nil {
+		return Checkout{}, err
+	}
+	if err := l.Mirrors.Fetch(ctx, stored, []string{sha}, nil); err != nil {
+		return Checkout{}, err
+	}
+	release, err := l.Mirrors.CloneShared(ctx, stored, sha, dir, req.RunAs)
+	if err != nil {
+		return Checkout{}, err
+	}
+	return Checkout{Dir: dir, Repo: repo, SHA: sha, Ref: req.Ref, Dirty: dirty, Duration: time.Since(start), Release: release}, nil
+}
+
+// LocalRepo returns the "local/<name>" repo for a checkout directory. The
+// directory name is mapped onto the slug alphabet, so the repo always forms a
+// valid mirror path and cache trust domain.
+func LocalRepo(dir string) string {
+	return "local/" + localName(filepath.Base(dir))
+}
+
+// localStorageOwner is the owner local repos are stored under on disk.
+// GitHub owners are letters, digits and inner hyphens, so no GitHub repo,
+// not even "local/<name>", shares a mirror or cache dir with a local repo.
+const localStorageOwner = "_local"
+
+// LocalStorageRepo returns the repo naming the mirror and cache dirs of the
+// LocalRepo result repo: "local/<name>" becomes "_local/<name>". Run records
+// and trust domains keep "local/<name>".
+func LocalStorageRepo(repo string) string {
+	return localStorageOwner + "/" + strings.TrimPrefix(repo, "local/")
+}
+
+// localName maps a directory name onto the slug alphabet.
+func localName(base string) string {
+	b := []byte(base)
+	for i, c := range b {
+		if !slugByte(c) {
+			b[i] = '-'
+		}
+	}
+	if name := string(b); name != "." && name != ".." && name != "" {
+		return name
+	}
+	return "root"
 }

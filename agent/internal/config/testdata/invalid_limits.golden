@@ -1,0 +1,10 @@
+invalid_limits.yml:4: error: checks.limits.memory: memory "0G": must be greater than zero
+  fix: use a size such as 4G or 512M
+invalid_limits.yml:7: error: checks.jobs.test.run: run must not be blank
+  fix: give the command to run
+invalid_limits.yml:8: error: checks.jobs.test.timeout: duration "0s": must be greater than zero
+  fix: use a duration such as 90s, 10m or 1h
+invalid_limits.yml:13: error: checks.setup[0].cache.paths[0]: cache path "/var/cache/npm" must be relative to the repository root and stay inside it
+  fix: use a path inside the repository, for example node_modules
+invalid_limits.yml:13: error: checks.setup[0].cache.paths[1]: cache path "../outside" must be relative to the repository root and stay inside it
+  fix: use a path inside the repository, for example node_modules

@@ -1,237 +1,430 @@
 package detect
 
 import (
+	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
 )
 
-func TestDetectGo(t *testing.T) {
-	dir := t.TempDir()
-	goMod := `module example.com/myapp
-
-go 1.24
-`
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+// fixtureDir returns examples/detect/<name>, located from this file so the
+// test does not depend on the working directory.
+func fixtureDir(t *testing.T, name string) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
 	}
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "examples", "detect", name)
+}
 
-	res, err := Detect(dir)
+// fixtureNames lists every dir under examples/detect and checks that the
+// fixtures the detection rules are pinned against are all there.
+func fixtureNames(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(fixtureDir(t, ""))
 	if err != nil {
-		t.Fatalf("Detect failed: %v", err)
+		t.Fatal(err)
 	}
-	if res.Ecosystem != EcosystemGo {
-		t.Errorf("expected %s, got %s", EcosystemGo, res.Ecosystem)
-	}
-	if res.Config.Version != 1 {
-		t.Errorf("expected version 1, got %d", res.Config.Version)
-	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "go mod download" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
-	}
-	expectedJobs := []string{"fmt", "vet", "test"}
-	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
-			t.Errorf("expected check job %q not found", job)
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
 		}
 	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
+	for _, want := range []string{"pnpm-turbo", "npm", "yarn", "bun", "go", "rust", "python-uv", "python-pip", "compose-postgres", "empty"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("fixture examples/detect/%s is missing", want)
+		}
+	}
+	return names
+}
+
+func detectFixture(t *testing.T, name string) *Result {
+	t.Helper()
+	r, err := DetectDir(fixtureDir(t, name))
+	if err != nil {
+		t.Fatalf("DetectDir(%s): %v", name, err)
+	}
+	return r
+}
+
+func detectFS(t *testing.T, fsys fs.FS) *Result {
+	t.Helper()
+	r, err := Detect(fsys)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	return r
+}
+
+func checksOf(t *testing.T, r *Result) *config.Checks {
+	t.Helper()
+	if r.Config.ZeroCIConfig.Checks == nil {
+		t.Fatal("no checks in detected config")
+	}
+	return r.Config.ZeroCIConfig.Checks
+}
+
+func jobNames(r *Result) []string {
+	if r.Config.ZeroCIConfig.Checks == nil {
+		return nil
+	}
+	return sortedKeys(r.Config.ZeroCIConfig.Checks.Jobs)
+}
+
+func mustJob(t *testing.T, r *Result, name string) config.Job {
+	t.Helper()
+	job, ok := checksOf(t, r).Jobs[name]
+	if !ok {
+		t.Fatalf("job %q not detected; jobs: %v", name, jobNames(r))
+	}
+	return job
+}
+
+func setupRuns(r *Result) []string {
+	var runs []string
+	for _, s := range r.Config.ZeroCIConfig.Checks.Setup {
+		runs = append(runs, s.Run)
+	}
+	return runs
+}
+
+func file(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s)} }
+
+func TestDetectFixtures(t *testing.T) {
+	for _, name := range fixtureNames(t) {
+		t.Run(name, func(t *testing.T) {
+			dir := fixtureDir(t, name)
+			r, err := DetectDir(dir)
+			if name == "empty" {
+				if !errors.Is(err, ErrNothingDetected) {
+					t.Fatalf("DetectDir(empty) error = %v, want ErrNothingDetected", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DetectDir: %v", err)
+			}
+			out, err := Render(r)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			testutil.GoldenFile(t, filepath.Join(dir, "expected.zeroci.yml"), out)
+			if _, diags := config.Parse(out, config.ParseOptions{}); diags.HasErrors() {
+				t.Fatalf("rendered output does not parse:\n%s\n%s", diags.Format("expected.zeroci.yml"), out)
+			}
+		})
+	}
+}
+
+func TestDetectGo(t *testing.T) {
+	r := detectFixture(t, "go")
+	if got, want := jobNames(r), []string{"go-test", "go-vet"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("jobs = %v, want %v", got, want)
+	}
+	if got := mustJob(t, r, "go-vet").Run; got != "go vet ./..." {
+		t.Errorf("go-vet run = %q", got)
+	}
+	if got := mustJob(t, r, "go-test").Run; got != "go test ./..." {
+		t.Errorf("go-test run = %q", got)
+	}
+	setup := checksOf(t, r).Setup
+	if len(setup) != 1 || setup[0].Run != "go mod download" {
+		t.Fatalf("setup = %+v", setup)
+	}
+	if got, want := setup[0].Cache.Key, []string{"go.sum"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cache key = %v, want %v", got, want)
+	}
+	if got, want := setup[0].Cache.Paths, []string{"~/go/pkg/mod", "~/.cache/go-build"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cache paths = %v, want %v", got, want)
 	}
 }
 
 func TestDetectRust(t *testing.T) {
-	dir := t.TempDir()
-	cargoToml := `[package]
-name = "myapp"
-version = "0.1.0"
-edition = "2021"
-`
-	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte(cargoToml), 0o600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+	r := detectFixture(t, "rust")
+	if got, want := jobNames(r), []string{"cargo-test", "clippy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("jobs = %v, want %v", got, want)
 	}
-
-	res, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect failed: %v", err)
+	if got := mustJob(t, r, "clippy").Run; got != "cargo clippy --all-targets -- -D warnings" {
+		t.Errorf("clippy run = %q", got)
 	}
-	if res.Ecosystem != EcosystemRust {
-		t.Errorf("expected %s, got %s", EcosystemRust, res.Ecosystem)
+	if got := mustJob(t, r, "cargo-test").Run; got != "cargo test" {
+		t.Errorf("cargo-test run = %q", got)
 	}
-	expectedJobs := []string{"fmt", "check", "test"}
-	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
-			t.Errorf("expected check job %q not found", job)
-		}
+	setup := checksOf(t, r).Setup
+	if len(setup) != 1 || setup[0].Run != "cargo fetch" {
+		t.Fatalf("setup = %+v", setup)
 	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
+	if got, want := setup[0].Cache.Key, []string{"Cargo.lock"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cache key = %v, want %v", got, want)
 	}
-}
-
-func TestDetectPnpmTurbo(t *testing.T) {
-	dir := t.TempDir()
-	pkgJSON := `{
-  "name": "monorepo",
-  "scripts": {
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test"
-  }
-}`
-	turboJSON := `{
-  "$schema": "https://turbo.build/schema.json",
-  "tasks": {
-    "lint": {},
-    "typecheck": {},
-    "test": {}
-  }
-}`
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0o600); err != nil {
-		t.Fatalf("WriteFile package.json failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(turboJSON), 0o600); err != nil {
-		t.Fatalf("WriteFile turbo.json failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'"), 0o600); err != nil {
-		t.Fatalf("WriteFile pnpm-lock.yaml failed: %v", err)
-	}
-
-	res, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect failed: %v", err)
-	}
-	if res.Ecosystem != EcosystemNodePnpm {
-		t.Errorf("expected %s, got %s", EcosystemNodePnpm, res.Ecosystem)
-	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "pnpm install --frozen-lockfile" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
-	}
-	expectedJobs := []string{"lint", "typecheck", "unit"}
-	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
-			t.Errorf("expected check job %q not found in checks: %v", job, res.Config.Checks)
-		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
-	}
-}
-
-func TestDetectNpm(t *testing.T) {
-	dir := t.TempDir()
-	pkgJSON := `{
-  "name": "node-app",
-  "scripts": {
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "test": "jest"
-  }
-}`
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0o600); err != nil {
-		t.Fatalf("WriteFile package.json failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatalf("WriteFile package-lock.json failed: %v", err)
-	}
-
-	res, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect failed: %v", err)
-	}
-	if res.Ecosystem != EcosystemNodeNpm {
-		t.Errorf("expected %s, got %s", EcosystemNodeNpm, res.Ecosystem)
-	}
-	if len(res.Config.Setup) != 1 || res.Config.Setup[0] != "npm ci" {
-		t.Errorf("unexpected setup: %v", res.Config.Setup)
-	}
-	expectedJobs := map[string]string{
-		"lint":      "npm run lint",
-		"typecheck": "npm run typecheck",
-		"unit":      "npm test",
-	}
-	for name, wantRun := range expectedJobs {
-		job, ok := res.Config.Checks[name]
-		if !ok {
-			t.Errorf("expected job %q not found", name)
-		} else if job.Run != wantRun {
-			t.Errorf("job %q run = %q, want %q", name, job.Run, wantRun)
-		}
-	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
+	if got, want := setup[0].Cache.Paths, []string{"~/.cargo/registry", "target"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cache paths = %v, want %v", got, want)
 	}
 }
 
 func TestDetectPython(t *testing.T) {
-	dir := t.TempDir()
-	pyproject := `[project]
-name = "my-py-app"
-version = "0.1.0"
+	t.Run("uv", func(t *testing.T) {
+		r := detectFixture(t, "python-uv")
+		setup := checksOf(t, r).Setup
+		if len(setup) != 1 || setup[0].Run != "uv sync --frozen" {
+			t.Fatalf("setup = %+v", setup)
+		}
+		if got, want := setup[0].Cache.Key, []string{"uv.lock"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("cache key = %v, want %v", got, want)
+		}
+		if got, want := setup[0].Cache.Paths, []string{".venv"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("cache paths = %v, want %v", got, want)
+		}
+		if got := mustJob(t, r, "ruff").Run; got != "uv run ruff check ." {
+			t.Errorf("ruff run = %q", got)
+		}
+		if got := mustJob(t, r, "pytest").Run; got != "uv run pytest" {
+			t.Errorf("pytest run = %q", got)
+		}
+	})
+	t.Run("pip requirements", func(t *testing.T) {
+		r := detectFixture(t, "python-pip")
+		setup := checksOf(t, r).Setup
+		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -r requirements.txt" {
+			t.Fatalf("setup = %+v", setup)
+		}
+		if got, want := setup[0].Cache.Key, []string{"requirements.txt"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("cache key = %v, want %v", got, want)
+		}
+		if got, want := jobNames(r), []string{"pytest"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("jobs = %v, want %v (no ruff config)", got, want)
+		}
+		if got := mustJob(t, r, "pytest").Run; got != ".venv/bin/pytest" {
+			t.Errorf("pytest run = %q", got)
+		}
+	})
+	t.Run("pip pyproject", func(t *testing.T) {
+		r := detectFS(t, fstest.MapFS{
+			"pyproject.toml":   file("[project]\nname = \"x\"\n"),
+			"requirements.txt": file("pytest\n"),
+			"ruff.toml":        file("line-length = 100\n"),
+		})
+		setup := checksOf(t, r).Setup
+		if len(setup) != 1 || setup[0].Run != "python -m venv .venv && .venv/bin/pip install -e ." {
+			t.Fatalf("setup = %+v", setup)
+		}
+		if got, want := setup[0].Cache.Key, []string{"pyproject.toml"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("cache key = %v, want %v", got, want)
+		}
+		if got := mustJob(t, r, "ruff").Run; got != ".venv/bin/ruff check ." {
+			t.Errorf("ruff run = %q", got)
+		}
+	})
 
-[tool.ruff]
-line-length = 88
+	gating := []struct {
+		name       string
+		fsys       fstest.MapFS
+		ruff, test bool
+	}{
+		{"no ruff config, no tests", fstest.MapFS{"pyproject.toml": file("[project]\nname = \"x\"\n# [tool.ruff] in a comment\n[tool.ruffle]\n")}, false, false},
+		{"tool.ruff table", fstest.MapFS{"pyproject.toml": file("[tool.ruff]\n")}, true, false},
+		{"tool.ruff subtable", fstest.MapFS{"pyproject.toml": file("  [tool.ruff.lint]\n")}, true, false},
+		{".ruff.toml", fstest.MapFS{"requirements.txt": file(""), ".ruff.toml": file("")}, true, false},
+		{"tests dir", fstest.MapFS{"requirements.txt": file(""), "tests/test_a.py": file("")}, false, true},
+		{"test dir", fstest.MapFS{"requirements.txt": file(""), "test/test_a.py": file("")}, false, true},
+		{"tests is a file", fstest.MapFS{"requirements.txt": file(""), "tests": file("")}, false, false},
+	}
+	for _, tc := range gating {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.ruff && !tc.test {
+				if _, err := Detect(tc.fsys); !errors.Is(err, ErrNothingDetected) {
+					t.Errorf("error = %v, want ErrNothingDetected (setup but no jobs)", err)
+				}
+				return
+			}
+			r := detectFS(t, tc.fsys)
+			jobs := checksOf(t, r).Jobs
+			if _, ok := jobs["ruff"]; ok != tc.ruff {
+				t.Errorf("ruff job present = %v, want %v", ok, tc.ruff)
+			}
+			if _, ok := jobs["pytest"]; ok != tc.test {
+				t.Errorf("pytest job present = %v, want %v", ok, tc.test)
+			}
+		})
+	}
+}
 
-[tool.pytest.ini_options]
-minversion = "7.0"
+func TestDetectComposePostgres(t *testing.T) {
+	r := detectFixture(t, "compose-postgres")
+	svc := checksOf(t, r).Services
+	if svc == nil || svc.Postgres == nil {
+		t.Fatal("no postgres service detected")
+	}
+	if svc.Postgres.Image != "postgres:16-alpine" || !svc.Postgres.Tmpfs {
+		t.Errorf("postgres = %+v, want postgres:16-alpine on tmpfs", svc.Postgres)
+	}
+	if !containsSubstring(r.Notes, "postgres") {
+		t.Errorf("notes %q do not mention postgres", r.Notes)
+	}
+	if !slices.Contains(r.Sources, "docker-compose.yml") {
+		t.Errorf("sources %v lack docker-compose.yml", r.Sources)
+	}
 
-[tool.mypy]
-strict = true
-`
-	reqs := "pytest>=7.0\nruff>=0.1.0\nmypy>=1.0\n"
-	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(pyproject), 0o600); err != nil {
-		t.Fatalf("WriteFile pyproject.toml failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte(reqs), 0o600); err != nil {
-		t.Fatalf("WriteFile requirements.txt failed: %v", err)
-	}
+	t.Run("no postgres adds nothing", func(t *testing.T) {
+		r := detectFS(t, fstest.MapFS{
+			"go.mod":             file("module x\n"),
+			"docker-compose.yml": file("services:\n  cache:\n    image: redis:7\n"),
+		})
+		if svc := checksOf(t, r).Services; svc != nil {
+			t.Errorf("services = %+v, want none", svc)
+		}
+		if slices.Contains(r.Sources, "docker-compose.yml") || containsSubstring(r.Notes, "postgres") {
+			t.Errorf("compose without postgres left a trace: sources %v notes %q", r.Sources, r.Notes)
+		}
+	})
+	t.Run("first sorted file with postgres wins", func(t *testing.T) {
+		r := detectFS(t, fstest.MapFS{
+			"go.mod":                  file("module x\n"),
+			"compose.yaml":            file("services:\n  db:\n    image: postgres:15\n"),
+			"docker-compose.dev.yml":  file("services:\n  db:\n    image: redis:7\n"),
+			"docker-compose.test.yml": file("services:\n  db:\n    image: postgres:16.2\n"),
+			"other.yml":               file("services:\n  db:\n    image: postgres:14\n"),
+		})
+		if got := checksOf(t, r).Services.Postgres.Image; got != "postgres:15-alpine" {
+			t.Errorf("image = %q, want postgres:15-alpine from compose.yaml", got)
+		}
+	})
+	t.Run("non-major tags stay verbatim", func(t *testing.T) {
+		for image, want := range map[string]string{
+			"postgres:16":           "postgres:16-alpine",
+			"postgres:16.2":         "postgres:16.2",
+			"postgres:16-bookworm":  "postgres:16-bookworm",
+			"postgres":              "postgres",
+			"postgres@sha256:abc12": "postgres@sha256:abc12",
+		} {
+			if got := postgresImage(image); got != want {
+				t.Errorf("postgresImage(%q) = %q, want %q", image, got, want)
+			}
+		}
+	})
+	t.Run("compose alone detects nothing", func(t *testing.T) {
+		_, err := Detect(fstest.MapFS{"docker-compose.yml": file("services:\n  db:\n    image: postgres:16\n")})
+		if !errors.Is(err, ErrNothingDetected) {
+			t.Fatalf("error = %v, want ErrNothingDetected", err)
+		}
+	})
+}
 
-	res, err := Detect(dir)
-	if err != nil {
-		t.Fatalf("Detect failed: %v", err)
+func TestDetectNothing(t *testing.T) {
+	if _, err := DetectDir(t.TempDir()); !errors.Is(err, ErrNothingDetected) {
+		t.Errorf("empty dir: error = %v, want ErrNothingDetected", err)
 	}
-	if res.Ecosystem != EcosystemPython {
-		t.Errorf("expected %s, got %s", EcosystemPython, res.Ecosystem)
+	if _, err := Detect(fstest.MapFS{"README.md": file("# hello\n")}); !errors.Is(err, ErrNothingDetected) {
+		t.Errorf("README.md only: error = %v, want ErrNothingDetected", err)
 	}
-	expectedJobs := []string{"lint", "typecheck", "test"}
-	for _, job := range expectedJobs {
-		if _, ok := res.Config.Checks[job]; !ok {
-			t.Errorf("expected check job %q not found", job)
+	_, err := Detect(fstest.MapFS{
+		"package.json":      file(`{"scripts": {"build": "tsc", "test": "echo \"Error: no test specified\" && exit 1"}}`),
+		"package-lock.json": file("{}"),
+	})
+	if !errors.Is(err, ErrNothingDetected) {
+		t.Errorf("node without matching scripts: error = %v, want ErrNothingDetected", err)
+	}
+}
+
+func TestDetectDeterministic(t *testing.T) {
+	var first []byte
+	for i := range 20 {
+		out, err := Render(detectFixture(t, "pnpm-turbo"))
+		if err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		if i == 0 {
+			first = out
+			continue
+		}
+		if !bytes.Equal(out, first) {
+			t.Fatalf("run %d differs:\n%s\n--- first ---\n%s", i, out, first)
 		}
 	}
-	if err := config.ValidateSemantics(res.Config); err != nil {
-		t.Errorf("ValidateSemantics failed on generated config: %v", err)
+}
+
+func TestDetectNeverDeploys(t *testing.T) {
+	for _, name := range fixtureNames(t) {
+		if name == "empty" {
+			continue
+		}
+		r := detectFixture(t, name)
+		if len(r.Config.Deployments) != 0 {
+			t.Errorf("%s: deployments = %v, want none", name, r.Config.Deployments)
+		}
 	}
 }
 
-func TestDetectEmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	_, err := Detect(dir)
-	if !errors.Is(err, ErrNoEcosystemDetected) {
-		t.Errorf("expected ErrNoEcosystemDetected, got %v", err)
+func TestDetectMergeOrder(t *testing.T) {
+	r := detectFS(t, fstest.MapFS{
+		"requirements.txt":  file(""),
+		"Cargo.toml":        file(""),
+		"go.mod":            file("module x\n"),
+		"package.json":      file(`{"scripts": {"lint": "eslint ."}}`),
+		"package-lock.json": file("{}"),
+	})
+	want := []string{"npm ci", "go mod download", "cargo fetch", "python -m venv .venv && .venv/bin/pip install -r requirements.txt"}
+	if got := setupRuns(r); !reflect.DeepEqual(got, want) {
+		t.Errorf("setup order = %q, want %q", got, want)
+	}
+	wantSources := []string{"Cargo.toml", "go.mod", "package-lock.json", "package.json", "requirements.txt"}
+	if !reflect.DeepEqual(r.Sources, wantSources) {
+		t.Errorf("sources = %v, want %v", r.Sources, wantSources)
 	}
 }
 
-func TestFormatYAML(t *testing.T) {
-	cfg := &config.Config{
-		Version: 1,
-		Setup:   []string{"npm ci"},
-		Checks: config.ConfigChecks{
-			"lint": config.CheckJob{Run: "npm run lint"},
-		},
+func TestDetectJobCollisionPrefix(t *testing.T) {
+	saved := ecosystems
+	t.Cleanup(func() { ecosystems = saved })
+	stub := func(eco string) func(fs.FS) (*partial, error) {
+		return func(fs.FS) (*partial, error) {
+			return &partial{ecosystem: eco, jobs: map[string]config.Job{"test": {Run: eco + " test"}}}, nil
+		}
 	}
-	data, err := FormatYAML(cfg)
-	if err != nil {
-		t.Fatalf("FormatYAML failed: %v", err)
+	ecosystems = []func(fs.FS) (*partial, error){stub("node"), stub("go")}
+	r := detectFS(t, fstest.MapFS{})
+	if got, want := jobNames(r), []string{"go-test", "test"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("jobs = %v, want %v", got, want)
 	}
-	parsed, err := config.Parse(data)
-	if err != nil {
-		t.Fatalf("config.Parse failed on formatted YAML: %v", err)
+	if got := mustJob(t, r, "test").Run; got != "node test" {
+		t.Errorf("earlier ecosystem keeps the bare name, got run %q", got)
 	}
-	if parsed.Version != 1 || len(parsed.Checks) != 1 {
-		t.Errorf("parsed config mismatch: %+v", parsed)
+	if got := mustJob(t, r, "go-test").Run; got != "go test" {
+		t.Errorf("later ecosystem gets the prefix, got run %q", got)
 	}
+}
+
+func TestDetectMalformedInput(t *testing.T) {
+	for name, fsys := range map[string]fstest.MapFS{
+		"package.json":        {"package.json": file("{")},
+		"turbo.json":          {"package.json": file("{}"), "turbo.json": file("{")},
+		"pnpm-workspace.yaml": {"package.json": file("{}"), "pnpm-workspace.yaml": file("packages: {")},
+		"docker-compose.yml":  {"go.mod": file(""), "docker-compose.yml": file("services: [")},
+	} {
+		_, err := Detect(fsys)
+		if err == nil || errors.Is(err, ErrNothingDetected) || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: error = %v, want a parse error naming the file", name, err)
+		}
+	}
+}
+
+func containsSubstring(ss []string, sub string) bool {
+	for _, s := range ss {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }

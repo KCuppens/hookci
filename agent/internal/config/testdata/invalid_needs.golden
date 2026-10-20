@@ -1,0 +1,6 @@
+invalid_needs.yml:6: error: checks.jobs.lint.needs[0]: job "lint" cannot need itself
+  fix: remove "lint" from its own needs
+invalid_needs.yml:9: error: checks.jobs.test.needs[0]: unknown job "biuld"
+  fix: known jobs: a, b, c, lint, test
+invalid_needs.yml:12: error: checks.jobs.a.needs[0]: cycle: a -> b -> c -> a
+  fix: remove one of these needs so the jobs can run in order

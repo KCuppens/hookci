@@ -1,0 +1,15 @@
+# package manager: bun (bun.lockb)
+
+version: 1
+checks:
+  setup:
+    - run: bun install --frozen-lockfile
+      cache:
+        key: [bun.lockb]
+        paths: [node_modules]
+  jobs:
+    lint:
+      run: bun run lint
+      annotate: eslint
+    test:
+      run: bun run test

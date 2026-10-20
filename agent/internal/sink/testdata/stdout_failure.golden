@@ -1,0 +1,8 @@
+[12:00:00] run 01HXRUN0000000000000000000 running
+[12:00:00] lint     running
+[12:00:02] lint     failed 2.1s
+  | src/a.ts: 1 problem
+  | error: unused variable x
+  | lint failed
+  reason: exit 1
+[12:00:02] run 01HXRUN0000000000000000000 failed (1 job, 2.0s)

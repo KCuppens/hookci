@@ -1,0 +1,21 @@
+version: 1
+checks:
+  trust: everyone
+  limits:
+    cpus: 0
+    memory: 4GB
+    tasks: 8
+    timeout: 10
+  setup: npm ci
+  jobs:
+    Build:
+      run: make
+    test:
+      run: go test ./...
+      annotate: eslnt
+      needs: lint
+deployments:
+  production:
+    env_file: etc/production.env
+    health:
+      timeout: 1d

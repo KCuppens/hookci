@@ -23,9 +23,9 @@ func NewRunID() string {
 //
 // The ID is 26 Crockford base32 characters: the first 10 encode t's Unix
 // millisecond timestamp as 48 bits big-endian, and the remaining 16 encode
-// 10 random bytes (80 bits). If r returns an error or fewer than 10 bytes,
-// the unread trailing bytes stay zero; NewRunIDAt never returns an error,
-// since crypto/rand.Reader does not fail on supported platforms.
+// 10 random bytes (80 bits). It panics if r cannot supply 10 bytes: an ID
+// without entropy could collide, and crypto/rand.Reader does not fail on
+// supported platforms.
 func NewRunIDAt(t time.Time, r io.Reader) string {
 	var ts [6]byte
 	ms := uint64(t.UnixMilli())
@@ -37,7 +37,9 @@ func NewRunIDAt(t time.Time, r io.Reader) string {
 	ts[5] = byte(ms)
 
 	var entropy [10]byte
-	_, _ = io.ReadFull(r, entropy[:])
+	if _, err := io.ReadFull(r, entropy[:]); err != nil {
+		panic("ids: read entropy: " + err.Error())
+	}
 
 	var buf [16]byte
 	copy(buf[:6], ts[:])

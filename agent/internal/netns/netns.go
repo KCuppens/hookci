@@ -1,161 +1,237 @@
+// Package netns gives a run a private network namespace whose only exit is
+// the run's egress proxy. The agent creates /run/netns/zc-<run> with ip,
+// brings up loopback and starts pasta without --config-net, which forwards
+// 127.0.0.1:InNSProxyPort inside the namespace to the proxy's host port and
+// gives the namespace no outbound route. Jobs join the namespace through
+// isolation.Spec.NetNSPath and reach the proxy through ProxyEnv.
+//
+// Without pasta, ip or root, trusted runs fall back to the systemd
+// IPAddressDeny set (ModeDeny) and untrusted runs refuse to start.
 package netns
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
 )
 
-var (
-	// ErrUntrustedRequiresNetns indicates an untrusted run cannot execute without netns isolation.
-	ErrUntrustedRequiresNetns = errors.New("untrusted runs refuse to run without network namespace isolation")
+// Mode is how a run's network is restricted.
+type Mode string
+
+const (
+	ModeNetns Mode = "netns" // private namespace, egress only via proxy
+	ModeDeny  Mode = "deny"  // no namespace, systemd IPAddressDeny set, no proxy
+	ModeHost  Mode = "host"  // isolation none: host network, no restriction
 )
 
-// DefaultIPAddressDeny contains the CIDR ranges denied via systemd IPAddressDeny
-// when pasta is unavailable and fallback isolation is active.
-var DefaultIPAddressDeny = []string{
-	"127.0.0.0/8",
-	"10.0.0.0/8",
-	"172.16.0.0/12",
-	"192.168.0.0/16",
-	"169.254.0.0/16",
-	"100.64.0.0/10",
-	"::1/128",
-	"fc00::/7",
-	"fe80::/10",
-}
+// ErrNetnsRequired is returned by Decide for an untrusted run on a host
+// that cannot create a private namespace.
+var ErrNetnsRequired = errors.New("untrusted run requires a private network namespace, but pasta or ip is not available on this host")
 
-// Namespace describes a per-run network namespace or active fallback policy.
-type Namespace struct {
-	Name          string
-	Path          string
-	ProxyPort     int
-	Fallback      bool
-	IPAddressDeny []string
-}
+const (
+	nsPrefix     = "zc-"
+	maxNSNameLen = 15
 
-// Manager orchestrates netns creation with ip and pasta or fallback IPAddressDeny.
-type Manager struct {
-	Runner execx.Runner
-}
+	defaultNetnsDir     = "/run/netns"
+	defaultReadyTimeout = 5 * time.Second
+	pastaGrace          = 2 * time.Second
+)
 
-// NewManager constructs a netns Manager.
-func NewManager(runner execx.Runner) *Manager {
-	if runner == nil {
-		runner = execx.OS{}
-	}
-	return &Manager{Runner: runner}
-}
-
-// NetnsName computes the network namespace name for a run: zc-<runID>.
-func NetnsName(runID string) string {
-	return "zc-" + runID
-}
-
-// NetnsPath computes the network namespace filesystem path for a run.
-func NetnsPath(runID string) string {
-	return filepath.Join("/run/netns", NetnsName(runID))
-}
-
-// HasTools checks whether the host system provides the required binaries: ip and pasta.
-func (m *Manager) HasTools() bool {
-	if _, err := execx.LookPath("ip"); err != nil {
-		return false
-	}
-	if _, err := execx.LookPath("pasta"); err != nil {
-		return false
-	}
-	return true
-}
-
-// Create provisions a dedicated network namespace for runID with pasta forwarding,
-// or activates fallback restrictions if tools are absent.
-func (m *Manager) Create(ctx context.Context, runID string, proxyPort int, trustDomain egress.TrustDomain) (*Namespace, error) {
-	hasTools := m.HasTools()
-
-	if !hasTools {
-		// Untrusted runs refuse to run without netns
-		if trustDomain == egress.TrustDomainUntrusted {
-			return nil, ErrUntrustedRequiresNetns
+// NSName returns "zc-" + isolation.SanitizeUnitPart(runID), lower-cased with
+// every byte outside [a-z0-9-] mapped to '-', truncated to at most 15 bytes.
+// Truncation keeps the tail: run IDs start with a millisecond timestamp and
+// end in random characters, so the tail keeps concurrent runs apart.
+func NSName(runID string) string {
+	part := []byte(strings.ToLower(isolation.SanitizeUnitPart(runID)))
+	for i, c := range part {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			part[i] = '-'
 		}
+	}
+	if keep := maxNSNameLen - len(nsPrefix); len(part) > keep {
+		part = part[len(part)-keep:]
+	}
+	return nsPrefix + string(part)
+}
 
-		// Fallback for trusted/local runs: no netns, IPAddressDeny set
-		return &Namespace{
-			Fallback:      true,
-			IPAddressDeny: DefaultIPAddressDeny,
-		}, nil
+// Decide picks the mode. isolationName is the selected Isolation.Name().
+// "none" -> ModeHost. available=false and trusted -> ModeDeny plus a
+// warning. available=false and untrusted -> ErrNetnsRequired.
+func Decide(isolationName string, trusted, available bool) (Mode, string, error) {
+	switch {
+	case isolationName == "none":
+		return ModeHost, "", nil
+	case available:
+		return ModeNetns, "", nil
+	case trusted:
+		return ModeDeny, "pasta or ip is not available on this host: trusted run falls back to the systemd IPAddressDeny set with no egress proxy", nil
+	default:
+		return "", "", ErrNetnsRequired
+	}
+}
+
+// Manager creates and removes per-run namespaces. The zero value uses the
+// real ip, pasta and /run/netns.
+type Manager struct {
+	Runner       execx.Runner                                           // runs ip commands; default execx.OS{}
+	Start        func(context.Context, execx.Cmd) (*execx.Group, error) // default execx.StartGroup, fake in tests
+	LookPath     func(string) (string, error)                           // default exec.LookPath
+	NetnsDir     string                                                 // default "/run/netns"
+	ReadyTimeout time.Duration                                          // default 5s
+
+	euid func() int // default os.Geteuid
+}
+
+// Available reports whether ip and pasta are on PATH and we are root.
+// The reason string explains what is missing.
+func (m *Manager) Available() (bool, string) {
+	lookPath := m.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	euid := m.euid
+	if euid == nil {
+		euid = os.Geteuid
+	}
+	var missing []string
+	for _, bin := range []string{"ip", "pasta"} {
+		if _, err := lookPath(bin); err != nil {
+			missing = append(missing, bin+" not found on PATH")
+		}
+	}
+	if id := euid(); id != 0 {
+		missing = append(missing, fmt.Sprintf("not running as root (euid %d)", id))
+	}
+	if len(missing) > 0 {
+		return false, strings.Join(missing, "; ")
+	}
+	return true, ""
+}
+
+// Network is one run's network setup.
+type Network struct {
+	RunID         string
+	Mode          Mode
+	NSName        string // "" unless ModeNetns
+	NSPath        string // "/run/netns/zc-<run>" or ""
+	HostProxyPort int    // proxy port on the host side, 0 unless ModeNetns
+	pasta         *execx.Group
+}
+
+// Setup creates the namespace and pasta for ModeNetns. For other modes it
+// returns a Network with no side effects. pidFile is <rundir>/pasta.pid.
+// On failure nothing is left behind.
+func (m *Manager) Setup(ctx context.Context, runID string, mode Mode, hostProxyPort int, pidFile string) (*Network, error) {
+	switch mode {
+	case ModeDeny, ModeHost:
+		return &Network{RunID: runID, Mode: mode}, nil
+	case ModeNetns:
+	default:
+		return nil, fmt.Errorf("netns: unknown mode %q", mode)
 	}
 
-	nsName := NetnsName(runID)
-	nsPath := NetnsPath(runID)
-
-	// 1. Create network namespace: ip netns add zc-<run>
-	addCmd := execx.Cmd{
-		Name: "ip",
-		Args: []string{"netns", "add", nsName},
+	name := NSName(runID)
+	cleanupCtx := context.WithoutCancel(ctx)
+	if err := m.ip(ctx, "netns", "add", name); err != nil {
+		return nil, fmt.Errorf("netns: create %s: %w", name, err)
 	}
-	if err := m.Runner.Run(ctx, addCmd); err != nil {
-		return nil, fmt.Errorf("ip netns add %s: %w", nsName, err)
+	if err := m.ip(ctx, "-n", name, "link", "set", "lo", "up"); err != nil {
+		return nil, errors.Join(fmt.Errorf("netns: bring up loopback in %s: %w", name, err), m.RemoveNamespace(cleanupCtx, name))
 	}
-
-	// 2. Bring up loopback: ip -n zc-<run> link set lo up
-	loCmd := execx.Cmd{
-		Name: "ip",
-		Args: []string{"-n", nsName, "link", "set", "lo", "up"},
+	nsPath := filepath.Join(m.netnsDir(), name)
+	pasta, err := m.startPasta(ctx, nsPath, hostProxyPort, pidFile)
+	if err != nil {
+		return nil, errors.Join(err, m.RemoveNamespace(cleanupCtx, name))
 	}
-	if err := m.Runner.Run(ctx, loCmd); err != nil {
-		_ = m.Destroy(ctx, runID)
-		return nil, fmt.Errorf("bring up loopback in %s: %w", nsName, err)
-	}
-
-	// 3. Connect pasta forwarding port 3128 in netns to proxyPort on host loopback
-	// pasta --config-net --netns /run/netns/zc-<run> -T 3128:127.0.0.1:<proxyPort>
-	forwardSpec := fmt.Sprintf("3128:127.0.0.1:%d", proxyPort)
-	if proxyPort == 3128 {
-		forwardSpec = "3128"
-	}
-
-	pastaCmd := execx.Cmd{
-		Name: "pasta",
-		Args: []string{
-			"--config-net",
-			"--netns", nsPath,
-			"-T", forwardSpec,
-		},
-	}
-	if err := m.Runner.Run(ctx, pastaCmd); err != nil {
-		_ = m.Destroy(ctx, runID)
-		return nil, fmt.Errorf("attach pasta to %s: %w", nsName, err)
-	}
-
-	return &Namespace{
-		Name:      nsName,
-		Path:      nsPath,
-		ProxyPort: 3128,
-		Fallback:  false,
+	return &Network{
+		RunID:         runID,
+		Mode:          ModeNetns,
+		NSName:        name,
+		NSPath:        nsPath,
+		HostProxyPort: hostProxyPort,
+		pasta:         pasta,
 	}, nil
 }
 
-// Destroy cleans up the network namespace and any lingering pasta processes.
-func (m *Manager) Destroy(ctx context.Context, runID string) error {
-	nsName := NetnsName(runID)
-
-	delCmd := execx.Cmd{
-		Name: "ip",
-		Args: []string{"netns", "del", nsName},
+// Env returns the proxy environment for jobs (nil unless ModeNetns).
+func (n *Network) Env() []string {
+	if n == nil || n.Mode != ModeNetns {
+		return nil
 	}
-	err := m.Runner.Run(ctx, delCmd)
+	return ProxyEnv(InNSProxyPort)
+}
 
-	// Also ensure file in /run/netns is removed if still present
-	_ = os.Remove(NetnsPath(runID))
+// Teardown stops pasta (SIGTERM, 2s grace, then SIGKILL) and deletes the
+// namespace. Idempotent; errors for already-gone resources are ignored.
+func (m *Manager) Teardown(ctx context.Context, n *Network) error {
+	if n == nil || n.Mode != ModeNetns {
+		return nil
+	}
+	var errs []error
+	if n.pasta != nil {
+		if err := n.pasta.Terminate(pastaGrace); err != nil {
+			errs = append(errs, fmt.Errorf("netns: stop pasta for %s: %w", n.NSName, err))
+		}
+		n.pasta = nil
+	}
+	errs = append(errs, m.RemoveNamespace(ctx, n.NSName))
+	return errors.Join(errs...)
+}
 
+// ListNamespaces returns names under NetnsDir with prefix "zc-" (used by
+// crash recovery, M0-17). A missing NetnsDir yields an empty list.
+func (m *Manager) ListNamespaces() ([]string, error) {
+	dir := m.netnsDir()
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	}
 	if err != nil {
-		return fmt.Errorf("ip netns del %s: %w", nsName, err)
+		return nil, fmt.Errorf("netns: list %s: %w", dir, err)
+	}
+	names := []string{}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), nsPrefix) {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+
+// RemoveNamespace runs "ip netns delete <name>" (used by M0-17). A namespace
+// that is already gone is not an error.
+func (m *Manager) RemoveNamespace(ctx context.Context, name string) error {
+	err := m.ip(ctx, "netns", "delete", name)
+	var exitErr *execx.ExitError
+	if errors.As(err, &exitErr) && strings.Contains(exitErr.Stderr, "No such file") {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("netns: delete %s: %w", name, err)
 	}
 	return nil
+}
+
+func (m *Manager) ip(ctx context.Context, args ...string) error {
+	runner := m.Runner
+	if runner == nil {
+		runner = execx.OS{}
+	}
+	return runner.Run(ctx, execx.Cmd{Name: "ip", Args: args})
+}
+
+func (m *Manager) netnsDir() string {
+	if m.NetnsDir == "" {
+		return defaultNetnsDir
+	}
+	return m.NetnsDir
 }

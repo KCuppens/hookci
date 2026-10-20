@@ -1,16 +1,81 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
-	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// TestSecondSignalKills: the first SIGINT cancels the command context; a
+// later one kills a process whose teardown hangs. The child is this test
+// binary run again with ZEROCI_TEST_SIGNAL_CHILD set.
+func TestSecondSignalKills(t *testing.T) {
+	if os.Getenv("ZEROCI_TEST_SIGNAL_CHILD") == "1" {
+		ctx, stop := signalContext()
+		defer stop()
+		fmt.Println("ready")
+		<-ctx.Done()
+		fmt.Println("cancelled")
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSecondSignalKills$")
+	cmd.Env = append(os.Environ(), "ZEROCI_TEST_SIGNAL_CHILD=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	lines := bufio.NewScanner(out)
+	expect := func(want string) {
+		t.Helper()
+		if !lines.Scan() || lines.Text() != want {
+			_ = cmd.Process.Kill()
+			t.Fatalf("child said %q, want %q (%v)", lines.Text(), want, lines.Err())
+		}
+	}
+	expect("ready")
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	expect("cancelled")
+	go func() { exited <- cmd.Wait() }()
+
+	// The default handler comes back just after the context ends, so keep
+	// signalling until it takes over.
+	deadline := time.After(10 * time.Second)
+	for {
+		_ = cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-exited:
+			ws, _ := cmd.ProcessState.Sys().(syscall.WaitStatus)
+			if !ws.Signaled() || ws.Signal() != syscall.SIGINT {
+				t.Errorf("child ended with %v, want killed by SIGINT", cmd.ProcessState)
+			}
+			return
+		case <-deadline:
+			_ = cmd.Process.Kill()
+			<-exited
+			t.Fatal("a second SIGINT did not kill the process")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
 
 func TestMainVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Main(context.Background(), []string{"version"}, &stdout, &stderr)
+	code := Main([]string{"version"}, &stdout, &stderr)
 
 	if code != ExitOK {
 		t.Fatalf("exit code = %d, want %d", code, ExitOK)
@@ -23,7 +88,7 @@ func TestMainVersion(t *testing.T) {
 func TestMainUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Main(context.Background(), []string{"nope"}, &stdout, &stderr)
+	code := Main([]string{"nope"}, &stdout, &stderr)
 
 	if code != ExitUsage {
 		t.Fatalf("exit code = %d, want %d", code, ExitUsage)
@@ -48,7 +113,7 @@ func TestMainHelp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
-			code := Main(context.Background(), tc.args, &stdout, &stderr)
+			code := Main(tc.args, &stdout, &stderr)
 
 			if code != ExitOK {
 				t.Fatalf("exit code = %d, want %d", code, ExitOK)

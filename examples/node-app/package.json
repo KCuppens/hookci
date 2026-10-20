@@ -1,11 +1,10 @@
 {
-  "name": "example-node-app",
+  "name": "zeroci-node-app",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal Node.js app used for zeroci end-to-end detection and test runs",
   "scripts": {
-    "lint": "echo 'checking code formatting' && exit 0",
-    "typecheck": "echo 'verifying typescript types' && exit 0",
-    "test": "node test.js"
+    "lint": "node scripts/lint.js",
+    "typecheck": "node scripts/typecheck.js",
+    "test": "node --test"
   }
 }

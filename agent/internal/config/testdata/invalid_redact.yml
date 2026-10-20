@@ -1,0 +1,9 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+redact:
+  - "token_[a-z]+"
+  - "secret=(?=\\w)"
+  - "unclosed(group"

@@ -1,0 +1,7 @@
+{
+  "name": "bun-fixture",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "bun test"
+  }
+}

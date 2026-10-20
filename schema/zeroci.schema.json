@@ -1,176 +1,878 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ci.webuno.io/schema/zeroci.schema.json",
-  "title": "Config",
-  "description": "ZeroCI configuration file format (.zeroci.yml) and wire protocol definitions.",
+  "title": "ZeroCIConfig",
+  "description": "ZeroCI repository configuration (.zeroci.yml).",
   "type": "object",
   "additionalProperties": false,
   "required": ["version"],
   "properties": {
     "version": {
+      "description": "Configuration format version. Must be 1.",
       "type": "integer",
-      "const": 1,
-      "description": "Schema version (must be 1)."
-    },
-    "setup": {
-      "type": "array",
-      "description": "Setup commands executed once before running checks.",
-      "items": {
-        "type": "string"
-      }
+      "const": 1
     },
     "checks": {
+      "description": "Checks that run on pull requests and pushes.",
+      "$ref": "#/$defs/Checks"
+    },
+    "deployments": {
+      "description": "Deployments keyed by environment name, for example production.",
       "type": "object",
-      "description": "Named check jobs forming a DAG.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]{0,31}$"
+      },
       "additionalProperties": {
-        "$ref": "#/$defs/checkJob"
+        "$ref": "#/$defs/Deployment"
       }
     },
-    "caches": {
+    "notify": {
+      "description": "Notification targets.",
       "type": "object",
-      "description": "Named caches restored using copy-on-write mechanisms.",
-      "additionalProperties": {
-        "$ref": "#/$defs/cacheConfig"
+      "additionalProperties": false,
+      "properties": {
+        "slack": {
+          "description": "Slack notifications.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["channel"],
+          "properties": {
+            "channel": {
+              "description": "Slack channel name, with or without the leading #.",
+              "type": "string",
+              "pattern": "^#?[a-z0-9._-]+$"
+            },
+            "on": {
+              "description": "Outcomes that send a notification.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["failure", "success", "deploy", "all"]
+              }
+            }
+          }
+        }
       }
     },
-    "services": {
-      "type": "object",
-      "description": "Background service containers (e.g. postgres).",
-      "additionalProperties": {
-        "$ref": "#/$defs/serviceConfig"
-      }
-    },
-    "egress": {
+    "redact": {
+      "description": "Extra RE2 patterns whose matches are masked in logs.",
       "type": "array",
-      "description": "Additional hostnames allowed through the egress proxy for trusted runs.",
+      "maxItems": 50,
       "items": {
         "type": "string"
       }
     }
   },
   "$defs": {
-    "checkJob": {
+    "Checks": {
+      "description": "Check configuration: triggers, trust policy, limits, setup, jobs, services and egress.",
       "type": "object",
-      "description": "A single check job within a run.",
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "description": "Events that start a check run.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pull_request": {
+              "description": "Run checks on pull requests.",
+              "type": "boolean",
+              "default": true
+            },
+            "push": {
+              "description": "Run checks on pushes.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "branches": {
+                  "description": "Branches whose pushes start a check run.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": ["main"]
+                }
+              }
+            }
+          }
+        },
+        "trust": {
+          "description": "Whose pull requests run automatically: repository collaborators, only after approval, or everyone.",
+          "type": "string",
+          "enum": ["collaborators", "approve", "all"],
+          "default": "collaborators"
+        },
+        "forks": {
+          "description": "Fork pull requests: gated behind approval, or never run.",
+          "type": "string",
+          "enum": ["gated", "never"],
+          "default": "gated"
+        },
+        "limits": {
+          "description": "Default resource limits for every job.",
+          "$ref": "#/$defs/Limits"
+        },
+        "setup": {
+          "description": "Steps that run once before the jobs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SetupStep"
+          }
+        },
+        "jobs": {
+          "description": "Check jobs keyed by name.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/Job"
+          }
+        },
+        "services": {
+          "description": "Service containers available to the jobs.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "postgres": {
+              "description": "A PostgreSQL server reachable over a unix socket.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "image": {
+                  "description": "Container image.",
+                  "type": "string",
+                  "default": "postgres:16-alpine"
+                },
+                "tmpfs": {
+                  "description": "Keep the data directory on tmpfs.",
+                  "type": "boolean",
+                  "default": true
+                }
+              }
+            }
+          }
+        },
+        "egress": {
+          "description": "Extra exact host names the jobs may reach through the egress proxy on port 443.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+          }
+        }
+      }
+    },
+    "Limits": {
+      "description": "Resource limits for a job.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "description": "CPU quota in cores.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "default": 2
+        },
+        "memory": {
+          "description": "Memory limit with a K, M or G suffix, for example 4G.",
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?[KMG]$",
+          "default": "4G"
+        },
+        "timeout": {
+          "description": "Wall clock timeout with an s, m or h suffix, for example 10m.",
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "default": "10m"
+        },
+        "tasks": {
+          "description": "Maximum number of processes and threads.",
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 65536,
+          "default": 512
+        }
+      }
+    },
+    "SetupStep": {
+      "description": "A setup command with an optional cache.",
+      "type": "object",
       "additionalProperties": false,
       "required": ["run"],
       "properties": {
         "run": {
+          "description": "Shell command.",
           "type": "string",
-          "description": "Shell command to execute."
+          "minLength": 1
+        },
+        "cache": {
+          "description": "Directories restored before and saved after the step.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key", "paths"],
+          "properties": {
+            "key": {
+              "description": "Files whose content hash forms the cache key.",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "paths": {
+              "description": "Directories to cache, relative to the repository root.",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "Job": {
+      "description": "A check job.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run"],
+      "properties": {
+        "run": {
+          "description": "Shell command.",
+          "type": "string"
+        },
+        "annotate": {
+          "description": "Parse the job output with this format and report annotations.",
+          "type": "string",
+          "enum": ["eslint", "tsc"]
         },
         "needs": {
+          "description": "Jobs that must succeed before this one starts.",
           "type": "array",
-          "description": "Dependencies on other check jobs in this run.",
+          "uniqueItems": true,
           "items": {
             "type": "string"
           }
+        },
+        "limits": {
+          "description": "Resource limits that override the checks limits.",
+          "$ref": "#/$defs/Limits"
         },
         "timeout": {
+          "description": "Wall clock timeout with an s, m or h suffix. Overrides limits.timeout.",
           "type": "string",
-          "description": "Maximum execution duration (e.g. 10m, 300s)."
-        },
-        "services": {
-          "type": "array",
-          "description": "Service names required by this job.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "env": {
-          "type": "object",
-          "description": "Environment variables injected into this job.",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "pattern": "^[0-9]+(s|m|h)$"
         }
       }
     },
-    "cacheConfig": {
+    "Deployment": {
+      "description": "A deployment to one environment. Validated in M0, executed in M2.",
       "type": "object",
-      "description": "Cache path and key definition.",
       "additionalProperties": false,
-      "required": ["path", "key"],
       "properties": {
-        "path": {
-          "type": "string",
-          "description": "Directory or file path relative to repository root."
-        },
-        "key": {
-          "type": "string",
-          "description": "Cache key or file hash expression."
-        }
-      }
-    },
-    "serviceConfig": {
-      "type": "object",
-      "description": "Service configuration definition.",
-      "additionalProperties": false,
-      "required": ["image"],
-      "properties": {
-        "image": {
-          "type": "string",
-          "description": "Docker container image name (e.g. postgres:16-alpine)."
-        },
-        "env": {
+        "on": {
+          "description": "Event that starts the deployment.",
           "type": "object",
-          "description": "Service environment variables.",
-          "additionalProperties": {
-            "type": "string"
+          "additionalProperties": false,
+          "properties": {
+            "push": {
+              "description": "Deploy on pushes.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "branch": {
+                  "description": "Branch whose pushes deploy.",
+                  "type": "string"
+                }
+              }
+            }
           }
+        },
+        "strategy": {
+          "description": "How the new version replaces the old one.",
+          "type": "string",
+          "enum": ["restart", "compose-bluegreen"]
+        },
+        "target": {
+          "description": "Where the application lives on the host.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Application directory.",
+              "type": "string"
+            },
+            "unit": {
+              "description": "systemd unit to restart.",
+              "type": "string"
+            }
+          }
+        },
+        "build": {
+          "description": "Build command.",
+          "type": "string"
+        },
+        "migrate": {
+          "description": "Database migration command.",
+          "type": "string"
+        },
+        "env_file": {
+          "description": "Absolute path of the environment file on the host.",
+          "type": "string",
+          "pattern": "^/"
+        },
+        "health": {
+          "description": "Health check run after the switch.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "description": "Local URL to probe.",
+              "type": "string"
+            },
+            "timeout": {
+              "description": "How long to wait for a healthy answer, with an s, m or h suffix.",
+              "type": "string",
+              "pattern": "^[0-9]+(s|m|h)$"
+            },
+            "expect_status": {
+              "description": "Expected HTTP status code.",
+              "type": "integer",
+              "default": 200
+            }
+          }
+        },
+        "rollback": {
+          "description": "Roll back automatically or manually when the health check fails.",
+          "type": "string",
+          "enum": ["auto", "manual"],
+          "default": "auto"
+        },
+        "approve": {
+          "description": "Require a human approval before deploying.",
+          "type": "boolean",
+          "default": false
         }
       }
     },
     "protocol": {
-      "type": "object",
-      "description": "WebSocket wire protocol definitions.",
-      "properties": {
-        "runState": {
-          "type": "string",
-          "enum": ["Queued", "Running", "Success", "Failed", "Verifying", "RollingBack", "Interrupted", "Superseded"]
-        },
-        "jobState": {
-          "type": "string",
-          "enum": ["queued", "running", "success", "failed", "cancelled", "skipped"]
-        },
-        "trustDomain": {
-          "type": "string",
-          "enum": ["trusted", "untrusted", "local"]
-        },
-        "event": {
-          "$ref": "#/$defs/protocolEvent"
-        }
-      }
-    },
-    "protocolEvent": {
-      "type": "object",
-      "description": "A state transition or lifecycle event queued in outbox and sent over WebSocket.",
-      "required": ["id", "runId", "seq", "timestamp", "type"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Event unique identifier."
-        },
-        "runId": {
-          "type": "string",
-          "description": "Run ULID."
-        },
-        "seq": {
-          "type": "integer",
-          "description": "Monotonically increasing sequence number."
-        },
-        "timestamp": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Event timestamp in ISO 8601."
-        },
-        "type": {
-          "type": "string",
-          "description": "Event type descriptor."
-        },
-        "payload": {
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type.",
+      "$defs": {
+        "Envelope": {
+          "description": "Fields shared by every frame.",
           "type": "object",
-          "description": "Event-specific payload."
+          "required": ["v", "type"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string"
+            }
+          }
+        },
+        "Hello": {
+          "description": "First frame the agent sends after connecting.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "protocol_version", "agent_version"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "hello"
+            },
+            "protocol_version": {
+              "description": "Protocol version the agent speaks.",
+              "type": "integer",
+              "const": 1
+            },
+            "agent_version": {
+              "description": "Agent build version.",
+              "type": "string"
+            },
+            "agent_id": {
+              "description": "Agent identifier, when already registered.",
+              "type": "string"
+            }
+          }
+        },
+        "Trigger": {
+          "description": "Hub to agent: start a run for a commit.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "hub_seq", "trigger_id", "repo", "sha", "ref", "event", "attempt", "trust"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "trigger"
+            },
+            "hub_seq": {
+              "description": "Hub sequence number, acknowledged by the agent.",
+              "type": "integer"
+            },
+            "trigger_id": {
+              "description": "Hub trigger identifier.",
+              "type": "string"
+            },
+            "repo": {
+              "description": "Repository as owner/name.",
+              "type": "string"
+            },
+            "sha": {
+              "description": "Commit to check out.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "ref": {
+              "description": "Git ref that triggered the run.",
+              "type": "string"
+            },
+            "event": {
+              "description": "GitHub event behind the trigger.",
+              "type": "string",
+              "enum": ["pull_request", "push", "retry"]
+            },
+            "pr": {
+              "description": "Pull request details for pull_request events.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["number", "head_ref", "head_repo_full_name", "fork"],
+              "properties": {
+                "number": {
+                  "description": "Pull request number.",
+                  "type": "integer"
+                },
+                "head_ref": {
+                  "description": "Head branch name.",
+                  "type": "string"
+                },
+                "head_repo_full_name": {
+                  "description": "Head repository as owner/name.",
+                  "type": "string"
+                },
+                "fork": {
+                  "description": "The head repository is a fork.",
+                  "type": "boolean"
+                }
+              }
+            },
+            "base_sha": {
+              "description": "Base commit of the pull request.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "attempt": {
+              "description": "Attempt number, 1 for the first run.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "trust": {
+              "description": "Trust domain the run executes in.",
+              "type": "string",
+              "enum": ["trusted", "untrusted"]
+            }
+          }
+        },
+        "Accepted": {
+          "description": "Agent accepted a trigger and created a run.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "trigger_id", "run_id"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "accepted"
+            },
+            "trigger_id": {
+              "description": "Hub trigger identifier.",
+              "type": "string"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            }
+          }
+        },
+        "Rejected": {
+          "description": "Agent refused a trigger.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "trigger_id", "reason"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "rejected"
+            },
+            "trigger_id": {
+              "description": "Hub trigger identifier.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why the trigger was refused.",
+              "type": "string"
+            }
+          }
+        },
+        "JobPlanned": {
+          "description": "Jobs the agent planned for a run.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "jobs"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "job_planned"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "jobs": {
+              "description": "Planned jobs.",
+              "type": "array",
+              "items": {
+                "description": "A planned job.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "needs"],
+                "properties": {
+                  "name": {
+                    "description": "Job name.",
+                    "type": "string"
+                  },
+                  "needs": {
+                    "description": "Jobs this job waits for.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "env": {
+              "description": "Deployment environment, for deploy runs.",
+              "type": "string"
+            }
+          }
+        },
+        "Event": {
+          "description": "Run or job state change.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "agent_seq", "run_id", "state"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "event"
+            },
+            "agent_seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub.",
+              "type": "integer"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name. Absent for run events.",
+              "type": "string"
+            },
+            "state": {
+              "description": "New run or job state.",
+              "type": "string",
+              "enum": ["queued", "running", "success", "failed", "cancelled", "skipped", "superseded", "interrupted", "verifying", "rolling_back"]
+            },
+            "step": {
+              "description": "Current step name.",
+              "type": "string"
+            },
+            "step_index": {
+              "description": "Current step index, starting at 0.",
+              "type": "integer"
+            },
+            "steps_total": {
+              "description": "Number of steps.",
+              "type": "integer"
+            },
+            "duration_ms": {
+              "description": "Duration in milliseconds, for finished jobs.",
+              "type": "integer"
+            },
+            "tail": {
+              "description": "Last log lines, for failed jobs.",
+              "type": "array",
+              "maxItems": 40,
+              "items": {
+                "type": "string"
+              }
+            },
+            "reason": {
+              "description": "Why the state changed.",
+              "type": "string"
+            }
+          }
+        },
+        "Annotations": {
+          "description": "File annotations parsed from a job's output.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "agent_seq", "run_id", "job", "items"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "annotations"
+            },
+            "agent_seq": {
+              "description": "Agent outbox sequence number, acknowledged by the hub.",
+              "type": "integer"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name.",
+              "type": "string"
+            },
+            "items": {
+              "description": "Annotations.",
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "description": "One annotation.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "line", "level", "message"],
+                "properties": {
+                  "path": {
+                    "description": "File path relative to the repository root.",
+                    "type": "string"
+                  },
+                  "line": {
+                    "description": "Line number, starting at 1.",
+                    "type": "integer"
+                  },
+                  "column": {
+                    "description": "Column number, starting at 1.",
+                    "type": "integer"
+                  },
+                  "level": {
+                    "description": "Severity.",
+                    "type": "string",
+                    "enum": ["notice", "warning", "failure"]
+                  },
+                  "message": {
+                    "description": "Annotation text.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "Short title.",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "total": {
+              "description": "Number of annotations found, including those not sent in items.",
+              "type": "integer"
+            }
+          }
+        },
+        "TokenRequest": {
+          "description": "Agent asks the hub for a short-lived GitHub token.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "purpose"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "token_request"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "purpose": {
+              "description": "What the token is used for.",
+              "type": "string",
+              "enum": ["fetch"]
+            }
+          }
+        },
+        "Token": {
+          "description": "Hub answers a token request.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "token", "exp"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "token"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "token": {
+              "description": "GitHub installation token.",
+              "type": "string"
+            },
+            "exp": {
+              "description": "Expiry as unix seconds.",
+              "type": "integer"
+            }
+          }
+        },
+        "LogSubscribe": {
+          "description": "Hub asks the agent to stream a log.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "log_subscribe"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name. Absent for the whole run.",
+              "type": "string"
+            },
+            "from_offset": {
+              "description": "Byte offset to start from.",
+              "type": "integer",
+              "default": 0
+            }
+          }
+        },
+        "Log": {
+          "description": "A chunk of job log.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "job", "offset", "bytes"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "log"
+            },
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name.",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Byte offset of the chunk in the log.",
+              "type": "integer"
+            },
+            "bytes": {
+              "description": "Log bytes, base64 encoded.",
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          }
+        },
+        "Ack": {
+          "description": "Acknowledges every sequence number up to and including upto.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "upto"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "ack"
+            },
+            "upto": {
+              "description": "Highest acknowledged sequence number.",
+              "type": "integer"
+            }
+          }
         }
       }
     }

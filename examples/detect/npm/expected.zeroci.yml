@@ -1,0 +1,19 @@
+# package manager: npm (package-lock.json)
+# node >=20 (from engines.node), not installed by zeroci
+
+version: 1
+checks:
+  setup:
+    - run: npm ci
+      cache:
+        key: [package-lock.json]
+        paths: [node_modules]
+  jobs:
+    lint:
+      run: npm run lint
+      annotate: eslint
+    typecheck:
+      run: npm run type-check
+      annotate: tsc
+    unit:
+      run: npm run test:unit

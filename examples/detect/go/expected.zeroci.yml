@@ -1,0 +1,12 @@
+version: 1
+checks:
+  setup:
+    - run: go mod download
+      cache:
+        key: [go.sum]
+        paths: [~/go/pkg/mod, ~/.cache/go-build]
+  jobs:
+    go-test:
+      run: go test ./...
+    go-vet:
+      run: go vet ./...

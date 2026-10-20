@@ -1,0 +1,71 @@
+# Every section of the format, as a real project would use it.
+version: 1
+checks:
+  on:
+    pull_request: true
+    push:
+      branches: [main, release]
+  trust: approve
+  forks: never
+  limits:
+    cpus: 4
+    memory: 8G
+    tasks: 1024
+    timeout: 20m
+  setup:
+    - run: npm ci
+      cache:
+        key: [package-lock.json]
+        paths: [node_modules]
+  jobs:
+    lint:
+      run: npm run lint
+      annotate: eslint
+    typecheck:
+      run: npx tsc --noEmit
+      annotate: tsc
+    unit:
+      run: npm test
+      needs: [lint, typecheck]
+      limits:
+        memory: 1.5G
+      timeout: 5m
+  services:
+    postgres:
+      image: postgres:17-alpine
+  egress:
+    - registry.npmjs.org
+    - github.com
+    - api.example.com
+deployments:
+  production:
+    on:
+      push:
+        branch: main
+    strategy: compose-bluegreen
+    target:
+      path: /srv/app
+    build: docker compose build
+    migrate: docker compose run --rm web ./manage.py migrate
+    env_file: /etc/zeroci/production.env
+    health:
+      url: http://127.0.0.1:{port}/health
+      timeout: 60s
+      expect_status: 200
+    rollback: auto
+    approve: true
+  staging:
+    on:
+      push:
+        branch: develop
+    strategy: restart
+    target:
+      unit: app-staging.service
+    health:
+      url: http://localhost:8001/healthz
+notify:
+  slack:
+    channel: "#deploys"
+    on: [failure, deploy]
+redact:
+  - "sk_live_[0-9a-zA-Z]{24}"

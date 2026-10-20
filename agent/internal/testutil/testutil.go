@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"flag"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -30,13 +32,32 @@ func RequireIntegration(t testing.TB) {
 	}
 }
 
+// EnsureUser creates the system account name when it does not exist, as
+// the M1 install script does for the job user. Call it after
+// RequireIntegration: useradd needs root.
+func EnsureUser(t testing.TB, name string) {
+	t.Helper()
+	if _, err := user.Lookup(name); err == nil {
+		return
+	}
+	out, err := exec.Command("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", name).CombinedOutput()
+	if err != nil {
+		t.Fatalf("useradd %s: %v: %s", name, err, out)
+	}
+}
+
 // Golden compares got against the golden file testdata/<name>.golden,
 // failing with a readable diff on mismatch. Run tests with -update to
 // (re)write the golden file from got.
 func Golden(t testing.TB, name string, got []byte) {
 	t.Helper()
+	GoldenFile(t, filepath.Join("testdata", name+".golden"), got)
+}
 
-	path := filepath.Join("testdata", name+".golden")
+// GoldenFile is Golden for a golden file at an explicit path, for goldens
+// that live outside testdata (for example the detection fixtures).
+func GoldenFile(t testing.TB, path string, got []byte) {
+	t.Helper()
 
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

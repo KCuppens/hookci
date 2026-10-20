@@ -1,0 +1,4 @@
+invalid_egress_port.yml:7: error: checks.egress[0]: "api.example.com:443" has a port; egress takes host names and only port 443 is proxied
+  fix: use "api.example.com"
+invalid_egress_port.yml:8: error: checks.egress[1]: "registry.npmjs.org:8080" has a port; egress takes host names and only port 443 is proxied
+  fix: use "registry.npmjs.org"

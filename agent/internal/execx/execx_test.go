@@ -82,6 +82,9 @@ func TestFakeUnexpected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unmatched command, got nil")
 	}
+	if want := "execx fake: unexpected command rm -rf /"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
 	if !f.Called("rm", "-rf") {
 		t.Error("Called(\"rm\", \"-rf\") = false, want true")
 	}

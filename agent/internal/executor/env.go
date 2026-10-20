@@ -1,0 +1,50 @@
+package executor
+
+import (
+	"os"
+	"slices"
+
+	"github.com/KCuppens/zerocideploy/agent/internal/store"
+)
+
+// EnvInput is everything a job environment is built from.
+type EnvInput struct {
+	Run         store.Run
+	Job         string
+	Dir         RunDir
+	ProxyEnv    []string // netns.ProxyEnv or Network.Env(); nil without a proxy
+	ServiceEnv  []string // Postgres.Env(); nil without services
+	InheritPATH bool     // isolation "none": keep the agent's PATH so local toolchains resolve
+}
+
+// BuildJobEnv returns the whole environment of a job, sorted. Backends add
+// nothing, so a job never sees the agent's own environment: no env_file
+// values, DOCKER_HOST, SSH_AUTH_SOCK, ZEROCI_STATE_DIR or tokens.
+func BuildJobEnv(in EnvInput) []string {
+	path := JobPATH
+	if in.InheritPATH {
+		if p := os.Getenv("PATH"); p != "" {
+			path = p
+		}
+	}
+	env := []string{
+		"PATH=" + path,
+		"HOME=" + in.Dir.Home(),
+		"TMPDIR=" + in.Dir.Tmp(),
+		"LANG=C.UTF-8",
+		"CI=true",
+		"ZEROCI=1",
+		"ZEROCI_RUN_ID=" + in.Run.ID,
+		"ZEROCI_JOB=" + in.Job,
+		"ZEROCI_SHA=" + in.Run.SHA,
+		"ZEROCI_REF=" + in.Run.Ref,
+		"ZEROCI_EVENT=" + in.Run.Event,
+	}
+	if in.Run.PR != nil {
+		env = append(env, "ZEROCI_BASE_SHA="+in.Run.BaseSHA)
+	}
+	env = append(env, in.ProxyEnv...)
+	env = append(env, in.ServiceEnv...)
+	slices.Sort(env)
+	return env
+}
