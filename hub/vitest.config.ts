@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Fixed values for the secrets typed in src/env.ts, so tests never need real ones.
 const testKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -42,5 +42,7 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
+    // test/cli runs under vitest.cli.config.ts in the node environment.
+    exclude: [...configDefaults.exclude, "test/cli/**"],
   },
 });

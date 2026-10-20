@@ -1,0 +1,58 @@
+# Self-hosted zeroci hub, rendered by the zeroci-hub CLI from the package
+# template. `zeroci-hub upgrade` re-renders this file, so edits here are lost.
+# Secrets are stored with `wrangler secret put`, never in this file.
+# Keep bindings, Durable Object migrations, crons and rules in lockstep with
+# hub/wrangler.toml (test/cli/template-sync.test.ts checks them).
+
+name = "{{name}}"
+main = "worker/index.js"
+no_bundle = true
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+account_id = "{{accountId}}"
+{{routes}}
+
+[vars]
+HUB_MODE = "self_hosted"
+HUB_ORIGIN = "{{baseUrl}}"
+HUB_VERSION = "{{hubVersion}}"
+GITHUB_API_URL = "{{githubApiUrl}}"
+GITHUB_APP_SLUG = "zeroci"
+LATEST_AGENT_VERSION = ""
+MIN_AGENT_VERSION = ""
+SLACK_APP_ID = ""
+SECURITY_CONTACT = "{{securityContact}}"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "{{name}}-db"
+database_id = "{{d1DatabaseId}}"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "{{r2Bucket}}"
+
+[[durable_objects.bindings]]
+name = "AGENT_DO"
+class_name = "AgentDO"
+
+[[durable_objects.bindings]]
+name = "SLACK_DO"
+class_name = "SlackWorkspaceDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+# The prebuilt Worker imports static/install.sh as a separate text module.
+[[rules]]
+type = "Text"
+globs = ["**/*.sh"]
+fallthrough = true

@@ -19,6 +19,12 @@ node scripts/gen-manifests.mjs --check
 	npm run typecheck
 	npx wrangler deploy --dry-run --env "" --outdir /tmp/zeroci-dry
 	npx wrangler deploy --dry-run --env staging --outdir /tmp/zeroci-dry-staging
+	# zeroci-hub CLI: a config rendered from the packaged template deploys (dry run).
+	npm run prepack
+	cli_tmp=$(mktemp -d)
+	trap 'rm -rf "$cli_tmp"' EXIT
+	node dist/cli/index.js render --dir "$cli_tmp/state" --yes
+	npx wrangler deploy --dry-run --config "$cli_tmp/state/wrangler.toml" --outdir "$cli_tmp/out"
 )
 
 echo "check: ok"
