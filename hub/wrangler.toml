@@ -5,7 +5,7 @@
 name = "zeroci-hub"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "enable_request_signal"]
 
 [vars]
 HUB_ORIGIN = "https://ci.webuno.io"
@@ -56,7 +56,7 @@ crons = ["*/5 * * * *", "17 3 * * *"]
 
 [[rules]]
 type = "Text"
-globs = ["**/*.sh", "**/*.css"]
+globs = ["**/*.sh", "**/*.css", "**/*viewer.js"]
 fallthrough = true
 
 [env.staging]

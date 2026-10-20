@@ -8,7 +8,7 @@ name = "{{name}}"
 main = "worker/index.js"
 no_bundle = true
 compatibility_date = "2026-08-15"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "enable_request_signal"]
 account_id = "{{accountId}}"
 {{routes}}
 
@@ -64,5 +64,5 @@ crons = ["*/5 * * * *", "17 3 * * *"]
 # separate text modules.
 [[rules]]
 type = "Text"
-globs = ["**/*.sh", "**/*.css"]
+globs = ["**/*.sh", "**/*.css", "**/*viewer.js"]
 fallthrough = true

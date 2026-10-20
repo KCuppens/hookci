@@ -53,6 +53,10 @@ var ErrAgentTooOld = errors.New("hubclient: agent_too_old")
 // errRateLimited makes Run wait at least rateLimitedWait before reconnecting.
 var errRateLimited = errors.New("hubclient: rate limited by hub")
 
+// ErrNotConnected means SendLog found no open session to write on, or the
+// session ended before the frame was written.
+var ErrNotConnected = errors.New("hubclient: not connected")
+
 // Config configures a Client.
 type Config struct {
 	HubURL     string // e.g. https://ci.webuno.io
@@ -64,14 +68,24 @@ type Config struct {
 	Clock      clock.Clock // nil = real clock
 }
 
-// Handler receives the hub frames that carry a seq: trigger, token,
-// interrupt and log_subscribe. HandleFrame runs on the session goroutine, so
-// it must return promptly and hand long work to another goroutine. A frame
-// HandleFrame fails is not acknowledged: the session drops and the hub
-// resends it after the reconnect. HandleFrame must be idempotent, since a
-// crash between handling and acknowledging also brings the frame back.
+// Handler receives the hub frames that carry a seq: trigger, token and
+// interrupt. HandleFrame runs on the session goroutine, so it must return
+// promptly and hand long work to another goroutine. A frame HandleFrame
+// fails is not acknowledged: the session drops and the hub resends it after
+// the reconnect. HandleFrame must be idempotent, since a crash between
+// handling and acknowledging also brings the frame back.
 type Handler interface {
 	HandleFrame(ctx context.Context, f protocol.Frame) error
+}
+
+// LiveHandler is implemented by a Handler that serves the live log tail.
+// HandleLive receives log_subscribe and log_unsubscribe, which carry no seq
+// and are never acknowledged or resent; like HandleFrame it runs on the
+// session goroutine and must return promptly. SessionEnded runs after every
+// session closes: the subscriptions it carried died with it.
+type LiveHandler interface {
+	HandleLive(f protocol.Frame)
+	SessionEnded()
 }
 
 // TokenRefusals is implemented by a Handler whose token requests the hub may
@@ -94,6 +108,19 @@ type Client struct {
 	backoff   Backoff
 	connected atomic.Bool
 	flush     chan struct{}
+	live      atomic.Pointer[liveSession] // nil without an open session
+}
+
+// liveSession carries SendLog frames to the session goroutine, the only
+// writer of the connection.
+type liveSession struct {
+	frames chan liveFrame
+	ended  chan struct{} // closed once the session stops taking frames
+}
+
+type liveFrame struct {
+	b    []byte
+	done chan error // buffered: the session goroutine never waits on it
 }
 
 // New returns a client that persists outbound frames and the inbound
@@ -131,7 +158,7 @@ func (c *Client) Flush() {
 // Send appends f to the outbox and flushes it. The returned seq is the
 // frame's outbox seq, which is also the agent_seq of event and annotations
 // frames. f must be an agent frame value: Accepted, Rejected, JobPlanned,
-// Event, Annotations, TokenRequest or Log.
+// Event, Annotations or TokenRequest.
 func (c *Client) Send(ctx context.Context, f protocol.Frame) (seq int64, err error) {
 	switch m := f.(type) {
 	case protocol.Event:
@@ -166,10 +193,30 @@ func sendKind(f protocol.Frame) (string, bool) {
 		return store.KindJobPlanned, true
 	case protocol.TokenRequest:
 		return "token_request", true
-	case protocol.Log:
-		return "log", true
 	}
 	return "", false
+}
+
+// SendLog writes a live log chunk on the open session now, bypassing the
+// outbox: it is never stored, sequenced or resent, since the subscription
+// it answers ends with the session. It returns ErrNotConnected when no
+// session is open or the session ends before l is written.
+func (c *Client) SendLog(l protocol.Log) error {
+	b, err := protocol.Marshal("log", l)
+	if err != nil {
+		return fmt.Errorf("hubclient: send log: %w", err)
+	}
+	ls := c.live.Load()
+	if ls == nil {
+		return ErrNotConnected
+	}
+	f := liveFrame{b: b, done: make(chan error, 1)}
+	select {
+	case ls.frames <- f:
+		return <-f.done
+	case <-ls.ended:
+		return ErrNotConnected
+	}
 }
 
 // Run keeps a session open until ctx ends or the hub refuses the agent for
@@ -223,14 +270,21 @@ func (c *Client) session(ctx context.Context) (time.Duration, error) {
 	ping := c.clk.NewTicker(pingInterval)
 	defer ping.Stop()
 	idle := c.clk.After(pingTimeout)
+	live := &liveSession{frames: make(chan liveFrame), ended: make(chan struct{})}
+	c.live.Store(live)
 	c.connected.Store(true)
 	c.log.Info("connected to hub", "hub", c.cfg.HubURL, "agent_id", s.welcome.AgentId, "hub_version", s.welcome.HubVersion)
 	if latest := deref(s.welcome.LatestAgentVersion); latest != "" && version.Compare(c.cfg.Version, latest) < 0 {
 		c.log.Warn(fmt.Sprintf("upgrade available: %s -> %s", c.cfg.Version, latest), "hint", "run zeroci upgrade")
 	}
 
-	err = c.loop(ctx, s, ping, idle)
+	err = c.loop(ctx, s, ping, idle, live.frames)
 	c.connected.Store(false)
+	c.live.Store(nil)
+	close(live.ended)
+	if lh, ok := c.h.(LiveHandler); ok {
+		lh.SessionEnded()
+	}
 	code, reason := closeGoingAway, "reconnecting"
 	if ctx.Err() != nil {
 		code, reason = closeNormal, "shutdown"
@@ -239,7 +293,7 @@ func (c *Client) session(ctx context.Context) (time.Duration, error) {
 	return c.clk.Now().Sub(start), err
 }
 
-func (c *Client) loop(ctx context.Context, s *conn, ping clock.Ticker, idle <-chan time.Time) error {
+func (c *Client) loop(ctx context.Context, s *conn, ping clock.Ticker, idle <-chan time.Time, live <-chan liveFrame) error {
 	var sent int64
 	if err := c.flushOutbox(ctx, s, &sent); err != nil {
 		return err
@@ -258,6 +312,12 @@ func (c *Client) loop(ctx context.Context, s *conn, ping clock.Ticker, idle <-ch
 			}
 		case <-c.flush:
 			if err := c.flushOutbox(ctx, s, &sent); err != nil {
+				return err
+			}
+		case f := <-live:
+			err := s.write(ctx, f.b)
+			f.done <- err
+			if err != nil {
 				return err
 			}
 		case <-ping.C():
@@ -321,6 +381,11 @@ func (c *Client) handle(ctx context.Context, s *conn, b []byte) error {
 		return nil
 	case protocol.Welcome:
 		return nil
+	case protocol.LogSubscribe, protocol.LogUnsubscribe:
+		if lh, ok := c.h.(LiveHandler); ok {
+			lh.HandleLive(f)
+		}
+		return nil
 	}
 	seq, ok := inboundSeq(f)
 	if !ok {
@@ -361,8 +426,6 @@ func inboundSeq(f protocol.Frame) (int64, bool) {
 	case protocol.Token:
 		p = v.Seq
 	case protocol.Interrupt:
-		p = v.Seq
-	case protocol.LogSubscribe:
 		p = v.Seq
 	case protocol.Error:
 		p = v.Seq

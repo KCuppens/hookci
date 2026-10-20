@@ -304,22 +304,22 @@ const JobPlannedSlackNotifyNormal JobPlannedSlackNotify = "normal"
 const JobPlannedSlackNotifyQuiet JobPlannedSlackNotify = "quiet"
 const JobPlannedSlackNotifyVerbose JobPlannedSlackNotify = "verbose"
 
-// A chunk of job log.
+// A redacted chunk of a subscribed job log. Never sequenced.
 type Log struct {
 	// Log bytes, base64 encoded.
 	Bytes string `json:"bytes"`
 
+	// The job has ended and every byte of its log was sent; the subscription is over.
+	Eof bool `json:"eof"`
+
 	// Job name.
 	Job string `json:"job"`
 
-	// Byte offset of the chunk in the log.
+	// Byte offset of the chunk in the job's log file.
 	Offset int `json:"offset"`
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
-
-	// Agent outbox sequence number, acknowledged by the hub with ack.
-	Seq *int `json:"seq,omitempty,omitzero"`
 
 	// Message type.
 	Type string `json:"type"`
@@ -328,19 +328,32 @@ type Log struct {
 	V int `json:"v"`
 }
 
-// Hub asks the agent to stream a log.
+// Hub asks the agent to stream a job's log from offset until the job ends. Never
+// sequenced: a subscription lives as long as the connection.
 type LogSubscribe struct {
-	// Byte offset to start from.
-	FromOffset int `json:"from_offset,omitempty,omitzero"`
+	// Job name.
+	Job string `json:"job"`
 
-	// Job name. Absent for the whole run.
-	Job *string `json:"job,omitempty,omitzero"`
+	// Byte offset in the job's log file to start from.
+	Offset int `json:"offset"`
 
 	// Agent run identifier.
 	RunId string `json:"run_id"`
 
-	// Hub outbox sequence number, acknowledged by the agent with ack.
-	Seq *int `json:"seq,omitempty,omitzero"`
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+// Hub tells the agent to stop streaming a job's log. Never sequenced.
+type LogUnsubscribe struct {
+	// Job name.
+	Job string `json:"job"`
+
+	// Agent run identifier.
+	RunId string `json:"run_id"`
 
 	// Message type.
 	Type string `json:"type"`

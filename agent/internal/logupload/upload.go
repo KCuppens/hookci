@@ -33,6 +33,18 @@ var backoffs = [retries]time.Duration{time.Second, 2 * time.Second, 4 * time.Sec
 // catches anything written around it.
 var redactor, _ = redact.New(nil, nil)
 
+// Redact masks a run of whole log lines the way Upload does, so the live
+// log tail shows what the uploaded log will. A trailing partial line is
+// masked on its own, as at the end of an upload.
+func Redact(b []byte) []byte {
+	var out bytes.Buffer
+	w := redactor.Writer(&out)
+	// A bytes.Buffer never fails a write.
+	_, _ = w.Write(b)
+	_ = w.Close()
+	return out.Bytes()
+}
+
 // Uploader PUTs job logs to the hub.
 type Uploader struct {
 	HubURL   string        // e.g. https://ci.webuno.io

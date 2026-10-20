@@ -52,6 +52,7 @@ export type Frame =
   | TokenRequest
   | Token
   | LogSubscribe
+  | LogUnsubscribe
   | Log
   | Ack
   | Welcome
@@ -59,7 +60,7 @@ export type Frame =
   | ProtocolErrorFrame;
 
 /**
- * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.
+ * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them.
  */
 export interface Protocol {
   [k: string]: unknown;
@@ -516,7 +517,7 @@ export interface Token {
   exp: number;
 }
 /**
- * Hub asks the agent to stream a log.
+ * Hub asks the agent to stream a job's log from offset until the job ends. Never sequenced: a subscription lives as long as the connection.
  *
  * This interface was referenced by `Protocol`'s JSON-Schema
  * via the `definition` "LogSubscribe".
@@ -531,24 +532,44 @@ export interface LogSubscribe {
    */
   type: "log_subscribe";
   /**
-   * Hub outbox sequence number, acknowledged by the agent with ack.
+   * Agent run identifier.
    */
-  seq?: number;
+  run_id: string;
+  /**
+   * Job name.
+   */
+  job: string;
+  /**
+   * Byte offset in the job's log file to start from.
+   */
+  offset: number;
+}
+/**
+ * Hub tells the agent to stop streaming a job's log. Never sequenced.
+ *
+ * This interface was referenced by `Protocol`'s JSON-Schema
+ * via the `definition` "LogUnsubscribe".
+ */
+export interface LogUnsubscribe {
+  /**
+   * Protocol version.
+   */
+  v: 1;
+  /**
+   * Message type.
+   */
+  type: "log_unsubscribe";
   /**
    * Agent run identifier.
    */
   run_id: string;
   /**
-   * Job name. Absent for the whole run.
+   * Job name.
    */
-  job?: string;
-  /**
-   * Byte offset to start from.
-   */
-  from_offset?: number;
+  job: string;
 }
 /**
- * A chunk of job log.
+ * A redacted chunk of a subscribed job log. Never sequenced.
  *
  * This interface was referenced by `Protocol`'s JSON-Schema
  * via the `definition` "Log".
@@ -563,10 +584,6 @@ export interface Log {
    */
   type: "log";
   /**
-   * Agent outbox sequence number, acknowledged by the hub with ack.
-   */
-  seq?: number;
-  /**
    * Agent run identifier.
    */
   run_id: string;
@@ -575,13 +592,17 @@ export interface Log {
    */
   job: string;
   /**
-   * Byte offset of the chunk in the log.
+   * Byte offset of the chunk in the job's log file.
    */
   offset: number;
   /**
    * Log bytes, base64 encoded.
    */
   bytes: string;
+  /**
+   * The job has ended and every byte of its log was sent; the subscription is over.
+   */
+  eof: boolean;
 }
 /**
  * Acknowledges every sequence number up to and including upto.

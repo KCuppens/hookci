@@ -27,6 +27,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
 	"github.com/KCuppens/zerocideploy/agent/internal/ids"
+	"github.com/KCuppens/zerocideploy/agent/internal/logtail"
 	"github.com/KCuppens/zerocideploy/agent/internal/logupload"
 	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
 	"github.com/KCuppens/zerocideploy/agent/internal/recovery"
@@ -88,6 +89,7 @@ type Daemon struct {
 	tokens  *hubtokens.Broker
 	src     source.Source
 	logs    *logupload.Uploader
+	tail    *logtail.Tailer // live log tail of the log viewer
 
 	wake    chan struct{}
 	mu      sync.Mutex
@@ -141,6 +143,8 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		Clock:      o.Clock,
 	}, st, d, o.Logger)
 	d.tokens = hubtokens.New(d.client, o.Clock)
+	d.tail = logtail.NewTailer(filepath.Join(o.StateDir, "runs"), logupload.Redact, d.client.SendLog)
+	d.tail.Finished = d.jobFinished
 	d.src = o.Source
 	if d.src == nil {
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
@@ -204,6 +208,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	wg.Go(func() { d.flushLoop(wctx) })
 	wg.Go(func() { d.deployWorker(wctx) })
 	wg.Go(func() { d.deploySched.Run(wctx) })
+	wg.Go(func() { d.tail.Run(wctx) })
 	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
@@ -235,6 +240,40 @@ func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 // fail now instead of timing out.
 func (d *Daemon) TokenRefused(runID, message string) bool {
 	return d.tokens.Refuse(runID, message)
+}
+
+// HandleLive implements hubclient.LiveHandler: the hub opens and closes live
+// log tails for its log viewer. A refused subscription leaves the viewer
+// without live lines; the uploaded log still shows once the job ends.
+func (d *Daemon) HandleLive(f protocol.Frame) {
+	switch v := f.(type) {
+	case protocol.LogSubscribe:
+		if err := d.tail.Subscribe(v.RunId, v.Job, int64(v.Offset)); err != nil {
+			d.log.Warn("log tail refused", "run", v.RunId, "job", v.Job, "err", err)
+		}
+	case protocol.LogUnsubscribe:
+		d.tail.Unsubscribe(v.RunId, v.Job)
+	}
+}
+
+// SessionEnded implements hubclient.LiveHandler: the live log tails were
+// opened on the session that ended.
+func (d *Daemon) SessionEnded() { d.tail.UnsubscribeAll() }
+
+// jobFinished reports whether job of runID has ended, so its log file is
+// complete. A job the store does not know will never write a log; one the
+// store cannot be asked about is taken as running until a later poll.
+func (d *Daemon) jobFinished(runID, job string) bool {
+	jobs, err := d.st.Jobs(context.Background(), runID)
+	if err != nil {
+		return false
+	}
+	for _, j := range jobs {
+		if j.Name == job {
+			return j.State.Terminal()
+		}
+	}
+	return true
 }
 
 // accept records t and queues it. A trigger already recorded is ignored:

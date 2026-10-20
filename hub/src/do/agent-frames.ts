@@ -12,7 +12,6 @@ const AGENT_FRAME_TYPES = {
 	event: true,
 	annotations: true,
 	token_request: true,
-	log: true,
 } as const satisfies Partial<Record<Frame["type"], true>>;
 
 export type AgentFrameType = keyof typeof AGENT_FRAME_TYPES;

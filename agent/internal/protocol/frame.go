@@ -70,27 +70,29 @@ type frameType struct {
 }
 
 var frameTypes = map[string]frameType{
-	"hello":         {decodeAs[Hello], []string{"protocol_version", "agent_version"}},
-	"trigger":       {decodeAs[Trigger], []string{"hub_seq", "trigger_id", "repo", "sha", "ref", "event", "attempt", "trust"}},
-	"accepted":      {decodeAs[Accepted], []string{"trigger_id", "run_id"}},
-	"rejected":      {decodeAs[Rejected], []string{"trigger_id", "reason"}},
-	"job_planned":   {decodeAs[JobPlanned], []string{"run_id", "jobs"}},
-	"event":         {decodeAs[Event], []string{"agent_seq", "run_id", "state"}},
-	"annotations":   {decodeAs[Annotations], []string{"agent_seq", "run_id", "job", "items"}},
-	"token_request": {decodeAs[TokenRequest], []string{"run_id", "purpose"}},
-	"token":         {decodeAs[Token], []string{"run_id", "token", "exp"}},
-	"log_subscribe": {decodeAs[LogSubscribe], []string{"run_id"}},
-	"log":           {decodeAs[Log], []string{"run_id", "job", "offset", "bytes"}},
-	"ack":           {decodeAs[Ack], []string{"upto"}},
-	"welcome":       {decodeAs[Welcome], []string{"hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"}},
-	"interrupt":     {decodeAs[Interrupt], []string{"reason"}},
-	"error":         {decodeAs[Error], []string{"code", "message"}},
+	"hello":           {decodeAs[Hello], []string{"protocol_version", "agent_version"}},
+	"trigger":         {decodeAs[Trigger], []string{"hub_seq", "trigger_id", "repo", "sha", "ref", "event", "attempt", "trust"}},
+	"accepted":        {decodeAs[Accepted], []string{"trigger_id", "run_id"}},
+	"rejected":        {decodeAs[Rejected], []string{"trigger_id", "reason"}},
+	"job_planned":     {decodeAs[JobPlanned], []string{"run_id", "jobs"}},
+	"event":           {decodeAs[Event], []string{"agent_seq", "run_id", "state"}},
+	"annotations":     {decodeAs[Annotations], []string{"agent_seq", "run_id", "job", "items"}},
+	"token_request":   {decodeAs[TokenRequest], []string{"run_id", "purpose"}},
+	"token":           {decodeAs[Token], []string{"run_id", "token", "exp"}},
+	"log_subscribe":   {decodeAs[LogSubscribe], []string{"run_id", "job", "offset"}},
+	"log_unsubscribe": {decodeAs[LogUnsubscribe], []string{"run_id", "job"}},
+	"log":             {decodeAs[Log], []string{"run_id", "job", "offset", "bytes", "eof"}},
+	"ack":             {decodeAs[Ack], []string{"upto"}},
+	"welcome":         {decodeAs[Welcome], []string{"hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"}},
+	"interrupt":       {decodeAs[Interrupt], []string{"reason"}},
+	"error":           {decodeAs[Error], []string{"code", "message"}},
 }
 
 // DecodeFrame checks the frame's version, type and required fields and
 // returns it decoded, by value, into the generated message for its type:
 // Hello, Trigger, Accepted, Rejected, JobPlanned, Event, Annotations,
-// TokenRequest, Token, LogSubscribe, Log, Ack, Welcome, Interrupt or Error.
+// TokenRequest, Token, LogSubscribe, LogUnsubscribe, Log, Ack, Welcome,
+// Interrupt or Error.
 // An interrupt must carry exactly one of run_id or trigger_id. Unknown
 // fields are ignored so a newer peer can add optional fields.
 func DecodeFrame(frame []byte) (any, error) {

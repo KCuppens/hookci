@@ -239,6 +239,7 @@ export const S = {
 	agentFrameNotText: "Frames must be text.",
 	agentFrameNotFromAgent: (type: string) => `${type} frames are sent by the hub, not the agent.`,
 	agentFrameLacksSeq: (type: string) => `${type} frame lacks a positive integer seq.`,
+	agentLogFrameInvalid: "log frame needs string run_id, job and base64 bytes, a non-negative integer offset and a boolean eof.",
 	agentRateLimited: "More than 200 frames in one second.",
 	agentRevoked: "This agent was revoked; pair it again with a new pair token.",
 	runNotBound: "run not bound to this agent",
@@ -264,6 +265,10 @@ export const S = {
 		raw: "Raw log",
 		truncated: (mib: number) => `Truncated: this page shows the first ${mib} MiB.`,
 		downloadRaw: "Download the raw log",
+		live: "Live: following the job's log on the agent.",
+		agentOffline: "Agent offline",
+		finished: "Job finished. Reload the page for the stored log.",
+		streamLost: "Live log interrupted. Reload the page to try again.",
 	},
 	pages: {
 		startTitle: "Install ZeroCI",

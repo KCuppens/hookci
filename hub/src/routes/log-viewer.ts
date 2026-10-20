@@ -1,21 +1,27 @@
 // GET /logs/view: a job's log as an HTML page; GET /logs/raw: the same log as
-// text. Both take the signed query signLogUrl writes. GET /logs/viewer.css: the
-// page's stylesheet. The log holds output a fork pull request controls, so
-// every response here carries a CSP without inline script and refuses framing.
+// text; GET /logs/stream: a running job's log as server-sent events. All take the
+// signed query signLogUrl writes. GET /logs/viewer.css and /logs/viewer.js: the
+// page's stylesheet and live-tail script. The log holds output a fork pull
+// request controls, so every response here carries a CSP without inline script
+// and refuses framing.
 
 import type { Context } from "hono";
 import viewerCss from "../../static/viewer.css";
+import viewerJs from "../../static/viewer.js";
 import { getRepo } from "../db/repos";
 import { getRun, type RunRow } from "../db/runs";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
+import { HubError } from "../errors";
 import { ansiToHtml } from "../logs/ansi";
 import { logKey } from "../logs/keys";
+import { SSE_HEADERS, offlineStream } from "../logs/live";
 import { type LogRef, SIGNED_PARAMS, verifyLogUrl } from "../logs/signing";
 import { logEvent } from "../observability";
 import { escapeHtml } from "../pages/layout";
 import { QUOTAS } from "../quotas";
+import { TERMINAL } from "../slack/badge";
 import { S } from "../strings";
 
 type ViewerContext = Context<{ Bindings: Env }>;
@@ -23,6 +29,7 @@ type ViewerContext = Context<{ Bindings: Env }>;
 /** Decompressed bytes of a log the page renders; the rest is only in /logs/raw. */
 export const RENDER_LIMIT_MIB = 5;
 const RENDER_LIMIT_BYTES = RENDER_LIMIT_MIB * 1024 * 1024;
+const TERMINAL_STATES: ReadonlySet<string> = TERMINAL;
 
 const HEADERS: Readonly<Record<string, string>> = {
 	"Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
@@ -50,15 +57,14 @@ export function noticePage(title: string, message: string, status: number): Resp
 	return viewerPage(title, `<h1>${escapeHtml(title)}</h1>\n<p>${escapeHtml(message)}</p>`, status);
 }
 
-interface OpenLog {
+interface OpenRun {
 	ref: LogRef;
 	t: TenantDb;
 	run: RunRow;
-	object: R2ObjectBody;
 }
 
-/** The signed link's log, or the 403 or 404 page to answer instead. */
-async function openLog(c: ViewerContext): Promise<OpenLog | Response> {
+/** The signed link's run, or the 403 page to answer instead. */
+async function openRun(c: ViewerContext): Promise<OpenRun | Response> {
 	const env = c.env;
 	const verdict = await verifyLogUrl(env, new URL(c.req.url).searchParams, new Date((env.__TEST_CLOCK ?? systemClock).now()));
 	if (!verdict.ok) return noticePage(S.logViewer.linkExpiredTitle, S.logViewer.linkExpired, 403);
@@ -70,9 +76,13 @@ async function openLog(c: ViewerContext): Promise<OpenLog | Response> {
 		logEvent("tenant_denied", { installation_id: ref.installationId, run_id: ref.runId, job: ref.job, reason: "run_not_owned" });
 		return noticePage(S.logViewer.linkExpiredTitle, S.logViewer.linkExpired, 403);
 	}
-	const object = await env.LOGS.get(logKey(ref.installationId, ref.runId, ref.job));
-	if (!object) return noticePage(S.logViewer.notFoundTitle, S.logViewer.notFound(QUOTAS.retentionDays), 404);
-	return { ref, t, run, object };
+	return { ref, t, run };
+}
+
+/** The signed query of this request, for a sibling /logs route. */
+function signedLink(c: ViewerContext, path: string): string {
+	const params = new URL(c.req.url).searchParams;
+	return escapeHtml(`${path}?${new URLSearchParams(SIGNED_PARAMS.map((name) => [name, params.get(name) ?? ""]))}`);
 }
 
 /** Up to RENDER_LIMIT_BYTES of the gunzipped log as text, and whether more followed. */
@@ -95,33 +105,71 @@ async function readRenderable(gzipped: ReadableStream<Uint8Array>): Promise<{ te
 }
 
 export async function viewLogPage(c: ViewerContext): Promise<Response> {
-	const opened = await openLog(c);
+	const opened = await openRun(c);
 	if (opened instanceof Response) return opened;
-	const { ref, t, run, object } = opened;
+	const { ref, t, run } = opened;
+	// The agent uploads a job's log once the job ends; until then a running run's page follows it live.
+	const object = await c.env.LOGS.get(logKey(ref.installationId, ref.runId, ref.job));
+	if (!object && TERMINAL_STATES.has(run.state)) return noticePage(S.logViewer.notFoundTitle, S.logViewer.notFound(QUOTAS.retentionDays), 404);
 
 	const repo = await getRepo(t, run.repo_id);
-	const { text, truncated } = await readRenderable(object.body);
-	const params = new URL(c.req.url).searchParams;
-	const raw = escapeHtml(`/logs/raw?${new URLSearchParams(SIGNED_PARAMS.map((name) => [name, params.get(name) ?? ""]))}`);
 	const repoName = repo?.full_name ?? S.logViewer.repoRemoved;
+	const meta = `${escapeHtml(S.logViewer.run)} <code>${escapeHtml(ref.runId)}</code> · ${escapeHtml(S.logViewer.job)} <code>${escapeHtml(ref.job)}</code>`;
+	if (!object) {
+		return viewerPage(
+			`${repoName} ${ref.job}`,
+			`<h1>${escapeHtml(repoName)}</h1>
+<p class="meta">${meta}</p>
+<p class="notice" id="live" data-offline="${escapeHtml(S.logViewer.agentOffline)}" data-finished="${escapeHtml(S.logViewer.finished)}" data-lost="${escapeHtml(S.logViewer.streamLost)}">${escapeHtml(S.logViewer.live)}</p>
+<pre class="log" id="log" data-stream="${signedLink(c, "/logs/stream")}"></pre>
+<script src="/logs/viewer.js"></script>`,
+		);
+	}
+
+	const { text, truncated } = await readRenderable(object.body);
+	const raw = signedLink(c, "/logs/raw");
 	const notice = truncated
 		? `\n<p class="notice">${escapeHtml(S.logViewer.truncated(RENDER_LIMIT_MIB))} <a href="${raw}">${escapeHtml(S.logViewer.downloadRaw)}</a></p>`
 		: "";
 	return viewerPage(
 		`${repoName} ${ref.job}`,
 		`<h1>${escapeHtml(repoName)}</h1>
-<p class="meta">${escapeHtml(S.logViewer.run)} <code>${escapeHtml(ref.runId)}</code> · ${escapeHtml(S.logViewer.job)} <code>${escapeHtml(ref.job)}</code> · <a href="${raw}">${escapeHtml(S.logViewer.raw)}</a></p>
+<p class="meta">${meta} · <a href="${raw}">${escapeHtml(S.logViewer.raw)}</a></p>
 <pre class="log">${ansiToHtml(text)}</pre>${notice}`,
 	);
 }
 
 export async function rawLog(c: ViewerContext): Promise<Response> {
-	const opened = await openLog(c);
+	const opened = await openRun(c);
 	if (opened instanceof Response) return opened;
-	return new Response(opened.object.body, {
+	const { ref } = opened;
+	const object = await c.env.LOGS.get(logKey(ref.installationId, ref.runId, ref.job));
+	if (!object) return noticePage(S.logViewer.notFoundTitle, S.logViewer.notFound(QUOTAS.retentionDays), 404);
+	return new Response(object.body, {
 		headers: { ...HEADERS, "Content-Type": "text/plain; charset=utf-8", "Content-Encoding": "gzip", "Content-Disposition": "inline" },
 		encodeBody: "manual",
 	});
+}
+
+/** GET /logs/stream: the job's live log, proxied from its agent's AgentDO, which caps it at 60 minutes and sends keepalives. */
+export async function streamLog(c: ViewerContext): Promise<Response> {
+	const opened = await openRun(c);
+	if (opened instanceof Response) return opened;
+	const { ref, run } = opened;
+	if (TERMINAL_STATES.has(run.state)) return Response.json({ error: "run_finished" }, { status: 409, headers: HEADERS });
+	const headers = { ...HEADERS, ...SSE_HEADERS };
+	if (!run.agent_id) return new Response(offlineStream(), { headers });
+
+	const agent = c.env.AGENT_DO.get(c.env.AGENT_DO.idFromName(run.agent_id));
+	const tail = await agent.fetch(`https://do/tail?${new URLSearchParams({ run_id: ref.runId, job: ref.job, offset: "0" })}`, {
+		signal: c.req.raw.signal,
+	});
+	if (!tail.ok || !tail.body) throw new HubError("agent_tail_failed", 502, `AgentDO /tail answered ${tail.status}`);
+	return new Response(tail.body, { headers });
+}
+
+export function viewerScript(): Response {
+	return new Response(viewerJs, { headers: { ...HEADERS, "Content-Type": "text/javascript; charset=utf-8" } });
 }
 
 export function viewerStylesheet(): Response {

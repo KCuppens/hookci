@@ -444,6 +444,28 @@ func TestDaemonInterrupt(t *testing.T) {
 	}
 }
 
+// TestDaemonLogTailFinished: the live log tail ends a job's stream once the
+// store records the job terminal, or never knew it.
+func TestDaemonLogTailFinished(t *testing.T) {
+	h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{Block: true})
+	h.send(h.trigger("trg_1", false))
+	tr := h.waitTrigger("trg_1", store.TriggerRunning)
+	<-h.runner.running
+
+	if h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(running unit) = true")
+	}
+	if !h.d.jobFinished(tr.RunID, "nope") {
+		t.Error("jobFinished(unknown job) = false")
+	}
+	runID := tr.RunID
+	h.send(protocol.Interrupt{RunId: &runID, Reason: protocol.InterruptReasonSuperseded, Seq: new(9)})
+	h.waitTrigger("trg_1", store.TriggerDone)
+	if !h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(cancelled unit) = false")
+	}
+}
+
 func TestDaemonInterruptDuringCheckout(t *testing.T) {
 	h := newHarness(t, &fakeSource{Block: true}, &fakeRunner{})
 	h.send(h.trigger("trg_1", false))

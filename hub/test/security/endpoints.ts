@@ -51,8 +51,10 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "POST", path: "/v1/render", auth: "agent_bearer" },
   { method: "GET", path: "/logs/view", auth: "log_sig" },
   { method: "GET", path: "/logs/raw", auth: "log_sig" },
+  { method: "GET", path: "/logs/stream", auth: "log_sig" },
   { method: "GET", path: "/logs/viewer.css", auth: "public" },
   // The stable log link: a public repo's log opens for anyone; a private repo's needs the zc_session cookie, else it starts sign-in.
   { method: "GET", path: "/runs/:runId/logs", auth: "public" },
   { method: "GET", path: "/auth/github/callback", auth: "oauth_state" },
+  { method: "GET", path: "/logs/viewer.js", auth: "public" },
 ];

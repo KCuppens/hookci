@@ -113,6 +113,20 @@ describe("GET /logs/view", () => {
     expectSecurityHeaders(res);
     expect(await res.text()).toContain("Log expired (14-day retention) or kept local on the agent.");
   });
+
+  it("follows a running job live until its log is stored", async () => {
+    await env.LOGS.delete(logKey(A, RUN_A, "test"));
+    await seedRun(A, 5100, "run_viewer_live", null, "test", { state: "running", finished_at: null, duration_ms: null });
+    const url = await signed({ installationId: A, runId: "run_viewer_live", job: "test" });
+    const res = await fetchHub(url);
+    expect(res.status).toBe(200);
+    expectSecurityHeaders(res);
+    const html = await res.text();
+    expect(html).toContain('<script src="/logs/viewer.js"></script>');
+    expect(html).toContain(`data-stream="${escapeHtml(url.replace(`${env.HUB_ORIGIN}/logs/view`, "/logs/stream"))}"`);
+    expect(html).toContain(`data-offline="${escapeHtml(S.logViewer.agentOffline)}"`);
+    expect(html).not.toContain("/logs/raw");
+  });
 });
 
 describe("GET /logs/raw", () => {

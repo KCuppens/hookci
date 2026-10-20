@@ -523,7 +523,7 @@
       }
     },
     "protocol": {
-      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.",
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them.",
       "$defs": {
         "Envelope": {
           "description": "Fields shared by every frame.",
@@ -1026,10 +1026,10 @@
           }
         },
         "LogSubscribe": {
-          "description": "Hub asks the agent to stream a log.",
+          "description": "Hub asks the agent to stream a job's log from offset until the job ends. Never sequenced: a subscription lives as long as the connection.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["v", "type", "run_id"],
+          "required": ["v", "type", "run_id", "job", "offset"],
           "properties": {
             "v": {
               "description": "Protocol version.",
@@ -1041,31 +1041,52 @@
               "type": "string",
               "const": "log_subscribe"
             },
-            "seq": {
-              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name.",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Byte offset in the job's log file to start from.",
               "type": "integer",
-              "minimum": 1
+              "minimum": 0
+            }
+          }
+        },
+        "LogUnsubscribe": {
+          "description": "Hub tells the agent to stop streaming a job's log. Never sequenced.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "job"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "log_unsubscribe"
             },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
             },
             "job": {
-              "description": "Job name. Absent for the whole run.",
+              "description": "Job name.",
               "type": "string"
-            },
-            "from_offset": {
-              "description": "Byte offset to start from.",
-              "type": "integer",
-              "default": 0
             }
           }
         },
         "Log": {
-          "description": "A chunk of job log.",
+          "description": "A redacted chunk of a subscribed job log. Never sequenced.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["v", "type", "run_id", "job", "offset", "bytes"],
+          "required": ["v", "type", "run_id", "job", "offset", "bytes", "eof"],
           "properties": {
             "v": {
               "description": "Protocol version.",
@@ -1077,11 +1098,6 @@
               "type": "string",
               "const": "log"
             },
-            "seq": {
-              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
-              "type": "integer",
-              "minimum": 1
-            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -1091,13 +1107,18 @@
               "type": "string"
             },
             "offset": {
-              "description": "Byte offset of the chunk in the log.",
-              "type": "integer"
+              "description": "Byte offset of the chunk in the job's log file.",
+              "type": "integer",
+              "minimum": 0
             },
             "bytes": {
               "description": "Log bytes, base64 encoded.",
               "type": "string",
               "contentEncoding": "base64"
+            },
+            "eof": {
+              "description": "The job has ended and every byte of its log was sent; the subscription is over.",
+              "type": "boolean"
             }
           }
         },
@@ -1340,6 +1361,7 @@
             { "$ref": "#/$defs/protocol/$defs/TokenRequest" },
             { "$ref": "#/$defs/protocol/$defs/Token" },
             { "$ref": "#/$defs/protocol/$defs/LogSubscribe" },
+            { "$ref": "#/$defs/protocol/$defs/LogUnsubscribe" },
             { "$ref": "#/$defs/protocol/$defs/Log" },
             { "$ref": "#/$defs/protocol/$defs/Ack" },
             { "$ref": "#/$defs/protocol/$defs/Welcome" },
