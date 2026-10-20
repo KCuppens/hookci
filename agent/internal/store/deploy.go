@@ -339,31 +339,9 @@ func (s *Store) AllocatePort(ctx context.Context, repo, env, color string, lo, h
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		rows, err := conn.QueryContext(ctx,
-			`SELECT port FROM port_allocations WHERE port BETWEEN ? AND ? ORDER BY port`, lo, hi)
+		port, err = lowestFreePort(ctx, conn, lo, hi)
 		if err != nil {
 			return err
-		}
-		defer rows.Close()
-		port = lo
-		for rows.Next() {
-			var taken int
-			if err := rows.Scan(&taken); err != nil {
-				return err
-			}
-			if taken != port {
-				break
-			}
-			port++
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if port > hi {
-			return fmt.Errorf("%w: %d-%d", ErrPortsExhausted, lo, hi)
 		}
 		_, err = conn.ExecContext(ctx,
 			`INSERT INTO port_allocations (repo, env, color, port) VALUES (?, ?, ?, ?)`, repo, env, color, port)
@@ -371,6 +349,65 @@ func (s *Store) AllocatePort(ctx context.Context, repo, env, color string, lo, h
 	})
 	if err != nil {
 		return 0, err
+	}
+	return port, nil
+}
+
+// GetPortAllocation returns the host port allocated to (repo, env, color), or
+// ErrNotFound. It allocates nothing.
+func (s *Store) GetPortAllocation(ctx context.Context, repo, env, color string) (int, error) {
+	var port int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT port FROM port_allocations WHERE repo = ? AND env = ? AND color = ?`, repo, env, color).Scan(&port)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("store: port allocation %s/%s %s: %w", repo, env, color, ErrNotFound)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: port allocation %s/%s %s: %w", repo, env, color, err)
+	}
+	return port, nil
+}
+
+// NextFreePort returns the port AllocatePort would hand out next in the
+// default range, without reserving it.
+func (s *Store) NextFreePort(ctx context.Context) (int, error) {
+	port, err := lowestFreePort(ctx, s.db, DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		return 0, fmt.Errorf("store: next free port: %w", err)
+	}
+	return port, nil
+}
+
+// lowestFreePort returns the lowest port in [lo, hi] without an allocation,
+// or an error wrapping ErrPortsExhausted.
+func lowestFreePort(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, lo, hi int) (int, error) {
+	rows, err := q.QueryContext(ctx,
+		`SELECT port FROM port_allocations WHERE port BETWEEN ? AND ? ORDER BY port`, lo, hi)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	port := lo
+	for rows.Next() {
+		var taken int
+		if err := rows.Scan(&taken); err != nil {
+			return 0, err
+		}
+		if taken != port {
+			break
+		}
+		port++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if port > hi {
+		return 0, fmt.Errorf("%w: %d-%d", ErrPortsExhausted, lo, hi)
 	}
 	return port, nil
 }

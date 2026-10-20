@@ -50,6 +50,16 @@ func (s *Script) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Step
 	return []deploy.Step{{Name: "run", Phase: deploy.PhaseApply, Run: s.run}}, nil
 }
 
+// Preview shows the single step of a deploy; a script builds no image and
+// touches no route the agent knows of.
+func (s *Script) Preview(_ context.Context, pc deploy.PreviewContext) (deploy.PlanPreview, error) {
+	steps, err := s.Plan(store.DeployRun{Repo: pc.Repo, Env: pc.Env, SHA: pc.SHA}, pc.Cfg)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	return deploy.PlanPreview{Steps: deploy.StepNames(steps)}, nil
+}
+
 // run executes deployments.<env>.run, reporting each marker line as a
 // sub-step and logging how long each sub-step took.
 func (s *Script) run(ctx context.Context, sc *deploy.StepContext) error {

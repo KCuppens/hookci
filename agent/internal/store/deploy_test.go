@@ -86,6 +86,68 @@ func TestAllocatePort_IdempotentAndUnique(t *testing.T) {
 	}
 }
 
+func TestGetPortAllocation_ReadsWithoutAllocating(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if _, err := s.GetPortAllocation(ctx, "acme/web", "prod", "blue"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPortAllocation before allocation: err = %v, want ErrNotFound", err)
+	}
+	if n := countPortAllocations(t, s); n != 0 {
+		t.Fatalf("lookup inserted %d port_allocations rows", n)
+	}
+	want, err := s.AllocatePort(ctx, "acme/web", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPortAllocation(ctx, "acme/web", "prod", "blue")
+	if err != nil || got != want {
+		t.Errorf("GetPortAllocation = %d, %v; want %d", got, err, want)
+	}
+	if _, err := s.GetPortAllocation(ctx, "acme/web", "prod", "green"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetPortAllocation(green): err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestNextFreePort_MatchesAllocateWithoutInserting(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	first, err := s.NextFreePort(ctx)
+	if err != nil || first != DefaultPortLo {
+		t.Fatalf("NextFreePort on empty table = %d, %v; want %d", first, err, DefaultPortLo)
+	}
+	for _, color := range []string{"blue", "green"} {
+		if _, err := s.AllocatePort(ctx, "acme/web", "prod", color, DefaultPortLo, DefaultPortHi); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next, err := s.NextFreePort(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.NextFreePort(ctx); err != nil || again != next {
+		t.Errorf("NextFreePort again = %d, %v; want unchanged %d", again, err, next)
+	}
+	if n := countPortAllocations(t, s); n != 2 {
+		t.Errorf("port_allocations rows = %d, want 2", n)
+	}
+	allocated, err := s.AllocatePort(ctx, "acme/api", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != allocated {
+		t.Errorf("NextFreePort = %d, AllocatePort then gave %d", next, allocated)
+	}
+}
+
+func countPortAllocations(t *testing.T, s *Store) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM port_allocations`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func TestEnvLock_Exclusive(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

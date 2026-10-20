@@ -41,6 +41,10 @@ func commandTable() map[string]command {
 			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
 			run:     cmdConnect,
 		},
+		"deploy": {
+			summary: "preview a deployment without running it: deploy <env> --dry-run [--repo owner/name] [--sha SHA]",
+			run:     cmdDeploy,
+		},
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
 			run:     noDeps(runDetect),

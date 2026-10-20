@@ -12,7 +12,12 @@ import (
 // ReadMarker returns the color recorded in the marker file at path, or ""
 // when the file does not exist.
 func ReadMarker(path string) (string, error) {
-	raw, err := os.ReadFile(path)
+	return readMarker(os.ReadFile, path)
+}
+
+// readMarker is ReadMarker reading through read.
+func readMarker(read func(string) ([]byte, error), path string) (string, error) {
+	raw, err := read(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}

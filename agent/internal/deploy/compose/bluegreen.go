@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"gopkg.in/yaml.v3"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
@@ -84,6 +86,62 @@ func (b *BlueGreen) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.S
 	}, nil
 }
 
+// Preview shows the plan of a deploy of pc.SHA: the color it would target,
+// that color's port (allocated or next free, reserving none), the override
+// and the route diff. It reads the marker and route file through
+// pc.ReadFile and runs and writes nothing.
+func (b *BlueGreen) Preview(ctx context.Context, pc deploy.PreviewContext) (deploy.PlanPreview, error) {
+	run, cfg := store.DeployRun{Repo: pc.Repo, Env: pc.Env, SHA: pc.SHA}, pc.Cfg
+	steps, err := b.Plan(run, cfg)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	active, err := readMarker(pc.ReadFile, b.markerPath(run, cfg))
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	target := OtherColor(active)
+	port, err := pc.Store.GetPortAllocation(ctx, run.Repo, run.Env, target)
+	if errors.Is(err, store.ErrNotFound) {
+		port, err = pc.Store.NextFreePort(ctx)
+	}
+	if err != nil {
+		return deploy.PlanPreview{}, fmt.Errorf("deployments.%s: %w", run.Env, err)
+	}
+	image, err := ImageTag(cfg.Compose.Project, run.SHA)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	override, err := renderOverride(run.Env, b.WorkDir(run), cfg, image, target, port)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	route, err := b.renderRoute(run, cfg, target, port)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	current, err := pc.ReadFile(cfg.Route.File)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return deploy.PlanPreview{}, fmt.Errorf("compose: reading route %s: %w", cfg.Route.File, err)
+	}
+	diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A: diffLines(current), B: diffLines(route),
+		FromFile: cfg.Route.File, ToFile: cfg.Route.File, Context: 3,
+	})
+	if err != nil {
+		return deploy.PlanPreview{}, fmt.Errorf("compose: diffing route %s: %w", cfg.Route.File, err)
+	}
+	return deploy.PlanPreview{
+		Steps:       deploy.StepNames(steps),
+		ActiveColor: active,
+		TargetColor: target,
+		TargetPort:  port,
+		Image:       image,
+		Override:    string(override),
+		RouteDiff:   diff,
+	}, nil
+}
+
 // build builds <project>:<sha7> with BuildKit unless the image exists.
 func (b *BlueGreen) build(ctx context.Context, sc *deploy.StepContext) error {
 	return buildImage(ctx, sc, b.WorkDir(sc.Run))
@@ -137,18 +195,7 @@ func (b *BlueGreen) prepare(ctx context.Context, sc *deploy.StepContext) error {
 	if err != nil {
 		return err
 	}
-	in := OverrideInput{
-		Env:         run.Env,
-		ComposeFile: composeFile(b.WorkDir(run), cfg),
-		Service:     cfg.Compose.Service,
-		Image:       image,
-		HostPort:    port,
-		Color:       color,
-	}
-	if cfg.Compose.SharedNetwork != nil {
-		in.SharedNetwork = *cfg.Compose.SharedNetwork
-	}
-	override, err := RenderOverride(in)
+	override, err := renderOverride(run.Env, b.WorkDir(run), cfg, image, color, port)
 	if err != nil {
 		return err
 	}
@@ -303,11 +350,9 @@ func (b *BlueGreen) restoreRoute(ctx context.Context, sc *deploy.StepContext) er
 // the write and reload when the route file already holds it.
 func (b *BlueGreen) applyRoute(ctx context.Context, sc *deploy.StepContext, color string, port int) error {
 	r := sc.Cfg.Route
-	content, err := b.Proxy.Render(proxy.RouteSpec{
-		Repo: sc.Run.Repo, Env: sc.Run.Env, Color: color, UpstreamHost: r.UpstreamHost, Port: port,
-	})
+	content, err := b.renderRoute(sc.Run, sc.Cfg, color, port)
 	if err != nil {
-		return fmt.Errorf("deployments.%s.route: %w", sc.Run.Env, err)
+		return err
 	}
 	current, err := os.ReadFile(r.File)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -349,6 +394,17 @@ func (b *BlueGreen) envDir(run store.DeployRun) string {
 	return filepath.Join(b.StateDir, "deploy", run.Repo, run.Env)
 }
 
+// renderRoute renders the route of run to color on port.
+func (b *BlueGreen) renderRoute(run store.DeployRun, cfg config.Deployment, color string, port int) ([]byte, error) {
+	content, err := b.Proxy.Render(proxy.RouteSpec{
+		Repo: run.Repo, Env: run.Env, Color: color, UpstreamHost: cfg.Route.UpstreamHost, Port: port,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deployments.%s.route: %w", run.Env, err)
+	}
+	return content, nil
+}
+
 // markerPath is compose.marker, or <StateDir>/deploy/<repo>/<env>/active-color.
 func (b *BlueGreen) markerPath(run store.DeployRun, cfg config.Deployment) string {
 	if cfg.Compose.Marker != nil && *cfg.Compose.Marker != "" {
@@ -363,6 +419,35 @@ func composeFile(workdir string, cfg config.Deployment) string {
 		file = defaultComposeFile
 	}
 	return filepath.Join(workdir, file)
+}
+
+// diffLines splits b into newline-terminated lines for difflib, so an empty
+// file has no lines and a missing final newline adds none.
+func diffLines(b []byte) []string {
+	lines := strings.SplitAfter(string(b), "\n")
+	if last := len(lines) - 1; lines[last] == "" {
+		lines = lines[:last]
+	} else {
+		lines[last] += "\n"
+	}
+	return lines
+}
+
+// renderOverride renders the compose override of cfg's service in workdir:
+// image, the shared network, and color on host port when port is not 0.
+func renderOverride(env, workdir string, cfg config.Deployment, image, color string, port int) ([]byte, error) {
+	in := OverrideInput{
+		Env:         env,
+		ComposeFile: composeFile(workdir, cfg),
+		Service:     cfg.Compose.Service,
+		Image:       image,
+		HostPort:    port,
+		Color:       color,
+	}
+	if cfg.Compose.SharedNetwork != nil {
+		in.SharedNetwork = *cfg.Compose.SharedNetwork
+	}
+	return RenderOverride(in)
 }
 
 // buildSource returns the build context directory and the Dockerfile

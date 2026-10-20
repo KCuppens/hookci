@@ -48,6 +48,25 @@ func (p *InPlace) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Ste
 	), nil
 }
 
+// Preview shows the steps of a deploy of pc.SHA, its image and the override
+// pinning that image. It runs and writes nothing.
+func (p *InPlace) Preview(_ context.Context, pc deploy.PreviewContext) (deploy.PlanPreview, error) {
+	run, cfg := store.DeployRun{Repo: pc.Repo, Env: pc.Env, SHA: pc.SHA}, pc.Cfg
+	steps, err := p.Plan(run, cfg)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	image, err := ImageTag(cfg.Compose.Project, run.SHA)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	override, err := renderOverride(run.Env, p.WorkDir(run), cfg, image, "", 0)
+	if err != nil {
+		return deploy.PlanPreview{}, err
+	}
+	return deploy.PlanPreview{Steps: deploy.StepNames(steps), Image: image, Override: string(override)}, nil
+}
+
 // build builds <project>:<sha7> with BuildKit unless the image exists.
 func (p *InPlace) build(ctx context.Context, sc *deploy.StepContext) error {
 	return buildImage(ctx, sc, p.WorkDir(sc.Run))
@@ -106,11 +125,7 @@ func (p *InPlace) composeArgv(sc *deploy.StepContext) ([]string, error) {
 	}
 	workdir := p.WorkDir(sc.Run)
 	file := composeFile(workdir, sc.Cfg)
-	in := OverrideInput{Env: sc.Run.Env, ComposeFile: file, Service: sc.Cfg.Compose.Service, Image: image}
-	if sc.Cfg.Compose.SharedNetwork != nil {
-		in.SharedNetwork = *sc.Cfg.Compose.SharedNetwork
-	}
-	override, err := RenderOverride(in)
+	override, err := renderOverride(sc.Run.Env, workdir, sc.Cfg, image, "", 0)
 	if err != nil {
 		return nil, err
 	}
