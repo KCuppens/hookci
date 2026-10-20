@@ -111,7 +111,11 @@ reason the app asks for it. GitHub shows these on the install page.
 | Event | `push` | | Starts a run on pushed branches and triggers configured deploys. |
 | Event | `check_suite` | | Delivered when GitHub requests or re-requests a check suite; the hub records it, and runs start from `pull_request` and `push`. |
 | Event | `check_run` | | Receives the "Approve run" button press that lets a gated fork run start. |
-| Event | `installation_repositories` | | Keeps the hub's repository list in sync when repositories are added to or removed from the installation. |
+
+GitHub also sends every app the `installation` and `installation_repositories`
+events without a subscription. The hub uses `installation_repositories` to keep
+its repository list in sync when repositories are added to or removed from the
+installation.
 
 ## Logo and screenshots
 
