@@ -262,6 +262,31 @@ export interface Deployment {
      * Migration command, run in the new image.
      */
     run: string;
+    /**
+     * Globs of migration files. When set, migrate.before runs only when a changed file since the last successful deploy matches one of them.
+     */
+    paths?: string[];
+    /**
+     * Backup command run in a one-off container before the migration, with output_dir mounted at /backup. {env}, {sha7} and {ts} in run are replaced.
+     */
+    before?: {
+      /**
+       * Backup command, run with sh -c.
+       */
+      run: string;
+      /**
+       * Image the backup command runs in. Defaults to the freshly built app image.
+       */
+      image?: string;
+      /**
+       * Absolute host directory the backup is written to, mounted at /backup.
+       */
+      output_dir?: string;
+      /**
+       * Number of recorded backups kept; older ones are deleted.
+       */
+      retain?: number;
+    };
   };
   /**
    * Reverse proxy route switched between colors. Required for compose-bluegreen.

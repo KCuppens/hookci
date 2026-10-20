@@ -1,0 +1,26 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: make test
+deployments:
+  production:
+    on: { push: main, after: checks }
+    strategy: compose-bluegreen
+    compose:
+      project: app
+      service: web
+      shared_network: shared
+    migrate:
+      run: "./migrate up"
+      paths: ["db/migrations/**"]
+      before:
+        run: "pg_dump -Fc -f /backup/{env}-{sha7}-{ts}.dump \"$DATABASE_URL\""
+        image: "postgres:16"
+        output_dir: /var/backups/zeroci/app
+        retain: 5
+    route:
+      kind: caddy
+      file: /etc/caddy/routes/app.caddy
+    health: { url: "http://127.0.0.1:{port}/health" }
+    env_file: /etc/zeroci/env/app.env

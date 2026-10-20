@@ -50,13 +50,14 @@ type execCall struct {
 }
 
 // recExecutor records commands. docker image inspect succeeds only when
-// imageExists is set; docker compose down of project failDown fails; every
-// command fails once ctx is done.
+// imageExists is set; docker compose down of project failDown fails; docker
+// run fails with failRun when set; every command fails once ctx is done.
 type recExecutor struct {
 	mu          sync.Mutex
 	calls       []execCall
 	imageExists bool
 	failDown    string
+	failRun     error
 }
 
 func (e *recExecutor) Run(ctx context.Context, _ string, argv []string, opts deploy.ExecOpts) error {
@@ -71,6 +72,9 @@ func (e *recExecutor) Run(ctx context.Context, _ string, argv []string, opts dep
 	}
 	if e.failDown != "" && slices.Contains(argv, "down") && argv[3] == e.failDown {
 		return fmt.Errorf("deploy: step finalize: exit status 1")
+	}
+	if e.failRun != nil && slices.Equal(argv[:2], []string{"docker", "run"}) {
+		return e.failRun
 	}
 	return nil
 }
@@ -318,26 +322,39 @@ func downs(cmds []string) []string {
 }
 
 func TestBlueGreen_Plan_StepNames(t *testing.T) {
-	r := newBGRig(t)
-	steps, err := r.strat.Plan(store.DeployRun{Repo: bgRepo, Env: bgEnv, SHA: bgSHA}, r.cfg)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
 	type np struct {
 		name  string
 		phase deploy.Phase
 	}
-	want := []np{
-		{"build", deploy.PhaseApply}, {"prepare", deploy.PhaseApply}, {"migrate", deploy.PhaseApply},
-		{"start", deploy.PhaseApply}, {"health", deploy.PhaseApply}, {"swap", deploy.PhaseApply},
-		{"verify", deploy.PhaseVerify}, {"finalize", deploy.PhaseVerify},
+	head := []np{{"build", deploy.PhaseApply}, {"prepare", deploy.PhaseApply}}
+	tail := []np{
+		{"migrate", deploy.PhaseApply}, {"start", deploy.PhaseApply}, {"health", deploy.PhaseApply},
+		{"swap", deploy.PhaseApply}, {"verify", deploy.PhaseVerify}, {"finalize", deploy.PhaseVerify},
 	}
-	var got []np
-	for _, s := range steps {
-		got = append(got, np{s.Name, s.Phase})
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("plan = %v, want %v", got, want)
+	for _, tc := range []struct {
+		name   string
+		before *config.DeploymentMigrateBefore
+		want   []np
+	}{
+		{"without migrate.before", nil, slices.Concat(head, tail)},
+		{"with migrate.before", &config.DeploymentMigrateBefore{Run: "pg_dump", OutputDir: new("/var/backups/app")},
+			slices.Concat(head, []np{{"migrate-before", deploy.PhaseApply}}, tail)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBGRig(t)
+			r.cfg.Migrate.Before = tc.before
+			steps, err := r.strat.Plan(store.DeployRun{Repo: bgRepo, Env: bgEnv, SHA: bgSHA}, r.cfg)
+			if err != nil {
+				t.Fatalf("Plan: %v", err)
+			}
+			var got []np
+			for _, s := range steps {
+				got = append(got, np{s.Name, s.Phase})
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("plan = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -452,6 +469,55 @@ func TestBlueGreen_HealthFailure_BeforeSwap(t *testing.T) {
 	}
 	if got := r.marker(t); got != "blue" {
 		t.Fatalf("marker = %q, want unchanged blue", got)
+	}
+}
+
+func TestBlueGreen_MigrateBeforeFailure_OldColorServes(t *testing.T) {
+	r := newBGRig(t)
+	wantSuccess(t, r.deploy(t))
+	r.exec.reset()
+	appliesBefore := len(r.proxy.applied())
+	routeBefore := r.routeFile(t)
+	r.cfg.Migrate.Before = &config.DeploymentMigrateBefore{
+		Run: "pg_dump -Fc -f /backup/{env}-{sha7}-{ts}.dump", OutputDir: new(filepath.Join(t.TempDir(), "backups")),
+	}
+	r.exec.failRun = fmt.Errorf("deploy: step migrate-before: exit code 1")
+
+	run := r.deploy(t)
+	if run.State != store.DeployFailed || !strings.Contains(run.Error, "migrate-before: exit code 1") {
+		t.Fatalf("state = %s (%s), want Failed with the hook error", run.State, run.Error)
+	}
+	steps, err := r.store.ListSteps(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := steps[len(steps)-1]
+	if last.Name != "migrate-before" || last.Status != store.StepFailed {
+		t.Fatalf("last step = %s %s, want migrate-before failed", last.Name, last.Status)
+	}
+	cmds := r.exec.commands()
+	for _, c := range cmds {
+		if strings.Contains(c, " run --rm web ") || strings.Contains(c, " up -d") {
+			t.Fatalf("command %q ran after the hook failed; commands:\n%s", c, strings.Join(cmds, "\n"))
+		}
+	}
+	if !slices.ContainsFunc(cmds, func(c string) bool { return strings.HasPrefix(c, "docker run --rm ") }) {
+		t.Fatalf("no hook container in %v", cmds)
+	}
+	if got := downs(cmds); !slices.Equal(got, []string{"myapp-green"}) {
+		t.Fatalf("down projects = %v, want only the idle myapp-green", got)
+	}
+	if got := len(r.proxy.applied()); got != appliesBefore {
+		t.Fatalf("proxy Apply called %d times during the failed deploy, want 0", got-appliesBefore)
+	}
+	if got := r.routeFile(t); got != routeBefore {
+		t.Fatalf("route = %q, want unchanged %q", got, routeBefore)
+	}
+	if got := r.marker(t); got != "blue" {
+		t.Fatalf("marker = %q, want unchanged blue", got)
+	}
+	if got := r.activeColor(t); got != "blue" {
+		t.Fatalf("active_color = %q, want unchanged blue", got)
 	}
 }
 

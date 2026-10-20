@@ -232,6 +232,82 @@ func TestValidateDeployments_HealthURL(t *testing.T) {
 	}
 }
 
+// TestValidateDeployments runs the migrate.before fixtures through the full
+// parse pipeline. A missing migrate.run is a schema error there; the
+// semantic check behind it is covered by TestValidateDeployments_MigrateBefore.
+func TestValidateDeployments(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		path    string // "" means no diagnostics
+		msg     string
+	}{
+		{"migrate_before_ok.yml", "", ""},
+		{"migrate_before_relative_dir.yml", "deployments.production.migrate.before.output_dir", "must be an absolute path other than /"},
+		{"migrate_before_script.yml", "deployments.production.migrate.before", "not supported by strategy: script"},
+		{"migrate_before_no_run.yml", "deployments.production.migrate", "run"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			_, diags := parseString(t, readFixture(t, "deploy/"+tc.fixture), ParseOptions{})
+			if tc.path == "" {
+				if len(diags) > 0 {
+					t.Fatalf("unexpected diagnostics:\n%s", diags.Format(tc.fixture))
+				}
+				return
+			}
+			if len(diags) != 1 {
+				t.Fatalf("got %d diagnostics, want 1:\n%s", len(diags), diags.Format(tc.fixture))
+			}
+			d := findDiag(t, diags, tc.path)
+			if d.Severity != SeverityError || !strings.Contains(d.Message, tc.msg) {
+				t.Errorf("diagnostic = %+v, want an error containing %q", d, tc.msg)
+			}
+		})
+	}
+}
+
+func TestValidateDeployments_MigrateBefore(t *testing.T) {
+	before := func() *DeploymentMigrateBefore {
+		return &DeploymentMigrateBefore{Run: "pg_dump", OutputDir: new("/var/backups/app")}
+	}
+	for _, tc := range []struct {
+		name     string
+		strategy DeploymentStrategy
+		migrate  DeploymentMigrate
+		want     []string
+	}{
+		{"ok", DeploymentStrategyComposeInplace,
+			DeploymentMigrate{Run: "./migrate", Paths: []string{"db/**/*.sql"}, Before: before()}, nil},
+		{"no run", DeploymentStrategyComposeInplace,
+			DeploymentMigrate{Before: before()}, []string{"deployments.production.migrate.run"}},
+		{"script", DeploymentStrategyScript,
+			DeploymentMigrate{Run: "./migrate", Before: before()}, []string{"deployments.production.migrate.before"}},
+		{"missing dir", DeploymentStrategyComposeInplace,
+			DeploymentMigrate{Run: "./migrate", Before: &DeploymentMigrateBefore{Run: "pg_dump"}},
+			[]string{"deployments.production.migrate.before.output_dir"}},
+		{"root dir", DeploymentStrategyComposeInplace,
+			DeploymentMigrate{Run: "./migrate", Before: &DeploymentMigrateBefore{Run: "pg_dump", OutputDir: new("/backups/..")}},
+			[]string{"deployments.production.migrate.before.output_dir"}},
+		{"bad glob", DeploymentStrategyComposeInplace,
+			DeploymentMigrate{Run: "./migrate", Paths: []string{"db/**", "db/[migrations"}},
+			[]string{"deployments.production.migrate.paths[1]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateMigrate("deployments.production.migrate", tc.strategy, tc.migrate)
+			var got []string
+			for _, e := range errs {
+				got = append(got, e.Path)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("paths = %v, want %v:\n%s", got, tc.want, errorStrings(errs))
+			}
+		})
+	}
+	errs := validateMigrate("m", DeploymentStrategyScript, DeploymentMigrate{Run: "x", Before: before()})
+	if len(errs) != 1 || errs[0].Fix != "use run/needs steps for script deployments" {
+		t.Fatalf("script errors =\n%s", errorStrings(errs))
+	}
+}
+
 func TestSchema_RejectsUnknownStrategy(t *testing.T) {
 	_, diags := parseString(t, readFixture(t, "deploy/bad_strategy.yml"), ParseOptions{})
 	d := findDiag(t, diags, "deployments.production.strategy")

@@ -359,6 +359,43 @@
               "description": "Migration command, run in the new image.",
               "type": "string",
               "minLength": 1
+            },
+            "paths": {
+              "description": "Globs of migration files. When set, migrate.before runs only when a changed file since the last successful deploy matches one of them.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "before": {
+              "description": "Backup command run in a one-off container before the migration, with output_dir mounted at /backup. {env}, {sha7} and {ts} in run are replaced.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["run"],
+              "properties": {
+                "run": {
+                  "description": "Backup command, run with sh -c.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "image": {
+                  "description": "Image the backup command runs in. Defaults to the freshly built app image.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "output_dir": {
+                  "description": "Absolute host directory the backup is written to, mounted at /backup.",
+                  "type": "string"
+                },
+                "retain": {
+                  "description": "Number of recorded backups kept; older ones are deleted.",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "default": 10
+                }
+              }
             }
           }
         },

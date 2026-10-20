@@ -135,6 +135,9 @@ func TestInPlace_Plan(t *testing.T) {
 		want    []string
 	}{
 		{"with migrate", &config.DeploymentMigrate{Run: "./migrate up"}, []string{"build", "migrate", "up", "health"}},
+		{"with migrate.before", &config.DeploymentMigrate{Run: "./migrate up",
+			Before: &config.DeploymentMigrateBefore{Run: "pg_dump", OutputDir: new("/var/backups/app")}},
+			[]string{"build", "migrate-before", "migrate", "up", "health"}},
 		{"empty migrate.run", &config.DeploymentMigrate{}, []string{"build", "up", "health"}},
 		{"no migrate", nil, []string{"build", "up", "health"}},
 	}

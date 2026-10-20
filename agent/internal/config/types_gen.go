@@ -441,8 +441,65 @@ func (j *DeploymentHealth) UnmarshalJSON(value []byte) error {
 
 // Database migration run before the switch.
 type DeploymentMigrate struct {
+	// Backup command run in a one-off container before the migration, with output_dir
+	// mounted at /backup. {env}, {sha7} and {ts} in run are replaced.
+	Before *DeploymentMigrateBefore `json:"before,omitempty,omitzero" yaml:"before,omitempty"`
+
+	// Globs of migration files. When set, migrate.before runs only when a changed
+	// file since the last successful deploy matches one of them.
+	Paths []string `json:"paths,omitempty,omitzero" yaml:"paths,omitempty"`
+
 	// Migration command, run in the new image.
 	Run string `json:"run" yaml:"run"`
+}
+
+// Backup command run in a one-off container before the migration, with output_dir
+// mounted at /backup. {env}, {sha7} and {ts} in run are replaced.
+type DeploymentMigrateBefore struct {
+	// Image the backup command runs in. Defaults to the freshly built app image.
+	Image *string `json:"image,omitempty,omitzero" yaml:"image,omitempty"`
+
+	// Absolute host directory the backup is written to, mounted at /backup.
+	OutputDir *string `json:"output_dir,omitempty,omitzero" yaml:"output_dir,omitempty"`
+
+	// Number of recorded backups kept; older ones are deleted.
+	Retain int `json:"retain,omitempty,omitzero" yaml:"retain,omitempty"`
+
+	// Backup command, run with sh -c.
+	Run string `json:"run" yaml:"run"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *DeploymentMigrateBefore) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["run"]; raw != nil && !ok {
+		return fmt.Errorf("field run in DeploymentMigrateBefore: required")
+	}
+	type Plain DeploymentMigrateBefore
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if plain.Image != nil && utf8.RuneCountInString(string(*plain.Image)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "image", 1)
+	}
+	if v, ok := raw["retain"]; !ok || v == nil {
+		plain.Retain = 10
+	}
+	if 1000 < plain.Retain {
+		return fmt.Errorf("field %s: must be <= %v", "retain", 1000)
+	}
+	if 1 > plain.Retain {
+		return fmt.Errorf("field %s: must be >= %v", "retain", 1)
+	}
+	if utf8.RuneCountInString(string(plain.Run)) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "run", 1)
+	}
+	*j = DeploymentMigrateBefore(plain)
+	return nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.

@@ -184,7 +184,7 @@ func (in *Intake) pathsMatch(ctx context.Context, t protocol.Trigger, env string
 	if err != nil {
 		return false, fmt.Errorf("trigger: %w", err)
 	}
-	return truncated || MatchPaths(globs, files), nil
+	return truncated || deploy.MatchPaths(globs, files), nil
 }
 
 func (in *Intake) now() time.Time {

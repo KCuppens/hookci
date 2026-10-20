@@ -144,7 +144,8 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 	})
 	intake := d.deploys.(*hubIntake)
 	intake.githubURL, intake.http = gh.URL, gh.Client()
-	d.deployConfig = githubConfig(gh.URL, gh.Client(), d.tokens.Request)
+	d.deployRefs = githubRefs(gh.URL, gh.Client(), d.tokens.Request)
+	d.deployConfig = githubConfig(d.deployRefs)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w.harness = &harness{t: t, ctx: ctx, st: st, d: d}

@@ -64,6 +64,7 @@ func (d *Daemon) newDeployScheduler(credential string, agentCfg config.AgentConf
 			StateDir: o.StateDir,
 			WorkDir:  d.deployWorkDir,
 			Access:   &compose.UnitAccess{Cred: d.deployCred},
+			Changes:  func(run store.DeployRun) deploy.ChangeLister { return d.deployRefs(run) },
 		}),
 		Events:         events,
 		Clock:          o.Clock,
@@ -160,14 +161,21 @@ func deployRedactor(credential string, repoCfg *config.Config) *redact.Redactor 
 	return red
 }
 
-// githubConfig returns a loader of the .zeroci.yml at a run's sha, fetched
-// from GitHub with a token the hub issues for the run.
-func githubConfig(githubURL string, hc *http.Client, tokens func(ctx context.Context, runID string) (string, error)) func(context.Context, store.DeployRun) (*config.Config, error) {
-	return func(ctx context.Context, run store.DeployRun) (*config.Config, error) {
-		refs := &trigger.GitHubRefChecker{BaseURL: githubURL, HTTP: hc, Token: func(ctx context.Context, _ string) (string, error) {
+// githubRefs returns the GitHub client of a deploy run, authenticated with
+// a token the hub issues for the run.
+func githubRefs(githubURL string, hc *http.Client, tokens func(ctx context.Context, runID string) (string, error)) func(store.DeployRun) *trigger.GitHubRefChecker {
+	return func(run store.DeployRun) *trigger.GitHubRefChecker {
+		return &trigger.GitHubRefChecker{BaseURL: githubURL, HTTP: hc, Token: func(ctx context.Context, _ string) (string, error) {
 			return tokens(ctx, run.RunID)
 		}}
-		cfg, err := refs.LoadConfig(ctx, run.Repo, run.SHA)
+	}
+}
+
+// githubConfig returns a loader of the .zeroci.yml at a run's sha, fetched
+// with the run's GitHub client from refs.
+func githubConfig(refs func(store.DeployRun) *trigger.GitHubRefChecker) func(context.Context, store.DeployRun) (*config.Config, error) {
+	return func(ctx context.Context, run store.DeployRun) (*config.Config, error) {
+		cfg, err := refs(run).LoadConfig(ctx, run.Repo, run.SHA)
 		if err != nil {
 			return nil, fmt.Errorf("daemon: %w", err)
 		}

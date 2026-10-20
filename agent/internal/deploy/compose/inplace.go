@@ -16,16 +16,21 @@ import (
 // recreates the one compose project of the deployment on it, with brief
 // downtime, then gates on health. It has no rollback.
 type InPlace struct {
+	Store    *store.Store // records migrate.before backups
 	Health   *health.Checker
 	StateDir string                           // agent state dir; the override is <StateDir>/deploy/<repo>/<env>/inplace.override.yml
 	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
 	Access   *UnitAccess                      // nil leaves the override to the agent only
+	// Changes returns the change lister migrate.before diffs a run's SHA
+	// with; nil, or a nil lister, backs up on every deploy that has paths.
+	Changes func(run store.DeployRun) deploy.ChangeLister
 }
 
 // Name returns the strategy name of deployments.<env>.strategy.
 func (p *InPlace) Name() string { return "compose-inplace" }
 
-// Plan returns build, migrate (only when migrate.run is set), up and health.
+// Plan returns build, migrate-before (only when migrate.before is set),
+// migrate (only when migrate.run is set), up and health.
 func (p *InPlace) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Step, error) {
 	if cfg.Compose == nil {
 		return nil, fmt.Errorf("deployments.%s.compose: required for compose-inplace; add compose.project and compose.service", run.Env)
@@ -37,6 +42,9 @@ func (p *InPlace) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Ste
 		return nil, fmt.Errorf("deployments.%s.%w", run.Env, err)
 	}
 	steps := []deploy.Step{{Name: "build", Phase: deploy.PhaseApply, Run: p.build}}
+	if hasMigrateBefore(cfg) {
+		steps = append(steps, deploy.Step{Name: "migrate-before", Phase: deploy.PhaseApply, Run: p.migrateBefore})
+	}
 	if cfg.Migrate != nil && cfg.Migrate.Run != "" {
 		steps = append(steps, deploy.Step{Name: "migrate", Phase: deploy.PhaseApply, Run: p.migrate})
 	}
@@ -68,6 +76,12 @@ func (p *InPlace) Preview(_ context.Context, pc deploy.PreviewContext) (deploy.P
 // build builds <project>:<sha7> with BuildKit unless the image exists.
 func (p *InPlace) build(ctx context.Context, sc *deploy.StepContext) error {
 	return buildImage(ctx, sc, p.WorkDir(sc.Run))
+}
+
+// migrateBefore runs the migrate.before backup in the new image.
+func (p *InPlace) migrateBefore(ctx context.Context, sc *deploy.StepContext) error {
+	_, err := deploy.RunBeforeHook(ctx, sc, beforeDeps(p.Store, p.Changes, sc), sc.Outputs[outImage], sharedNetwork(sc.Cfg))
+	return err
 }
 
 // migrate runs migrate.run in the new image.
