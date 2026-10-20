@@ -16,6 +16,7 @@ LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci"
 SLACK_APP_ID = "A0000000000"
+TELEGRAM_API_BASE = "https://api.telegram.org"
 
 [observability]
 enabled = true
@@ -69,6 +70,7 @@ LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "zeroci-staging"
 SLACK_APP_ID = "A0000000001"
+TELEGRAM_API_BASE = "https://api.telegram.org"
 
 [env.staging.observability]
 enabled = true

@@ -34,6 +34,7 @@ describe("renderWranglerToml", () => {
 			HUB_VERSION: "1.2.3",
 			GITHUB_API_URL: "https://api.github.com",
 			SECURITY_CONTACT: "",
+			TELEGRAM_API_BASE: "https://api.telegram.org",
 		});
 		expect(toml.d1_databases).toEqual([{ binding: "DB", database_name: "acme-hub-db", database_id: input.d1DatabaseId, migrations_dir: "migrations" }]);
 		expect(toml.r2_buckets).toEqual([{ binding: "LOGS", bucket_name: "acme-hub-logs" }]);

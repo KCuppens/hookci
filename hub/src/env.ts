@@ -24,6 +24,8 @@ export interface Env {
 	SECURITY_CONTACT: string;
 	/** "shared" (default) or "self_hosted"; anything else is treated as shared. */
 	HUB_MODE?: string;
+	/** The Telegram Bot API origin, https://api.telegram.org; tests point it at a fake. */
+	TELEGRAM_API_BASE: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;
@@ -45,6 +47,6 @@ export interface Env {
 	ROTATION_IN_PROGRESS?: string;
 	/** Tests only: replaces the wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;
-	/** Tests only: replaces fetch for GitHub and Slack calls. Never set in wrangler.toml. */
+	/** Tests only: replaces fetch for GitHub, Slack and Telegram calls. Never set in wrangler.toml. */
 	__TEST_FETCHER?: Fetcher;
 }

@@ -196,6 +196,15 @@ export const S = {
 		jobsPassed: (passed: number, total: number) => `${passed}/${total} jobs passed`,
 		jobsFailed: (names: string) => `failed: ${names}`,
 	},
+	telegram: {
+		/** The status word of a run that waits on someone: an approval, an agent, a quota or a config. */
+		actionRequired: "Action required",
+		ref: (ref: string) => `Ref: ${ref}`,
+		push: "Push",
+		environment: (env: string) => `Environment: ${env}`,
+		moreJobs: (n: number) => `... and ${n} more jobs`,
+		viewLogs: "View logs",
+	},
 	deploy: {
 		queued: "queued",
 		healthOk: "health ok",
