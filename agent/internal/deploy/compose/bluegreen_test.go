@@ -148,6 +148,7 @@ type bgRig struct {
 	events   *events
 	cfg      config.Deployment
 	stateDir string
+	chown    *fakeChown
 	route    string
 	// status returns the app's health status for the n-th request (from 1).
 	status   func(n int64) int
@@ -164,7 +165,7 @@ func newBGRig(t *testing.T) *bgRig {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	r := &bgRig{store: st, exec: &recExecutor{}, proxy: &fakeProxy{}, events: &events{}, stateDir: t.TempDir()}
+	r := &bgRig{store: st, exec: &recExecutor{}, proxy: &fakeProxy{}, events: &events{}, stateDir: t.TempDir(), chown: &fakeChown{}}
 	r.status = func(int64) int { return http.StatusOK }
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(r.status(r.requests.Add(1)))
@@ -191,6 +192,7 @@ func newBGRig(t *testing.T) *bgRig {
 		Health:   &health.Checker{Clock: clk},
 		StateDir: r.stateDir,
 		WorkDir:  func(store.DeployRun) string { return workdir },
+		Access:   r.chown.access(),
 	}
 	r.engine = &deploy.Engine{
 		Store:      st,
@@ -328,6 +330,8 @@ func TestBlueGreen_HappyPath_FirstDeploy(t *testing.T) {
 		!strings.Contains(string(override), "myapp:abcdef1") {
 		t.Fatalf("override = %s, want port %s and image myapp:abcdef1", override, want)
 	}
+	wantHandedOver(t, r.chown, r.stateDir, overridePath, nil)
+	wantMode(t, filepath.Join(r.stateDir, "deploy", bgRepo, bgEnv, "active-color"), 0o644)
 	if got, want := r.routeFile(t), fmt.Sprintf("blue %d\n", port); got != want {
 		t.Fatalf("route = %q, want %q", got, want)
 	}

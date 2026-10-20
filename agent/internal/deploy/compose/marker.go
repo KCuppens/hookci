@@ -31,7 +31,7 @@ func readMarker(read func(string) ([]byte, error), path string) (string, error) 
 // a temp file in the same directory, syncs it, renames it over path and syncs
 // the directory.
 func WriteMarker(path, color string) error {
-	if err := writeFileAtomic(path, []byte(color+"\n")); err != nil {
+	if err := writeFileAtomic(path, []byte(color+"\n"), 0o644, nil); err != nil {
 		return fmt.Errorf("compose: writing marker: %w", err)
 	}
 	return nil
@@ -46,9 +46,10 @@ func OtherColor(c string) string {
 	return "blue"
 }
 
-// writeFileAtomic replaces path with data so readers see either the old or
-// the new content, creating the parent directory when missing.
-func writeFileAtomic(path string, data []byte) error {
+// writeFileAtomic replaces path with data in mode perm so readers see either
+// the old or the new content, creating the parent directory when missing.
+// own, when not nil, runs on the new file before it replaces path.
+func writeFileAtomic(path string, data []byte, perm os.FileMode, own func(name string) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", dir, err)
@@ -70,8 +71,13 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing %s: %w", name, err)
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
+	if err := os.Chmod(name, perm); err != nil {
 		return fmt.Errorf("chmod %s: %w", name, err)
+	}
+	if own != nil {
+		if err := own(name); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(name, path); err != nil {
 		return fmt.Errorf("renaming %s to %s: %w", name, path, err)

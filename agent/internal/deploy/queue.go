@@ -85,14 +85,25 @@ func (s *Scheduler) Enqueue(_ context.Context, runID string, retry bool) {
 	s.signal()
 }
 
-// Recover enqueues the stored Queued runs, oldest first. A run re-queued by
-// a retry is enqueued as a retry.
+// Recover enqueues the stored Queued runs, oldest first. A run whose
+// trigger was never answered as accepted, because the agent stopped between
+// creating the run and recording the answer, stays Queued: the hub
+// redelivers that trigger, and the intake then links it to the run and
+// enqueues it. A run re-queued by a retry is enqueued as a retry.
 func (s *Scheduler) Recover(ctx context.Context) error {
 	runs, err := s.Store.ListQueuedDeployRuns(ctx)
 	if err != nil {
 		return fmt.Errorf("deploy: recover queue: %w", err)
 	}
 	for _, r := range runs {
+		accepted, err := s.Store.DeployRunAccepted(ctx, r.RunID)
+		if err != nil {
+			return fmt.Errorf("deploy: recover queue: %w", err)
+		}
+		if !accepted {
+			s.logger().Warn("deploy run has no accepted trigger; waiting for the hub to redeliver it", "run", r.RunID)
+			continue
+		}
 		s.Enqueue(ctx, r.RunID, r.RetryOfState != "")
 	}
 	return nil

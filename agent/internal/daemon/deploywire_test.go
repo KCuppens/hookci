@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -263,6 +264,28 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 			t.Errorf("checkout request = %+v, want %s at %s as uid %s", r, run.RunID, headSHA, me.Uid)
 		}
 	}
+	// compose runs in the units as the deploy user: the override sits in the
+	// agent's env dir, readable through the deploy user's group only.
+	override := filepath.Join(w.stateDir, "deploy", "acme", "app", "prod", "blue.override.yml")
+	for p, want := range map[string]os.FileMode{
+		override:                            0o640,
+		filepath.Join(w.stateDir, "deploy"): 0o710 | os.ModeDir,
+		filepath.Join(w.stateDir, "deploy", "acme", "app", "prod"): 0o710 | os.ModeDir,
+	} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("override: %v", err)
+		}
+		if got := info.Mode() & (os.ModeDir | os.ModePerm); got != want {
+			t.Errorf("mode of %s = %v, want %v", p, got, want)
+		}
+		if gid := info.Sys().(*syscall.Stat_t).Gid; fmt.Sprint(gid) != me.Gid {
+			t.Errorf("group of %s = %d, want the deploy user's %s", p, gid, me.Gid)
+		}
+	}
+	if !slices.ContainsFunc(w.unitCalls(), func(u string) bool { return strings.Contains(u, " -f "+override+" up -d") }) {
+		t.Errorf("units = %q, want compose up with %s", w.unitCalls(), override)
+	}
 
 	units := w.unitCalls()
 	if len(units) == 0 {
@@ -293,27 +316,36 @@ func TestDeployWiredEndToEnd(t *testing.T) {
 	}
 }
 
-// TestDeployWiredUntrustedRun: a queued run no intake accepted fails before
-// its checkout.
-func TestDeployWiredUntrustedRun(t *testing.T) {
-	src := &deploySource{files: map[string]string{"compose.yml": "services: {}\n"}}
+// TestDeployWiredRelinksUnansweredRun: a queued run whose trigger was never
+// answered (a crash between the run and the answer) does not run at
+// startup; the hub's redelivery of the trigger links it and deploys it.
+func TestDeployWiredRelinksUnansweredRun(t *testing.T) {
+	src := &deploySource{files: map[string]string{"compose.yml": "services:\n  web:\n    build: .\n    expose: [\"8080\"]\n"}}
 	w := newWire(t, src, func(st *store.Store) {
 		if err := st.InsertDeployRun(context.Background(), store.DeployRun{
 			RunID: "run_bare", Repo: "acme/app", Env: "prod", SHA: headSHA, Ref: "refs/heads/main",
-			Strategy: "compose-bluegreen", State: store.DeployQueued,
+			Strategy: "compose-bluegreen", Attempt: 1, State: store.DeployQueued,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	run := w.waitDeploy("run_bare")
-	if want := "deployments.prod: executor: " + deploy.ErrUntrustedDeploy.Error(); run.State != store.DeployFailed || run.Error != want {
-		t.Errorf("run = %s %q, want %s %q", run.State, run.Error, store.DeployFailed, want)
+	time.Sleep(100 * time.Millisecond)
+	if run, err := w.st.GetDeployRun(w.ctx, "run_bare"); err != nil || run.State != store.DeployQueued {
+		t.Fatalf("run_bare before redelivery = %s, %v; want %s", run.State, err, store.DeployQueued)
 	}
 	if reqs := src.requests(); len(reqs) != 0 {
-		t.Errorf("checkout requests = %+v, want none", reqs)
+		t.Errorf("checkout requests before redelivery = %+v, want none", reqs)
 	}
 	if units := w.unitCalls(); len(units) != 0 {
-		t.Errorf("units = %q, want none", units)
+		t.Errorf("units before redelivery = %q, want none", units)
+	}
+
+	relinked := w.accept("trg_push")
+	if relinked.RunID != "run_bare" {
+		t.Fatalf("redelivered trigger ran %s, want run_bare", relinked.RunID)
+	}
+	if run := w.waitDeploy("run_bare"); run.State != store.DeploySuccess {
+		t.Fatalf("run_bare = %s %q, want %s", run.State, run.Error, store.DeploySuccess)
 	}
 }
 

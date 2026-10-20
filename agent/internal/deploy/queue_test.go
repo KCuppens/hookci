@@ -482,13 +482,22 @@ func TestScheduler_RetryFlagCallsEngineRetry(t *testing.T) {
 	}
 }
 
+// TestScheduler_RecoverRequeuesQueued checks that Recover enqueues the
+// Queued runs whose trigger was accepted and leaves a Queued run with no
+// answered trigger (a crash before the answer) for the hub's redelivery.
 func TestScheduler_RecoverRequeuesQueued(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "agent.db")
 	first := newQueueRig(t, path, oneStep)
 	first.insert(t, "p", "production", t0, store.DeployQueued)
 	first.insert(t, "s", "staging", t0.Add(time.Second), store.DeployQueued)
-	first.insert(t, "done", "preview", t0, store.DeploySuccess)
+	first.insert(t, "bare", "preview", t0, store.DeployQueued)
+	first.insert(t, "done", "qa", t0, store.DeploySuccess)
+	for _, id := range []string{"p", "s", "done"} {
+		if _, err := first.store.AnswerTrigger(ctx, "trg_"+id, id, ""); err != nil {
+			t.Fatalf("AnswerTrigger(%s): %v", id, err)
+		}
+	}
 	if err := first.store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -508,6 +517,8 @@ func TestScheduler_RecoverRequeuesQueued(t *testing.T) {
 	r.sched.Wait()
 	r.wantState(t, "p", store.DeploySuccess)
 	r.wantState(t, "s", store.DeploySuccess)
+	r.tick(t, ctx, 0)
+	r.wantState(t, "bare", store.DeployQueued)
 }
 
 func TestScheduler_RecoverRetryFlag(t *testing.T) {
@@ -526,6 +537,11 @@ func TestScheduler_RecoverRetryFlag(t *testing.T) {
 		t.Fatalf("PrepareRetry: %v", err)
 	}
 	first.insert(t, "fresh", "staging", t0.Add(time.Second), store.DeployQueued)
+	for _, id := range []string{"retried", "fresh"} {
+		if _, err := first.store.AnswerTrigger(ctx, "trg_"+id, id, ""); err != nil {
+			t.Fatalf("AnswerTrigger(%s): %v", id, err)
+		}
+	}
 	if err := first.store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

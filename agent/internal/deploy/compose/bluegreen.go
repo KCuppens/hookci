@@ -51,8 +51,9 @@ type BlueGreen struct {
 	// Proxy returns the adapter of a deployment's route block.
 	Proxy    func(route config.DeploymentRoute) (proxy.ProxyAdapter, error)
 	Health   *health.Checker
-	StateDir string                           // agent state dir; marker default <StateDir>/deploy/<repo>/<env>/active-color
+	StateDir string                           // agent state dir; overrides and marker default under <StateDir>/deploy/<repo>/<env>
 	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
+	Access   *UnitAccess                      // nil leaves the overrides to the agent only
 }
 
 // Name returns the strategy name of deployments.<env>.strategy.
@@ -200,9 +201,9 @@ func (b *BlueGreen) prepare(ctx context.Context, sc *deploy.StepContext) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(b.envDir(run), color+".override.yml")
-	if err := writeFileAtomic(path, override); err != nil {
-		return fmt.Errorf("compose: writing override: %w", err)
+	path := filepath.Join(envDir(b.StateDir, run), color+".override.yml")
+	if err := b.Access.writeOverride(b.StateDir, path, override); err != nil {
+		return err
 	}
 	sc.Outputs[outPrevColor] = prev
 	sc.Outputs[outColor] = color
@@ -407,11 +408,6 @@ func (b *BlueGreen) execOpts(sc *deploy.StepContext) deploy.ExecOpts {
 	return deploy.ExecOpts{Dir: b.WorkDir(sc.Run), Stdout: sc.Log, Stderr: sc.Log}
 }
 
-// envDir is <StateDir>/deploy/<repo>/<env>.
-func (b *BlueGreen) envDir(run store.DeployRun) string {
-	return filepath.Join(b.StateDir, "deploy", run.Repo, run.Env)
-}
-
 // renderRoute renders the route of run to color on port.
 func (b *BlueGreen) renderRoute(run store.DeployRun, cfg config.Deployment, color string, port int) ([]byte, error) {
 	px, err := b.Proxy(*cfg.Route)
@@ -432,7 +428,7 @@ func (b *BlueGreen) markerPath(run store.DeployRun, cfg config.Deployment) strin
 	if cfg.Compose.Marker != nil && *cfg.Compose.Marker != "" {
 		return *cfg.Compose.Marker
 	}
-	return filepath.Join(b.envDir(run), "active-color")
+	return filepath.Join(envDir(b.StateDir, run), "active-color")
 }
 
 func composeFile(workdir string, cfg config.Deployment) string {

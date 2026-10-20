@@ -22,14 +22,17 @@ type Deps struct {
 	Clock    clock.Clock
 	StateDir string                           // agent state dir
 	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
+	// Access lets the deploy unit read the compose overrides; nil leaves
+	// them to the agent only.
+	Access *compose.UnitAccess
 }
 
 // New returns every deploy strategy keyed by its name, for
 // deploy.Engine.Strategies.
 func New(d Deps) map[string]deploy.DeployStrategy {
 	all := []deploy.DeployStrategy{
-		&compose.BlueGreen{Store: d.Store, Proxy: d.Proxy, Health: d.Health, StateDir: d.StateDir, WorkDir: d.WorkDir},
-		&compose.InPlace{Health: d.Health, WorkDir: d.WorkDir},
+		&compose.BlueGreen{Store: d.Store, Proxy: d.Proxy, Health: d.Health, StateDir: d.StateDir, WorkDir: d.WorkDir, Access: d.Access},
+		&compose.InPlace{Health: d.Health, StateDir: d.StateDir, WorkDir: d.WorkDir, Access: d.Access},
 		&script.Script{WorkDir: d.WorkDir, Clock: d.Clock},
 	}
 	out := make(map[string]deploy.DeployStrategy, len(all))

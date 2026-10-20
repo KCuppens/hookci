@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy/compose"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
 	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
@@ -46,6 +48,7 @@ func (d *Daemon) newDeployScheduler(credential string, events deploy.EventSink, 
 			Clock:    o.Clock,
 			StateDir: o.StateDir,
 			WorkDir:  d.deployWorkDir,
+			Access:   &compose.UnitAccess{Cred: d.deployCred},
 		}),
 		Events:         events,
 		Clock:          o.Clock,
@@ -80,6 +83,11 @@ func (d *Daemon) deployWorkDir(run store.DeployRun) string {
 	return filepath.Join(d.o.StateDir, "deploy-work", run.RunID)
 }
 
+// deployCred is the account deploy units run as.
+func (d *Daemon) deployCred() (*syscall.Credential, error) {
+	return isolation.LookupCredential(cmp.Or(d.o.DeployUser, deploy.DeployUser))
+}
+
 // checkoutDeploy fetches run's repo at its sha into deployWorkDir, owned by
 // the deploy user, with a token the hub issues for the run. A finished
 // checkout from an earlier pass is reused. The fetch goes to
@@ -91,7 +99,7 @@ func (d *Daemon) checkoutDeploy(ctx context.Context, run store.DeployRun) error 
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("daemon: deploy checkout: %w", err)
 	}
-	cred, err := isolation.LookupCredential(cmp.Or(d.o.DeployUser, deploy.DeployUser))
+	cred, err := d.deployCred()
 	if err != nil {
 		return fmt.Errorf("daemon: deploy checkout: %w", err)
 	}

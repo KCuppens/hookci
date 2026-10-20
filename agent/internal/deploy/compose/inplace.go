@@ -12,16 +12,14 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/store"
 )
 
-// inplaceOverride is the file name of the compose-inplace override, written
-// into the run's checkout next to the user's files.
-const inplaceOverride = ".zeroci-inplace.override.yml"
-
 // InPlace is the compose-inplace strategy: it rebuilds the image and
 // recreates the one compose project of the deployment on it, with brief
 // downtime, then gates on health. It has no rollback.
 type InPlace struct {
-	Health  *health.Checker
-	WorkDir func(run store.DeployRun) string // checkout dir of the run's sha
+	Health   *health.Checker
+	StateDir string                           // agent state dir; the override is <StateDir>/deploy/<repo>/<env>/inplace.override.yml
+	WorkDir  func(run store.DeployRun) string // checkout dir of the run's sha
+	Access   *UnitAccess                      // nil leaves the override to the agent only
 }
 
 // Name returns the strategy name of deployments.<env>.strategy.
@@ -129,9 +127,9 @@ func (p *InPlace) composeArgv(sc *deploy.StepContext) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(workdir, inplaceOverride)
-	if err := writeFileAtomic(path, override); err != nil {
-		return nil, fmt.Errorf("compose: writing override: %w", err)
+	path := filepath.Join(envDir(p.StateDir, sc.Run), "inplace.override.yml")
+	if err := p.Access.writeOverride(p.StateDir, path, override); err != nil {
+		return nil, err
 	}
 	return []string{"docker", "compose", "-p", project, "-f", file, "-f", path}, nil
 }

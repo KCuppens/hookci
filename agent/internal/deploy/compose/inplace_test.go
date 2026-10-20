@@ -50,6 +50,8 @@ type ipRig struct {
 	events   *eventLog
 	cfg      config.Deployment
 	workdir  string
+	stateDir string
+	chown    *fakeChown
 	appPort  string
 	status   atomic.Int64 // health status the app answers
 	requests atomic.Int64
@@ -64,7 +66,7 @@ func newIPRig(t *testing.T) *ipRig {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	r := &ipRig{store: st, exec: &recExecutor{}, events: &eventLog{}, workdir: t.TempDir()}
+	r := &ipRig{store: st, exec: &recExecutor{}, events: &eventLog{}, workdir: t.TempDir(), stateDir: t.TempDir(), chown: &fakeChown{}}
 	r.status.Store(http.StatusOK)
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		r.requests.Add(1)
@@ -83,7 +85,12 @@ func newIPRig(t *testing.T) *ipRig {
 		Migrate:  &config.DeploymentMigrate{Run: "./migrate up"},
 		Health:   &config.DeploymentHealth{Url: "http://127.0.0.1:{port}/healthz", Retries: 3, Interval: "1s"},
 	}
-	r.strat = &InPlace{Health: &health.Checker{Clock: clk}, WorkDir: func(store.DeployRun) string { return r.workdir }}
+	r.strat = &InPlace{
+		Health:   &health.Checker{Clock: clk},
+		StateDir: r.stateDir,
+		WorkDir:  func(store.DeployRun) string { return r.workdir },
+		Access:   r.chown.access(),
+	}
 	r.engine = &deploy.Engine{
 		Store:      st,
 		Strategies: map[string]deploy.DeployStrategy{r.strat.Name(): r.strat},
@@ -170,7 +177,7 @@ func TestInPlace_Deploy(t *testing.T) {
 		t.Fatalf("state = %s (%s), want Success", run.State, run.Error)
 	}
 	file := filepath.Join(r.workdir, "compose.yml")
-	override := filepath.Join(r.workdir, inplaceOverride)
+	override := filepath.Join(r.stateDir, "deploy", bgRepo, bgEnv, "inplace.override.yml")
 	compose := "docker compose -p myapp -f " + file + " -f " + override
 	want := []string{
 		"docker image inspect myapp:abcdef1",
@@ -187,6 +194,10 @@ func TestInPlace_Deploy(t *testing.T) {
 	}
 	if want := "services:\n  web:\n    image: myapp:abcdef1\n"; string(got) != want {
 		t.Errorf("override =\n%s\nwant\n%s", got, want)
+	}
+	wantHandedOver(t, r.chown, r.stateDir, override, []byte("services:\n  web:\n    image: myapp:abcdef1\n"))
+	if entries, err := os.ReadDir(r.workdir); err != nil || len(entries) != 1 {
+		t.Errorf("checkout entries = %v, %v; want only compose.yml, the agent writes nothing there", entries, err)
 	}
 	if r.requests.Load() == 0 {
 		t.Error("health never reached the published port " + r.appPort)
