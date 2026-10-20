@@ -116,6 +116,41 @@ describe("telegramDeliverer", () => {
     expect(tg.calls).toHaveLength(1);
   });
 
+  it("reports a sent message as delivered when saving its message_id fails", async () => {
+    sendsMessage();
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args) => void errors.push(args.map(String).join(" ")));
+    const DB = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("INSERT INTO sink_messages")) throw new Error("D1_ERROR: database is locked");
+            return target.prepare(sql);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const item: OutboxDelivery = {
+      installationId: INSTALLATION,
+      sinkId: cfg.id,
+      runId: "trg_1",
+      terminal: false,
+      payload: view("running"),
+      enqueuedAt: 0,
+      deliveryId: "d-save-fails",
+    };
+
+    expect(await telegramDeliverer.deliver({ ...env, DB }, cfg, item, 1)).toEqual({ kind: "ok", externalId: "77" });
+    expect(tg.calls).toHaveLength(1);
+    expect(await message()).toBeNull();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("telegram_message_save_failed");
+    expect(errors[0]).toContain("database is locked");
+    expect(errors[0]).not.toContain(TOKEN);
+  });
+
   it("retries after retry_after on 429", async () => {
     tg.respond("POST", botMethod("sendMessage"), () => botError(429, "Too Many Requests: retry after 7", { retry_after: 7 }));
     expect(await deliver(view("running"))).toEqual({ kind: "retry", afterMs: 7000, httpStatus: 429 });

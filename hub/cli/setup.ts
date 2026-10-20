@@ -61,6 +61,7 @@ export type SetupErrorCode =
 	| "manifest_timeout"
 	| "manifest_conversion_failed"
 	| "github_app_verify_failed"
+	| "github_app_incomplete"
 	| "not_set_up"
 	| "downgrade"
 	| "version_mismatch"
@@ -77,7 +78,8 @@ const HINTS: Record<SetupErrorCode, string> = {
 	bad_name: "Use 3 to 41 lowercase letters, digits or dashes, starting with a letter.",
 	manifest_timeout: "Run zeroci-hub setup again and finish creating the GitHub App in the browser within 10 minutes.",
 	manifest_conversion_failed: "The manifest code is single-use and expires after an hour; run zeroci-hub setup again.",
-	github_app_verify_failed: "Delete the new app in GitHub settings, then run zeroci-hub setup again.",
+	github_app_verify_failed: "Delete the new app in GitHub settings, remove github_app_id from zeroci-hub.state.json in the state dir, then run zeroci-hub setup again.",
+	github_app_incomplete: "Delete that app on its GitHub settings page, remove github_app_id from zeroci-hub.state.json in the state dir, then run zeroci-hub setup again.",
 	not_set_up: "run zeroci-hub setup first",
 	downgrade: "Run a zeroci-hub as new as the hub or newer; D1 migrations only move forward.",
 	version_mismatch: "Check npx wrangler deployments list in the state dir, then run zeroci-hub upgrade again.",

@@ -108,6 +108,8 @@ Keep the state directory. Upgrades and reruns need it.
 
 `LOG_SIGNING_KEY` signs log links. During a rotation, the hub also accepts links signed with `LOG_SIGNING_KEY_PREVIOUS`. Put the old value as `LOG_SIGNING_KEY_PREVIOUS` and a new value as `LOG_SIGNING_KEY` with `npx wrangler secret put <NAME>` in the state dir. Setup does not keep secret values, so you need your own copy of the old key to keep old links working.
 
+The hub refuses to sign or check log links and sign-in sessions while `LOG_SIGNING_KEY` is unset or empty. It replaced the m2 JSON secret `LOG_SIGNING_KEYS`. Operators of the shared hub and staging must put `LOG_SIGNING_KEY` with `npx wrangler secret put LOG_SIGNING_KEY` before deploying this release.
+
 ## Install the GitHub App and pair an agent
 
 1. Open the install link from the summary, `https://github.com/apps/<slug>/installations/new`, and choose the repositories.
@@ -242,7 +244,12 @@ Fix: run setup again.
 ### `github_app_verify_failed`
 
 Cause: signing in as the new GitHub App failed, or GitHub reported a different app id or slug.
-Fix: delete the new app in GitHub settings, then run setup again.
+Fix: delete the new app in GitHub settings, remove `github_app_id` from `zeroci-hub.state.json` in the state dir, then run setup again.
+
+### `github_app_incomplete`
+
+Cause: an earlier setup run created the GitHub App named in the message but failed before it stored all of the app's credentials as Worker secrets. GitHub hands out those credentials only once, and setup never writes them to disk, so it cannot finish that app. A run that fails after storing all of them, for example at the redeploy, does not hit this: the next run resumes at the redeploy with the same app.
+Fix: delete that app on its settings page (the URL in the message), remove `github_app_id` from `zeroci-hub.state.json` in the state dir, then run setup again. It creates a new app.
 
 ### `not_set_up`
 

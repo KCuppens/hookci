@@ -7,6 +7,7 @@
 
 import { base64Bytes, base64url, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
+import { logSigningKey } from "../logs/signing";
 import { readCookie, setCookie } from "../oauth/state";
 
 export const SESSION_COOKIE = "zc_session";
@@ -22,9 +23,9 @@ export interface Session {
 	exp: number;
 }
 
-/** HMAC-SHA256 of the versioned payload under HKDF-SHA256(LOG_SIGNING_KEY, "zeroci-session-v1"), base64url. */
+/** HMAC-SHA256 of the versioned payload under HKDF-SHA256(LOG_SIGNING_KEY, "zeroci-session-v1"), base64url; throws log_signing_key_missing when the key is empty. */
 async function mac(env: Env, payload: string): Promise<string> {
-	const base = await crypto.subtle.importKey("raw", utf8.encode(env.LOG_SIGNING_KEY), "HKDF", false, ["deriveBits"]);
+	const base = await crypto.subtle.importKey("raw", utf8.encode(logSigningKey(env)), "HKDF", false, ["deriveBits"]);
 	const bits = await crypto.subtle.deriveBits(
 		{ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8.encode("zeroci-session-v1") },
 		base,
@@ -50,15 +51,16 @@ function isSession(value: unknown): value is Session {
 	return Number.isSafeInteger(s.githubUserId) && typeof s.login === "string" && s.login !== "" && Number.isSafeInteger(s.exp);
 }
 
-/** Set-Cookie value for a session of user, valid SESSION_TTL_SEC from now (ms). */
+/** Set-Cookie value for a session of user, valid SESSION_TTL_SEC from now (ms); throws log_signing_key_missing when LOG_SIGNING_KEY is empty. */
 export async function issueSession(env: Env, user: Omit<Session, "exp">, now: number): Promise<string> {
 	const session: Session = { githubUserId: user.githubUserId, login: user.login, exp: Math.floor(now / 1000) + SESSION_TTL_SEC };
 	const payload = base64url(utf8.encode(JSON.stringify(session)));
 	return setCookie(SESSION_COOKIE, `${VERSION}.${payload}.${await mac(env, payload)}`, SESSION_TTL_SEC);
 }
 
-/** The session in req's cookie, or null when it is missing, altered, of another version or expired at now (ms). */
+/** The session in req's cookie, or null when it is missing, altered, of another version, expired at now (ms) or LOG_SIGNING_KEY is empty. */
 export async function readSession(env: Env, req: Request, now: number): Promise<Session | null> {
+	if (!env.LOG_SIGNING_KEY) return null;
 	const value = readCookie(req.headers.get("cookie"), SESSION_COOKIE);
 	const [version, payload, signature, ...rest] = value?.split(".") ?? [];
 	if (version !== VERSION || !payload || !signature || rest.length > 0) return null;

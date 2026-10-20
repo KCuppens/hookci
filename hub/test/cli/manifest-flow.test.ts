@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createVerify } from "node:crypto";
+import { createPrivateKey, createVerify, generateKeyPairSync } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -206,7 +206,8 @@ describe("githubAppStep through runSetup", () => {
 		expect(puts.map((c) => c.args)).toEqual(GITHUB_SECRETS.map((n) => ["secret", "put", n]));
 		const values = puts.map((c) => c.stdin ?? "");
 		expect(values[0]).toBe("424242");
-		expect(values[1]).toContain("PRIVATE KEY");
+		expect(values[1]).toMatch(/^-----BEGIN PRIVATE KEY-----\n/);
+		expect(createPrivateKey(values[1] ?? "").asymmetricKeyType).toBe("rsa");
 		expect(values.slice(2)).toEqual(["whsec-fake-0f9e8d7c", "Iv1.fakeclientid0001", "fake-client-secret-5a4b3c2d1e"]);
 		for (const v of values) {
 			expect(exec.calls.some((c) => c.args.some((a) => a.includes(v)))).toBe(false);
@@ -243,11 +244,61 @@ describe("githubAppStep through runSetup", () => {
 	});
 
 	it("puts no secret when GitHub rejects the app JWT", async () => {
-		gh.nextConversion = { pem: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString() };
+		gh.nextConversion = { pem: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }).toString() };
 		const exec = wrangler();
 		const err = await runSetup(options(exec, { openBrowser: fakeBrowser("code-2") })).catch((e: unknown) => e);
 		expect((err as SetupError).code).toBe("github_app_verify_failed");
 		expect(exec.calls).toEqual([]);
+	});
+
+	it("keeps the new app's id but not its key when a secret put fails, and refuses to create a second app", async () => {
+		const failing = fakeExec([
+			{ match: (a) => a.join(" ") === "secret put GITHUB_WEBHOOK_SECRET", result: { code: 1, stdout: "", stderr: "Authentication error" } },
+			{ match: (a) => a[0] === "secret" && a[1] === "put", result: ok("✨ Success! Uploaded secret\n") },
+		]);
+		const first = await runSetup(options(failing, { openBrowser: fakeBrowser("code-4") })).catch((e: unknown) => e);
+		expect((first as SetupError).code).toBe("wrangler_failed");
+		expect(await loadState(dir)).toMatchObject({ github_app_id: 424242, github_app_slug: "acme-zeroci", github_app_html_url: "https://github.com/apps/acme-zeroci" });
+		expect(await readFile(join(dir, STATE_FILE), "utf8")).not.toContain("PRIVATE KEY");
+
+		const callsBefore = gh.calls.length;
+		const opened: string[] = [];
+		const exec = fakeExec([]);
+		const second = await runSetup(options(exec, { openBrowser: async (url) => void opened.push(url) })).catch((e: unknown) => e);
+		expect(second).toBeInstanceOf(SetupError);
+		expect((second as SetupError).code).toBe("github_app_incomplete");
+		expect((second as SetupError).message).toContain("GitHub App 424242 (https://github.com/apps/acme-zeroci)");
+		expect((second as SetupError).hint).toContain("Delete that app");
+		expect(gh.calls).toHaveLength(callsBefore);
+		expect(opened).toEqual([]);
+		expect(exec.calls).toEqual([]);
+	});
+
+	it("resumes at the redeploy when the deploy failed after every secret was stored", async () => {
+		const failingDeploy = fakeExec([
+			{ match: (a) => a[0] === "secret" && a[1] === "put", result: ok("✨ Success! Uploaded secret\n") },
+			{ match: (a) => a[0] === "deploy", result: { code: 1, stdout: "", stderr: "Authentication error" } },
+		]);
+		const first = await runSetup(options(failingDeploy, { openBrowser: fakeBrowser("code-5") })).catch((e: unknown) => e);
+		expect(first).toBeInstanceOf(SetupError);
+		expect(failingDeploy.calls.filter((c) => c.args[0] === "secret").map((c) => c.args[2])).toEqual(GITHUB_SECRETS);
+		expect(await loadState(dir)).toMatchObject({ github_app_id: 424242, github_app_secrets_stored: true });
+		expect((await loadState(dir))?.steps_done).not.toContain("github_app");
+
+		const callsBefore = gh.calls.length;
+		const exec = wrangler();
+		const log: string[] = [];
+		const opened: string[] = [];
+		const state = await runSetup(options(exec, { log: (l) => log.push(l), openBrowser: async (url) => void opened.push(url) }));
+		expect(gh.calls).toHaveLength(callsBefore);
+		expect(opened).toEqual([]);
+		expect(exec.calls.filter((c) => c.args[0] === "secret")).toEqual([]);
+		expect(exec.calls.filter((c) => c.args[0] === "deploy")).toHaveLength(1);
+		expect(state.steps_done).toContain("github_app");
+		expect(await loadState(dir)).toEqual(state);
+		const toml = parse(await readFile(join(dir, "wrangler.toml"), "utf8")) as { vars: Record<string, string> };
+		expect(toml.vars.GITHUB_APP_SLUG).toBe("acme-zeroci");
+		expect(log).toContain("Install the app: https://github.com/apps/acme-zeroci/installations/new");
 	});
 
 	it("does nothing on a second run once the app is registered", async () => {

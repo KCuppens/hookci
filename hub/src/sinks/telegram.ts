@@ -13,6 +13,7 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { defaultFetcher, type Fetcher } from "../http";
 import { getLogTail } from "../logs/tail";
+import { reportError } from "../observability";
 import { formatDuration } from "../slack/badge";
 import { S } from "../strings";
 import { type Deliverer, type DeliveryResult, registerDeliverer } from "./deliverers";
@@ -263,7 +264,12 @@ export const telegramDeliverer: Deliverer = {
 			const sent = field(reply.result, "message_id");
 			const id = messageId ?? (typeof sent === "number" ? String(sent) : null);
 			if (id === null) return { kind: "retry", httpStatus: status };
-			await save({ externalId: id, lastHash: hash });
+			try {
+				await save({ externalId: id, lastHash: hash });
+			} catch (err) {
+				// Telegram already shows the message; a retry would send it twice.
+				reportError(err, { installation_id: item.installationId, sink_id: item.sinkId, run_id: item.runId, event: "telegram_message_save_failed" });
+			}
 			return { kind: "ok", externalId: id };
 		}
 		if (status === 400 && messageId && reply.description.includes("message is not modified")) {

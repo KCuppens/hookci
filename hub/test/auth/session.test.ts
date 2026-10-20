@@ -48,6 +48,23 @@ describe("zc_session", () => {
     expect(await readSession({ ...env, LOG_SIGNING_KEY: `${env.LOG_SIGNING_KEY}-rotated` }, requestWith(cookie), NOW)).toBeNull();
   });
 
+  it("is never valid and never issued while LOG_SIGNING_KEY is empty", async () => {
+    const noKey = { ...env, LOG_SIGNING_KEY: "" };
+    const payload = base64url(new TextEncoder().encode(JSON.stringify({ ...USER, exp: NOW / 1000 + SESSION_TTL_SEC })));
+    const base = await crypto.subtle.importKey("raw", new Uint8Array(0), "HKDF", false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode("zeroci-session-v1") },
+      base,
+      256,
+    );
+    const key = await crypto.subtle.importKey("raw", bits, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const forgedMac = base64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`sess1.${payload}`)));
+
+    expect(await readSession(noKey, requestWith(`${SESSION_COOKIE}=sess1.${payload}.${forgedMac}`), NOW)).toBeNull();
+    expect(await readSession(noKey, requestWith(cookieOf(await issueSession(env, USER, NOW))), NOW)).toBeNull();
+    await expect(issueSession(noKey, USER, NOW)).rejects.toMatchObject({ code: "log_signing_key_missing", status: 500 });
+  });
+
   it("is absent without the cookie", async () => {
     expect(await readSession(env, new Request("https://hub.test/"), NOW)).toBeNull();
     expect(await readSession(env, requestWith("zc_session="), NOW)).toBeNull();

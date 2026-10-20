@@ -37,8 +37,8 @@ function verifiedClaims(jwt: string, publicKey: string): Record<string, unknown>
 
 /**
  * A loopback stand-in for api.github.com: `POST /app-manifests/:code/conversions`
- * creates an app with a fresh RSA key (code `bad` is unknown), `GET /app`
- * answers only to a JWT that key signed.
+ * creates an app with a fresh RSA key, as PKCS#1 PEM like GitHub (code `bad` is
+ * unknown), `GET /app` answers only to a JWT that key signed.
  */
 export async function startFakeGithub(): Promise<FakeGithub> {
 	const calls: FakeGithubCall[] = [];
@@ -61,7 +61,7 @@ export async function startFakeGithub(): Promise<FakeGithub> {
 		const conversion = /^\/app-manifests\/([^/]+)\/conversions$/.exec(path);
 		if (req.method === "POST" && conversion) {
 			if (conversion[1] === "bad") return json(404, { message: "Not Found" });
-			const keys = generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } });
+			const keys = generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs1", format: "pem" } });
 			publicKey = keys.publicKey;
 			app = { ...DEFAULTS, pem: keys.privateKey, ...fake.nextConversion };
 			return json(201, app);

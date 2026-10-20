@@ -1,4 +1,4 @@
-import { createSign, randomBytes } from "node:crypto";
+import { createPrivateKey, createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { type Server, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -194,6 +194,15 @@ export function appJwt(appId: number, pem: string, nowSec: number): string {
 	return `${head}.${b64url(signature)}`;
 }
 
+/** GitHub's PKCS#1 `pem` as the PKCS#8 PEM the hub's Worker imports (src/github/jwt.ts). */
+export function pkcs8Pem(pem: string): string {
+	try {
+		return createPrivateKey(pem).export({ type: "pkcs8", format: "pem" }).toString();
+	} catch {
+		throw new SetupError("manifest_conversion_failed", "GitHub's manifest conversion pem is not a private key");
+	}
+}
+
 /** Signs in as the new app and checks GitHub reports the same id and slug. */
 export async function verifyGithubApp(
 	conv: ManifestConversion,
@@ -213,13 +222,23 @@ export async function verifyGithubApp(
 
 /**
  * Registers the hub's own GitHub App through the manifest flow, stores its
- * credentials as Worker secrets and redeploys with the app's slug.
+ * credentials as Worker secrets and redeploys with the app's slug. The app's
+ * id is saved before any secret is stored: its credentials exist only in this
+ * run, so a rerun refuses to create a second app, and resumes at the redeploy
+ * once every credential is stored.
  */
 export async function githubAppStep(ctx: SetupContext): Promise<HubState> {
 	const { options: o, state: s, exec, log } = ctx;
 	if (s.github_app_id !== undefined && s.steps_done.includes("github_app")) {
 		log(`GitHub App already registered: ${s.github_app_html_url ?? ""}`);
 		return s;
+	}
+	if (s.github_app_id !== undefined && s.github_app_secrets_stored) return redeployWithApp(ctx, s);
+	if (s.github_app_id !== undefined) {
+		throw new SetupError(
+			"github_app_incomplete",
+			`GitHub App ${s.github_app_id} (${s.github_app_html_url ?? "unknown URL"}) was created by an earlier run that did not store its credentials`,
+		);
 	}
 	const baseUrl = s.base_url;
 	if (!baseUrl) throw new Error("the setup state has no hub URL; the deploy step must run first");
@@ -239,21 +258,29 @@ export async function githubAppStep(ctx: SetupContext): Promise<HubState> {
 	await pending.close();
 
 	const conv = await convertManifestCode(pending.code, o.fetchFn, o.githubApiBase);
+	let next: HubState = { ...s, github_app_id: conv.id, github_app_slug: conv.slug, github_app_html_url: conv.html_url, github_app_secrets_stored: false };
+	await saveState(o.dir, next);
+	const pem = pkcs8Pem(conv.pem);
 	await verifyGithubApp(conv, o.fetchFn, o.githubApiBase);
 	const secrets: [string, string][] = [
 		["GITHUB_APP_ID", String(conv.id)],
-		["GITHUB_APP_PRIVATE_KEY", conv.pem],
+		["GITHUB_APP_PRIVATE_KEY", pem],
 		["GITHUB_WEBHOOK_SECRET", conv.webhook_secret],
 		["GITHUB_CLIENT_ID", conv.client_id],
 		["GITHUB_CLIENT_SECRET", conv.client_secret],
 	];
 	for (const [name, value] of secrets) await putSecret(exec, o.dir, name, value);
-
-	let next: HubState = { ...s, github_app_id: conv.id, github_app_slug: conv.slug, github_app_html_url: conv.html_url };
+	next = { ...next, github_app_secrets_stored: true };
 	await saveState(o.dir, next);
-	next = await deployWorker(o, await renderConfig(o, next));
+	return redeployWithApp(ctx, next);
+}
+
+/** Redeploys with the registered app's slug, marks the step done and prints the install link. */
+async function redeployWithApp(ctx: SetupContext, s: HubState): Promise<HubState> {
+	const { options: o, log } = ctx;
+	let next = await deployWorker(o, await renderConfig(o, s));
 	next = { ...next, steps_done: [...next.steps_done, "github_app"] };
 	await saveState(o.dir, next);
-	log(`Install the app: https://github.com/apps/${conv.slug}/installations/new`);
+	log(`Install the app: https://github.com/apps/${next.github_app_slug ?? ""}/installations/new`);
 	return next;
 }

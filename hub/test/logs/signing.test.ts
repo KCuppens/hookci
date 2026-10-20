@@ -34,6 +34,11 @@ describe("signLogUrl", () => {
   it("refuses a job name no log can have", async () => {
     await expect(signLogUrl(env, { ...REF, job: "../x" }, NOW)).rejects.toMatchObject({ code: "bad_job_name", status: 400 });
   });
+
+  it("refuses to sign while LOG_SIGNING_KEY is empty", async () => {
+    env.LOG_SIGNING_KEY = "";
+    await expect(signLogUrl(env, REF, NOW)).rejects.toMatchObject({ code: "log_signing_key_missing", status: 500 });
+  });
 });
 
 describe("verifyLogUrl", () => {
@@ -95,5 +100,11 @@ describe("verifyLogUrl", () => {
     params.set("kid", "p");
     env.LOG_SIGNING_KEY_PREVIOUS = OLD_KEY;
     expect(await verifyLogUrl(env, params, NOW)).toEqual({ ok: false, reason: "bad_signature" });
+  });
+
+  it("fails closed on a kid=c link while LOG_SIGNING_KEY is empty", async () => {
+    const params = await signedParams();
+    env.LOG_SIGNING_KEY = "";
+    await expect(verifyLogUrl(env, params, NOW)).rejects.toMatchObject({ code: "log_signing_key_missing", status: 500 });
   });
 });

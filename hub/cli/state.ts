@@ -13,6 +13,8 @@ export interface HubState {
 	github_app_id?: number;
 	github_app_slug?: string;
 	github_app_html_url?: string;
+	/** Set once all of the GitHub App's credentials are stored as Worker secrets. */
+	github_app_secrets_stored?: boolean;
 	/** Hub name: the Worker name and the prefix of the D1 database and R2 bucket. */
 	name?: string;
 	custom_domain?: string;

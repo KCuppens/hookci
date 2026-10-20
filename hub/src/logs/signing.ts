@@ -4,6 +4,7 @@
 
 import { base64url, hmacSha256, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
+import { HubError } from "../errors";
 import { checkJobName, isJobName } from "./keys";
 
 export interface LogRef {
@@ -26,11 +27,17 @@ function signedData(ref: LogRef, exp: number): string {
 	return `v1\n${ref.installationId}\n${ref.runId}\n${ref.job}\n${exp}`;
 }
 
+/** LOG_SIGNING_KEY; throws log_signing_key_missing (500) when it is unset or empty, so nothing is signed under an empty key. */
+export function logSigningKey(env: Env): string {
+	if (!env.LOG_SIGNING_KEY) throw new HubError("log_signing_key_missing", 500, "LOG_SIGNING_KEY is not set");
+	return env.LOG_SIGNING_KEY;
+}
+
 /** A link to the job's log page, expiring ttlSec after now; throws bad_job_name (400) for a job name no log can have. */
 export async function signLogUrl(env: Env, ref: LogRef, now: Date, ttlSec: number = LOG_URL_TTL_SEC): Promise<string> {
 	checkJobName(ref.job);
 	const exp = Math.floor(now.getTime() / 1000) + ttlSec;
-	const sig = base64url(await hmacSha256(env.LOG_SIGNING_KEY, signedData(ref, exp)));
+	const sig = base64url(await hmacSha256(logSigningKey(env), signedData(ref, exp)));
 	const query = new URLSearchParams({ i: String(ref.installationId), r: ref.runId, j: ref.job, exp: String(exp), kid: "c", sig });
 	return `${env.HUB_ORIGIN}/logs/view?${query}`;
 }
@@ -38,7 +45,8 @@ export async function signLogUrl(env: Env, ref: LogRef, now: Date, ttlSec: numbe
 /**
  * Checks a signed link's query. Missing or ill-formed params, an unknown kid and
  * an exp further than LOG_URL_TTL_SEC ahead are malformed; a signature neither
- * key made is bad_signature; a validly signed link past exp is expired.
+ * key made is bad_signature; a validly signed link past exp is expired. A kid=c
+ * link throws log_signing_key_missing (500) while LOG_SIGNING_KEY is unset.
  */
 export async function verifyLogUrl(env: Env, params: URLSearchParams, now: Date): Promise<VerifyResult> {
 	const [i, r, j, exp, kid, sig] = SIGNED_PARAMS.map((name) => params.get(name));
@@ -49,7 +57,7 @@ export async function verifyLogUrl(env: Env, params: URLSearchParams, now: Date)
 	const expSec = Number(exp);
 	if (expSec > Math.floor(now.getTime() / 1000) + LOG_URL_TTL_SEC) return { ok: false, reason: "malformed" };
 
-	const key = kid === "c" ? env.LOG_SIGNING_KEY : env.LOG_SIGNING_KEY_PREVIOUS;
+	const key = kid === "c" ? logSigningKey(env) : env.LOG_SIGNING_KEY_PREVIOUS;
 	if (!key) return { ok: false, reason: "bad_signature" };
 	const ref: LogRef = { installationId: Number(i), runId: r, job: j };
 	if (!timingSafeEqual(base64url(await hmacSha256(key, signedData(ref, expSec))), sig)) return { ok: false, reason: "bad_signature" };
