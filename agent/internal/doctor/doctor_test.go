@@ -17,6 +17,7 @@ import (
 
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
 	"github.com/KCuppens/zerocideploy/agent/internal/version"
 )
 
@@ -24,14 +25,17 @@ var now = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 
 const agentJSON = `{"hub_url":"https://hub","agent_id":"agt_1","credential":"zc_agent_x","name":"b","installation_id":42}`
 
-// fakeHub serves /healthz with a Date header dateOffset from now and
-// /v1/agent/connect the way the hub does: 426 without Upgrade, else 401.
+// fakeHub serves /healthz with a Date header dateOffset from now, /v1/info,
+// and /v1/agent/connect the way the hub does: 426 without Upgrade, else 401.
 func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Date", now.Add(dateOffset).Format(http.TimeFormat))
 		w.WriteHeader(healthStatus)
+	})
+	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"zeroci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,1],"github_app":{"slug":"acme-ci"},"slack":{"enabled":false}}`))
 	})
 	mux.HandleFunc("GET /v1/agent/connect", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -106,7 +110,7 @@ func runOne(t *testing.T, c Check, env Env) Result {
 func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	srv := fakeHub(t, 0, http.StatusOK, true)
 	rs := Run(context.Background(), healthyEnv(srv), Default())
-	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "zeroci_run_user", "git_present", "disk_space", "hub_reachable", "hub_tls", "clock_skew", "ws_upgrade"}
+	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "zeroci_run_user", "git_present", "disk_space", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
 	if len(rs) != len(want) {
 		t.Fatalf("got %d results, want %d", len(rs), len(want))
 	}
@@ -122,6 +126,17 @@ func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	if Render(&out, rs) {
 		t.Errorf("Render reported a failure:\n%s", out.String())
 	}
+}
+
+// The healthy host's table, with the test server's origin replaced by a
+// stable one.
+func TestRenderHealthyHostGolden(t *testing.T) {
+	srv := fakeHub(t, 0, http.StatusOK, true)
+	var out bytes.Buffer
+	if Render(&out, Run(context.Background(), healthyEnv(srv), Default())) {
+		t.Fatalf("Render reported a failure:\n%s", out.String())
+	}
+	testutil.Golden(t, "doctor_healthy", []byte(strings.ReplaceAll(out.String(), srv.URL, "https://hub.test")))
 }
 
 func TestChecksWarnOrFail(t *testing.T) {
@@ -170,6 +185,19 @@ func TestChecksWarnOrFail(t *testing.T) {
 			srv := fakeHub(t, 0, http.StatusServiceUnavailable, true)
 			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
 		}, Fail, "answered 503"},
+		{"hub info down", hubInfoCheck{}, func(e *Env) { e.HubOrigin = "https://127.0.0.1:1" }, Warn, "127.0.0.1:1"},
+		{"hub without info", hubInfoCheck{}, func(e *Env) {
+			srv := httptest.NewTLSServer(http.NotFoundHandler())
+			t.Cleanup(srv.Close)
+			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
+		}, Warn, "HTTP 404"},
+		{"not a hub", hubInfoCheck{}, func(e *Env) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"name":"gitea"}`))
+			}))
+			t.Cleanup(srv.Close)
+			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
+		}, Warn, "not a zeroci hub"},
 		{"hub down", hubReachableCheck{}, func(e *Env) { e.HubOrigin = "https://127.0.0.1:1" }, Fail, "127.0.0.1:1"},
 		{"tls untrusted", hubTLSCheck{}, func(e *Env) { e.HTTP = &http.Client{} }, Fail, "certificate"},
 		{"tls plain http", hubTLSCheck{}, func(e *Env) {

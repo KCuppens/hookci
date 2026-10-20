@@ -109,6 +109,7 @@ func Default() []Check {
 		gitCheck{},
 		diskSpaceCheck{},
 		hubReachableCheck{},
+		hubInfoCheck{},
 		hubTLSCheck{},
 		clockSkewCheck{},
 		wsUpgradeCheck{},

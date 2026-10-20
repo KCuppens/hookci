@@ -20,6 +20,8 @@ export interface Env {
 	GITHUB_APP_SLUG: string;
 	/** security.txt Contact, a mailto: or https: URI; empty points reporters at GitHub's private advisories. */
 	SECURITY_CONTACT: string;
+	/** "shared" (default) or "self_hosted"; anything else is treated as shared. */
+	HUB_MODE?: string;
 	GITHUB_APP_ID: string;
 	GITHUB_APP_PRIVATE_KEY: string;
 	GITHUB_CLIENT_ID: string;

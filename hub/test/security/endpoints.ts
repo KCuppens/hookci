@@ -25,6 +25,7 @@ export interface Endpoint {
 
 export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/healthz", auth: "public" },
+  { method: "GET", path: "/v1/info", auth: "public" },
   { method: "GET", path: "/install", auth: "public" },
   { method: "POST", path: "/github/webhook", auth: "github_sig" },
   { method: "GET", path: "/v1/agent/connect", auth: "agent_bearer" },
