@@ -78,6 +78,50 @@ func (s *Store) RejectTrigger(ctx context.Context, triggerID, reason string) err
 	return nil
 }
 
+// AnswerTrigger records the final answer to a trigger that starts no checks
+// run, a deploy trigger: accepted for runID when reason is empty (state
+// done), else rejected with reason. The frame is appended in the same
+// transaction. It returns false, and changes nothing, when triggerID is
+// already recorded.
+func (s *Store) AnswerTrigger(ctx context.Context, triggerID, runID, reason string) (bool, error) {
+	state, kind, frame := TriggerDone, "accepted", any(protocol.Accepted{TriggerId: triggerID, RunId: runID})
+	if reason != "" {
+		state, kind, frame = TriggerRejected, "rejected", protocol.Rejected{TriggerId: triggerID, Reason: reason}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: answer trigger %s: %w", triggerID, err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO triggers (trigger_id, run_id, state, created_at) VALUES (?, ?, ?, ?)`,
+		triggerID, runID, state, s.now().UnixMilli())
+	if err != nil {
+		return false, fmt.Errorf("store: answer trigger %s: %w", triggerID, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return false, fmt.Errorf("store: answer trigger %s: %w", triggerID, err)
+	} else if n == 0 {
+		return false, nil
+	}
+	if err := s.appendFrame(ctx, tx, kind, frame); err != nil {
+		return false, fmt.Errorf("store: answer trigger %s: %w", triggerID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: answer trigger %s: %w", triggerID, err)
+	}
+	return true, nil
+}
+
+// TriggerRecorded reports whether triggerID is already recorded.
+func (s *Store) TriggerRecorded(ctx context.Context, triggerID string) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM triggers WHERE trigger_id = ?`, triggerID).Scan(&n); err != nil {
+		return false, fmt.Errorf("store: trigger %s: %w", triggerID, err)
+	}
+	return n > 0, nil
+}
+
 // SetTriggerState moves triggerID to state, or returns ErrNotFound.
 func (s *Store) SetTriggerState(ctx context.Context, triggerID string, state TriggerState) error {
 	return setTriggerState(ctx, s.db, triggerID, state)

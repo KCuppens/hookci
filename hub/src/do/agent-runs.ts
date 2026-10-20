@@ -126,6 +126,12 @@ function triggerByRun(dob: AgentDO, runId: string): TriggerRow | null {
 	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ?", runId).toArray()[0] ?? null;
 }
 
+/** A deploy trigger still waiting for this agent's answer; its checks read GitHub before the agent accepts it, so the agent asks for a token by trigger id. */
+function sentDeployTrigger(dob: AgentDO, triggerId: string): TriggerRow | null {
+	const row = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ? AND state = 'sent'", triggerId).toArray()[0];
+	return row !== undefined && deployEnv(row.target) != null ? row : null;
+}
+
 function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 	const row = triggerByRun(dob, runId);
 	if (!row) {
@@ -536,7 +542,7 @@ export function registerRunLifecycle(): () => void {
 		}),
 
 		registerFrameHandler("token_request", async (dob, frame) => {
-			const row = triggerByRun(dob, frame.run_id);
+			const row = triggerByRun(dob, frame.run_id) ?? sentDeployTrigger(dob, frame.run_id);
 			const binding = row && (await getBinding(dob.tenant(), row.repo_id, row.target));
 			if (!row || binding?.agent_id !== dob.agentId) {
 				logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, reason: "run_not_bound" });

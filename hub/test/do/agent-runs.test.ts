@@ -13,6 +13,7 @@ import type { TriggerRequest } from "../../src/webhook/route";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { createFakeGitHub } from "../fakes/github";
+import type { FakeService } from "../fakes/http";
 import { generateAppKey } from "../github/helpers";
 import { type RecordingSink, recordSink, type SinkCall } from "../sinks/recording";
 import { type Agent, type AgentSocket, connect, seedAgent } from "./agent-socket";
@@ -339,6 +340,101 @@ describe("AgentDO run lifecycle", () => {
     expect(sent).toEqual([{ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound }]);
     expect(sock.ws.readyState).toBe(WebSocket.OPEN);
     expect(gh.calls).toEqual([]);
+  });
+
+  /** Serves installation token mints from a fake GitHub for this test. */
+  async function fakeTokenMint(): Promise<FakeService> {
+    const gh = createFakeGitHub();
+    gh.respond("POST", "/app/installations/:id/access_tokens", () =>
+      Response.json({ token: "ghs_fetch", expires_at: "2030-01-01T00:00:00Z" }, { status: 201 }),
+    );
+    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+    env.__TEST_FETCHER = gh.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+    cleanups.push(() => {
+      env.__TEST_FETCHER = saved.fetcher;
+      env.GITHUB_APP_PRIVATE_KEY = saved.key;
+    });
+    return gh;
+  }
+
+  /** tenant_denied events logged through the console.log spy. */
+  function denials(spy: { mock: { calls: unknown[][] } }): Row[] {
+    return spy.mock.calls.flatMap(([line]) => {
+      if (typeof line !== "string" || !line.startsWith("{")) return [];
+      const entry = JSON.parse(line) as Row;
+      return entry.event === "tenant_denied" ? [entry] : [];
+    });
+  }
+
+  it("token_request by trigger id serves a sent deploy trigger until it is answered", async () => {
+    const gh = await fakeTokenMint();
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const triggerId = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId, env: "staging" });
+
+    // The agent checks GitHub before it answers, so it has no run id yet.
+    const sent = await sock.request({ type: "token_request", run_id: triggerId, purpose: "fetch" });
+    expect(sent).toEqual([
+      { v: 1, type: "token", seq: expect.any(Number), run_id: triggerId, token: "ghs_fetch", exp: Math.floor(Date.parse("2030-01-01T00:00:00Z") / 1000) },
+    ]);
+    expect(gh.calls).toEqual([
+      {
+        method: "POST",
+        url: `https://api.github.com/app/installations/${INSTALLATION}/access_tokens`,
+        body: { repository_ids: [REPO], permissions: { contents: "read" } },
+      },
+    ]);
+
+    // Once answered the trigger is finished: the same request gets today's refusal.
+    expect(await sock.request({ type: "rejected", trigger_id: triggerId, reason: "deployments.staging: untrusted trigger cannot deploy" })).toEqual([]);
+    expect(await triggerState(agent, triggerId)).toBe("rejected");
+    const log = vi.spyOn(console, "log");
+    expect(await sock.request({ type: "token_request", run_id: triggerId, purpose: "fetch" })).toEqual([
+      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound },
+    ]);
+    expect(denials(log)).toEqual([expect.objectContaining({ agent_id: agent.agentId, run_id: triggerId, reason: "run_not_bound" })]);
+    expect(gh.calls).toHaveLength(1);
+  });
+
+  it("token_request by trigger id is refused to other agents and for unknown or checks triggers", async () => {
+    const gh = await fakeTokenMint();
+    const owner = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", owner.agentId);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", owner.agentId);
+    const ownerSock = await online(owner);
+    const deployId = await trigger(owner, DEPLOY_TRIGGER);
+    expect(await ownerSock.next()).toMatchObject({ type: "trigger", trigger_id: deployId });
+    const checksId = await trigger(owner);
+    expect(await ownerSock.next()).toMatchObject({ type: "trigger", trigger_id: checksId });
+
+    const OTHER_INSTALLATION = INSTALLATION + 1;
+    await upsertInstallation(env.DB, { id: OTHER_INSTALLATION, account_login: "evil", account_type: "Organization", account_id: OTHER_INSTALLATION * 10, created_at: 1 });
+    const sameTenant = await seedAgent(INSTALLATION);
+    const otherTenant = await seedAgent(OTHER_INSTALLATION);
+    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound };
+
+    const log = vi.spyOn(console, "log");
+    for (const agent of [sameTenant, otherTenant]) {
+      const sock = await online(agent);
+      expect(await sock.request({ type: "token_request", run_id: deployId, purpose: "fetch" })).toEqual([refused]);
+      expect(sock.ws.readyState).toBe(WebSocket.OPEN);
+      sock.ws.close();
+    }
+    for (const runId of ["trg_unknown", checksId]) {
+      expect(await ownerSock.request({ type: "token_request", run_id: runId, purpose: "fetch" })).toEqual([refused]);
+    }
+
+    expect(denials(log)).toEqual([
+      expect.objectContaining({ installation_id: INSTALLATION, agent_id: sameTenant.agentId, run_id: deployId, reason: "run_not_bound" }),
+      expect.objectContaining({ installation_id: OTHER_INSTALLATION, agent_id: otherTenant.agentId, run_id: deployId, reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: owner.agentId, run_id: "trg_unknown", reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: owner.agentId, run_id: checksId, reason: "run_not_bound" }),
+    ]);
+    expect(gh.calls).toEqual([]);
+    expect(await triggerState(owner, deployId)).toBe("sent");
   });
 
   it("offline 10 minutes marks pending runs agent_offline", async () => {

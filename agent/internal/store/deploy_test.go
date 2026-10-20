@@ -307,6 +307,46 @@ func TestIncrementDeployAttempt(t *testing.T) {
 	}
 }
 
+func TestFindDeployRun(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	older := testDeployRun("r1", "prod", DeployFailed)
+	older.SHA, older.Attempt = "abc", 1
+	newer := older
+	newer.RunID, newer.State, newer.CreatedAt = "r2", DeployQueued, t0.Add(time.Minute)
+	other := older
+	other.RunID, other.Env = "r3", "staging"
+	for _, r := range []DeployRun{older, newer, other} {
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	for _, tc := range []struct {
+		name, repo, env, sha string
+		attempt              int
+		want                 string // run id; "" means ErrNotFound
+	}{
+		{name: "exact match picks the newest", repo: "acme/web", env: "prod", sha: "abc", attempt: 1, want: "r2"},
+		{name: "other env", repo: "acme/web", env: "staging", sha: "abc", attempt: 1, want: "r3"},
+		{name: "different attempt", repo: "acme/web", env: "prod", sha: "abc", attempt: 2},
+		{name: "different sha", repo: "acme/web", env: "prod", sha: "def", attempt: 1},
+		{name: "different repo", repo: "acme/api", env: "prod", sha: "abc", attempt: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.FindDeployRun(ctx, tc.repo, tc.env, tc.sha, tc.attempt)
+			if tc.want == "" {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("FindDeployRun = %+v, %v; want ErrNotFound", got, err)
+				}
+				return
+			}
+			if err != nil || got.RunID != tc.want {
+				t.Fatalf("FindDeployRun = %q, %v; want %q", got.RunID, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestDeployState_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "agent.db")

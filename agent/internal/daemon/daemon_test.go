@@ -147,6 +147,11 @@ func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
 
 // newHarnessAt is newHarness with the hub at hubURL, where job logs go.
 func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string) *harness {
+	return newHarnessWith(t, src, runner, hubURL, nil)
+}
+
+// newHarnessWith is newHarnessAt with deploy triggers decided by deploys.
+func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
 	runner.stateDir = stateDir
@@ -171,7 +176,7 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 	}
 	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x"}
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2})
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx

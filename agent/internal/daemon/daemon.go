@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
 	"github.com/KCuppens/zerocideploy/agent/internal/clock"
 	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
 	"github.com/KCuppens/zerocideploy/agent/internal/executor"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
 	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
@@ -58,6 +60,9 @@ type Options struct {
 	Source  source.Source
 	JobUser executor.JobUser
 	Slots   int // job slots of a run; <= 0 means scheduler.DefaultSlots()
+	// Deploys decides triggers that name an env; nil checks GitHub with
+	// hub-issued tokens and records accepted runs in the store.
+	Deploys DeployIntake
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -77,6 +82,11 @@ type Daemon struct {
 	mu      sync.Mutex
 	queue   []*work // accepted, not started
 	current *work
+
+	deploys    DeployIntake
+	deployWake chan struct{}
+	deployQ    []protocol.Trigger // guarded by mu
+	deploying  map[string]bool    // trigger ids queued or being decided; guarded by mu
 }
 
 // work is one accepted trigger.
@@ -101,7 +111,10 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
-	d := &Daemon{agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
+	d := &Daemon{
+		agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1),
+		deploys: o.Deploys, deployWake: make(chan struct{}, 1), deploying: map[string]bool{},
+	}
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
@@ -116,6 +129,13 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	d.src = o.Source
 	if d.src == nil {
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
+	}
+	if d.deploys == nil {
+		d.deploys = &hubIntake{
+			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
+			http:   &http.Client{Timeout: githubTimeout},
+			tokens: d.tokens.Request,
+		}
 	}
 	return d
 }
@@ -145,6 +165,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
+	wg.Go(func() { d.deployWorker(wctx) })
 	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
@@ -157,6 +178,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 	switch v := f.(type) {
 	case protocol.Trigger:
+		if v.Env != nil && *v.Env != "" {
+			d.queueDeploy(v)
+			return nil
+		}
 		return d.accept(ctx, v)
 	case protocol.Token:
 		d.tokens.Deliver(v)

@@ -106,6 +106,21 @@ func (s *Store) GetDeployRun(ctx context.Context, runID string) (DeployRun, erro
 	return r, nil
 }
 
+// FindDeployRun returns the deploy run of exactly (repo, env, sha, attempt),
+// the newest when there are several, or ErrNotFound.
+func (s *Store) FindDeployRun(ctx context.Context, repo, env, sha string, attempt int) (DeployRun, error) {
+	r, err := scanDeployRun(s.db.QueryRowContext(ctx,
+		`SELECT `+deployRunColumns+` FROM deploy_runs WHERE repo = ? AND env = ? AND sha = ? AND attempt = ?
+		 ORDER BY created_at DESC, run_id DESC LIMIT 1`, repo, env, sha, attempt))
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeployRun{}, fmt.Errorf("store: deploy run %s/%s at %s attempt %d: %w", repo, env, sha, attempt, ErrNotFound)
+	}
+	if err != nil {
+		return DeployRun{}, fmt.Errorf("store: deploy run %s/%s at %s attempt %d: %w", repo, env, sha, attempt, err)
+	}
+	return r, nil
+}
+
 // SetDeployRunState moves runID to state with error text errMsg ("" clears
 // it). Running stamps started_at with at; Success, Failed, Interrupted and
 // Superseded stamp finished_at; any other state clears finished_at.
