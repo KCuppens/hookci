@@ -103,12 +103,13 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	}
 	// The pushed commit names its own deploy branch, so a branch other than
 	// the default one must also be named by the default branch's config:
-	// whoever can push a branch cannot make it deploy.
+	// whoever can push a branch cannot make it deploy. The full ref keeps a
+	// tag named like the default branch from standing in for it.
 	if t.DefaultBranch == nil {
 		return rejected("deployments.%s: the repository's default branch is unknown", env), nil
 	}
 	if def := *t.DefaultBranch; branch != def {
-		trusted, err := in.LoadConfig(ctx, t.Repo, def)
+		trusted, err := in.LoadConfig(ctx, t.Repo, "refs/heads/"+def)
 		if err != nil {
 			return Decision{}, fmt.Errorf("trigger: load config at %s: %w", def, err)
 		}

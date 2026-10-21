@@ -69,12 +69,16 @@ export async function onCheckConcluded(env: Env, c: CheckConclusion): Promise<nu
 	);
 	if (bindings.length === 0) return 0;
 	// Deploy branches are read on the default branch, like the agent's check, so
-	// a pushed commit cannot pick its own. An env without one deploys only from
-	// the default branch. If the config cannot be fetched every env goes out and
-	// the agent, which reads it again, decides and reports.
+	// a pushed commit cannot pick its own. An env that config names no branch
+	// for (gone, or the file broken) still goes out on a default-branch push so
+	// the agent reports why. If the config cannot be fetched every env goes out
+	// and the agent, which reads it again, decides and reports. The full ref
+	// keeps a tag named like the default branch from standing in for it.
 	let deployBranches: Record<string, string> | null;
 	try {
-		({ deployBranches } = readRepoTriggers(await fetchRepoConfig(env, c.installationId, repo.full_name, repo.default_branch)));
+		({ deployBranches } = readRepoTriggers(
+			await fetchRepoConfig(env, c.installationId, repo.full_name, `refs/heads/${repo.default_branch}`),
+		));
 	} catch (err) {
 		reportError(err, { installation_id: c.installationId, repo: repo.full_name, sha: c.sha });
 		deployBranches = null;

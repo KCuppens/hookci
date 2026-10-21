@@ -27,7 +27,7 @@ deployments:
     on: { push: develop }       # a deploy branch always runs checks
 ```
 
-`*` matches within one path segment, `**` across segments. A deployment ships only when its checks pass on a push to its `on.push` branch. Its `on.push` is read from the default branch's `.hookci.yml`, never from the pushed commit, so a branch cannot name itself a deploy branch. A deployment without `on.push` ships from the default branch. Each branch pushed keeps its own build cache and falls back to the default branch's. A branch that restores the fallback's cache does not save a copy of its own. A pull request reads its base branch's cache, then the default branch's, and never writes one.
+`*` matches within one path segment, `**` across segments. A deployment ships only when its checks pass on a push to its `on.push` branch. Its `on.push` is read from the default branch's `.hookci.yml`, never from the pushed commit, so a branch cannot name itself a deploy branch. Each branch pushed keeps its own build cache and falls back to the default branch's. A branch that restores the fallback's cache does not save a copy of its own. A pull request reads its base branch's cache, then the default branch's, and never writes one.
 
 ## Quick start (local)
 

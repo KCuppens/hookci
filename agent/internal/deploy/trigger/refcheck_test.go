@@ -173,7 +173,7 @@ deployments:
 	}{
 		{name: "valid", status: 200, body: valid, wantEnv: true},
 		{name: "no config at the commit", status: 404, body: `{"message":"Not Found"}`},
-		{name: "invalid", status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n", err: ".hookci.yml at 0123456 is invalid"},
+		{name: "invalid", status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n", err: ".hookci.yml at " + sha + " is invalid"},
 		{name: "server error", status: 503, err: "github " + path + ": 503"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

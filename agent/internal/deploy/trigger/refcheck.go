@@ -101,7 +101,7 @@ func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, ref string) (*c
 	}
 	cfg, diags := config.Parse(data, config.ParseOptions{})
 	if diags.HasErrors() {
-		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(ref), diags.Format(configFile)))
+		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, ref, diags.Format(configFile)))
 	}
 	return cfg, nil
 }

@@ -1,6 +1,8 @@
 // GitHub webhook dispatch: one handler per X-GitHub-Event the hub acts on.
 // Events without a handler are recorded and otherwise ignored.
 
+import { setDefaultBranch } from "../db/repos";
+import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { normalize } from "../github/normalize";
 import type { WaitUntil } from "../sinks";
@@ -27,6 +29,7 @@ export type WebhookHandler = (env: Env, payload: unknown, ctx: WaitUntil) => Pro
 async function onTriggerEvent(env: Env, event: "pull_request" | "push", payload: unknown, ctx: WaitUntil): Promise<HandlerResult> {
 	const trig = normalize(event, payload);
 	if (!trig) return { status: "processed" };
+	await setDefaultBranch(tenantDb(env.DB, trig.installationId), trig.repoId, trig.defaultBranch);
 	const outcome = await routeTrigger(env, trig, ctx);
 	if (outcome.kind === "deleted" || outcome.kind === "unknown_installation" || outcome.kind === "not_wanted") return { status: "dropped", note: outcome.kind };
 	return { status: "processed" };

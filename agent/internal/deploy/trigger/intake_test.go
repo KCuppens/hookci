@@ -72,14 +72,14 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg := configWith(dep)
-	f := &fixture{st: st, refs: &fakeRefs{}, configs: map[string]*config.Config{testSHA: cfg, "main": cfg}}
+	f := &fixture{st: st, refs: &fakeRefs{}, configs: map[string]*config.Config{testSHA: cfg, "refs/heads/main": cfg}}
 	f.in = &Intake{
 		Store: st,
 		Refs:  f.refs,
 		LoadConfig: func(_ context.Context, repo, ref string) (*config.Config, error) {
 			cfg, ok := f.configs[ref]
 			if repo != "acme/web" || !ok {
-				t.Errorf("LoadConfig(%s, %s), want acme/web at the trigger sha or main", repo, ref)
+				t.Errorf("LoadConfig(%s, %s), want acme/web at the trigger sha or refs/heads/main", repo, ref)
 				return &config.Config{}, nil
 			}
 			return cfg, nil
@@ -105,6 +105,8 @@ func pushTrigger() protocol.Trigger {
 func TestIntake_AcceptsPushOnRef(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, deployment())
+	// A push to the default branch reads only the pushed commit's config.
+	delete(f.configs, "refs/heads/main")
 	got, err := f.in.Handle(ctx, pushTrigger())
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -150,7 +152,7 @@ func TestIntake_RejectsBranchOnlyThePushNames(t *testing.T) {
 	dep := deployment()
 	dep.On.Push = "feature/x"
 	f := newFixture(t, dep)
-	f.configs["main"] = configWith(deployment())
+	f.configs["refs/heads/main"] = configWith(deployment())
 	tr := pushTrigger()
 	tr.Ref = "refs/heads/feature/x"
 	got, err := f.in.Handle(ctx, tr)
@@ -160,6 +162,31 @@ func TestIntake_RejectsBranchOnlyThePushNames(t *testing.T) {
 	}
 	if runs, _ := f.st.ListDeployRunsInStates(ctx, store.DeployQueued); len(runs) != 0 {
 		t.Errorf("a rejection stored runs: %+v", runs)
+	}
+}
+
+// A failure to read the default branch's config is an error, neither an
+// accept nor a rejection, so the daemon retries the trigger.
+func TestIntake_ReturnsDefaultBranchConfigError(t *testing.T) {
+	ctx := context.Background()
+	dep := deployment()
+	dep.On.Push = "feature/x"
+	f := newFixture(t, dep)
+	down := errors.New("github down")
+	f.in.LoadConfig = func(_ context.Context, _, ref string) (*config.Config, error) {
+		if ref == testSHA {
+			return configWith(dep), nil
+		}
+		return nil, down
+	}
+	tr := pushTrigger()
+	tr.Ref = "refs/heads/feature/x"
+	got, err := f.in.Handle(ctx, tr)
+	if !errors.Is(err, down) || got.Accepted || got.Reason != "" {
+		t.Fatalf("Handle = %+v, %v; want the load error", got, err)
+	}
+	if runs, _ := f.st.ListDeployRunsInStates(ctx, store.DeployQueued); len(runs) != 0 {
+		t.Errorf("a failed load stored runs: %+v", runs)
 	}
 }
 

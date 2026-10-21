@@ -5,6 +5,7 @@ import { hex, hmacSha256 } from "../src/crypto";
 import { bind } from "../src/db/bindings";
 import { markDelivery, PENDING_STALE_MS } from "../src/db/deliveries";
 import { markDeleted, markSuspended, upsertInstallation } from "../src/db/installations";
+import { getRepo, upsertRepos } from "../src/db/repos";
 import { tenantDb } from "../src/db/tenant";
 import type { Env } from "../src/env";
 import worker from "../src/index";
@@ -344,6 +345,13 @@ describe("POST /github/webhook routing", () => {
     await deliver("push", pushMain, { id: "d-main" });
     expect(agents.calls).toEqual([]);
     expect(await deliveryRow("d-main")).toMatchObject({ status: "dropped", note: "not_wanted" });
+  });
+
+  it("records the default branch a push reports, so a renamed one reaches the deploy chain", async () => {
+    const t = tenantDb(env.DB, INSTALLATION);
+    await upsertRepos(t, [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "master" }]);
+    await deliver("push", pushMain, { id: "d-renamed" });
+    expect(await getRepo(t, REPO)).toMatchObject({ default_branch: "main" });
   });
 
   it("drops a pull request when checks.on.pull_request is false", async () => {

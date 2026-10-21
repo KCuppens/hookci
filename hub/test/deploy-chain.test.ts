@@ -90,15 +90,15 @@ describe("deploy chain", () => {
       for (const name of ["staging", "production", "preview"]) await bind(tenantDb(env.DB, INSTALLATION), REPO, `deploy:${name}`, agent.agentId);
     });
 
-    it("reads on.push at the default branch; an env without one deploys from the default branch", async () => {
-      github.files["acme/widgets@main:.hookci.yml"] = DEPLOYMENTS;
+    it("reads on.push at the default branch's full ref; an env it names no branch for goes out on a default-branch push", async () => {
+      github.files["acme/widgets@refs/heads/main:.hookci.yml"] = DEPLOYMENTS;
       expect(await onCheckConcluded(env, PUSH_SUCCESS)).toBe(2);
       expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "staging"]);
-      expect(github.refs).toEqual(["main"]);
+      expect(github.refs).toEqual(["refs/heads/main"]);
     });
 
     it("deploys a pushed branch only to the env whose on.push names it", async () => {
-      github.files["acme/widgets@main:.hookci.yml"] = DEPLOYMENTS;
+      github.files["acme/widgets@refs/heads/main:.hookci.yml"] = DEPLOYMENTS;
       expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/release" })).toBe(1);
       expect((await deployRows()).map((r) => r.env)).toEqual(["production"]);
     });
