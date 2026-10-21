@@ -22,7 +22,8 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-// eventLog records every deploy event.
+// eventLog records the deploy job's events; the run's own events carry
+// nothing these tests check.
 type eventLog struct {
 	mu     sync.Mutex
 	events []protocol.Event
@@ -31,6 +32,9 @@ type eventLog struct {
 func (*eventLog) DeployPlanned(protocol.JobPlanned) {}
 
 func (l *eventLog) DeployEvent(ev protocol.Event) {
+	if ev.Job == nil {
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.events = append(l.events, ev)

@@ -1,8 +1,9 @@
 // Package trigger decides whether a deploy trigger from the hub may deploy:
-// the env must exist at the commit, the push branch must be listed and
-// protected on GitHub, the commit must be on it, the trigger trusted, and a
-// paths filter must match the files changed since the last success. A
-// retry trigger re-queues the commit's Failed or Interrupted run.
+// the env must exist at the commit, the push branch must be listed there and,
+// off the default branch, in the default branch's config too, the commit
+// must be on it, the trigger trusted, and a paths filter must match the
+// files changed since the last success. A retry trigger re-queues the
+// commit's Failed or Interrupted run.
 package trigger
 
 import (
@@ -55,8 +56,8 @@ func IsPermanent(err error) bool {
 type Intake struct {
 	Store *store.Store
 	Refs  RefChecker
-	// LoadConfig returns the repository configuration at sha.
-	LoadConfig func(ctx context.Context, repo, sha string) (*config.Config, error)
+	// LoadConfig returns the repository configuration at ref, a sha or a branch.
+	LoadConfig func(ctx context.Context, repo, ref string) (*config.Config, error)
 	Clock      func() time.Time // nil means time.Now
 	NewRunID   func() string    // nil means ids.NewRunID
 }
@@ -100,12 +101,21 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	if dep.On.Push != branch {
 		return rejected("deployments.%s.on.push: branch %s is not listed", env, branch), nil
 	}
-	protected, err := in.Refs.IsProtected(ctx, t.Repo, branch)
-	if err != nil {
-		return Decision{}, fmt.Errorf("trigger: %w", err)
+	// The pushed commit names its own deploy branch, so a branch other than
+	// the default one must also be named by the default branch's config:
+	// whoever can push a branch cannot make it deploy. The full ref keeps a
+	// tag named like the default branch from standing in for it.
+	if t.DefaultBranch == nil {
+		return rejected("deployments.%s: the repository's default branch is unknown", env), nil
 	}
-	if !protected {
-		return rejected("deployments.%s: branch %s is not protected on GitHub; protect it or remove the env", env, branch), nil
+	if def := *t.DefaultBranch; branch != def {
+		trusted, err := in.LoadConfig(ctx, t.Repo, "refs/heads/"+def)
+		if err != nil {
+			return Decision{}, fmt.Errorf("trigger: load config at %s: %w", def, err)
+		}
+		if trusted.Deployments[env].On.Push != branch {
+			return rejected("deployments.%s.on.push: branch %s is not listed on %s", env, branch, def), nil
+		}
 	}
 	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
 	if err != nil {
@@ -142,10 +152,10 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 // A trigger at that run's attempt is a redelivery and gets the run while it
 // is not Failed or Interrupted. A trigger at the run's attempt or later
 // re-queues a Failed or Interrupted run as a retry under the same run id,
-// once the run's branch is still protected, holds the commit and the
-// trigger is trusted: the hub counts only its own triggers, so a host-side
-// `hookci retry` leaves the agent's attempt ahead of it. The daemon drops a
-// trigger id it already answered. The paths filter does not apply to a retry.
+// once the run's branch still holds the commit and the trigger is trusted:
+// the hub counts only its own triggers, so a host-side `hookci retry` leaves
+// the agent's attempt ahead of it. The daemon drops a trigger id it already
+// answered. The paths filter does not apply to a retry.
 func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env string) (Decision, error) {
 	run, err := in.Store.LatestDeployRunFor(ctx, t.Repo, env, t.Sha)
 	if errors.Is(err, store.ErrNotFound) {
@@ -163,13 +173,6 @@ func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env strin
 		return stale, nil
 	}
 	branch := strings.TrimPrefix(run.Ref, "refs/heads/")
-	protected, err := in.Refs.IsProtected(ctx, t.Repo, branch)
-	if err != nil {
-		return Decision{}, fmt.Errorf("trigger: %w", err)
-	}
-	if !protected {
-		return rejected("deployments.%s: branch %s is not protected on GitHub; protect it or remove the env", env, branch), nil
-	}
 	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
 	if err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)

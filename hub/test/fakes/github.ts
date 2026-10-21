@@ -1,4 +1,6 @@
+import type { Env } from "../../src/env";
 import type { HookDelivery } from "../../src/github/types";
+import { generateAppKey } from "../github/helpers";
 import { createFakeService, type FakeService } from "./http";
 
 /** Fake GitHub (api.github.com and github.com OAuth); unmatched requests get GitHub's 404 body. */
@@ -25,6 +27,23 @@ export function serveRepoFiles(gh: FakeService, files: Record<string, string>): 
     return new Response(body, { status: 200 });
   });
   return refs;
+}
+
+export type FakeGitHubEnv = { gh: FakeService; files: Record<string, string>; refs: string[]; restore: () => void };
+
+/**
+ * Points env at a fresh fake GitHub with an app key, installation tokens and
+ * the repo files put in files (see serveRepoFiles); restore puts env back.
+ */
+export async function useFakeGitHub(env: Env): Promise<FakeGitHubEnv> {
+  const gh = createFakeGitHub();
+  serveInstallationTokens(gh, Date.now());
+  const files: Record<string, string> = {};
+  const refs = serveRepoFiles(gh, files);
+  const saved = { __TEST_FETCHER: env.__TEST_FETCHER, GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY };
+  env.__TEST_FETCHER = gh.fetcher;
+  env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+  return { gh, files, refs, restore: () => Object.assign(env, saved) };
 }
 
 /**

@@ -86,7 +86,7 @@ async function gateForkRun(t: Tenant): Promise<string> {
     sha: t.headSha,
     ref: "refs/heads/feature",
     event: "pull_request",
-    pr: { number: t.prNumber, headRef: "feature", headRepoFullName: `fork${t.installationId}/api`, fork: true, authorLogin: "mallory" },
+    pr: { number: t.prNumber, headRef: "feature", baseRef: "main", headRepoFullName: `fork${t.installationId}/api`, fork: true, authorLogin: "mallory" },
     baseSha: "0".repeat(40),
     authorLogin: "mallory",
     commitTitle: "Fork change",

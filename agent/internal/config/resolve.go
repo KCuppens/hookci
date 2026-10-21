@@ -10,7 +10,6 @@ import (
 // ResolvedChecks is the checks section with every default applied, job
 // limits merged over the check-level limits and jobs in dependency order.
 type ResolvedChecks struct {
-	On       OnSpec
 	Trust    string
 	Forks    string
 	Limits   ResolvedLimits
@@ -25,12 +24,6 @@ type ResolvedChecks struct {
 	// LogsLocal is true for `logs: local`: job logs stay on the agent and are
 	// not uploaded to the hub.
 	LogsLocal bool
-}
-
-// OnSpec says which GitHub events run the checks.
-type OnSpec struct {
-	PullRequest  bool
-	PushBranches []string
 }
 
 // Services are the sidecars started next to the jobs.
@@ -74,7 +67,6 @@ var defaultLimits = ResolvedLimits{
 // would hide the check-level values a job should inherit.
 func resolveChecks(cfg *HookCIConfig, raw any) *ResolvedChecks {
 	rc := &ResolvedChecks{
-		On:     OnSpec{PullRequest: true, PushBranches: []string{"main"}},
 		Trust:  string(ChecksTrustCollaborators),
 		Forks:  string(ChecksForksGated),
 		Limits: defaultLimits,
@@ -99,12 +91,6 @@ func resolveChecks(cfg *HookCIConfig, raw any) *ResolvedChecks {
 
 	rc.Trust = string(c.Trust)
 	rc.Forks = string(c.Forks)
-	if c.On != nil {
-		rc.On.PullRequest = c.On.PullRequest
-		if c.On.Push != nil {
-			rc.On.PushBranches = c.On.Push.Branches
-		}
-	}
 	rc.Limits = mergeLimits(defaultLimits, c.Limits, mapAt(rawChecks, "limits"))
 	rc.Setup = c.Setup
 	if c.Services != nil && c.Services.Postgres != nil {

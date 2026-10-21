@@ -20,7 +20,7 @@ describe("normalize pull_request", () => {
       sha: HEAD,
       ref: "refs/pull/7/head",
       event: "pull_request",
-      pr: { number: 7, headRef: "feature/sizing", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
+      pr: { number: 7, headRef: "feature/sizing", baseRef: "main", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
       baseSha: BASE,
       authorLogin: "alice",
       commitTitle: "Add widget sizing",
@@ -31,7 +31,7 @@ describe("normalize pull_request", () => {
 
   it("marks a pull request from another repository as a fork", () => {
     const trig = normalize("pull_request", prFork);
-    expect(trig?.pr).toEqual({ number: 9, headRef: "patch-1", headRepoFullName: "mallory/widgets", fork: true, authorLogin: "mallory" });
+    expect(trig?.pr).toEqual({ number: 9, headRef: "patch-1", baseRef: "main", headRepoFullName: "mallory/widgets", fork: true, authorLogin: "mallory" });
     expect(trig?.sha).toBe("f00dfacecafebeef0123456789abcdef01234567");
     expect(trig?.ref).toBe("refs/pull/9/head");
   });
@@ -66,7 +66,6 @@ describe("normalize push", () => {
       sha: HEAD,
       ref: "refs/heads/main",
       event: "push",
-      baseSha: BASE,
       authorLogin: "alice",
       authorEmail: "alice@example.com",
       commitTitle: "Fix flaky retry test",
@@ -82,8 +81,8 @@ describe("normalize push", () => {
     expect(trig?.authorEmail).toBe("bot@example.com");
   });
 
-  it("ignores a push to another branch", () => {
-    expect(normalize("push", pushBranch)).toBeNull();
+  it("turns a push to another branch into a trigger too; the repo's config decides whether it runs", () => {
+    expect(normalize("push", pushBranch)).toMatchObject({ ref: "refs/heads/feature/sizing", defaultBranch: "main", target: "checks" });
   });
 
   it("ignores a branch deletion", () => {

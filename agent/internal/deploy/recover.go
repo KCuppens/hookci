@@ -53,7 +53,7 @@ func (r *Recoverer) Recover(ctx context.Context) ([]string, error) {
 			return interrupted, fmt.Errorf("deploy: recover: %w", err)
 		}
 		job := JobName
-		r.Events.DeployEvent(protocol.Event{
+		sendStateChange(r.Events, protocol.Event{
 			RunId: run.RunID, Job: &job, State: protocol.EventStateInterrupted, Reason: &msg, Tail: []string{msg},
 		})
 		r.logger().Warn("deploy run interrupted by agent restart", "run_id", run.RunID, "reason", msg)

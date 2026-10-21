@@ -4,10 +4,7 @@
 
 import type { Checks } from "../config/generated";
 import type { TenantDb } from "../db/tenant";
-import { systemClock } from "../do/clock";
 import type { Env } from "../env";
-import { GitHubClient } from "../github/client";
-import { defaultFetcher } from "../http";
 import { S } from "../strings";
 
 export type HubMode = "shared" | "self_hosted";
@@ -51,9 +48,9 @@ export async function effectiveTrust(env: Env, t: TenantDb, repoId: number, decl
 const CHECKS_SCALAR = /^(trust|forks):[ \t]*(["']?)([\w-]+)\2[ \t]*(#.*)?$/;
 
 /**
- * The `checks.trust` and `checks.forks` of a `.hookci.yml` text. Only these
- * two scalars matter, so the lines are scanned instead of parsed as YAML
- * (a parser slows isolate start). Anything the scan cannot read, including a
+ * The `checks.trust` and `checks.forks` of a `.hookci.yml` text. These two
+ * scalars decide whether fork code runs unattended, so they are read by a
+ * line scan strict enough to audit: anything it cannot read, including a
  * flow-style `checks`, a repeated key or an unknown value, keeps the default.
  */
 export function readBaseConfig(text: string | null): BaseConfig {
@@ -80,14 +77,4 @@ export function readBaseConfig(text: string | null): BaseConfig {
 		trust: found.trust === "collaborators" || found.trust === "all" ? found.trust : DEFAULT_CONFIG.trust,
 		forks: found.forks === "gated" || found.forks === "never" ? found.forks : DEFAULT_CONFIG.forks,
 	};
-}
-
-/**
- * The `checks.trust` and `checks.forks` of repo (owner/name) at baseRef; a
- * missing or unreadable file, or an unknown value, falls back to the default.
- */
-export async function fetchBaseConfig(env: Env, installationId: number, repo: string, baseRef: string): Promise<BaseConfig> {
-	const clock = env.__TEST_CLOCK ?? systemClock;
-	const gh = await new GitHubClient(env, env.__TEST_FETCHER ?? defaultFetcher, () => clock.now()).installation(installationId);
-	return readBaseConfig(await gh.getRepoFileAtRef(repo, ".hookci.yml", baseRef));
 }

@@ -104,11 +104,13 @@ func (f *fakeStrategy) ranIndexes() []int {
 	return out
 }
 
-// fakeEvents collects the frames the engine emits.
+// fakeEvents collects the frames the engine emits: the deploy job's events
+// in events and the run's own events in runs.
 type fakeEvents struct {
 	mu      sync.Mutex
 	planned []protocol.JobPlanned
 	events  []protocol.Event
+	runs    []protocol.Event
 }
 
 func (f *fakeEvents) DeployPlanned(p protocol.JobPlanned) {
@@ -120,10 +122,14 @@ func (f *fakeEvents) DeployPlanned(p protocol.JobPlanned) {
 func (f *fakeEvents) DeployEvent(ev protocol.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if ev.Job == nil {
+		f.runs = append(f.runs, ev)
+		return
+	}
 	f.events = append(f.events, ev)
 }
 
-// states returns the event states with repeats collapsed.
+// states returns the job event states with repeats collapsed.
 func (f *fakeEvents) states() []protocol.EventState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -132,6 +138,18 @@ func (f *fakeEvents) states() []protocol.EventState {
 		if len(out) == 0 || out[len(out)-1] != ev.State {
 			out = append(out, ev.State)
 		}
+	}
+	return out
+}
+
+// runStates returns the run event states, without collapsing repeats: the
+// engine sends one only when the state changes.
+func (f *fakeEvents) runStates() []protocol.EventState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]protocol.EventState, len(f.runs))
+	for i, ev := range f.runs {
+		out[i] = ev.State
 	}
 	return out
 }

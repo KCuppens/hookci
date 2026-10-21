@@ -487,6 +487,9 @@ type Trigger struct {
 	// Base commit of the pull request.
 	BaseSha *string `json:"base_sha,omitempty,omitzero"`
 
+	// The repository's default branch name.
+	DefaultBranch *string `json:"default_branch,omitempty,omitzero"`
+
 	// Deployment environment, for deploy triggers.
 	Env *string `json:"env,omitempty,omitzero"`
 
@@ -532,6 +535,9 @@ const TriggerEventRetry TriggerEvent = "retry"
 
 // Pull request details for pull_request events.
 type TriggerPr struct {
+	// Base branch name.
+	BaseRef *string `json:"base_ref,omitempty,omitzero"`
+
 	// The head repository is a fork.
 	Fork bool `json:"fork"`
 

@@ -260,6 +260,12 @@ func TestScheduler_SupersedesOlderQueued(t *testing.T) {
 			t.Errorf("run %s events = %+v, want one superseded event for job %s", id, evs, JobName)
 		}
 	}
+	superseded := r.events.runs[len(r.events.runs)-2:]
+	for i, id := range []string{"q1", "q2"} {
+		if ev := superseded[i]; ev.RunId != id || ev.State != protocol.EventStateSuperseded || ev.Reason == nil || *ev.Reason != "superseded by q3" {
+			t.Errorf("run event %d = %+v, want %s superseded by q3", i, ev, id)
+		}
+	}
 	r.wantState(t, "q3", store.DeployQueued)
 
 	r.step("r0", succeed)

@@ -33,7 +33,7 @@ const PR_TRIGGER: TriggerRequest = {
   sha: SHA_1,
   ref: "refs/heads/feature",
   event: "pull_request",
-  pr: { number: 7, headRef: "feature", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
+  pr: { number: 7, headRef: "feature", baseRef: "main", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
   baseSha: "0".repeat(39) + "1",
   authorLogin: "alice",
   commitTitle: "Add widget sizing",

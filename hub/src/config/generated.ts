@@ -69,7 +69,7 @@ export interface Checks {
      */
     push?: {
       /**
-       * Branches whose pushes start a check run.
+       * Branches whose pushes start a check run, as names or GitHub Actions style globs (* matches within one path segment, ** across segments). Unset: the repository's default branch. A branch a deployment's on.push names always runs checks.
        */
       branches?: string[];
     };

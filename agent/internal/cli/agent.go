@@ -77,7 +77,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	defer h.close()
 	hooks := executorHooks(d, stateDir, errw)
 	jobCache, _ := hooks.Cache.(*cache.Cache) // for GC eviction; nil when d.Hooks brings another Cache
-	exec := func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, protected bool) (scheduler.JobRunner, error) {
+	exec := func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, cacheFallback []string) (scheduler.JobRunner, error) {
 		return executor.New(executor.Options{
 			StateDir:  stateDir,
 			Store:     h.db,
@@ -87,10 +87,10 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			Config: func(store.Run, string) (*config.ResolvedChecks, error) {
 				return checks, nil
 			},
-			Protected: func(store.Run) bool { return protected },
-			Policy:    policy,
-			Hooks:     hooks,
-			Clock:     d.Clock,
+			CacheFallback: cacheFallback,
+			Policy:        policy,
+			Hooks:         hooks,
+			Clock:         d.Clock,
 		})
 	}
 

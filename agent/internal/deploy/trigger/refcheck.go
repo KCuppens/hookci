@@ -14,8 +14,6 @@ import (
 
 // RefChecker answers the GitHub questions a deploy trigger must pass.
 type RefChecker interface {
-	// IsProtected reports whether branch has GitHub branch protection.
-	IsProtected(ctx context.Context, repo, branch string) (bool, error)
 	// ContainsSHA reports whether sha is reachable from ref.
 	ContainsSHA(ctx context.Context, repo, ref, sha string) (bool, error)
 	// ChangedFiles lists the files changed between base and head;
@@ -43,19 +41,6 @@ type GitHubRefChecker struct {
 }
 
 var _ RefChecker = (*GitHubRefChecker)(nil)
-
-// IsProtected implements RefChecker. A branch GitHub does not know is not
-// protected.
-func (g *GitHubRefChecker) IsProtected(ctx context.Context, repo, branch string) (bool, error) {
-	var body struct {
-		Protected bool `json:"protected"`
-	}
-	found, err := g.getJSON(ctx, repo, "/repos/"+repo+"/branches/"+escapeRef(branch), &body)
-	if err != nil || !found {
-		return false, err
-	}
-	return body.Protected, nil
-}
 
 // ContainsSHA implements RefChecker: sha is on ref when comparing ref to sha
 // is identical or behind. A ref or sha GitHub does not know is not
@@ -94,11 +79,11 @@ func (g *GitHubRefChecker) ChangedFiles(ctx context.Context, repo, base, head st
 	return files, len(files) >= compareFileCap, nil
 }
 
-// LoadConfig returns repo's .hookci.yml at sha. A commit without one has an
-// empty configuration; one that does not parse is an error naming its
-// problems.
-func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*config.Config, error) {
-	path := "/repos/" + repo + "/contents/" + configFile + "?ref=" + url.QueryEscape(sha)
+// LoadConfig returns repo's .hookci.yml at ref, a sha or a branch. A ref
+// without one has an empty configuration; one that does not parse is an
+// error naming its problems.
+func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, ref string) (*config.Config, error) {
+	path := "/repos/" + repo + "/contents/" + configFile + "?ref=" + url.QueryEscape(ref)
 	resp, err := g.get(ctx, repo, path, "application/vnd.github.raw+json")
 	if err != nil {
 		return nil, err
@@ -116,7 +101,7 @@ func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*c
 	}
 	cfg, diags := config.Parse(data, config.ParseOptions{})
 	if diags.HasErrors() {
-		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(sha), diags.Format(configFile)))
+		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, ref, diags.Format(configFile)))
 	}
 	return cfg, nil
 }

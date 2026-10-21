@@ -1,6 +1,7 @@
 // The push-to-deploy chain: when the aggregate `hookci` check of a push
-// concludes success, every `deploy:<env>` binding of the repo gets one deploy
-// trigger through its agent's AgentDO, recorded once per
+// concludes success, every `deploy:<env>` binding of the repo whose
+// `deployments.<env>.on.push` on the default branch names the pushed branch
+// gets one deploy trigger through its agent's AgentDO, recorded once per
 // (repo, sha, env, attempt) in deploy_triggers together with the agent's reply.
 
 import { type BindingRow, deployEnv } from "../db/bindings";
@@ -10,6 +11,8 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import type { CheckRunConclusion } from "../github/types";
+import { reportError } from "../observability";
+import { fetchRepoConfig, readRepoTriggers } from "../policy/repo-config";
 import { renderRejected, reopenDeployRender } from "./render";
 import type { TriggerRequest } from "../webhook/route";
 
@@ -64,10 +67,28 @@ export async function onCheckConcluded(env: Env, c: CheckConclusion): Promise<nu
 		"SELECT * FROM repo_bindings WHERE installation_id = ?1 AND repo_id = ?2 AND target LIKE 'deploy:%' ORDER BY target",
 		repo.repo_id,
 	);
+	if (bindings.length === 0) return 0;
+	// Deploy branches are read on the default branch, like the agent's check, so
+	// a pushed commit cannot pick its own. An env that config names no branch
+	// for (gone, or the file broken) still goes out on a default-branch push so
+	// the agent reports why. If the config cannot be fetched every env goes out
+	// and the agent, which reads it again, decides and reports. The full ref
+	// keeps a tag named like the default branch from standing in for it.
+	let deployBranches: Record<string, string> | null;
+	try {
+		({ deployBranches } = readRepoTriggers(
+			await fetchRepoConfig(env, c.installationId, repo.full_name, `refs/heads/${repo.default_branch}`),
+		));
+	} catch (err) {
+		reportError(err, { installation_id: c.installationId, repo: repo.full_name, sha: c.sha });
+		deployBranches = null;
+	}
+	const branch = c.ref.replace(/^refs\/heads\//, "");
 	let sent = 0;
 	for (const binding of bindings) {
 		const envName = deployEnv(binding.target);
 		if (envName === null) continue;
+		if (deployBranches !== null && (deployBranches[envName] ?? repo.default_branch) !== branch) continue;
 		const { duplicate } = await dispatchDeployTrigger(env, {
 			installationId: c.installationId,
 			repo: repo.full_name,

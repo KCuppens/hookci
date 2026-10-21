@@ -167,20 +167,24 @@ func (p *fakePostgres) Stop(context.Context) error {
 	return p.stopErr
 }
 
+// fakeCache hits on every key hash saved into it before.
 type fakeCache struct {
-	rec      *recorder
-	restored []cache.Key
-	saved    []cache.Policy
+	rec       *recorder
+	restored  []cache.Key
+	saved     []cache.Policy
+	savedKeys []cache.Key
 }
 
 func (c *fakeCache) Restore(_ context.Context, k cache.Key, _ string) (bool, func() error, error) {
 	c.restored = append(c.restored, k)
 	c.rec.add("cache restore")
-	return false, func() error { c.rec.add("cache cleanup"); return nil }, nil
+	hit := slices.ContainsFunc(c.savedKeys, func(s cache.Key) bool { return s.Hash == k.Hash })
+	return hit, func() error { c.rec.add("cache cleanup"); return nil }, nil
 }
 
-func (c *fakeCache) Save(_ context.Context, _ cache.Key, p cache.Policy, _ string) error {
+func (c *fakeCache) Save(_ context.Context, k cache.Key, p cache.Policy, _ string) error {
 	c.saved = append(c.saved, p)
+	c.savedKeys = append(c.savedKeys, k)
 	c.rec.add("cache save")
 	return nil
 }

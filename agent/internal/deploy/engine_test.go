@@ -40,6 +40,12 @@ func TestEngine_HappyPath(t *testing.T) {
 	if got := r.events.states(); !slices.Equal(got, want) {
 		t.Errorf("event states = %v, want %v", got, want)
 	}
+	if got := r.events.runStates(); !slices.Equal(got, want) {
+		t.Errorf("run event states = %v, want %v once each", got, want)
+	}
+	if end := r.events.runs[len(r.events.runs)-1]; end.RunId != "r1" || end.DurationMs == nil || *end.DurationMs != int(4*stepTime.Milliseconds()) {
+		t.Errorf("run's last event = %+v, want r1 with duration %d", end, 4*stepTime.Milliseconds())
+	}
 
 	var stepEvents []protocol.Event
 	for _, ev := range r.events.events {
@@ -155,7 +161,14 @@ func TestEngine_FailureRollsBack(t *testing.T) {
 	if got := r.events.states(); !slices.Equal(got, want) {
 		t.Errorf("event states = %v, want %v", got, want)
 	}
+	if got := r.events.runStates(); !slices.Equal(got, want) {
+		t.Errorf("run event states = %v, want %v once each", got, want)
+	}
 	last := r.events.last()
+	if end := r.events.runs[len(r.events.runs)-1]; end.Reason == nil || *end.Reason != wantErr || end.DurationMs == nil || !slices.Equal(end.Tail, last.Tail) {
+		t.Errorf("run's last event = %+v, want the reason, duration and the job's tail", end)
+	}
+
 	if last.State != protocol.EventStateFailed || last.Reason == nil || *last.Reason != wantErr ||
 		last.StepIndex == nil || *last.StepIndex != 2 || last.DurationMs == nil {
 		t.Errorf("last event = %+v, want failed at step 2 with reason and duration", last)
@@ -236,7 +249,7 @@ func TestEngine_NoTailOnSuccess(t *testing.T) {
 			if r.events.last().State != protocol.EventStateSuccess {
 				t.Fatalf("last event state = %s, want success", r.events.last().State)
 			}
-			for _, ev := range r.events.events {
+			for _, ev := range append(r.events.events, r.events.runs...) {
 				if ev.Tail != nil {
 					t.Errorf("%s event carries tail %v", ev.State, ev.Tail)
 				}

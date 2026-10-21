@@ -70,7 +70,7 @@ describe("fork pull request gate", () => {
       sha: HEAD_SHA,
       ref: "refs/heads/feature",
       event: "pull_request",
-      pr: { number: PR, headRef: "feature", headRepoFullName: "mallory/api", fork: true, authorLogin: "mallory" },
+      pr: { number: PR, headRef: "feature", baseRef: "main", headRepoFullName: "mallory/api", fork: true, authorLogin: "mallory" },
       baseSha: BASE_SHA,
       authorLogin: "mallory",
       commitTitle: "Fork change",
@@ -78,7 +78,7 @@ describe("fork pull request gate", () => {
       target: "checks",
     } satisfies HubTrigger;
 
-    await expect(gateForkRun({ ...env, AGENT_DO: noTriggerId } as unknown as Env, trigger, world.agent.agentId)).rejects.toMatchObject({
+    await expect(gateForkRun({ ...env, AGENT_DO: noTriggerId } as unknown as Env, trigger, world.agent.agentId, null)).rejects.toMatchObject({
       code: "agent_do_failed",
       status: 502,
     });

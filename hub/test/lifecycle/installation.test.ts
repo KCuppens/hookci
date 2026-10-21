@@ -53,7 +53,7 @@ async function acceptedRun(agent: Agent, sock: AgentSocket, runId: string): Prom
     sha: "1".repeat(40),
     ref: "refs/heads/feature",
     event: "pull_request",
-    pr: { number: 7, headRef: "feature", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
+    pr: { number: 7, headRef: "feature", baseRef: "main", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
     authorLogin: "alice",
     commitTitle: "Add widget sizing",
     defaultBranch: "main",

@@ -86,7 +86,6 @@ func TestParseMinimal(t *testing.T) {
 	}
 	limits := ResolvedLimits{CPUs: 2, MemoryBytes: 4 << 30, Tasks: 512, Timeout: 10 * time.Minute}
 	want := &ResolvedChecks{
-		On:     OnSpec{PullRequest: true, PushBranches: []string{"main"}},
 		Trust:  "collaborators",
 		Forks:  "gated",
 		Limits: limits,
