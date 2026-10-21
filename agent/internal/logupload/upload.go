@@ -53,7 +53,7 @@ func Redact(b []byte) []byte {
 
 // Uploader PUTs job logs to the hub.
 type Uploader struct {
-	HubURL   string        // e.g. https://ci.webuno.io
+	HubURL   string        // e.g. https://ci.hookci.com
 	Token    func() string // agent credential, hci_agent_...
 	HTTP     *http.Client  // nil: http.DefaultClient
 	MaxBytes int64         // <= 0: DefaultMaxBytes

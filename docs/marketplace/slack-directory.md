@@ -5,8 +5,8 @@ Copy for the Slack App Directory submission of the `hookci` Slack app
 bot scopes table against `oauth_config.scopes.bot` in the manifest, so edit
 this file and the manifest together.
 
-Pending decisions: Q4 (when to list, assumed after M1) and Q10 (domain). URLs
-below use the manifest host `https://ci.webuno.io`.
+Pending decision: Q4 (when to list, assumed after M1). URLs below use the
+manifest host `https://ci.hookci.com`.
 
 ## App name
 
@@ -76,7 +76,7 @@ user's role on the linked GitHub repository or organization.
 ## Data handling
 
 Answers for the security and compliance section of the submission. The full
-text is the privacy policy at https://ci.webuno.io/privacy.
+text is the privacy policy at https://ci.hookci.com/privacy.
 
 - What is stored: workspace and channel IDs, the encrypted bot token, watch
   settings, the GitHub login linked with `/hookci me`, run results and job
@@ -87,7 +87,7 @@ text is the privacy policy at https://ci.webuno.io/privacy.
   days of uninstalling the app.
 - Deletion: uninstalling the app starts the deletion. A user can remove their
   own data at any time with `/hookci delete-my-data`, or ask
-  privacy@webuno.io.
+  privacy@hookci.com.
 - Where data is stored: Cloudflare D1 and R2, in the EU jurisdiction where
   Cloudflare offers it. Subprocessors are Cloudflare (hosting) and bugwatch
   (error reports).
@@ -128,6 +128,6 @@ landing page.
 | Field | URL |
 | --- | --- |
 | Landing page | https://github.com/KCuppens/hookci#readme |
-| Support | https://ci.webuno.io/support (email support@webuno.io, no account needed) |
-| Privacy policy | https://ci.webuno.io/privacy |
-| Terms of service | https://ci.webuno.io/terms |
+| Support | https://ci.hookci.com/support (email support@hookci.com, no account needed) |
+| Privacy policy | https://ci.hookci.com/privacy |
+| Terms of service | https://ci.hookci.com/terms |

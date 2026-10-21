@@ -42,7 +42,7 @@ func TestInstallerThenDoctor(t *testing.T) {
 
 	env := Env{
 		StateRoot: "/var/lib/hookci",
-		HubOrigin: "https://ci.webuno.io",
+		HubOrigin: "https://ci.hookci.com",
 		HTTP:      &http.Client{},
 		Clock:     clock.Real{},
 		Exec:      execx.OS{},

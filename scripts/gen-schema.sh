@@ -31,7 +31,7 @@ const [src, protocolOut, configOut] = process.argv.slice(1);
 const schema = JSON.parse(fs.readFileSync(src, "utf8"));
 const protocol = {
   $schema: schema.$schema,
-  $id: "https://ci.webuno.io/schema/protocol.schema.json",
+  $id: "https://ci.hookci.com/schema/protocol.schema.json",
   title: "Protocol",
   ...schema.$defs.protocol,
 };

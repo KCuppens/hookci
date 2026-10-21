@@ -5,7 +5,7 @@ This guide stands up your own hookci hub on your Cloudflare account and pairs an
 ## What you get
 
 - Your own Worker running the hub, with its own D1 database, R2 log bucket and Durable Objects, all in your Cloudflare account.
-- Your own GitHub App and Slack App. Webhooks, tokens and run reports never pass through the shared hub at `ci.webuno.io`.
+- Your own GitHub App and Slack App. Webhooks, tokens and run reports never pass through the shared hub at `ci.hookci.com`.
 - No per-installation quotas. The caps the shared hub sets on runs per day, agents per installation, pair tokens per hour, Slack commands per minute and sink changes per hour are lifted. The 10 MiB log size limit still applies, to protect your R2 bucket.
 - Logs kept 14 days, then deleted.
 

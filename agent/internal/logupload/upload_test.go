@@ -167,10 +167,10 @@ func TestUpload(t *testing.T) {
 
 func TestLogURL(t *testing.T) {
 	tests := []struct{ in, want, err string }{
-		{"https://ci.webuno.io", "https://ci.webuno.io/v1/logs/run_1/build", ""},
-		{"https://ci.webuno.io/", "https://ci.webuno.io/v1/logs/run_1/build", ""},
+		{"https://ci.hookci.com", "https://ci.hookci.com/v1/logs/run_1/build", ""},
+		{"https://ci.hookci.com/", "https://ci.hookci.com/v1/logs/run_1/build", ""},
 		{"http://127.0.0.1:8787", "http://127.0.0.1:8787/v1/logs/run_1/build", ""},
-		{"wss://ci.webuno.io", "", "scheme must be http or https"},
+		{"wss://ci.hookci.com", "", "scheme must be http or https"},
 		{"https://", "", "missing host"},
 	}
 	for _, tc := range tests {

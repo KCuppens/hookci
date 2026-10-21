@@ -4,7 +4,7 @@
 
 - Run `/hookci help` in Slack to list the commands.
 - Search or open an issue on [GitHub](https://github.com/KCuppens/hookci/issues).
-- Email support@webuno.io.
+- Email support@hookci.com.
 
 ## Security issues
 

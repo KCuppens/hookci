@@ -122,7 +122,7 @@ describe("addSinkConfig", () => {
   it.each([
     ["http://hooks.example.com/x", "not_https"],
     ["https://10.0.0.1/x", "private_host"],
-    ["https://ci.webuno.io/x", "self"],
+    ["https://ci.hookci.com/x", "self"],
   ])("refuses the webhook URL %s as %s", async (url, code) => {
     expect(await refusal(addSinkConfig(env, ta, actor, { kind: "webhook", repo: a.fullName, url }))).toBe(code);
     expect(await count("sink_configs")).toBe(0);

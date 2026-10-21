@@ -12,6 +12,8 @@ RestartPreventExitStatus=3 4
 RestartSec=5
 Slice=hookci.slice
 StateDirectory=hookci/%i
+Environment=HOOKCI_STATE_DIR=%S/hookci/%i
+Environment=HOME=/root
 NoNewPrivileges=no
 
 [Install]

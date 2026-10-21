@@ -21,7 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const schemaURL = "https://ci.webuno.io/schema/hookci.schema.json"
+const schemaURL = "https://ci.hookci.com/schema/hookci.schema.json"
 
 // Config is a parsed .hookci.yml: the generated root type plus the resolved
 // view of the checks that Parse builds once the file is valid.

@@ -11,8 +11,9 @@ Pending decisions:
 - Q4 (when to list): this kit assumes the listing is submitted after M1 ships.
 - Q6 (publisher): the listing is published by the GitHub organization
   `{{PUBLISHER_ORG}}`, which must pass publisher verification first.
-- Q10 (domain): URLs below use the manifest host `https://ci.webuno.io`. If the
-  domain changes, change the manifest and these URLs in the same commit.
+
+URLs below use the manifest host `https://ci.hookci.com`. If the domain
+changes, change the manifest and these URLs in the same commit.
 
 ## Listing name
 
@@ -91,9 +92,9 @@ commands in `.hookci.yml`.
 
 | Field | URL |
 | --- | --- |
-| Customer support (required) | https://ci.webuno.io/support |
-| Privacy policy (required) | https://ci.webuno.io/privacy |
-| Terms of service | https://ci.webuno.io/terms |
+| Customer support (required) | https://ci.hookci.com/support |
+| Privacy policy (required) | https://ci.hookci.com/privacy |
+| Terms of service | https://ci.hookci.com/terms |
 | Documentation | https://github.com/KCuppens/hookci#readme |
 | Status | {{STATUS_PAGE_URL}} |
 

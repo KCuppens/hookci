@@ -7,7 +7,7 @@ Status: pre-alpha, M0 (agent core).
 ## How it works
 
 - The agent (`hookci`) runs on your server. It detects what to check in your repository, runs each job in an isolated sandbox, and stores runs and logs locally.
-- The hub at `ci.webuno.io` relays GitHub webhooks and Slack interactions to your agent and reports results back to GitHub and Slack.
+- The hub at `ci.hookci.com` relays GitHub webhooks and Slack interactions to your agent and reports results back to GitHub and Slack.
 - The agent dials out to the hub over a WebSocket. Your server needs no inbound ports.
 
 M0 delivers the agent core only. The hub connection, GitHub reporting and Slack integration are planned for later milestones.
@@ -44,7 +44,7 @@ Commands available now: `version`, `detect`, `validate`, `init`, `run`, `status`
 
 ## Self-host the hub
 
-The shared hub at `ci.webuno.io` is the quickest start. Self-host the hub when you want webhooks, tokens and run reports to stay in your own Cloudflare account, with your own GitHub App and Slack App and no per-installation quotas. The `hookci-hub` CLI creates the Worker, D1 database, R2 bucket and both apps, and it can resume a setup that stopped.
+The shared hub at `ci.hookci.com` is the quickest start. Self-host the hub when you want webhooks, tokens and run reports to stay in your own Cloudflare account, with your own GitHub App and Slack App and no per-installation quotas. The `hookci-hub` CLI creates the Worker, D1 database, R2 bucket and both apps, and it can resume a setup that stopped.
 
 You need Node.js 20+, a Cloudflare account, and a GitHub user or organization where you can create apps. A Slack workspace is optional.
 
