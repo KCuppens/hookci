@@ -111,6 +111,8 @@ describe("deploy chain", () => {
 
     it("sends every bound env when the default branch's config cannot be read, leaving the check to the agent", async () => {
       github.gh.respond("GET", "/repos/:owner/:repo/contents/:path", () => Response.json({ message: "Server Error" }, { status: 500 }));
+      // withRetry backs off up to 7 s in total on a 5xx with full jitter; zero jitter keeps the test inside its timeout.
+      vi.spyOn(Math, "random").mockReturnValue(0);
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/feature" })).toBe(3);
       expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "production", "staging"]);

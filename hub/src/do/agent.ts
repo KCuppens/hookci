@@ -274,7 +274,15 @@ export class AgentDO extends DurableObject<Env> {
 		if (request.method === "GET" && path === "/status") return Response.json(this.status());
 		if (request.method === "GET" && path === "/tail") return this.openTail(request);
 		const route = request.method === "POST" ? doRoute(path.slice(1)) : undefined;
-		if (route) return route(this, request);
+		if (route) {
+			try {
+				return await route(this, request);
+			} catch (err) {
+				// Thrown out of fetch, it would also surface as an uncaught exception in the DO; callers treat any failed answer as agent_do_failed.
+				reportError(err, { agent_id: this.agentId, installation_id: this.installationId, route: path });
+				return Response.json({ error: "route_failed" }, { status: 500 });
+			}
+		}
 		return Response.json({ error: "not_found" }, { status: 404 });
 	}
 

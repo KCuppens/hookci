@@ -117,7 +117,7 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 			return rejected("deployments.%s.on.push: branch %s is not listed on %s", env, branch, def), nil
 		}
 	}
-	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
+	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, "refs/heads/"+branch, t.Sha)
 	if err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)
 	}
@@ -173,7 +173,7 @@ func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env strin
 		return stale, nil
 	}
 	branch := strings.TrimPrefix(run.Ref, "refs/heads/")
-	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
+	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, "refs/heads/"+branch, t.Sha)
 	if err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)
 	}

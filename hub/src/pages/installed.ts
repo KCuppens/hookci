@@ -6,26 +6,33 @@ export interface InstalledView {
 	accountLogin: string;
 	pairToken: string;
 	hubOrigin: string;
+	/** LATEST_AGENT_VERSION; empty until the first release, when /install has nothing to download. */
+	latestAgentVersion: string;
 	expiresInMinutes: number;
 	/** Set-Cookie values; include the session that lets this browser poll /start/status. */
 	cookies: string[];
 }
 
 /**
- * The success page: the install and connect commands for the pair token, the
- * Add to Slack link, and a status line that polls /start/status every 3 s
- * until an agent of the installation is online.
+ * The success page: the install and connect commands for the pair token (only
+ * the connect command, after a link to building the agent, while no release
+ * exists), the Add to Slack link, and a status line that polls /start/status
+ * every 3 s until an agent of the installation is online.
  */
 export function installedPage(v: InstalledView): Response {
 	const install = `curl -fsSL ${v.hubOrigin}/install | sh -s -- ${v.pairToken}`;
 	const connect = `sudo hookci connect --hub ${v.hubOrigin} ${v.pairToken}`;
+	const commands = v.latestAgentVersion
+		? `<p>${escapeHtml(S.pages.installedRunOne)}</p>
+<pre>${escapeHtml(install)}</pre>
+<pre>${escapeHtml(connect)}</pre>`
+		: `<p>${escapeHtml(S.pages.installedNoRelease)} <a href="${S.pages.buildAgentUrl}">${escapeHtml(S.pages.buildAgent)}</a> ${escapeHtml(S.pages.installedPairBuilt)}</p>
+<pre>${escapeHtml(connect)}</pre>`;
 	const statusUrl = `/start/status?installation_id=${v.installationId}`;
 	return page(
 		S.pages.installedTitle,
 		`<p>${escapeHtml(S.pages.installedOn(v.accountLogin))}</p>
-<p>${escapeHtml(S.pages.installedRunOne)}</p>
-<pre>${escapeHtml(install)}</pre>
-<pre>${escapeHtml(connect)}</pre>
+${commands}
 <p>${escapeHtml(S.pages.installedExpiry(v.expiresInMinutes))}</p>
 <p id="agent-status">${escapeHtml(S.pages.agentWaiting)}</p>
 <p><a href="/slack/install?installation_id=${v.installationId}">${escapeHtml(S.pages.addToSlack)}</a></p>

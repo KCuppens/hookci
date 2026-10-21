@@ -665,16 +665,17 @@ describe("AgentDO run lifecycle", () => {
   });
 
   it("gives the daily run back when recording the run fails", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const day = new Date(testClock.now()).toISOString().slice(0, 10);
     const agent = await seedAgent(INSTALLATION);
     await env.DB.prepare("CREATE TRIGGER fail_run_insert BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'd1 down'); END").run();
     try {
-      await expect(postTrigger(agent)).rejects.toThrow("d1 down");
+      expect(await postTrigger(agent)).toMatchObject({ status: 500 });
     } finally {
       await env.DB.prepare("DROP TRIGGER fail_run_insert").run();
     }
     expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(0);
+    expect(reported(errors)).toContainEqual(expect.objectContaining({ route: "/trigger", error: expect.objectContaining({ message: expect.stringContaining("d1 down") }) }));
   });
 
   it("prunes finished triggers and stored tails past retention", async () => {

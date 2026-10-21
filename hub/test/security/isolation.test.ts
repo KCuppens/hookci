@@ -33,13 +33,17 @@ let slack: FakeService;
 let log: MockInstance<typeof console.log>;
 let appKey: string | undefined;
 let gates = 0;
+let seeds = 0;
 const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
 
 beforeEach(async () => {
   await clearTables();
   resetPermissionCacheForTests();
-  a = await seedTenant(env, { installationId: 701, teamId: "T0TENANTA" });
-  b = await seedTenant(env, { installationId: 702, teamId: "T0TENANTB" });
+  // Each test gets fresh workspaces: their Slack queue DO outlives the test, and a post an
+  // earlier test made to the same channel would hold the gate's post for up to 1 s (1 post/s per channel).
+  const seed = ++seeds;
+  a = await seedTenant(env, { installationId: 701, teamId: `T0TENANTA${seed}` });
+  b = await seedTenant(env, { installationId: 702, teamId: `T0TENANTB${seed}` });
 
   appKey ??= (await generateAppKey()).pem;
   env.GITHUB_APP_PRIVATE_KEY = appKey;
