@@ -532,10 +532,10 @@
           "additionalProperties": false,
           "properties": {
             "build_cache_max_bytes": {
-              "description": "Docker build cache size above which the agent prunes it.",
+              "description": "Docker build cache size above which the agent prunes it, with docker builder prune. 0 (the default) never prunes the build cache. The prune acts on the host's whole default BuildKit cache, which every other project on the host shares, so leave 0 on a shared host.",
               "type": "integer",
               "minimum": 0,
-              "default": 10737418240
+              "default": 0
             },
             "cache_max_bytes": {
               "description": "Total size of the setup step caches under <state>/cache above which the agent removes the least recently used entries. Entries unused for 14 days are removed regardless.",
@@ -544,7 +544,7 @@
               "default": 10737418240
             },
             "min_free_bytes": {
-              "description": "Free disk space below which the agent prunes images and build cache. A deploy does not start while the docker root dir or the state dir has less free.",
+              "description": "Free disk space a deploy needs. A deploy does not start while the docker root dir or the state dir has less free.",
               "type": "integer",
               "minimum": 0,
               "default": 5368709120
