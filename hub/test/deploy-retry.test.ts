@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hex, hmacSha256 } from "../src/crypto";
 import { bind } from "../src/db/bindings";
 import { tenantDb } from "../src/db/tenant";
-import { RETRY_ACTION, upsertDeployRender } from "../src/deploy/render";
+import { upsertDeployRender } from "../src/deploy/render";
+import { RETRY_ACTION } from "../src/deploy/lines";
 import { handleDeployRetry } from "../src/deploy/retry";
 import worker from "../src/index";
 import { S } from "../src/strings";
@@ -55,6 +56,7 @@ async function seedTrigger(attempt: number, runId: string, event: "push" | "retr
     step: "migrate",
     step_index: 2,
     steps_total: 8,
+    rolled_back: 0,
     started_at: 1,
     updated_at: 1,
   });

@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { defaultFetcher, type Fetcher } from "../http";
 import { appJwt } from "./jwt";
-import { withRetry } from "./retry";
+import { type RetryOptions, withRetry } from "./retry";
 import type { AccessToken, AccessTokenRequest, InstallationPermissions } from "./types";
 
 const API_ORIGIN = "https://api.github.com";
@@ -52,6 +52,7 @@ class Requester implements GitHubRequester {
 		private readonly authorization: string,
 		private readonly fetcher: Fetcher,
 		private readonly now: () => number,
+		private readonly retry: Pick<RetryOptions, "maxAttempts">,
 	) {}
 
 	request<T>(method: string, path: string, body?: unknown): Promise<GitHubResponse<T>>;
@@ -79,6 +80,7 @@ class Requester implements GitHubRequester {
 
 		const res = await withRetry(() => this.fetcher(`${API_ORIGIN}${path}`, { method, headers, body: payload }), {
 			now: this.now,
+			...this.retry,
 		});
 		const etag = res.headers.get("etag") ?? undefined;
 		if (res.status === 304 && opts.etag !== undefined) {
@@ -94,7 +96,7 @@ class Requester implements GitHubRequester {
 	async getRepoFileAtRef(repo: string, path: string, ref: string): Promise<string | null> {
 		const url = `/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`;
 		const headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "hookci-hub", Authorization: this.authorization };
-		const res = await withRetry(() => this.fetcher(`${API_ORIGIN}${url}`, { method: "GET", headers }), { now: this.now });
+		const res = await withRetry(() => this.fetcher(`${API_ORIGIN}${url}`, { method: "GET", headers }), { now: this.now, ...this.retry });
 		if (res.status === 404) return null;
 		if (!res.ok) throw new GitHubApiError(res.status, `GitHub GET ${url}: ${res.status} ${await errorMessage(res)}`);
 		return res.text();
@@ -121,12 +123,14 @@ export class GitHubClient {
 		private readonly env: Env,
 		private readonly fetcher: Fetcher = defaultFetcher,
 		private readonly now: () => number = () => Date.now(),
+		/** Caps every request's attempts; maxAttempts 1 never sleeps on a rate limit or a 5xx. */
+		private readonly retry: Pick<RetryOptions, "maxAttempts"> = {},
 	) {}
 
 	/** Authenticated as the app itself (JWT), for /app endpoints. */
 	async app(): Promise<GitHubRequester> {
 		const jwt = await appJwt(this.env.GITHUB_APP_ID, this.env.GITHUB_APP_PRIVATE_KEY, this.now());
-		return new Requester(`Bearer ${jwt}`, this.fetcher, this.now);
+		return new Requester(`Bearer ${jwt}`, this.fetcher, this.now, this.retry);
 	}
 
 	/**
@@ -146,7 +150,7 @@ export class GitHubClient {
 		const now = this.now();
 		const cached = installationTokens.get(key);
 		if (cached && cached.expiresAt - now > TOKEN_REUSE_MARGIN_MS) {
-			return new Requester(`Bearer ${cached.token}`, this.fetcher, this.now);
+			return new Requester(`Bearer ${cached.token}`, this.fetcher, this.now, this.retry);
 		}
 
 		const body: AccessTokenRequest = {};
@@ -157,17 +161,17 @@ export class GitHubClient {
 			if (v.expiresAt - now <= TOKEN_REUSE_MARGIN_MS) installationTokens.delete(k);
 		}
 		installationTokens.set(key, minted);
-		return new Requester(`Bearer ${minted.token}`, this.fetcher, this.now);
+		return new Requester(`Bearer ${minted.token}`, this.fetcher, this.now, this.retry);
 	}
 
 	/** Authenticated with a user-to-server token. */
 	user(userToken: string): GitHubRequester {
-		return new Requester(`Bearer ${userToken}`, this.fetcher, this.now);
+		return new Requester(`Bearer ${userToken}`, this.fetcher, this.now, this.retry);
 	}
 
 	/** Authenticated as the app's OAuth client (Basic client id and secret), for /applications/{client_id} endpoints. */
 	oauthApp(): GitHubRequester {
-		return new Requester(`Basic ${btoa(`${this.env.GITHUB_CLIENT_ID}:${this.env.GITHUB_CLIENT_SECRET}`)}`, this.fetcher, this.now);
+		return new Requester(`Basic ${btoa(`${this.env.GITHUB_CLIENT_ID}:${this.env.GITHUB_CLIENT_SECRET}`)}`, this.fetcher, this.now, this.retry);
 	}
 
 	/**

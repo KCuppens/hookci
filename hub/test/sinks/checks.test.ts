@@ -77,7 +77,7 @@ function checkCalls(): Record<string, unknown>[] {
 /** Runs fn with the ChecksSink an AgentDO's fan-out builds: coalesced, with the DO's storage and clock. */
 async function inAgent(agent: Agent, fn: (sink: ChecksSink) => Promise<void>): Promise<void> {
   await runInDurableObject(agent.stub, (dob) =>
-    fn(checksSinkFactory(dob.bindings, INSTALLATION, { storage: dob.state.storage, now: () => dob.clock.now() })),
+    fn(checksSinkFactory(dob.bindings, INSTALLATION, { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() })),
   );
 }
 

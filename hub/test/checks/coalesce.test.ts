@@ -22,7 +22,7 @@ async function withCoalescer(
   await runInDurableObject(agent.stub, async (dob) => {
     const sent: string[] = [];
     const storage = dob.state.storage;
-    const coalescer = new CheckUpdateCoalescer({ storage, now: () => testClock.now() }, async (u) => {
+    const coalescer = new CheckUpdateCoalescer({ agentId: agent.agentId, storage, now: () => testClock.now() }, async (u) => {
       const err = fail(u);
       if (err) throw err;
       sent.push(u.body.output?.title ?? "");

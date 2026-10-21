@@ -13,6 +13,8 @@ export type WaitUntil = Pick<ExecutionContext, "waitUntil">;
 
 /** The AgentDO a fan-out runs in, for sinks that keep state between calls; absent in the Worker. */
 export interface SinkHost {
+	/** The agent the AgentDO serves. */
+	agentId: string;
 	storage: DurableObjectStorage;
 	now(): number;
 }

@@ -107,7 +107,7 @@ async function mapAuthor(login: string, slackUserId: string): Promise<void> {
 /** Runs fn with the sink an AgentDO's fan-out builds, on the DO's storage. */
 async function inAgent(agent: Agent, fn: (sink: SlackSink, storage: DurableObjectStorage) => Promise<void>): Promise<void> {
   await runInDurableObject(agent.stub, (dob) =>
-    fn(slackSinkFactory(dob.bindings, INSTALLATION, { storage: dob.state.storage, now: () => dob.clock.now() }), dob.state.storage),
+    fn(slackSinkFactory(dob.bindings, INSTALLATION, { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() }), dob.state.storage),
   );
 }
 

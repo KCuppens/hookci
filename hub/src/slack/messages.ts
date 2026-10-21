@@ -1,8 +1,10 @@
 // The Slack sink's messages, as pure renderers: the run's message (posted
-// once, then updated in place), a thread reply per finished job, the failure
-// alert and the agent-offline DM. Every `text` starts with the state in plain
+// once, then updated in place, with a passed push's deploys folded in), a
+// thread reply per finished job and per deploy step, the failure replies
+// and the agent-offline DM. Every `text` starts with the state in plain
 // words, so a notification or screen reader never relies on the emoji.
 
+import { badgeLine, type DeployBadgeState, DEPLOY_EMOJI, deployTitle, foldHeader, foldLine, RETRY_ACTION } from "../deploy/lines";
 import { logJob } from "../sinks/runview";
 import type { AgentView, JobView, RunState, RunView } from "../sinks/types";
 import { S } from "../strings";
@@ -78,16 +80,27 @@ function jobLine(job: JobView): string {
 
 /**
  * The run's message: badge, state, repo, commit, ref, author, duration, the
- * running job's step and the log link. Quiet watches get no thread replies,
- * so their message lists each job's result instead.
+ * running job's step and the log link. A passed push's deploys fold in: the
+ * header says how they go, with a line per env and a Retry button per
+ * failed one. Quiet watches get no thread replies, so their message lists
+ * each job's result instead.
  */
-export function renderRunMessage(run: RunView, opts: { notify: "normal" | "quiet" }): SlackMessage {
-	const word = stateWord(run.state, run.reason);
-	const head = [`${BADGE_EMOJI[run.state]} *${word}* ${repoLink(run)}`, shaLink(run)];
+export function renderRunMessage(run: RunView, opts: { notify: "normal" | "quiet"; deploys?: readonly DeployBadgeState[] }): SlackMessage {
+	const deploys = run.state === "success" ? (opts.deploys ?? []) : [];
+	const fold = foldHeader(deploys);
+	const word = fold?.word ?? stateWord(run.state, run.reason);
+	const head = [`${fold?.emoji ?? BADGE_EMOJI[run.state]} *${word}* ${repoLink(run)}`, shaLink(run)];
 	const ref = where(run);
 	if (ref) head.push(escapeMrkdwn(ref));
 	if (run.commitTitle) head.push(escapeMrkdwn(run.commitTitle));
 	const blocks: Block[] = [section(head.join(SEP))];
+	if (deploys.length > 0) {
+		blocks.push(section(deploys.map((s) => foldLine(s, true)).join("\n")));
+		const failed = deploys.filter((s) => s.state === "failed" && s.runId !== undefined && s.attempt !== undefined);
+		for (const s of failed) {
+			blocks.push(actions(button(RETRY_ACTION, failed.length === 1 ? S.deploy.retry : S.deploy.retryEnv(s.env), `${s.runId}:${s.attempt}`)));
+		}
+	}
 
 	const pending = run.state === "pending" || run.state === "gated" ? pendingText(run) : undefined;
 	if (pending) blocks.push(section(pending));
@@ -154,6 +167,25 @@ export function renderAlert(run: RunView, job: JobView, tail: string[], mention:
 		if (logLink) blocks.push(context(`<${logLink}|${S.badge.log}>`), actions(viewLogsButton(run.runId ?? run.triggerId, job.name)));
 	}
 	return { text: S.slack.alertText(S.slack.state.failed, escapeMrkdwn(run.repo), run.shortSha, escapeMrkdwn(job.name)), blocks };
+}
+
+/** A deploy's thread reply under the push's message or its badge: the step it moved to, or how it ended, with the author's mention when given. */
+export function renderDeployReply(s: DeployBadgeState, mention: string | null = null): SlackMessage {
+	const at = mention ? `<@${mention}> ` : "";
+	return { text: S.deploy.replyText(deployTitle(s.state), foldLine(s, false)), blocks: [section(`${at}${DEPLOY_EMOJI[s.state]} ${foldLine(s, true)}`)] };
+}
+
+/**
+ * A failed deploy's reply: one mention at most, the repo, commit and the
+ * step it failed at, the log tail, the stable log link and View logs button.
+ */
+export function renderDeployFailure(repo: string, s: DeployBadgeState, tail: string[], mention: string | null): SlackMessage {
+	const line = badgeLine({ ...s, logUrl: undefined }, true);
+	const head = `${mention ? `<@${mention}> ` : ""}${DEPLOY_EMOJI.failed} *${S.deploy.checkTitle.failed}* <https://github.com/${repo}|${escapeMrkdwn(repo)}>${SEP}${line}`;
+	const blocks: Block[] = [section(head), tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail)];
+	if (s.logUrl) blocks.push(context(`<${s.logUrl}|${S.badge.log}>`));
+	if (s.logUrl && s.runId && s.logJob) blocks.push(actions(viewLogsButton(s.runId, s.logJob)));
+	return { text: S.deploy.failureText(`${repo}${SEP}${badgeLine({ ...s, logUrl: undefined }, false)}`), blocks };
 }
 
 /** The DM to the agent's admin when it goes offline, listing the runs waiting for it. */

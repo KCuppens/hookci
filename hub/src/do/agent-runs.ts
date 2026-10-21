@@ -6,6 +6,7 @@
 // A run's D1 run_id is its trigger_id until the agent accepts it and names
 // the run; the triggers table remembers which run_id each trigger became.
 
+import { aggregateFor } from "../checks/map";
 import { getAgent } from "../db/agents";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
 import {
@@ -19,7 +20,7 @@ import {
 	updateRunState,
 	upsertJob,
 } from "../db/runs";
-import { recordDeployReply } from "../deploy/chain";
+import { chainDeploys, recordDeployReply } from "../deploy/chain";
 import { onDeployEvent } from "../deploy/render";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
@@ -29,10 +30,11 @@ import { logEvent, reportError } from "../observability";
 import type { TrustRefusal } from "../policy/trust";
 import type { Event as EventFrame, Interrupt } from "../protocol";
 import { checkQuota, QUOTAS } from "../quotas";
-import { fanOut, sinksFor, sinksForRun } from "../sinks";
+import { fanOut, type SinkHost, sinksFor, sinksForRun } from "../sinks";
 import { loadRunView } from "../sinks/runview";
-import { pruneStoredTails } from "../sinks/slack";
+import { pruneStoredTails, type SlackFoldRequest, slackSinkFactory } from "../sinks/slack";
 import type { Annotation, RunView, Sink } from "../sinks/types";
+import { TERMINAL as RUN_ENDED } from "../slack/badge";
 import { S } from "../strings";
 import { ulid } from "../ulid";
 import type { TriggerRequest } from "../webhook/route";
@@ -175,8 +177,13 @@ async function fanOutView(
 ): Promise<void> {
 	const run = await loadRunView(dob.bindings, dob.installationId, key);
 	if (!run) return;
-	const sinks = await sinksForRun(dob.bindings, dob.installationId, run.repo, { storage: dob.state.storage, now: () => dob.clock.now() });
+	const sinks = await sinksForRun(dob.bindings, dob.installationId, run.repo, sinkHost(dob));
 	fanOut(dob.state, sinks, (sink) => fn(sink, run));
+}
+
+/** The DO's agent, storage and clock, so sinks queue their work in it. */
+function sinkHost(dob: AgentDO): SinkHost {
+	return { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() };
 }
 
 const runUpdate = (sink: Sink, run: RunView) => sink.onRunUpdate(run);
@@ -420,6 +427,22 @@ async function onRepair(dob: AgentDO): Promise<Response> {
 	return Response.json({ ok: true });
 }
 
+/**
+ * Renders the deploys of a checks run this agent ran into its Slack message,
+ * for a deploy on another agent: in this DO's queue for the run, so the
+ * render waits behind the run's own and none lands out of order.
+ */
+async function onSlackFold(dob: AgentDO, req: Request): Promise<Response> {
+	const agentId = req.headers.get("x-hookci-agent-id");
+	const fold = await req.json<SlackFoldRequest>();
+	if (!agentId || typeof fold.checksRunId !== "string" || typeof fold.checksTriggerId !== "string") {
+		return Response.json({ error: "bad_request" }, { status: 400 });
+	}
+	if (!dob.adopt(agentId, fold.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
+	await slackSinkFactory(dob.bindings, dob.installationId, sinkHost(dob)).foldInto(fold.checksRunId, fold.checksTriggerId, fold.deploy);
+	return Response.json({ ok: true });
+}
+
 /** The agent was revoked or its installation removed: stop its runs, tell it why, close the socket and drop what it left queued. */
 async function onRevoke(dob: AgentDO, req: Request): Promise<Response> {
 	const { reason } = await req.json<{ reason: "revoked" | "uninstalled" }>();
@@ -466,7 +489,7 @@ async function pendOfflineRuns(dob: AgentDO, now: number): Promise<boolean> {
 }
 
 async function notifyAgentOffline(dob: AgentDO): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
+	const sinks = await sinksFor(dob.bindings, dob.installationId, sinkHost(dob));
 	if (sinks.length === 0) return;
 	const agent = await getAgent(dob.tenant(), dob.agentId);
 	if (!agent) return;
@@ -491,6 +514,7 @@ export function registerRunLifecycle(): () => void {
 		registerDoRoute("interrupt", onInterrupt),
 		registerDoRoute("repair", onRepair),
 		registerDoRoute("revoke", onRevoke),
+		registerDoRoute("slack-fold", onSlackFold),
 
 		registerFrameHandler("accepted", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
@@ -556,7 +580,7 @@ export function registerRunLifecycle(): () => void {
 					const job = run.jobs.find((j) => j.name === name);
 					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
 				});
-				await onDeployEvent(dob.bindings, dob.installationId, frame);
+				await onDeployEvent(dob.bindings, dob.installationId, frame, dob.state, sinkHost(dob));
 				return;
 			}
 			const now = dob.clock.now();
@@ -566,10 +590,19 @@ export function registerRunLifecycle(): () => void {
 					: TERMINAL[frame.state]
 						? { finished_at: now, duration_ms: frame.duration_ms, reason: frame.reason }
 						: { reason: frame.reason };
-			if (TERMINAL[frame.state]) dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
+			if (TERMINAL[frame.state]) {
+				dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
+				// A push's deploys are recorded before its checks run reads as done, so no sink sees the run passed without them.
+				// The view is read before this frame's state is written: a run D1 already ended (superseded, cancelled) chains nothing.
+				const view = await loadRunView(dob.bindings, dob.installationId, { runId: frame.run_id });
+				if (view && !RUN_ENDED.has(view.state) && view.target === "checks" && view.reason !== "suspended") {
+					const check = aggregateFor({ ...view, state: frame.state }, dob.bindings.HUB_ORIGIN);
+					if (check.status === "completed") await chainDeploys(dob.bindings, view, check.conclusion);
+				}
+			}
 			await updateRunState(t, frame.run_id, frame.state, patch);
 			await fanOutRun(dob, frame.run_id, runUpdate);
-			await onDeployEvent(dob.bindings, dob.installationId, frame);
+			await onDeployEvent(dob.bindings, dob.installationId, frame, dob.state, sinkHost(dob));
 		}),
 
 		registerFrameHandler("annotations", async (dob, frame) => {

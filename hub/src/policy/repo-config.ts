@@ -9,7 +9,7 @@ import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
-import { defaultFetcher } from "../http";
+import { defaultFetcher, type Fetcher } from "../http";
 
 export interface RepoTriggers {
 	pullRequest: boolean;
@@ -50,10 +50,23 @@ export function readRepoTriggers(text: string | null): RepoTriggers {
 	};
 }
 
-/** The `.hookci.yml` text of repo (owner/name) at ref; null when the file or ref does not exist. */
-export async function fetchRepoConfig(env: Env, installationId: number, repo: string, ref: string): Promise<string | null> {
+/**
+ * The `.hookci.yml` text of repo (owner/name) at ref; null when the file or
+ * ref does not exist. signal aborts every GitHub call it makes, and
+ * maxAttempts caps each call's retries.
+ */
+export async function fetchRepoConfig(
+	env: Env,
+	installationId: number,
+	repo: string,
+	ref: string,
+	opts: { signal?: AbortSignal; maxAttempts?: number } = {},
+): Promise<string | null> {
 	const clock = env.__TEST_CLOCK ?? systemClock;
-	const gh = await new GitHubClient(env, env.__TEST_FETCHER ?? defaultFetcher, () => clock.now()).installation(installationId);
+	const base = env.__TEST_FETCHER ?? defaultFetcher;
+	const { signal, maxAttempts } = opts;
+	const fetcher: Fetcher = signal ? (input, init) => base(input, { ...init, signal }) : base;
+	const gh = await new GitHubClient(env, fetcher, () => clock.now(), maxAttempts === undefined ? {} : { maxAttempts }).installation(installationId);
 	return gh.getRepoFileAtRef(repo, ".hookci.yml", ref);
 }
 

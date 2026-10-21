@@ -1,12 +1,17 @@
-// How a deploy run shows up: one Slack badge per run (posted once, then
-// updated in place), a failure alert when the deploy ends failed, and an
-// informational `hookci/deploy:<env>` check run. Deploys never touch GitHub
-// Deployments. Every sink failure is reported and swallowed here, so the
-// agent's event handler never sees it.
+// How a deploy run shows up: a line in its push's Slack checks message (the
+// sink folds it in, deploy/lines.ts), or with no such message one badge per
+// run posted once and updated in place; a thread reply per step, one when it
+// ends and a failure reply with the author's mention; and an informational
+// `hookci/deploy:<env>` check run. Deploys never touch GitHub Deployments.
+// The Slack part runs after the agent's event is answered, queued on the
+// deploy's trigger, so Slack's pacing never holds the agent up. Every sink
+// failure is reported and swallowed here, so the agent's event handler
+// never sees it.
 
 import { getRepoByFullName } from "../db/repos";
+import { findMessagedChecksRun } from "../db/slack-messages";
 import { type TenantDb, tenantDb } from "../db/tenant";
-import { listWatchesForRepo } from "../db/watches";
+import { listWatchesForRepo, type WatchRow } from "../db/watches";
 import { systemClock } from "../do/clock";
 import { HubError } from "../errors";
 import type { Env } from "../env";
@@ -17,29 +22,13 @@ import { defaultFetcher } from "../http";
 import { stableLogLink } from "../logs/links";
 import { reportError } from "../observability";
 import type { Event as AgentEvent } from "../protocol";
-import { escapeMrkdwn } from "../slack/badge";
-import { actions, type Block, button, context, section } from "../slack/blocks";
+import type { SinkHost, WaitUntil } from "../sinks/index";
+import { type SlackSink, slackSinkFactory } from "../sinks/slack";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
-import { tailBlock } from "../slack/messages";
+import { actions, type Block, button, section } from "../slack/blocks";
 import { S } from "../strings";
 import type { DeployTriggerRow } from "./chain";
-
-export type DeployState = "queued" | "running" | "rolling_back" | "succeeded" | "failed" | "cancelled" | "interrupted" | "superseded";
-
-export type DeployBadgeState = {
-	env: string;
-	sha: string;
-	state: DeployState;
-	step?: string;
-	/** 0-based, as the agent reports it. */
-	stepIndex?: number;
-	stepsTotal?: number;
-	durationMs?: number;
-	rolledBack?: boolean;
-	logUrl?: string;
-	runId?: string;
-	attempt?: number;
-};
+import { badgeLine, type DeployBadgeState, DEPLOY_ACTIVE, type DeployState, RETRY_ACTION } from "./lines";
 
 export interface DeployRenderRow {
 	installation_id: number;
@@ -54,53 +43,13 @@ export interface DeployRenderRow {
 	step: string | null;
 	step_index: number | null;
 	steps_total: number | null;
+	/** 1 once the deploy failed after rolling back. */
+	rolled_back: number;
 	started_at: number;
 	updated_at: number;
 }
 
-const SEP = " · ";
-export const RETRY_ACTION = "hookci_deploy_retry";
-
-/** 2m04s from a minute on, 41s below. */
-function deployDuration(ms: number): string {
-	const total = Math.round(ms / 1000);
-	if (total < 60) return `${total}s`;
-	return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, "0")}s`;
-}
-
-function position(s: DeployBadgeState): string {
-	const at = s.stepIndex !== undefined && s.stepsTotal !== undefined ? `${s.stepIndex + 1}/${s.stepsTotal}` : "";
-	return [at, s.step ?? ""].filter(Boolean).join(" ");
-}
-
-/** The badge's parts after env and sha, without the log link. */
-function statusParts(s: DeployBadgeState): string[] {
-	switch (s.state) {
-		case "queued":
-			return [S.deploy.queued];
-		case "running":
-			return [position(s) || S.slack.state.running];
-		case "rolling_back":
-			return [S.deploy.rollingBack];
-		case "succeeded":
-			return [...(s.durationMs !== undefined ? [deployDuration(s.durationMs)] : []), S.deploy.healthOk];
-		case "failed":
-			return [S.deploy.failedAt(position(s) || S.slack.state.failed.toLowerCase()), ...(s.rolledBack ? [S.deploy.rolledBack] : [])];
-		case "cancelled":
-		case "interrupted":
-		case "superseded":
-			return [S.deploy.stopped[s.state]];
-	}
-}
-
-function badgeLine(s: DeployBadgeState, link: boolean): string {
-	const parts = [s.env, s.sha.slice(0, 7), ...statusParts(s)];
-	const plain = parts.join(SEP);
-	if (!s.logUrl) return link ? escapeMrkdwn(plain) : plain;
-	return link ? `${escapeMrkdwn(plain)}${SEP}<${s.logUrl}|${S.badge.log}>` : `${plain}${SEP}${S.badge.log}`;
-}
-
-/** The deploy run's Slack message; a failed deploy gets a Retry button. */
+/** The deploy run's standalone Slack badge; a failed deploy gets a Retry button. */
 export function renderDeployBadge(s: DeployBadgeState): { text: string; blocks: unknown[] } {
 	const blocks: Block[] = [section(badgeLine(s, true))];
 	if (s.state === "failed" && s.runId !== undefined && s.attempt !== undefined) {
@@ -109,26 +58,23 @@ export function renderDeployBadge(s: DeployBadgeState): { text: string; blocks: 
 	return { text: badgeLine(s, false), blocks };
 }
 
-/** The failure alert: the author's mention (or plain login), the badge line, the last log lines and the log link. */
-export function renderDeployAlert(s: DeployBadgeState, tail: string[], mention: string): { text: string; blocks: unknown[] } {
-	const blocks: Block[] = [section(`${mention ? `${mention} ` : ""}${badgeLine({ ...s, logUrl: undefined }, true)}`)];
-	if (tail.length > 0) blocks.push(section(tailBlock(tail)));
-	else blocks.push(context(S.slack.alertNoTail));
-	if (s.logUrl) blocks.push(context(`<${s.logUrl}|${S.badge.log}>`));
-	return { text: S.deploy.alertText(mention, badgeLine({ ...s, logUrl: undefined }, false)), blocks };
-}
-
 export async function getDeployRender(t: TenantDb, runId: string): Promise<DeployRenderRow | null> {
 	return t.first<DeployRenderRow>("SELECT * FROM deploy_renders WHERE installation_id = ?1 AND run_id = ?2", runId);
 }
 
-/** Stores the installation's render of a run; a run_id another installation renders is left alone. */
+/**
+ * Stores the installation's render of a run; a run_id another installation
+ * renders is left alone. A null Slack message keeps the stored one, which
+ * the badge post sets after the event that rendered it.
+ */
 export async function upsertDeployRender(t: TenantDb, row: Omit<DeployRenderRow, "installation_id">): Promise<void> {
 	await t.run(
-		`INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at)
-		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-		ON CONFLICT (run_id) DO UPDATE SET slack_channel = excluded.slack_channel, slack_ts = excluded.slack_ts, check_run_id = excluded.check_run_id,
-			state = excluded.state, step = excluded.step, step_index = excluded.step_index, steps_total = excluded.steps_total, updated_at = excluded.updated_at
+		`INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, rolled_back, started_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+		ON CONFLICT (run_id) DO UPDATE SET slack_channel = COALESCE(excluded.slack_channel, deploy_renders.slack_channel),
+			slack_ts = COALESCE(excluded.slack_ts, deploy_renders.slack_ts), check_run_id = excluded.check_run_id,
+			state = excluded.state, step = excluded.step, step_index = excluded.step_index, steps_total = excluded.steps_total,
+			rolled_back = excluded.rolled_back, updated_at = excluded.updated_at
 		WHERE deploy_renders.installation_id = excluded.installation_id`,
 		row.run_id,
 		row.repo,
@@ -141,6 +87,7 @@ export async function upsertDeployRender(t: TenantDb, row: Omit<DeployRenderRow,
 		row.step,
 		row.step_index,
 		row.steps_total,
+		row.rolled_back,
 		row.started_at,
 		row.updated_at,
 	);
@@ -154,7 +101,8 @@ export async function upsertDeployRender(t: TenantDb, row: Omit<DeployRenderRow,
 export async function reopenDeployRender(env: Env, installationId: number, runId: string, agentId: string): Promise<void> {
 	const at = now(env);
 	await tenantDb(env.DB, installationId).run(
-		`UPDATE deploy_renders SET state = 'queued', step = NULL, step_index = NULL, steps_total = NULL, check_run_id = NULL, started_at = ?3, updated_at = ?3
+		`UPDATE deploy_renders SET state = 'queued', step = NULL, step_index = NULL, steps_total = NULL, rolled_back = 0, check_run_id = NULL,
+			started_at = ?3, updated_at = ?3
 		WHERE installation_id = ?1 AND run_id = ?2 AND state IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'superseded')
 			AND run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND agent_id = ?4)`,
 		runId,
@@ -202,28 +150,10 @@ function now(env: Env): number {
 	return (env.__TEST_CLOCK ?? systemClock).now();
 }
 
-/** The watched channel the deploy posts to: the one it already posted in, else the repo's first active watch. */
-async function channelFor(env: Env, trigger: DeployTriggerRow, prior: string | null): Promise<{ teamId: string; channel: string } | null> {
-	const t = tenantDb(env.DB, trigger.installation_id);
-	const repo = await getRepoByFullName(t, trigger.repo);
-	if (!repo) return null;
-	const watches = (await listWatchesForRepo(t, repo.repo_id)).filter((w) => w.status === "active" || w.channel_id === prior);
-	const watch = watches.find((w) => w.channel_id === prior) ?? watches[0];
-	return watch ? { teamId: watch.team_id, channel: watch.channel_id } : null;
-}
-
-/** `<@U…>` for the commit author's linked Slack user, else their GitHub login, else ''. */
-async function authorMention(env: Env, trigger: DeployTriggerRow, runId: string, teamId: string): Promise<string> {
-	const run = await tenantDb(env.DB, trigger.installation_id).first<{ author_login: string | null }>(
-		"SELECT author_login FROM runs WHERE installation_id = ?1 AND run_id = ?2",
-		runId,
-	);
-	const login = run?.author_login;
-	if (!login) return "";
-	const link = await env.DB.prepare("SELECT slack_user_id FROM user_links WHERE team_id = ?1 AND github_login = ?2 COLLATE NOCASE LIMIT 1")
-		.bind(teamId, login)
-		.first<{ slack_user_id: string }>();
-	return link ? `<@${link.slack_user_id}>` : login;
+/** The watched channel the badge posts to: the one it already posted in, else the repo's first active watch. */
+async function watchFor(t: TenantDb, repoId: number, prior: string | null): Promise<WatchRow | null> {
+	const watches = (await listWatchesForRepo(t, repoId)).filter((w) => w.status === "active" || w.channel_id === prior);
+	return watches.find((w) => w.channel_id === prior) ?? watches[0] ?? null;
 }
 
 /** The stable link to the deploy's first job's log, or undefined when the run has no job. */
@@ -266,12 +196,46 @@ async function syncCheckRun(env: Env, trigger: DeployTriggerRow, row: Omit<Deplo
 }
 
 /**
- * Renders one agent event of a deploy run of installationId: the badge, the
- * alert when the deploy ends failed and the check run. Events for runs that
- * are not the installation's deploys, and events after the deploy ended,
- * change nothing.
+ * Posts the deploy's standalone badge, or updates it in place, for a push
+ * with no checks message to fold into; then the step, final or failure
+ * reply in the badge's thread.
  */
-export async function onDeployEvent(env: Env, installationId: number, ev: AgentEvent): Promise<void> {
+async function postBadge(env: Env, t: TenantDb, sink: SlackSink, repoId: number, runId: string, badge: DeployBadgeState, tail: string[]): Promise<void> {
+	const render = await getDeployRender(t, runId);
+	if (!render) return;
+	const watch = await watchFor(t, repoId, render.slack_channel);
+	if (!watch) return;
+	const msg = renderDeployBadge(badge);
+	const priority = DEPLOY_ACTIVE[badge.state] ? "normal" : "terminal";
+	let ts = render.slack_ts;
+	if (ts === null || render.slack_channel === null) {
+		const res = await slackApi(env, watch.team_id, "chat.postMessage", { channel: watch.channel_id, ...msg }, { priority });
+		if (typeof res.ts !== "string") return;
+		ts = res.ts;
+		await t.run("UPDATE deploy_renders SET slack_channel = ?3, slack_ts = ?4 WHERE installation_id = ?1 AND run_id = ?2", runId, watch.channel_id, ts);
+	} else {
+		await slackApiFireAndForget(
+			env,
+			watch.team_id,
+			"chat.update",
+			{ channel: render.slack_channel, ts, ...msg },
+			{ priority, coalesceKey: `${render.slack_channel}:${ts}` },
+		);
+	}
+	const run =
+		badge.state === "failed" || badge.state === "succeeded"
+			? await t.first<{ author_login: string | null }>("SELECT author_login FROM runs WHERE installation_id = ?1 AND run_id = ?2", runId)
+			: null;
+	await sink.deployReply(render.repo, runId, watch, ts, badge, tail, run?.author_login ?? null);
+}
+
+/**
+ * Renders one agent event of a deploy run of installationId: its line in the
+ * push's checks message or its own badge, its thread reply, and the check
+ * run. Events for runs that are not the installation's deploys, and events
+ * after the deploy ended, change nothing. The Slack part goes to ctx.
+ */
+export async function onDeployEvent(env: Env, installationId: number, ev: AgentEvent, ctx: WaitUntil, host: SinkHost): Promise<void> {
 	try {
 		const t = tenantDb(env.DB, installationId);
 		const trigger = await t.first<DeployTriggerRow>(
@@ -282,6 +246,8 @@ export async function onDeployEvent(env: Env, installationId: number, ev: AgentE
 		const prev = await getDeployRender(t, ev.run_id);
 		if (prev && CONCLUSION[prev.state] !== null) return;
 		const at = now(env);
+		// Job events only move the step; the run's own events move the state.
+		const state = ev.job === undefined ? deployState(ev.state) : (prev?.state ?? "running");
 		const row: Omit<DeployRenderRow, "installation_id"> = {
 			run_id: ev.run_id,
 			repo: trigger.repo,
@@ -290,11 +256,11 @@ export async function onDeployEvent(env: Env, installationId: number, ev: AgentE
 			slack_channel: prev?.slack_channel ?? null,
 			slack_ts: prev?.slack_ts ?? null,
 			check_run_id: prev?.check_run_id ?? null,
-			// Job events only move the step; the run's own events move the state.
-			state: ev.job === undefined ? deployState(ev.state) : (prev?.state ?? "running"),
+			state,
 			step: ev.step ?? prev?.step ?? null,
 			step_index: ev.step_index ?? prev?.step_index ?? null,
 			steps_total: ev.steps_total ?? prev?.steps_total ?? null,
+			rolled_back: state === "failed" && prev?.state === "rolling_back" ? 1 : (prev?.rolled_back ?? 0),
 			started_at: prev?.started_at ?? at,
 			updated_at: at,
 		};
@@ -311,46 +277,23 @@ export async function onDeployEvent(env: Env, installationId: number, ev: AgentE
 			...(row.step_index !== null ? { stepIndex: row.step_index } : {}),
 			...(row.steps_total !== null ? { stepsTotal: row.steps_total } : {}),
 			...(terminal ? { durationMs: ev.duration_ms ?? at - row.started_at } : {}),
-			...(row.state === "failed" && prev?.state === "rolling_back" ? { rolledBack: true } : {}),
+			...(row.rolled_back === 1 ? { rolledBack: true } : {}),
 		};
 		if (terminal) {
 			const logUrl = await logLinkFor(env, trigger.installation_id, row.run_id);
 			if (logUrl) badge.logUrl = logUrl;
 		}
 
-		try {
-			const target = await channelFor(env, trigger, row.slack_channel);
-			if (target) {
-				const msg = renderDeployBadge(badge);
-				const priority = terminal ? "terminal" : "normal";
-				if (row.slack_ts === null || row.slack_channel === null) {
-					const res = await slackApi(env, target.teamId, "chat.postMessage", { channel: target.channel, ...msg }, { priority });
-					if (typeof res.ts === "string") {
-						row.slack_channel = target.channel;
-						row.slack_ts = res.ts;
-						await upsertDeployRender(t, row);
-					}
-				} else {
-					await slackApiFireAndForget(
-						env,
-						target.teamId,
-						"chat.update",
-						{ channel: row.slack_channel, ts: row.slack_ts, ...msg },
-						{ priority, coalesceKey: `deploy:${row.run_id}` },
-					);
-				}
-				if (row.state === "failed") {
-					const mention = await authorMention(env, trigger, row.run_id, target.teamId);
-					const alert = renderDeployAlert(badge, ev.tail ?? [], mention);
-					await slackApiFireAndForget(env, target.teamId, "chat.postMessage", { channel: target.channel, ...alert }, {
-						priority: "alert",
-						coalesceKey: `deploy-alert:${row.run_id}`,
-					});
-				}
-			}
-		} catch (err) {
-			reportError(err, { op: "deploy_render_slack", run_id: row.run_id });
-		}
+		const tail = ev.tail ?? [];
+		const sink = slackSinkFactory(env, installationId, host);
+		// After the deploy run's own sink calls on its trigger: one render at a time, in event order.
+		// A fold waits for the checks message's own renders in the AgentDO that owns that run.
+		const render = sink.inOrder(trigger.trigger_id, async () => {
+			if (await sink.foldDeploy(trigger.trigger_id, { badge, tail })) return;
+			const repo = await getRepoByFullName(t, trigger.repo);
+			if (repo) await postBadge(env, t, sink, repo.repo_id, row.run_id, badge, tail);
+		});
+		ctx.waitUntil(render.catch((err: unknown) => reportError(err, { op: "deploy_render_slack", run_id: row.run_id })));
 
 		try {
 			const id = await syncCheckRun(env, trigger, row, renderDeployBadge(badge).text);
@@ -366,17 +309,21 @@ export async function onDeployEvent(env: Env, installationId: number, ev: AgentE
 	}
 }
 
-/** Posts the `not started: <reason>` badge for a deploy trigger the agent rejected. */
+/**
+ * Posts the `not started: <reason>` badge for a deploy trigger the agent
+ * rejected, when the checks run that chained it has no message: the sink
+ * folds it into that message when the rejected run fans out.
+ */
 export async function renderRejected(env: Env, row: DeployTriggerRow): Promise<void> {
 	try {
-		const target = await channelFor(env, row, null);
-		if (!target) return;
-		const parts = [row.env, row.sha.slice(0, 7), S.deploy.notStarted(row.reason ?? "")].join(SEP);
-		await slackApiFireAndForget(env, target.teamId, "chat.postMessage", {
-			channel: target.channel,
-			text: parts,
-			blocks: [section(escapeMrkdwn(parts))],
-		});
+		const t = tenantDb(env.DB, row.installation_id);
+		if (await findMessagedChecksRun(t, row.trigger_id)) return;
+		const repo = await getRepoByFullName(t, row.repo);
+		if (!repo) return;
+		const watch = await watchFor(t, repo.repo_id, null);
+		if (!watch) return;
+		const msg = renderDeployBadge({ env: row.env, sha: row.sha, state: "rejected", reason: row.reason ?? "" });
+		await slackApiFireAndForget(env, watch.team_id, "chat.postMessage", { channel: watch.channel_id, ...msg });
 	} catch (err) {
 		reportError(err, { op: "deploy_render_rejected", trigger_id: row.trigger_id });
 	}

@@ -72,6 +72,26 @@ export async function adoptSlackMessages(t: TenantDb, triggerId: string, runId: 
 	);
 }
 
+/**
+ * The checks run whose pass chained the deploy trigger, while it has a Slack
+ * message (posted or still queued) and did not end other than passed: the
+ * message the deploy folds into, rendered by the AgentDO of agent_id. null
+ * leaves the deploy its own badge.
+ */
+export async function findMessagedChecksRun(
+	t: TenantDb,
+	deployTriggerId: string,
+): Promise<{ run_id: string; trigger_id: string; agent_id: string | null } | null> {
+	return t.first<{ run_id: string; trigger_id: string; agent_id: string | null }>(
+		`SELECT r.run_id, r.trigger_id, r.agent_id FROM deploy_triggers dt
+		JOIN runs r ON r.installation_id = dt.installation_id AND r.run_id = dt.checks_run_id
+		WHERE dt.installation_id = ?1 AND dt.trigger_id = ?2
+			AND r.state NOT IN ('failed', 'cancelled', 'interrupted', 'superseded', 'skipped')
+			AND EXISTS (SELECT 1 FROM slack_messages m WHERE m.run_id IN (r.run_id, r.trigger_id))`,
+		deployTriggerId,
+	);
+}
+
 /** Claims the run's one alert for the channel's message: true when this caller must post it. */
 export async function claimAlert(t: TenantDb, runId: string, teamId: string, channelId: string): Promise<boolean> {
 	const res = await t.run(
