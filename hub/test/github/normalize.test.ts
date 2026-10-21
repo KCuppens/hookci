@@ -66,7 +66,6 @@ describe("normalize push", () => {
       sha: HEAD,
       ref: "refs/heads/main",
       event: "push",
-      baseSha: BASE,
       authorLogin: "alice",
       authorEmail: "alice@example.com",
       commitTitle: "Fix flaky retry test",

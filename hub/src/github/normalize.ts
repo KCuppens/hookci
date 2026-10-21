@@ -23,7 +23,6 @@ export interface HubTrigger {
 
 const PR_ACTIONS: Record<string, true> = { opened: true, synchronize: true, reopened: true, ready_for_review: true };
 const BRANCH_PREFIX = "refs/heads/";
-const ZERO_SHA = /^0+$/;
 
 type Json = Record<string, unknown>;
 
@@ -101,7 +100,6 @@ function normalizePush(p: Json): HubTrigger | null {
 	const defaultBranch = text(repo.default_branch, "repository.default_branch");
 	const head = record(p.head_commit, "head_commit");
 	const author = record(head.author, "head_commit.author");
-	const before = text(p.before, "before");
 	return {
 		installationId: int(record(p.installation, "installation").id, "installation.id"),
 		repoId: int(repo.id, "repository.id"),
@@ -109,7 +107,6 @@ function normalizePush(p: Json): HubTrigger | null {
 		sha: text(p.after, "after"),
 		ref,
 		event: "push",
-		baseSha: ZERO_SHA.test(before) ? undefined : before,
 		authorLogin: typeof author.username === "string" && author.username !== "" ? author.username : text(record(p.sender, "sender").login, "sender.login"),
 		authorEmail: typeof author.email === "string" && author.email !== "" ? author.email : undefined,
 		commitTitle: text(head.message, "head_commit.message").split("\n", 1)[0] ?? "",
