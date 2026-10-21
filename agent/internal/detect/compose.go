@@ -77,5 +77,5 @@ func postgresImage(image string) (string, bool) {
 	case tag != "" && strings.Trim(tag, "0123456789") == "":
 		image += "-alpine"
 	}
-	return image, config.ValidPostgresImage(image)
+	return image, config.OfficialPostgresImage(image)
 }

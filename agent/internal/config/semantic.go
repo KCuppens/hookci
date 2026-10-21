@@ -181,14 +181,14 @@ func checkCachePaths(setup []SetupStep, li lineIndex) Diagnostics {
 	return diags
 }
 
-// checkPostgresImage accepts only the official postgres image with a tag or
-// digest; the agent pulls and runs it.
+// checkPostgresImage accepts only the official postgres image or
+// pgvector/pgvector, with a tag or digest; the agent pulls and runs it.
 func checkPostgresImage(s *ChecksServices, li lineIndex) Diagnostics {
 	if s == nil || s.Postgres == nil || s.Postgres.Image == "" || ValidPostgresImage(s.Postgres.Image) {
 		return nil
 	}
-	return Diagnostics{li.errorf("checks.services.postgres.image", "use the official image with a tag, for example postgres:16-alpine",
-		"image %s is not the official postgres image with a tag or digest", quote(s.Postgres.Image))}
+	return Diagnostics{li.errorf("checks.services.postgres.image", "use the official image or pgvector/pgvector with a tag, for example postgres:16-alpine",
+		"image %s is not the official postgres image or pgvector/pgvector with a tag or digest", quote(s.Postgres.Image))}
 }
 
 // checkLimits rejects memory sizes and durations that match the schema

@@ -350,9 +350,9 @@ func TestRejectBadImage(t *testing.T) {
 	}
 }
 
-func TestAcceptOfficialImage(t *testing.T) {
+func TestAcceptAllowedImages(t *testing.T) {
 	digest := "@sha256:" + strings.Repeat("a", 64)
-	for _, image := range []string{"postgres:16", "library/postgres:16-alpine", "docker.io/library/postgres:17.2", "postgres" + digest, "postgres:16" + digest} {
+	for _, image := range []string{"postgres:16", "library/postgres:16-alpine", "docker.io/library/postgres:17.2", "postgres" + digest, "postgres:16" + digest, "pgvector/pgvector:pg16"} {
 		fake := &execx.Fake{}
 		fake.On("docker", []string{"run"}, execx.FakeResponse{})
 		onFinalServer(fake)

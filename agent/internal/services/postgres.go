@@ -126,7 +126,7 @@ func BuildRunArgv(o PostgresOptions) []string {
 // carries the tail of the container log, and the container is removed.
 func StartPostgres(ctx context.Context, o PostgresOptions) (*Postgres, error) {
 	if o.Image != "" && !config.ValidPostgresImage(o.Image) {
-		return nil, fmt.Errorf("services: invalid postgres image %q: only postgres, library/postgres or docker.io/library/postgres with a tag or digest", o.Image)
+		return nil, fmt.Errorf("services: invalid postgres image %q: only the official postgres image or pgvector/pgvector with a tag or digest", o.Image)
 	}
 	if o.ReadyTimeout <= 0 {
 		o.ReadyTimeout = defaultReadyTimeout

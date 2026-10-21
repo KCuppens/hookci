@@ -215,11 +215,13 @@ func TestCachePathsStayInside(t *testing.T) {
 	}
 }
 
-func TestPostgresImageOfficialOnly(t *testing.T) {
+func TestPostgresImageAllowList(t *testing.T) {
 	for image, ok := range map[string]bool{
 		"postgrest/postgrest:1": false, "postgres:16 ": false, "-x": false, "postgres": false,
-		"postgres.evil.example/x:1": false,
-		"postgres:16-alpine":        true, "docker.io/library/postgres:16": true,
+		"postgres.evil.example/x:1": false, "pgvector/pgvector": false, "evil/pgvector:pg16": false,
+		"pgvector/pgvector-evil:pg16": false, "ghcr.io/pgvector/pgvector:pg16": false,
+		"postgres:16-alpine": true, "docker.io/library/postgres:16": true,
+		"pgvector/pgvector:pg16": true, "docker.io/pgvector/pgvector:0.8.1-pg17": true,
 	} {
 		src := oneJob + "  services:\n    postgres:\n      image: " + strconv.Quote(image) + "\n"
 		_, diags := parseString(t, src, ParseOptions{})
