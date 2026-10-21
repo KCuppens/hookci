@@ -293,7 +293,7 @@ describe("POST /github/webhook routing", () => {
       { op: "onRunUpdate", run: expect.objectContaining({ repoId: REPO, prNumber: 7, target: "checks", state: "pending", reason: "no_agent" }) },
     ]);
     expect(await deliveryRow("d-unbound")).toMatchObject({ status: "processed" });
-    expect(github.refs).toEqual([]);
+    expect(github.refs).toEqual([prOpened.pull_request.head.sha]);
   });
 
   it("records a pending suspended run instead of dispatching for a suspended installation", async () => {
@@ -362,11 +362,43 @@ describe("POST /github/webhook routing", () => {
     expect(await deliveryRow("d-pr")).toMatchObject({ status: "dropped", note: "not_wanted" });
   });
 
-  it("drops an unbound repo's push to another branch by the default triggers, without reading its config", async () => {
+  it("tells an unbound repo whose config names the pushed branch that no agent is paired", async () => {
     github.files[`acme/widgets@${pushBranch.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: ['feature/*']\n";
     await deliver("push", pushBranch, { id: "d-unbound-branch" });
-    expect(github.refs).toEqual([]);
-    expect(await deliveryRow("d-unbound-branch")).toMatchObject({ status: "dropped", note: "not_wanted" });
+    expect(github.refs).toEqual([pushBranch.after]);
+    expect(await deliveryRow("d-unbound-branch")).toMatchObject({ status: "processed" });
+    const { results } = await env.DB.prepare("SELECT state, reason FROM runs").all();
+    expect(results).toEqual([{ state: "pending", reason: "no_agent" }]);
+  });
+
+  it("drops an unbound repo's push and pull request without a .hookci.yml: no run, no check", async () => {
+    github.files[`acme/widgets@${pushMain.after}:.hookci.yml`] = null;
+    github.files[`acme/widgets@${prOpened.pull_request.head.sha}:.hookci.yml`] = null;
+    const sink = recordSink();
+    await deliver("push", pushMain, { id: "d-noconfig-push" });
+    await deliver("pull_request", prOpened, { id: "d-noconfig-pr" }).finally(sink.undo);
+    expect(await deliveryRow("d-noconfig-push")).toMatchObject({ status: "dropped", note: "no_config" });
+    expect(await deliveryRow("d-noconfig-pr")).toMatchObject({ status: "dropped", note: "no_config" });
+    expect(sink.calls).toEqual([]);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("does not dispatch a bound repo's push without a .hookci.yml", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    github.files[`acme/widgets@${pushMain.after}:.hookci.yml`] = null;
+    await deliver("push", pushMain, { id: "d-bound-noconfig" });
+    expect(agents.calls).toEqual([]);
+    expect(await deliveryRow("d-bound-noconfig")).toMatchObject({ status: "dropped", note: "no_config" });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("drops a fork pull request when its base has no .hookci.yml, whatever the fork adds", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    github.files[`acme/widgets@${prFork.pull_request.base.sha}:.hookci.yml`] = null;
+    github.files[`acme/widgets@${prFork.pull_request.head.sha}:.hookci.yml`] = "checks:\n  on:\n    pull_request: true\n";
+    await deliver("pull_request", prFork, { id: "d-fork-noconfig" });
+    expect(github.refs).toEqual([prFork.pull_request.base.sha]);
+    expect(agents.calls).toEqual([]);
+    expect(await deliveryRow("d-fork-noconfig")).toMatchObject({ status: "dropped", note: "no_config" });
   });
 });

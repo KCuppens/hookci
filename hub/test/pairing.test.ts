@@ -13,6 +13,7 @@ import { type TriggerRequest, routeTrigger } from "../src/webhook/route";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { type Agent, AgentSocket, connect, connectRequest, seedAgent } from "./do/agent-socket";
+import { useFakeGitHub } from "./fakes/github";
 
 const INSTALLATION = 42;
 const ADMIN = 7;
@@ -249,6 +250,7 @@ describe("pairing", () => {
     const reconnect = await connectRequest(paired.credential);
     expect(reconnect.status).toBe(401);
 
+    const github = await useFakeGitHub(env);
     const ctx = createExecutionContext();
     const outcome = await routeTrigger(
       env,
@@ -266,7 +268,7 @@ describe("pairing", () => {
       },
       ctx,
     );
-    await waitOnExecutionContext(ctx);
+    await waitOnExecutionContext(ctx).finally(github.restore);
     expect(outcome).toEqual({ kind: "no_agent" });
   });
 

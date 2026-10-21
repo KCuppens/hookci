@@ -31,7 +31,9 @@ async function onTriggerEvent(env: Env, event: "pull_request" | "push", payload:
 	if (!trig) return { status: "processed" };
 	await setDefaultBranch(tenantDb(env.DB, trig.installationId), trig.repoId, trig.defaultBranch);
 	const outcome = await routeTrigger(env, trig, ctx);
-	if (outcome.kind === "deleted" || outcome.kind === "unknown_installation" || outcome.kind === "not_wanted") return { status: "dropped", note: outcome.kind };
+	if (outcome.kind === "deleted" || outcome.kind === "unknown_installation" || outcome.kind === "not_wanted" || outcome.kind === "no_config") {
+		return { status: "dropped", note: outcome.kind };
+	}
 	return { status: "processed" };
 }
 

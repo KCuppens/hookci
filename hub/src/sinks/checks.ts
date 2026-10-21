@@ -111,7 +111,11 @@ export class ChecksSink implements Sink {
 	/** Alarm task: sends the coalesced updates that are due; resolves true while some wait. */
 	async flush(): Promise<boolean> {
 		if (!this.host) return false;
-		return new CheckUpdateCoalescer(this.host, (u) => this.inOrder(u.repoId, u.headSha, () => this.send(u))).flushDue();
+		return new CheckUpdateCoalescer(
+			this.host,
+			(u) => this.send(u),
+			(t, fn) => this.inOrder(t.repoId, t.headSha, fn),
+		).flushDue();
 	}
 
 	private async push(run: RunView, name: string, body: UpdateCheckRunBody): Promise<void> {

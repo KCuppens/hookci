@@ -76,6 +76,7 @@ beforeEach(async () => {
   gh = createFakeGitHub();
   doCalls = [];
   serveInstallationTokens(gh, NOW);
+  serveRepoFiles(gh, {});
   testEnv = { ...env, AGENT_DO: fakeAgentDOs(), __TEST_FETCHER: gh.fetcher, GITHUB_APP_PRIVATE_KEY: pem, __TEST_CLOCK: { now: () => NOW } };
   await addInstallation(INSTALLATION);
 });
@@ -140,10 +141,13 @@ describe("reconcileDefaultBranches", () => {
     expect(events).toEqual([expect.objectContaining({ installation_id: INSTALLATION, repo_id: 1, sha: "sha-missed", outcome: "dispatched" })]);
   });
 
-  it("neither counts nor logs a head its config does not want", async () => {
+  it.each([
+    ["its config does not want", "checks:\n  on:\n    push:\n      branches: [release]\n"],
+    ["without a .hookci.yml", null],
+  ])("neither counts nor logs a head %s", async (_, config) => {
     await addRepos(INSTALLATION, [1]);
     serveBranchHeads(gh, { "org42/r1": { sha: "sha-1", committedAt: NOW - 30 * MINUTE } });
-    serveRepoFiles(gh, { "org42/r1@sha-1:.hookci.yml": "checks:\n  on:\n    push:\n      branches: [release]\n" });
+    serveRepoFiles(gh, { "org42/r1@sha-1:.hookci.yml": config });
     const logs = vi.spyOn(console, "log").mockImplementation(() => {});
 
     expect(await reconcileDefaultBranches(testEnv, NOW)).toEqual({ checked: 1, synthesized: 0 });

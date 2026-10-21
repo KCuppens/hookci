@@ -171,6 +171,34 @@ describe("ChecksSink", () => {
     expect(checkCalls().map((c) => c.title)).toEqual(["Running: compile", "Running: unit"]);
   });
 
+  it("an alarm flush that lands behind the run's completed update does not overwrite it", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    let release = () => {};
+    let entered = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const patching = new Promise<void>((resolve) => (entered = resolve));
+    await inAgent(agent, async (sink) => {
+      const run = runView({ jobs: PLANNED });
+      await sink.onJobPlanned(run);
+      await sink.onRunUpdate(run);
+      await sink.onRunUpdate(runView({ jobs: [{ name: "lint", state: "running" }, ...PLANNED.slice(1)] }));
+      gh.calls.length = 0;
+      gh.respond("PATCH", "/repos/:owner/:repo/check-runs/102", async (req) => {
+        entered();
+        await held;
+        return Response.json({ id: 102, ...fields(req.body) });
+      });
+      const job = sink.onJobUpdate(run, { name: "test", state: "running", step: "unit", stepIndex: 0, stepsTotal: 1 });
+      await patching;
+      const done = sink.onRunUpdate(runView({ state: "failed", jobs: [{ name: "lint", state: "success" }, { name: "test", state: "failed" }] }));
+      testClock.advance(FLUSH_INTERVAL_MS);
+      const flushed = sink.flush();
+      release();
+      await Promise.all([job, done, flushed]);
+    });
+    expect(checkCalls().filter((c) => c.id === 100)).toEqual([expect.objectContaining({ method: "PATCH", status: "completed", conclusion: "failure" })]);
+  });
+
   it("points each check's Details at its job's stable log link and the aggregate's at the failed job's", async () => {
     const lint: JobView = { name: "lint", state: "success", logLink: stableLogLink(env, "run_1", "lint") };
     const test: JobView = { name: "test", state: "failed", logLink: stableLogLink(env, "run_1", "test") };

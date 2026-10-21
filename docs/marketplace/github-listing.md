@@ -51,10 +51,12 @@ Each job becomes a GitHub check run, and a single `hookci` check sums them up
 for branch protection. Slack gets one message per run, updated in place, with
 a thread for failures.
 
-### Works without a config file
+### Opt in per repository
 
-The agent detects Go, Node.js, Python, Rust and Docker Compose projects. Add a
-`.hookci.yml` to set your own commands, deploy steps or fork policy.
+hookci only runs on repositories that have a `.hookci.yml`. An empty file is
+enough: the agent then detects Go, Node.js, Python, Rust and Docker Compose
+projects. Add commands, deploy steps or a fork policy to the file when you need
+them.
 
 ### Safe with forks
 
@@ -102,7 +104,7 @@ reason the app asks for it. GitHub shows these on the install page.
 
 | Kind | Name | Access | Why hookci needs it |
 | --- | --- | --- | --- |
-| Permission | `contents` | read | The hub mints a read only token for one repository so the agent can check out the commit, and reads `.hookci.yml` for the fork policy. |
+| Permission | `contents` | read | The hub mints a read only token for one repository so the agent can check out the commit, and reads `.hookci.yml` to see whether the repository opted in and for the fork policy. |
 | Permission | `metadata` | read | Required by GitHub for every app; lists the repositories in the installation. |
 | Permission | `pull_requests` | read | Detects pull requests from forks and confirms the head commit before an approved or retried run starts. |
 | Permission | `checks` | write | Creates the per job check runs, the `hookci` aggregate check and the "Approve run" button for fork pull requests. |

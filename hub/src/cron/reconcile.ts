@@ -67,8 +67,8 @@ export async function reconcileDefaultBranches(env: Env, now: number, limit = 50
 				},
 				ctx,
 			);
-			// A head the repo's config does not run checks for has no run on purpose.
-			if (outcome.kind === "not_wanted") continue;
+			// A head the repo does not run checks for (no .hookci.yml, or its config leaves the branch out) has no run on purpose.
+			if (outcome.kind === "not_wanted" || outcome.kind === "no_config") continue;
 			synthesized++;
 			logEvent("reconcile_synthesized", { installation_id: repo.installation_id, repo_id: repo.repo_id, sha: head.sha, outcome: outcome.kind });
 		} catch (err) {

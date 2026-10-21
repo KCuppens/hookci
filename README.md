@@ -14,7 +14,7 @@ M0 delivers the agent core only. The hub connection, GitHub reporting and Slack 
 
 ## Which pushes and pull requests run
 
-Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message. A repo with no agent paired is judged by the defaults below without reading its file.
+Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message. A repository without a `.hookci.yml` is skipped entirely; an empty file opts in with the defaults below.
 
 ```yaml
 checks:

@@ -13,23 +13,30 @@ export function createFakeGitHub(): FakeService {
   );
 }
 
+/** What the fake serves for a `.hookci.yml` a test did not set: an empty file, so the repo has opted in with default triggers and policy. */
+export const OPTED_IN_CONFIG = "";
+
 /**
  * Serves GET /repos/:owner/:repo/contents/:path?ref= from files keyed by
- * `owner/repo@ref:path`; others get 404. Returns every ref requested, in order.
+ * `owner/repo@ref:path`. Every repo has a `.hookci.yml` (OPTED_IN_CONFIG) unless
+ * its key is set; a key set to null, and any other unset path, gets 404.
+ * Returns every ref requested, in order.
  */
-export function serveRepoFiles(gh: FakeService, files: Record<string, string>): string[] {
+export function serveRepoFiles(gh: FakeService, files: Record<string, string | null>): string[] {
   const refs: string[] = [];
   gh.respond("GET", "/repos/:owner/:repo/contents/:path", ({ url, params }) => {
     const ref = new URL(url).searchParams.get("ref") ?? "";
     refs.push(ref);
-    const body = files[`${params.owner}/${params.repo}@${ref}:${decodeURIComponent(params.path ?? "")}`];
-    if (body === undefined) return Response.json({ message: "Not Found" }, { status: 404 });
+    const path = decodeURIComponent(params.path ?? "");
+    const key = `${params.owner}/${params.repo}@${ref}:${path}`;
+    const body = key in files ? files[key] : path === ".hookci.yml" ? OPTED_IN_CONFIG : undefined;
+    if (body === undefined || body === null) return Response.json({ message: "Not Found" }, { status: 404 });
     return new Response(body, { status: 200 });
   });
   return refs;
 }
 
-export type FakeGitHubEnv = { gh: FakeService; files: Record<string, string>; refs: string[]; restore: () => void };
+export type FakeGitHubEnv = { gh: FakeService; files: Record<string, string | null>; refs: string[]; restore: () => void };
 
 /**
  * Points env at a fresh fake GitHub with an app key, installation tokens and
@@ -38,7 +45,7 @@ export type FakeGitHubEnv = { gh: FakeService; files: Record<string, string>; re
 export async function useFakeGitHub(env: Env): Promise<FakeGitHubEnv> {
   const gh = createFakeGitHub();
   serveInstallationTokens(gh, Date.now());
-  const files: Record<string, string> = {};
+  const files: Record<string, string | null> = {};
   const refs = serveRepoFiles(gh, files);
   const saved = { __TEST_FETCHER: env.__TEST_FETCHER, GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY };
   env.__TEST_FETCHER = gh.fetcher;

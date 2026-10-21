@@ -17,6 +17,7 @@ export type RouteOutcome =
 	| { kind: "dispatched"; agentId: string }
 	| { kind: "gated"; agentId: string; reason: "fork_gated" | "fork_never" }
 	| { kind: "not_wanted" }
+	| { kind: "no_config" }
 	| { kind: "no_agent" }
 	| { kind: "suspended" }
 	| { kind: "deleted" }
@@ -50,18 +51,18 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
+	// A repo opts in with a .hookci.yml: without one nothing runs and nothing is posted,
+	// so installing the app on every repo leaves the others alone. Like an Actions
+	// workflow's `on:`, the file then picks the events.
+	const config = await fetchRepoConfig(env, trig.installationId, trig.repo, triggerConfigRef(trig));
+	if (config === null) return { kind: "no_config" };
+	if (!triggerWanted(readRepoTriggers(config), trig)) return { kind: "not_wanted" };
 	const binding = await getBinding(tenantDb(env.DB, trig.installationId), trig.repoId, trig.target);
 	if (!binding) {
-		// No agent can run it, so the repo's config is not read: the default
-		// triggers (pull requests, default-branch pushes) get the pairing message.
-		if (!triggerWanted(readRepoTriggers(null), trig)) return { kind: "not_wanted" };
 		const outcome = { kind: "no_agent" } as const;
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
-	// Like an Actions workflow's `on:`, the repo's own config picks the branches; no check, no message otherwise.
-	const config = await fetchRepoConfig(env, trig.installationId, trig.repo, triggerConfigRef(trig));
-	if (!triggerWanted(readRepoTriggers(config), trig)) return { kind: "not_wanted" };
 
 	const gate = await gateForkRun(env, trig, binding.agent_id, config);
 	if (gate.gated) return { kind: "gated", agentId: binding.agent_id, reason: gate.reason };
