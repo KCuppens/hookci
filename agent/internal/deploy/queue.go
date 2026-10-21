@@ -447,7 +447,7 @@ func (s *Scheduler) finish(ctx context.Context, runID, state string, evState pro
 		return fmt.Errorf("deploy: %w", err)
 	}
 	job := JobName
-	s.Events.DeployEvent(protocol.Event{RunId: runID, Job: &job, State: evState, Reason: &msg})
+	sendStateChange(s.Events, protocol.Event{RunId: runID, Job: &job, State: evState, Reason: &msg})
 	return nil
 }
 

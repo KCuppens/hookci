@@ -119,6 +119,14 @@ func TestRecoverer_MarksInterruptedAndStopsUnits(t *testing.T) {
 			t.Errorf("event %d = %+v, want interrupted %s with reason and tail %q", i, ev, s.id, s.want)
 		}
 	}
+	if len(r.events.runs) != 3 {
+		t.Fatalf("sent %d run events, want one per interrupted run", len(r.events.runs))
+	}
+	for i, ev := range r.events.runs {
+		if s := seeds[i]; ev.RunId != s.id || ev.State != protocol.EventStateInterrupted || ev.Reason == nil || *ev.Reason != s.want {
+			t.Errorf("run event %d = %+v, want interrupted %s with reason %q", i, ev, s.id, s.want)
+		}
+	}
 }
 
 func TestRecoverer_ListUnitsErrorStillInterrupts(t *testing.T) {

@@ -343,7 +343,8 @@ func (l logEvents) DeployEvent(ev protocol.Event) {
 	l.log.Info("deploy event", "run", ev.RunId, "state", ev.State, "tail", ev.Tail)
 }
 
-// eventLog records the events of the in-process agent.
+// eventLog records the deploy job's events of the in-process agent; the
+// run's own events carry nothing these tests check.
 type eventLog struct {
 	mu     sync.Mutex
 	events []protocol.Event
@@ -352,6 +353,9 @@ type eventLog struct {
 func (*eventLog) DeployPlanned(protocol.JobPlanned) {}
 
 func (l *eventLog) DeployEvent(ev protocol.Event) {
+	if ev.Job == nil {
+		return
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.events = append(l.events, ev)

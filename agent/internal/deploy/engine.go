@@ -393,7 +393,7 @@ func (x *execution) fail(ctx context.Context, msg string, step int) error {
 	ev.Reason = &msg
 	ev.DurationMs = x.durationMs()
 	ev.Tail = x.log.finish()
-	x.e.Events.DeployEvent(ev)
+	sendStateChange(x.e.Events, ev)
 	return nil
 }
 
@@ -415,20 +415,22 @@ func (x *execution) succeed(ctx context.Context, outputs map[string]string) erro
 	x.log.finish()
 	ev := x.event(-1)
 	ev.DurationMs = x.durationMs()
-	e.Events.DeployEvent(ev)
+	sendStateChange(e.Events, ev)
 	return nil
 }
 
 // transition stores state when it changed and emits an event for it, on
-// step when step >= 0.
+// step when step >= 0. A changed state also goes out as the run's own event.
 func (x *execution) transition(ctx context.Context, state string, step int) error {
-	if state != x.state {
-		if err := x.e.Store.SetDeployRunState(ctx, x.run.RunID, state, "", x.e.Clock.Now()); err != nil {
-			return fmt.Errorf("deploy: %w", err)
-		}
-		x.state = state
+	if state == x.state {
+		x.e.Events.DeployEvent(x.event(step))
+		return nil
 	}
-	x.e.Events.DeployEvent(x.event(step))
+	if err := x.e.Store.SetDeployRunState(ctx, x.run.RunID, state, "", x.e.Clock.Now()); err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	x.state = state
+	sendStateChange(x.e.Events, x.event(step))
 	return nil
 }
 
@@ -438,6 +440,15 @@ var eventStates = map[string]protocol.EventState{
 	store.DeployRollingBack: protocol.EventStateRollingBack,
 	store.DeploySuccess:     protocol.EventStateSuccess,
 	store.DeployFailed:      protocol.EventStateFailed,
+}
+
+// sendStateChange sends ev, the deploy job's event in a new state, then the
+// run's own event in that state: the hub moves only the step on job events
+// and the run, its check and its badge on run events. The job event goes
+// first, since the hub ignores job events after the run's terminal one.
+func sendStateChange(sink EventSink, ev protocol.Event) {
+	sink.DeployEvent(ev)
+	sink.DeployEvent(protocol.Event{RunId: ev.RunId, State: ev.State, Reason: ev.Reason, DurationMs: ev.DurationMs})
 }
 
 // event is the event for the current state, on step when step >= 0. Once
