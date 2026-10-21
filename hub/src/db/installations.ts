@@ -47,6 +47,16 @@ export async function markDeleted(db: D1Database, id: number, at: number, purgeA
 	await db.prepare("UPDATE installations SET deleted_at = ?2, purge_after = ?3 WHERE id = ?1").bind(id, at, purgeAfter).run();
 }
 
+/** The installations among ids that the hub has and that are not deleted, by id. */
+export async function listLiveInstallations(db: D1Database, ids: readonly number[]): Promise<InstallationRow[]> {
+	if (ids.length === 0) return [];
+	const { results } = await db
+		.prepare("SELECT * FROM installations WHERE deleted_at IS NULL AND id IN (SELECT value FROM json_each(?1)) ORDER BY id")
+		.bind(JSON.stringify(ids))
+		.all<InstallationRow>();
+	return results;
+}
+
 /** Ids of up to limit installations whose purge_after has passed, oldest first. */
 export async function listPurgeDue(db: D1Database, now: number, limit: number): Promise<number[]> {
 	const { results } = await db

@@ -189,6 +189,55 @@ export async function listRecentRuns(t: TenantDb, limit = 10): Promise<RunRow[]>
 	return t.all<RunRow>("SELECT * FROM runs WHERE installation_id = ?1 ORDER BY rowid DESC LIMIT ?2", limit);
 }
 
+/** A run with the names the dashboard shows; null when the repo is no longer shared with the app or the run has no agent. */
+export interface RunListRow extends RunRow {
+	/** The run's rowid: runs are listed newest first by it, and the next page starts below the last one's. */
+	run_rowid: number;
+	repo_name: string | null;
+	agent_name: string | null;
+}
+
+const RUN_LIST_SELECT = `SELECT r.*, r.rowid AS run_rowid, p.full_name AS repo_name, a.name AS agent_name FROM runs r
+	LEFT JOIN repos p ON p.installation_id = r.installation_id AND p.repo_id = r.repo_id
+	LEFT JOIN agents a ON a.installation_id = r.installation_id AND a.agent_id = r.agent_id`;
+
+/** At most limit runs, newest first, recorded before the run whose rowid is before; the newest when before is omitted. */
+export async function listRunsPage(t: TenantDb, limit: number, before?: number): Promise<RunListRow[]> {
+	return t.all<RunListRow>(
+		`${RUN_LIST_SELECT} WHERE r.installation_id = ?1 AND r.rowid < ?2 ORDER BY r.rowid DESC LIMIT ?3`,
+		before ?? Number.MAX_SAFE_INTEGER,
+		limit,
+	);
+}
+
+export async function getRunListRow(t: TenantDb, runId: string): Promise<RunListRow | null> {
+	return t.first<RunListRow>(`${RUN_LIST_SELECT} WHERE r.installation_id = ?1 AND r.run_id = ?2`, runId);
+}
+
+/** A job with where its finished log is stored: log_key is null until the agent uploads it. */
+export interface JobLogRow extends JobRow {
+	log_key: string | null;
+	log_bytes: number | null;
+	log_truncated: number;
+}
+
+/** The run's jobs in the order they were planned; empty when the run is not this installation's. */
+export async function listJobsOfRun(t: TenantDb, runId: string): Promise<JobLogRow[]> {
+	return t.all<JobLogRow>(
+		"SELECT j.* FROM jobs j JOIN runs r ON r.run_id = j.run_id WHERE r.installation_id = ?1 AND j.run_id = ?2 ORDER BY j.rowid",
+		runId,
+	);
+}
+
+/** One job of the run, or null when the run is not this installation's or has no such job. */
+export async function getJobOfRun(t: TenantDb, runId: string, job: string): Promise<JobLogRow | null> {
+	return t.first<JobLogRow>(
+		"SELECT j.* FROM jobs j JOIN runs r ON r.run_id = j.run_id WHERE r.installation_id = ?1 AND j.run_id = ?2 AND j.name = ?3",
+		runId,
+		job,
+	);
+}
+
 /** The repo's latest run, of the commit whose SHA starts with shaPrefix when given; null when none. */
 export async function findLatestRun(t: TenantDb, repoId: number, shaPrefix?: string): Promise<RunRow | null> {
 	if (shaPrefix === undefined) {

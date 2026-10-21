@@ -47,4 +47,9 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/support", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
   { method: "GET", path: "/logs/:runId/:job", auth: "log_sig" },
+  { method: "GET", path: "/app", auth: "session" },
+  { method: "GET", path: "/app/login", auth: "public" },
+  { method: "GET", path: "/app/:installationId", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs/:runId", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs/:runId/logs/:job", auth: "session" },
 ];

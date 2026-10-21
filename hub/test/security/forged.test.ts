@@ -49,7 +49,10 @@ type Expected =
   /** An HTML errorPage, which shows the message S.pages.errors holds for the code. */
   | { status: number; page: "oauth_state_invalid" | "github_no_access" }
   /** /slack/install's start-from-GitHub page, which carries no error code and issues no state. */
-  | { status: 403; slackStartPage: true };
+  | { status: 403; slackStartPage: true }
+  /** The dashboard's sign-in page (200) or its 404 page, neither of which carries a cookie. */
+  | { status: 200; dashboard: "signInTitle" }
+  | { status: 404; dashboard: "notFoundTitle" };
 
 interface Case {
   kind: CaseKind;
@@ -197,13 +200,20 @@ async function forgedSession(tenant: Tenant): Promise<string> {
 function sessionRequest(path: string, tenant: Tenant, cookie: string | null): Request {
   const headers = new Headers();
   if (cookie !== null) headers.set("cookie", cookie);
-  return new Request(`${ORIGIN}${path}?installation_id=${tenant.installationId}`, { headers });
+  const target = path.startsWith("/app")
+    ? path.replace(":installationId", String(tenant.installationId)).replace(":runId", tenant.runId).replace(":job", tenant.job)
+    : `${path}?installation_id=${tenant.installationId}`;
+  return new Request(`${ORIGIN}${target}`, { headers });
 }
 
 const SESSION_REFUSALS: Record<string, Expected> = {
   "/start": { status: 403, page: "github_no_access" },
   "/start/status": { status: 404, json: "not_found" },
   "/slack/install": { status: 403, slackStartPage: true },
+  "/app": { status: 200, dashboard: "signInTitle" },
+  "/app/:installationId": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
 };
 
 function sessionRefusal(path: string): Expected {
@@ -443,6 +453,10 @@ describe.each(ATTACKED)("$method $path ($auth)", (endpoint) => {
     } else if ("page" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(await res.text()).toContain(escapeHtml(S.pages.errors[expected.page]));
+    } else if ("dashboard" in expected) {
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("set-cookie")).toBeNull();
+      expect(await res.text()).toContain(escapeHtml(S.dashboard[expected.dashboard]));
     } else {
       expect(res.headers.get("set-cookie")).toBeNull();
       expect(await res.text()).toContain(escapeHtml(S.pages.slackStartBody));

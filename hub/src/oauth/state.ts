@@ -9,7 +9,7 @@ import { base64url, hmacSha256, sha256Hex, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 
-export type OAuthKind = "github_install" | "github_link" | "slack_install";
+export type OAuthKind = "github_install" | "github_link" | "slack_install" | "dashboard_login";
 /** cookie is the full Set-Cookie header value. */
 export interface IssuedState {
 	state: string;
@@ -59,11 +59,17 @@ function parsePayload(raw: string | null | undefined): Record<string, unknown> {
 	return payload;
 }
 
+/** The nonce of state when its signature holds for kind, else null. */
+async function verifiedNonce(env: Env, kind: OAuthKind, state: string): Promise<string | null> {
+	const [nonce, signature, ...rest] = state.split(".");
+	if (!nonce || !signature || rest.length > 0) return null;
+	return timingSafeEqual(signature, await sign(env, `${kind}.${nonce}`)) ? nonce : null;
+}
+
 /** The nonce of state when its signature holds for kind; throws oauth_state_invalid otherwise. */
 async function signedNonce(env: Env, kind: OAuthKind, state: string): Promise<string> {
-	const [nonce, signature, ...rest] = state.split(".");
-	if (!nonce || !signature || rest.length > 0) throw new HubError("oauth_state_invalid", 400);
-	if (!timingSafeEqual(signature, await sign(env, `${kind}.${nonce}`))) throw new HubError("oauth_state_invalid", 400);
+	const nonce = await verifiedNonce(env, kind, state);
+	if (nonce === null) throw new HubError("oauth_state_invalid", 400);
 	return nonce;
 }
 
@@ -136,6 +142,24 @@ export async function consumeState(
 	return parsePayload(row?.payload);
 }
 
+/**
+ * consumeState for a callback shared by several kinds: consumes state as the
+ * first of kinds whose signature it carries, and returns that kind with the
+ * payload. Throws oauth_state_invalid (400) when it carries none of them.
+ */
+export async function consumeAnyState<K extends OAuthKind>(
+	env: Env,
+	kinds: readonly K[],
+	state: string,
+	cookieHeader: string | null,
+	now: number,
+): Promise<{ kind: K; payload: Record<string, unknown> }> {
+	for (const kind of kinds) {
+		if ((await verifiedNonce(env, kind, state)) !== null) return { kind, payload: await consumeState(env, kind, state, cookieHeader, now) };
+	}
+	throw new HubError("oauth_state_invalid", 400);
+}
+
 /** Set-Cookie value that removes the state cookie once its state is consumed. */
 export const CLEAR_STATE_COOKIE = setCookie(STATE_COOKIE, "", 0);
 
@@ -156,13 +180,8 @@ export async function issueSession(env: Env, session: Session, now: number): Pro
 	return setCookie(SESSION_COOKIE, `${body}.${await sign(env, `session.${body}`)}`, SESSION_TTL_MS / 1000);
 }
 
-/** The session from the Cookie header when its signature holds, it is unexpired and it covers installationId; else null. */
-export async function readSession(
-	env: Env,
-	cookieHeader: string | null | undefined,
-	installationId: number,
-	now: number,
-): Promise<Session | null> {
+/** The session from the Cookie header when its signature holds and it is unexpired; else null. */
+export async function readAnySession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<Session | null> {
 	const value = readCookie(cookieHeader, SESSION_COOKIE);
 	if (!value) return null;
 	const [ids, user, login, expires, signature, ...rest] = value.split(".");
@@ -170,7 +189,16 @@ export async function readSession(
 	const body = `${ids}.${user}.${login}.${expires}`;
 	if (!timingSafeEqual(signature, await sign(env, `session.${body}`))) return null;
 	if (Number(expires) <= now) return null;
-	const installationIds = ids.split("-").map(Number);
-	if (!installationIds.includes(installationId)) return null;
-	return { installationIds, githubUserId: Number(user), githubLogin: login };
+	return { installationIds: ids.split("-").map(Number), githubUserId: Number(user), githubLogin: login };
+}
+
+/** The session from the Cookie header when its signature holds, it is unexpired and it covers installationId; else null. */
+export async function readSession(
+	env: Env,
+	cookieHeader: string | null | undefined,
+	installationId: number,
+	now: number,
+): Promise<Session | null> {
+	const session = await readAnySession(env, cookieHeader, now);
+	return session?.installationIds.includes(installationId) ? session : null;
 }
