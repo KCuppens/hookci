@@ -28,6 +28,9 @@ export interface CheckUpdate extends CheckTarget {
 
 export type SendUpdate = (update: CheckUpdate) => Promise<void>;
 
+/** Runs fn after every earlier call on target's commit, so a flush never overtakes a newer update. */
+export type Serialize = (target: CheckTarget, fn: () => Promise<void>) => Promise<void>;
+
 type StateRow = {
 	key: string;
 	sent_at: number;
@@ -50,6 +53,7 @@ export class CheckUpdateCoalescer {
 	constructor(
 		private readonly host: SinkHost,
 		private readonly send: SendUpdate,
+		private readonly serialize: Serialize = (_, fn) => fn(),
 	) {}
 
 	/** Sends update now, or keeps it as the check run's pending update and schedules the alarm. */
@@ -67,17 +71,26 @@ export class CheckUpdateCoalescer {
 		await this.schedule(due);
 	}
 
-	/** Sends every pending update that is due; resolves true while some stay pending. */
+	/**
+	 * Sends every pending update that is due; resolves true while some stay
+	 * pending. Each row is read again in its commit's turn: a completed update
+	 * queued ahead of the flush has cleared it by then.
+	 */
 	async flushDue(): Promise<boolean> {
 		const now = this.host.now();
 		const due = this.sql.exec<StateRow>("SELECT * FROM check_state WHERE pending IS NOT NULL AND due_at <= ? ORDER BY due_at", now).toArray();
 		for (const row of due) {
 			if (row.pending === null) continue;
-			const update: CheckUpdate = JSON.parse(row.pending);
+			const target: CheckTarget = JSON.parse(row.pending);
 			try {
-				await this.deliver(row.key, update, now);
+				await this.serialize(target, async () => {
+					const current = this.sql
+						.exec<StateRow>("SELECT * FROM check_state WHERE key = ? AND pending IS NOT NULL AND due_at <= ?", row.key, now)
+						.toArray()[0];
+					if (current?.pending) await this.deliver(row.key, JSON.parse(current.pending), now);
+				});
 			} catch (err) {
-				reportError(err, { installation_id: update.installationId, repo_id: update.repoId, check: update.name, op: "check_flush" });
+				reportError(err, { installation_id: target.installationId, repo_id: target.repoId, check: target.name, op: "check_flush" });
 			}
 		}
 		this.sql.exec("DELETE FROM check_state WHERE pending IS NULL AND touched_at < ?", now - FORGET_AFTER_MS);
