@@ -15,7 +15,7 @@ import { ephemeral } from "./common";
 
 registerCommand("delete-my-data", async ({ env, teamId, userId }) => {
 	const deleted = await deleteSlackUserData(env.DB, teamId, userId);
-	return ephemeral(S.slack.deletedData(deleted.links, deleted.authorMappings, deleted.authorCache));
+	return ephemeral(S.slack.deletedData(deleted.links, deleted.authorMappings, deleted.authorCache, deleted.accounts));
 });
 
 registerCommand("export", async ({ env, teamId, userId }) => {

@@ -19,6 +19,7 @@ import { logEvent } from "../observability";
 import { noInstallationPage, notFoundPage, runPage, runsPage, signInPage } from "../pages/dashboard";
 import { errorPage } from "../pages/error";
 import { QUOTAS } from "../quotas";
+import { accountsEnabled, renderLogin } from "./account";
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -52,10 +53,16 @@ async function scopeOf(c: AppContext): Promise<Scope | null> {
 
 export async function dashboardHome(c: AppContext): Promise<Response> {
 	const session = await readAnySession(c.env, c.req.header("cookie"), (c.env.__TEST_CLOCK ?? systemClock).now());
-	if (!session) return signInPage();
+	if (!session) return accountsEnabled(c.env) ? renderLogin(c) : signInPage();
 	const live = new Set((await listLiveInstallations(c.env.DB, session.installationIds)).map((a) => a.id));
 	const first = session.installationIds.find((id) => live.has(id));
-	if (first === undefined) return noInstallationPage();
+	if (first === undefined) {
+		// An email account that has not completed GitHub authorization in this session has no installations yet.
+		if (session.accountId !== undefined && session.githubUserId === 0) {
+			return new Response(null, { status: 303, headers: { Location: "/account/connect-github", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+		}
+		return noInstallationPage();
+	}
 	return new Response(null, { status: 303, headers: { Location: `/app/${first}`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
 

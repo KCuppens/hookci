@@ -80,7 +80,7 @@ describe("/hookci delete-my-data", () => {
 
     const reply = await hookci(world, "delete-my-data");
 
-    expect(reply.text).toBe(S.slack.deletedData(1, 1, 1));
+    expect(reply.text).toBe(S.slack.deletedData(1, 1, 1, 0));
     const survivors = [
       { team_id: TEAM, slack_user_id: OTHER_USER },
       { team_id: OTHER_TEAM, slack_user_id: USER },
@@ -93,7 +93,7 @@ describe("/hookci delete-my-data", () => {
   it("works for a user with no GitHub link", async () => {
     await seedAuthorRows(TEAM, OTHER_USER, "hubot");
 
-    expect((await hookci(world, "delete-my-data", OTHER_USER)).text).toBe(S.slack.deletedData(0, 1, 1));
+    expect((await hookci(world, "delete-my-data", OTHER_USER)).text).toBe(S.slack.deletedData(0, 1, 1, 0));
     expect(await rowsOf("author_map")).toEqual([]);
   });
 });

@@ -39,7 +39,11 @@ const original = {
   SLACK_SIGNING_SECRET_PREVIOUS: env.SLACK_SIGNING_SECRET_PREVIOUS,
   LOG_SIGNING_KEYS: env.LOG_SIGNING_KEYS,
   DB: env.DB,
+  ACCOUNTS_ENABLED: env.ACCOUNTS_ENABLED,
+  GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
 };
+const ACCOUNT_VARS = ["ACCOUNTS_ENABLED", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] as const;
 
 type CaseKind = "missing" | "wrong" | "previous" | "stale" | "wrong_bearer";
 
@@ -52,7 +56,11 @@ type Expected =
   | { status: 403; slackStartPage: true }
   /** The dashboard's sign-in page (200) or its 404 page, neither of which carries a cookie. */
   | { status: 200; dashboard: "signInTitle" }
-  | { status: 404; dashboard: "notFoundTitle" };
+  | { status: 404; dashboard: "notFoundTitle" }
+  /** An account page, which carries the given text. */
+  | { status: number; accountPage: string }
+  /** A redirect to a fixed internal path. */
+  | { status: 303; redirect: string };
 
 interface Case {
   kind: CaseKind;
@@ -177,6 +185,7 @@ const OAUTH_ROUTES: Record<string, { param: string; kind: string }> = {
   "/github/link/start": { param: "t", kind: "github_link" },
   "/github/link/callback": { param: "state", kind: "github_link" },
   "/slack/oauth/callback": { param: "state", kind: "slack_install" },
+  "/account/google/callback": { param: "state", kind: "google_login" },
 };
 
 /** A GET with fields in the query, or a POST with them as a form body. */
@@ -214,7 +223,27 @@ const SESSION_REFUSALS: Record<string, Expected> = {
   "/app/:installationId": { status: 404, dashboard: "notFoundTitle" },
   "/app/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
   "/app/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
+  "/account/connect-github": { status: 303, redirect: "/account/login" },
 };
+
+function oauthRefusal(path: string): Expected {
+  return path.startsWith("/account") ? { status: 400, accountPage: S.account.errors.googleFailed } : { status: 400, page: "oauth_state_invalid" };
+}
+
+/** Forged account requests need the feature on; afterEach puts the real values back. */
+function accountsOn(): void {
+  env.ACCOUNTS_ENABLED = "true";
+  env.GOOGLE_CLIENT_ID = "forged-client-id";
+  env.GOOGLE_CLIENT_SECRET = "forged-client-secret";
+}
+
+function accountForm(path: string, fields: Record<string, string>, headers: Record<string, string>): Request {
+  return new Request(`${ORIGIN}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: env.HUB_ORIGIN, "cf-connecting-ip": "203.0.113.7", ...headers },
+    body: new URLSearchParams(fields).toString(),
+  });
+}
 
 function sessionRefusal(path: string): Expected {
   const expected = SESSION_REFUSALS[path];
@@ -373,17 +402,81 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       {
         kind: "missing",
         name: "no state",
-        request: async () => oauthRequest(method, path, path === "/github/link/start" ? {} : { code: "forged-code" }, null),
-        expected: { status: 400, page: "oauth_state_invalid" },
+        request: async () => {
+          if (path.startsWith("/account")) accountsOn();
+          return oauthRequest(method, path, path === "/github/link/start" ? {} : { code: "forged-code" }, null);
+        },
+        expected: oauthRefusal(path),
       },
       {
         kind: "wrong",
         name: "a state signed with a key the hub never had, with its cookie",
         request: async () => {
           const { state, cookie } = await forgedState(route.kind);
+          if (path.startsWith("/account")) accountsOn();
           return oauthRequest(method, path, { code: "forged-code", [route.param]: state }, cookie);
         },
-        expected: { status: 400, page: "oauth_state_invalid" },
+        expected: oauthRefusal(path),
+      },
+    ];
+  },
+
+  email_token: ({ path }) => {
+    const expected: Expected = { status: 400, accountPage: path === "/account/verify" ? S.account.verify.invalidTitle : S.account.reset.invalidTitle };
+    return [
+      {
+        kind: "missing",
+        name: "no token",
+        request: async () => {
+          accountsOn();
+          return new Request(`${ORIGIN}${path}`, { headers: { "cf-connecting-ip": "203.0.113.7" } });
+        },
+        expected,
+      },
+      {
+        kind: "wrong",
+        name: "a well-formed token the hub never mailed",
+        request: async () => {
+          accountsOn();
+          return new Request(`${ORIGIN}${path}?token=${base64url(crypto.getRandomValues(new Uint8Array(32)))}`, { headers: { "cf-connecting-ip": "203.0.113.7" } });
+        },
+        expected,
+      },
+    ];
+  },
+
+  csrf_form: ({ path }) => {
+    const expected: Expected = { status: 403, accountPage: S.account.errors.csrf };
+    const fields = { email: "forged@example.test", password: "Forged-pass-1", token: base64url(crypto.getRandomValues(new Uint8Array(32))) };
+    const cookieValue = base64url(crypto.getRandomValues(new Uint8Array(32)));
+    const csrfCookie = `__Host-hookci_csrf=${cookieValue}`;
+    return [
+      {
+        kind: "missing",
+        name: "no csrf cookie and no token",
+        request: async () => {
+          accountsOn();
+          return accountForm(path, fields, {});
+        },
+        expected,
+      },
+      {
+        kind: "wrong",
+        name: "a token signed with a key the hub never had, with its cookie",
+        request: async () => {
+          accountsOn();
+          return accountForm(path, { ...fields, csrf: base64url(await hmacSha256(WRONG_SECRET, `csrf.${cookieValue}`)) }, { cookie: csrfCookie });
+        },
+        expected,
+      },
+      {
+        kind: "wrong",
+        name: "a valid token sent from another origin",
+        request: async () => {
+          accountsOn();
+          return accountForm(path, { ...fields, csrf: base64url(await hmacSha256(env.STATE_SIGNING_KEY, `csrf.${cookieValue}`)) }, { cookie: csrfCookie, origin: "https://evil.test" });
+        },
+        expected,
       },
     ];
   },
@@ -405,9 +498,28 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       ];
     }
     const expected = sessionRefusal(path);
+    const prepare = (): void => {
+      if (path.startsWith("/account")) accountsOn();
+    };
     return [
-      { kind: "missing", name: "no session cookie", request: async (t) => sessionRequest(path, t, null), expected },
-      { kind: "wrong", name: "a session cookie signed with a key the hub never had", request: async (t) => sessionRequest(path, t, await forgedSession(t)), expected },
+      {
+        kind: "missing",
+        name: "no session cookie",
+        request: async (t) => {
+          prepare();
+          return sessionRequest(path, t, null);
+        },
+        expected,
+      },
+      {
+        kind: "wrong",
+        name: "a session cookie signed with a key the hub never had",
+        request: async (t) => {
+          prepare();
+          return sessionRequest(path, t, await forgedSession(t));
+        },
+        expected,
+      },
     ];
   },
 };
@@ -435,6 +547,10 @@ afterEach(() => {
   else env.GITHUB_WEBHOOK_SECRET_PREVIOUS = original.GITHUB_WEBHOOK_SECRET_PREVIOUS;
   if (original.SLACK_SIGNING_SECRET_PREVIOUS === undefined) delete env.SLACK_SIGNING_SECRET_PREVIOUS;
   else env.SLACK_SIGNING_SECRET_PREVIOUS = original.SLACK_SIGNING_SECRET_PREVIOUS;
+  for (const key of ACCOUNT_VARS) {
+    if (original[key] === undefined) delete env[key];
+    else env[key] = original[key];
+  }
 });
 
 describe.each(ATTACKED)("$method $path ($auth)", (endpoint) => {
@@ -453,6 +569,13 @@ describe.each(ATTACKED)("$method $path ($auth)", (endpoint) => {
     } else if ("page" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(await res.text()).toContain(escapeHtml(S.pages.errors[expected.page]));
+    } else if ("accountPage" in expected) {
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toContain(escapeHtml(expected.accountPage));
+    } else if ("redirect" in expected) {
+      expect(res.headers.get("location")).toBe(expected.redirect);
+      expect(res.headers.get("set-cookie")).toBeNull();
     } else if ("dashboard" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(res.headers.get("set-cookie")).toBeNull();

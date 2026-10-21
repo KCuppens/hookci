@@ -15,6 +15,10 @@ export type EndpointAuth =
   | "oauth_state"
   /** A signed session token or cookie the hub issued earlier. */
   | "session"
+  /** A single-use token mailed to the address owner. */
+  | "email_token"
+  /** A signed, browser-bound form token (double-submit cookie) and a same-origin Origin header. */
+  | "csrf_form"
   | "public";
 
 export interface Endpoint {
@@ -52,4 +56,17 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/app/:installationId", auth: "session" },
   { method: "GET", path: "/app/:installationId/runs/:runId", auth: "session" },
   { method: "GET", path: "/app/:installationId/runs/:runId/logs/:job", auth: "session" },
+  { method: "GET", path: "/account/login", auth: "public" },
+  { method: "GET", path: "/account/register", auth: "public" },
+  { method: "GET", path: "/account/forgot-password", auth: "public" },
+  { method: "GET", path: "/account/google/start", auth: "public" },
+  { method: "GET", path: "/account/verify", auth: "email_token" },
+  { method: "GET", path: "/account/reset-password", auth: "email_token" },
+  { method: "GET", path: "/account/google/callback", auth: "oauth_state" },
+  { method: "GET", path: "/account/connect-github", auth: "session" },
+  { method: "POST", path: "/account/login", auth: "csrf_form" },
+  { method: "POST", path: "/account/register", auth: "csrf_form" },
+  { method: "POST", path: "/account/forgot-password", auth: "csrf_form" },
+  { method: "POST", path: "/account/reset-password", auth: "csrf_form" },
+  { method: "POST", path: "/account/connect-github", auth: "csrf_form" },
 ];

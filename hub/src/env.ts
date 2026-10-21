@@ -1,3 +1,4 @@
+import type { EmailBinding, EmailSender } from "./accounts/email";
 import type { AgentDO } from "./do/agent";
 import type { Clock } from "./do/clock";
 import type { SlackWorkspaceDO } from "./do/slack-workspace";
@@ -38,8 +39,19 @@ export interface Env {
 	/** JSON `{"<version>":"<base64 key>"}`; the highest version is current. */
 	LOG_SIGNING_KEYS: string;
 	ROTATION_IN_PROGRESS?: string;
+	/** "true" turns on email and password accounts and Google sign-in (the /account routes); anything else leaves them off and the routes 404. */
+	ACCOUNTS_ENABLED?: string;
+	/** The sender address of account email; its domain must be onboarded to Cloudflare Email Service. */
+	ACCOUNTS_MAIL_FROM?: string;
+	/** Cloudflare Email Service send_email binding; account email is not sent without it. */
+	EMAIL?: EmailBinding;
+	/** Google OAuth client for "Continue with Google"; the button is hidden unless both are set. */
+	GOOGLE_CLIENT_ID?: string;
+	GOOGLE_CLIENT_SECRET?: string;
 	/** Tests only: replaces the wall clock. Never set in wrangler.toml. */
 	__TEST_CLOCK?: Clock;
 	/** Tests only: replaces fetch for GitHub and Slack calls. Never set in wrangler.toml. */
 	__TEST_FETCHER?: Fetcher;
+	/** Tests only: replaces the Cloudflare email binding. Never set in wrangler.toml. */
+	__TEST_EMAIL?: EmailSender;
 }

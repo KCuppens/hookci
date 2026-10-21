@@ -9,7 +9,7 @@ import { base64url, hmacSha256, sha256Hex, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 
-export type OAuthKind = "github_install" | "github_link" | "slack_install" | "dashboard_login";
+export type OAuthKind = "github_install" | "github_link" | "slack_install" | "dashboard_login" | "google_login";
 /** cookie is the full Set-Cookie header value. */
 export interface IssuedState {
 	state: string;
@@ -21,12 +21,12 @@ export const STATE_COOKIE = "__Host-hookci_oauth";
 export const SESSION_TTL_MS = 30 * 60_000;
 export const SESSION_COOKIE = "__Host-hookci_session";
 
-function setCookie(name: string, value: string, maxAgeSeconds: number): string {
+export function setCookie(name: string, value: string, maxAgeSeconds: number): string {
 	return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
 }
 
 /** The value of cookie name in a Cookie request header, or null. */
-function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
+export function readCookie(cookieHeader: string | null | undefined, name: string): string | null {
 	if (!cookieHeader) return null;
 	for (const part of cookieHeader.split(";")) {
 		const eq = part.indexOf("=");
@@ -164,32 +164,49 @@ export async function consumeAnyState<K extends OAuthKind>(
 export const CLEAR_STATE_COOKIE = setCookie(STATE_COOKIE, "", 0);
 
 export interface Session {
-	/** Installations GitHub reported this user can access. */
+	/** Installations GitHub reported this user can access; empty for an account that has not linked GitHub. */
 	installationIds: number[];
+	/** 0 for an account that has not linked GitHub. */
 	githubUserId: number;
-	/** GitHub logins hold only letters, digits and hyphens, so they never contain the "." separator. */
+	/** GitHub logins hold only letters, digits and hyphens, so they never contain the "." separator. "-" for an account that has not linked GitHub. */
 	githubLogin: string;
+	/** The email account (a ULID) the browser signed in with, when ACCOUNTS_ENABLED; absent for a plain GitHub sign-in. */
+	accountId?: string;
 }
+
+// An empty installation list is written as "0"; ids are positive integers.
+const IDS_SHAPE = /^(?:0|[1-9]\d*(?:-[1-9]\d*)*)$/;
+const ACCOUNT_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
 /**
  * Set-Cookie value for a session valid for 30 minutes from now. The value is
- * "<id>-<id>.<github user id>.<github login>.<expires at ms>.<hmac>".
+ * "<id>-<id>.<github user id>.<github login>.<expires at ms>[.<account id>].<hmac>".
  */
 export async function issueSession(env: Env, session: Session, now: number): Promise<string> {
-	const body = `${session.installationIds.join("-")}.${session.githubUserId}.${session.githubLogin}.${now + SESSION_TTL_MS}`;
+	const ids = session.installationIds.length > 0 ? session.installationIds.join("-") : "0";
+	const account = session.accountId === undefined ? "" : `.${session.accountId}`;
+	const body = `${ids}.${session.githubUserId}.${session.githubLogin}.${now + SESSION_TTL_MS}${account}`;
 	return setCookie(SESSION_COOKIE, `${body}.${await sign(env, `session.${body}`)}`, SESSION_TTL_MS / 1000);
 }
 
-/** The session from the Cookie header when its signature holds and it is unexpired; else null. */
+/** The session from the Cookie header when its signature holds, its fields are well formed and it is unexpired; else null. */
 export async function readAnySession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<Session | null> {
 	const value = readCookie(cookieHeader, SESSION_COOKIE);
 	if (!value) return null;
-	const [ids, user, login, expires, signature, ...rest] = value.split(".");
-	if (!ids || !user || !login || !expires || !signature || rest.length > 0) return null;
-	const body = `${ids}.${user}.${login}.${expires}`;
-	if (!timingSafeEqual(signature, await sign(env, `session.${body}`))) return null;
+	const parts = value.split(".");
+	const signature = parts.pop();
+	if (!signature || (parts.length !== 4 && parts.length !== 5)) return null;
+	const [ids = "", user = "", login = "", expires = "", accountId] = parts;
+	if (!IDS_SHAPE.test(ids) || !/^\d+$/.test(user) || !/^[A-Za-z0-9-]+$/.test(login) || !/^\d+$/.test(expires)) return null;
+	if (accountId !== undefined && !ACCOUNT_ID_SHAPE.test(accountId)) return null;
+	if (!timingSafeEqual(signature, await sign(env, `session.${parts.join(".")}`))) return null;
 	if (Number(expires) <= now) return null;
-	return { installationIds: ids.split("-").map(Number), githubUserId: Number(user), githubLogin: login };
+	return {
+		installationIds: ids === "0" ? [] : ids.split("-").map(Number),
+		githubUserId: Number(user),
+		githubLogin: login,
+		...(accountId === undefined ? {} : { accountId }),
+	};
 }
 
 /** The session from the Cookie header when its signature holds, it is unexpired and it covers installationId; else null. */

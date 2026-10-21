@@ -10,6 +10,7 @@
 // request: never stored, never logged.
 
 import type { Context } from "hono";
+import { linkGithubUser } from "../accounts/service";
 import { listLiveInstallations } from "../db/installations";
 import { hitIpRate } from "../db/ip-rate";
 import { type Clock, systemClock } from "../do/clock";
@@ -19,8 +20,9 @@ import { getUser, listUserInstallations } from "../github/api";
 import { GitHubClient } from "../github/client";
 import { exchangeCode, redirectToAuthorize } from "../github/oauth";
 import { defaultFetcher } from "../http";
-import { CLEAR_STATE_COOKIE, consumeAnyState, issueSession, issueState } from "../oauth/state";
+import { CLEAR_STATE_COOKIE, consumeAnyState, issueSession, issueState, readAnySession } from "../oauth/state";
 import { logEvent } from "../observability";
+import { connectConflictPage } from "../pages/account";
 import { noInstallationPage } from "../pages/dashboard";
 import { errorPage } from "../pages/error";
 import { pickerPage, updatedPage } from "../pages/installed";
@@ -41,22 +43,55 @@ interface CallbackQuery {
 /**
  * Ends the dashboard sign-in: a session covering the hub's live installations
  * among those the user can access, then the dashboard. Read-only, so unlike an
- * install it syncs nothing from GitHub.
+ * install it syncs nothing from GitHub. For an email account (accountId) the
+ * session also names the account, and it is issued even when no live
+ * installation is covered, so the person stays signed in to their account.
  */
 async function finishDashboardLogin(
 	env: Env,
 	clock: Clock,
 	user: { id: number; login: string },
 	accessible: readonly SyncableInstallation[],
+	accountId?: string,
 ): Promise<Response> {
 	const live = await listLiveInstallations(env.DB, accessible.map((i) => i.id));
-	logEvent("dashboard_login", { github_user_id: user.id, installations: live.length });
-	if (live.length === 0) return noInstallationPage([CLEAR_STATE_COOKIE]);
-	const session = await issueSession(env, { installationIds: live.map((i) => i.id), githubUserId: user.id, githubLogin: user.login }, clock.now());
+	logEvent("dashboard_login", { github_user_id: user.id, installations: live.length, account: accountId !== undefined });
+	if (live.length === 0 && accountId === undefined) return noInstallationPage([CLEAR_STATE_COOKIE]);
+	const session = await issueSession(
+		env,
+		{ installationIds: live.map((i) => i.id), githubUserId: user.id, githubLogin: user.login, ...(accountId === undefined ? {} : { accountId }) },
+		clock.now(),
+	);
+	if (live.length === 0) return noInstallationPage([CLEAR_STATE_COOKIE, session]);
 	const headers = new Headers({ Location: "/app", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
 	headers.append("Set-Cookie", CLEAR_STATE_COOKIE);
 	headers.append("Set-Cookie", session);
 	return new Response(null, { status: 303, headers });
+}
+
+/**
+ * The GitHub step of an email account's sign-in: the state was issued by
+ * /account/connect-github for this account, and the browser's session must
+ * still name it, so a state cannot be completed by or for another browser.
+ * The account is linked to the GitHub user GitHub just authenticated; what that
+ * user may see is then the same installation list as any dashboard sign-in.
+ */
+async function finishAccountLogin(
+	env: Env,
+	clock: Clock,
+	cookieHeader: string | null,
+	accountId: string,
+	user: { id: number; login: string },
+	accessible: readonly SyncableInstallation[],
+): Promise<Response> {
+	const session = await readAnySession(env, cookieHeader, clock.now());
+	if (env.ACCOUNTS_ENABLED !== "true" || session?.accountId !== accountId) throw new HubError("oauth_state_invalid", 400);
+	const link = await linkGithubUser(env, accountId, user);
+	if (!link.ok) {
+		if (link.reason === "unknown_account") throw new HubError("oauth_state_invalid", 400);
+		return connectConflictPage({ status: 409, cookies: [CLEAR_STATE_COOKIE] });
+	}
+	return finishDashboardLogin(env, clock, user, accessible, accountId);
 }
 
 async function completeCallback(env: Env, clock: Clock, q: CallbackQuery): Promise<Response> {
@@ -78,7 +113,13 @@ async function completeCallback(env: Env, clock: Clock, q: CallbackQuery): Promi
 	for (const inst of await listUserInstallations(user)) {
 		if (inst.app_id === appId && isSyncableInstallation(inst)) accessible.push(inst);
 	}
-	if (kind === "dashboard_login") return finishDashboardLogin(env, clock, await getUser(user), accessible);
+	if (kind === "dashboard_login") {
+		const github = await getUser(user);
+		const accountId = typeof payload.account_id === "string" ? payload.account_id : undefined;
+		return accountId === undefined
+			? finishDashboardLogin(env, clock, github, accessible)
+			: finishAccountLogin(env, clock, q.cookieHeader, accountId, github, accessible);
+	}
 
 	const chosen =
 		installationId !== undefined

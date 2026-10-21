@@ -16,6 +16,8 @@ LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci"
 SLACK_APP_ID = "A0000000000"
+# Email accounts are off unless "true"; see docs/self-hosting.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
+ACCOUNTS_ENABLED = "false"
 
 [observability]
 enabled = true
@@ -37,6 +39,10 @@ class_name = "AgentDO"
 [[durable_objects.bindings]]
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
+
+# Sends account mail (verify email, reset password). Used only when ACCOUNTS_ENABLED is "true" and ACCOUNTS_MAIL_FROM is set.
+[[send_email]]
+name = "EMAIL"
 
 [[migrations]]
 tag = "v1"
@@ -61,6 +67,8 @@ LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci-staging"
 SLACK_APP_ID = "A0000000001"
+# Email accounts are off unless "true"; see docs/self-hosting.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
+ACCOUNTS_ENABLED = "false"
 
 [env.staging.observability]
 enabled = true
@@ -82,3 +90,6 @@ class_name = "AgentDO"
 [[env.staging.durable_objects.bindings]]
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
+
+[[env.staging.send_email]]
+name = "EMAIL"

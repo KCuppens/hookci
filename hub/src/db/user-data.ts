@@ -3,6 +3,7 @@
 // Slack team and user across installations, so these helpers take the raw
 // D1Database; runs go through TenantDb per installation.
 
+import { deleteAccountsOfGithubUser } from "./accounts";
 import type { RunRow } from "./runs";
 import { tenantDb } from "./tenant";
 
@@ -10,6 +11,8 @@ export interface DeletedUserData {
 	links: number;
 	authorMappings: number;
 	authorCache: number;
+	/** Email accounts linked to the user's GitHub identity; always 0 when ACCOUNTS_ENABLED is off, as none exist. */
+	accounts: number;
 }
 
 export interface AuthorMappingRow {
@@ -19,14 +22,24 @@ export interface AuthorMappingRow {
 
 export type AuthoredRun = RunRow & { full_name: string | null };
 
-/** Deletes the Slack user's GitHub link, author mappings and cached author lookups in the team; returns how many rows each lost. */
+/**
+ * Deletes the Slack user's GitHub link, author mappings and cached author lookups in the team,
+ * and the email account linked to that GitHub user; returns how many rows each lost.
+ */
 export async function deleteSlackUserData(db: D1Database, teamId: string, slackUserId: string): Promise<DeletedUserData> {
+	// The link names the GitHub user whose account to delete, so read it before the link goes.
+	const link = await db.prepare("SELECT github_user_id FROM user_links WHERE team_id = ?1 AND slack_user_id = ?2").bind(teamId, slackUserId).first<{ github_user_id: number }>();
 	const [links, mappings, cache] = await db.batch([
 		db.prepare("DELETE FROM user_links WHERE team_id = ?1 AND slack_user_id = ?2").bind(teamId, slackUserId),
 		db.prepare("DELETE FROM author_map WHERE team_id = ?1 AND slack_user_id = ?2").bind(teamId, slackUserId),
 		db.prepare("DELETE FROM author_cache WHERE team_id = ?1 AND slack_user_id = ?2").bind(teamId, slackUserId),
 	]);
-	return { links: links?.meta.changes ?? 0, authorMappings: mappings?.meta.changes ?? 0, authorCache: cache?.meta.changes ?? 0 };
+	return {
+		links: links?.meta.changes ?? 0,
+		authorMappings: mappings?.meta.changes ?? 0,
+		authorCache: cache?.meta.changes ?? 0,
+		accounts: link ? await deleteAccountsOfGithubUser(db, link.github_user_id) : 0,
+	};
 }
 
 /** The GitHub logins mapped to the Slack user in the team, per installation. */

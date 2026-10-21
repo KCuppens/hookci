@@ -9,6 +9,14 @@ export const QUOTAS = {
 	webhooksPerInstallationPerMin: 600,
 	agentConnectsPerMinPerIp: 30,
 	oauthCallbacksPer10MinPerIp: 20,
+	/** Account form POSTs (login, register, forgot, reset) per IP per 10 minutes. */
+	accountPostsPer10MinPerIp: 30,
+	/** Verification or "already registered" mails per address per hour. */
+	accountMailsPerHourPerEmail: 3,
+	/** Password reset mails per address per hour. */
+	accountResetsPerHourPerEmail: 3,
+	/** Login attempts per address per 10 minutes, on top of the failure lockout. */
+	accountLoginsPer10MinPerEmail: 20,
 	slackWorkspacePerMin: 40,
 	slackChannelPostPerSec: 1,
 	slackQueueMax: 500,

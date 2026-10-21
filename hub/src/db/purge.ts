@@ -9,6 +9,7 @@ const DAY_MS = 24 * HOUR_MS;
 
 const DELIVERY_RETENTION_MS = 7 * DAY_MS;
 const PAIR_TOKEN_RETENTION_MS = DAY_MS;
+const UNVERIFIED_ACCOUNT_RETENTION_MS = 7 * DAY_MS;
 // ip_rate rows only matter inside their rate window, the longest of which is
 // 10 minutes; an hour-old window is dead.
 const IP_RATE_RETENTION_MS = HOUR_MS;
@@ -78,6 +79,11 @@ export async function purgeExpired(db: D1Database, now: number): Promise<number>
 		["author_cache", "expires_at < ?1", now],
 		["ip_rate", "window_start < ?1", now - IP_RATE_RETENTION_MS],
 		["daily_counters", "day < ?1", oldestDay],
+		["email_tokens", "expires_at < ?1", now],
+		// A failure older than the lockout decay no longer counts.
+		["login_attempts", "last_failure_at < ?1", now - IP_RATE_RETENTION_MS],
+		// An address that never confirmed its email is dropped after a week.
+		["users", "email_verified_at IS NULL AND created_at < ?1", now - UNVERIFIED_ACCOUNT_RETENTION_MS],
 	];
 	let deleted = 0;
 	for (const [table, where, bind] of purges) {

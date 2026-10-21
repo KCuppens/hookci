@@ -3,7 +3,8 @@
 // and the runs that GitHub user authored within the retention window.
 
 import { base64url, hmacSha256, timingSafeEqual } from "../crypto";
-import { listAuthorMappings, listAuthoredRuns, type AuthorMappingRow } from "../db/user-data";
+import { type AccountExport, exportAccountOfGithubUser } from "../db/accounts";
+import { type AuthorMappingRow, listAuthorMappings, listAuthoredRuns } from "../db/user-data";
 import { getUserLink, listLinkedInstallationIds } from "../db/workspaces";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -38,6 +39,8 @@ export interface UserDataExport {
 	github_link: { github_user_id: number; github_login: string; linked_at: number } | null;
 	author_mappings: AuthorMappingRow[];
 	runs: ExportedRun[];
+	/** The email account linked to the GitHub user; null when there is none (always, when ACCOUNTS_ENABLED is off). No password hash or token is exported. */
+	account: AccountExport | null;
 }
 
 async function sign(env: Env, data: string): Promise<string> {
@@ -97,5 +100,6 @@ export async function collectUserData(env: Env, teamId: string, slackUserId: str
 		github_link: link && { github_user_id: link.github_user_id, github_login: link.github_login, linked_at: link.created_at },
 		author_mappings: await listAuthorMappings(env.DB, teamId, slackUserId),
 		runs,
+		account: link ? await exportAccountOfGithubUser(env.DB, link.github_user_id) : null,
 	};
 }
