@@ -312,6 +312,7 @@ func TestDetectComposePostgres(t *testing.T) {
 			"postgres.evil.example/x:1":     "",
 			"postgresx:1":                   "",
 			"postgres@sha256:abc12":         "",
+			"pgvector/pgvector:pg16":        "",
 		} {
 			got, ok := postgresImage(image)
 			if ok != (want != "") || (ok && got != want) {

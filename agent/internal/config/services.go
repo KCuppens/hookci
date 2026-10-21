@@ -7,16 +7,30 @@ import (
 	"strings"
 )
 
-// postgresImageRe accepts only the official postgres image, by its short or
-// fully qualified name, pinned by a tag, a digest or both.
-var postgresImageRe = regexp.MustCompile(
-	`^(?:(?:docker\.io/)?library/)?postgres(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$`)
+// imageRef is the part of an image reference after the repository name: a
+// tag, a digest or both.
+const imageRef = `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$`
 
-// ValidPostgresImage reports whether image is the official postgres image
+// officialPostgresRe accepts the official postgres image by its short or
+// fully qualified name.
+var officialPostgresRe = regexp.MustCompile(`^(?:(?:docker\.io/)?library/)?postgres` + imageRef)
+
+// pgvectorRe accepts pgvector/pgvector, the pgvector project's build of the
+// official image with the vector extension added.
+var pgvectorRe = regexp.MustCompile(`^(?:docker\.io/)?pgvector/pgvector` + imageRef)
+
+// OfficialPostgresImage reports whether image is the official postgres image
 // (postgres, library/postgres or docker.io/library/postgres) with a tag or
-// digest. The agent pulls and runs this image, so no other is accepted.
+// digest.
+func OfficialPostgresImage(image string) bool {
+	return officialPostgresRe.MatchString(image)
+}
+
+// ValidPostgresImage reports whether image is the official postgres image or
+// pgvector/pgvector, with a tag or digest. The agent pulls and runs this
+// image, so no other is accepted.
 func ValidPostgresImage(image string) bool {
-	return postgresImageRe.MatchString(image)
+	return officialPostgresRe.MatchString(image) || pgvectorRe.MatchString(image)
 }
 
 // SplitCachePath maps a setup cache path onto its base directory: "~" and
