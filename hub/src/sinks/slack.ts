@@ -201,8 +201,9 @@ export class SlackSink implements Sink {
 	/**
 	 * Posts a deploy's reply in the thread of parentTs once per step and once
 	 * when it ends, claimed in slack_job_replies under runKey: steps and the
-	 * final line for normal notify only, a failure always, with the author's
-	 * mention, or as a DM to them when the watch alerts by DM.
+	 * final line for normal notify only, a failure always. A success and a
+	 * failure mention the author; a failure goes to them as a DM instead when
+	 * the watch alerts by DM.
 	 */
 	async deployReply(
 		repo: string,
@@ -218,7 +219,14 @@ export class SlackSink implements Sink {
 		const { team_id: team, channel_id: channel } = watch;
 		if (!(await claimThreadReply(this.t, runKey, team, channel, key))) return;
 		if (s.state !== "failed") {
-			const msg = renderDeployReply(s);
+			let mention: string | null = null;
+			try {
+				if (s.state === "succeeded" && authorLogin) mention = await this.deployAuthor(team, authorLogin);
+			} catch (err) {
+				await releaseThreadReply(this.t, runKey, team, channel, key);
+				throw err;
+			}
+			const msg = renderDeployReply(s, mention);
 			await this.postReply(runKey, watch, key, { channel, thread_ts: parentTs, text: msg.text, blocks: msg.blocks });
 			return;
 		}

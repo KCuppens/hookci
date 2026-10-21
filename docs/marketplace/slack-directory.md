@@ -28,7 +28,8 @@ your team already talks.
   deploy step.
 - A failure reply in the thread with the end of the log and a link to the
   full log.
-- One mention of the commit author on a failure, or a direct message instead.
+- A mention of the commit author on a failure and when a deploy is done, or a
+  direct message for failures instead.
 - `/hookci` to watch repositories, check status, retry a run and bind agents.
 - An App Home tab that lists your agents and lets admins pair a new one.
 

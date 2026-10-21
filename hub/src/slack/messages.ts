@@ -169,9 +169,10 @@ export function renderAlert(run: RunView, job: JobView, tail: string[], mention:
 	return { text: S.slack.alertText(S.slack.state.failed, escapeMrkdwn(run.repo), run.shortSha, escapeMrkdwn(job.name)), blocks };
 }
 
-/** A deploy's thread reply under the push's message or its badge: the step it moved to, or how it ended. */
-export function renderDeployReply(s: DeployBadgeState): SlackMessage {
-	return { text: S.deploy.replyText(deployTitle(s.state), foldLine(s, false)), blocks: [section(`${DEPLOY_EMOJI[s.state]} ${foldLine(s, true)}`)] };
+/** A deploy's thread reply under the push's message or its badge: the step it moved to, or how it ended, with the author's mention when given. */
+export function renderDeployReply(s: DeployBadgeState, mention: string | null = null): SlackMessage {
+	const at = mention ? `<@${mention}> ` : "";
+	return { text: S.deploy.replyText(deployTitle(s.state), foldLine(s, false)), blocks: [section(`${at}${DEPLOY_EMOJI[s.state]} ${foldLine(s, true)}`)] };
 }
 
 /**

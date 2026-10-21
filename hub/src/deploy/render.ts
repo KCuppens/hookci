@@ -223,7 +223,7 @@ async function postBadge(env: Env, t: TenantDb, sink: SlackSink, repoId: number,
 		);
 	}
 	const run =
-		badge.state === "failed"
+		badge.state === "failed" || badge.state === "succeeded"
 			? await t.first<{ author_login: string | null }>("SELECT author_login FROM runs WHERE installation_id = ?1 AND run_id = ?2", runId)
 			: null;
 	await sink.deployReply(render.repo, runId, watch, ts, badge, tail, run?.author_login ?? null);

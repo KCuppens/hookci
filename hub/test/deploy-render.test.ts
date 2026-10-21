@@ -303,6 +303,18 @@ describe("deploy rendering through the agent", () => {
     expect(await getDeployRender(t, RUN)).toMatchObject({ slack_channel: CHANNEL, slack_ts: "1700000000.000001", state: "succeeded" });
   });
 
+  it("a successful deploy's final reply mentions the author, and its step replies do not", async () => {
+    await linkAlice();
+    const socket = await acceptedDeploy("alice");
+    await event(socket, { state: "running" });
+    await event(socket, { job: "deploy", state: "running", step: "migrate", step_index: 2, steps_total: 8 });
+    await event(socket, { state: "success", duration_ms: 124000 });
+    await settle(() => expect(texts(replies()).some((r) => r.startsWith("Deployed: staging"))).toBe(true));
+    const mentioned = replies().filter((c) => blocksOf(c).includes("<@U123>"));
+    expect(texts(mentioned)).toEqual([expect.stringMatching(/^Deployed: staging · 2m04s · health ok/)]);
+    expect(formField(mentioned[0]?.body, "reply_broadcast")).toBeUndefined();
+  });
+
   it("a failed deploy replies once in the thread with the author's mention and the log tail", async () => {
     await linkAlice();
     const socket = await acceptedDeploy("alice");
