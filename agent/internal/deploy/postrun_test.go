@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/gc"
 	"github.com/KCuppens/hookci/agent/internal/store"
@@ -28,6 +29,7 @@ func TestRunBestEffort_DoesNotAffectRunOutcome(t *testing.T) {
 			docker.On("docker", []string{"image", "rm"}, execx.FakeResponse{Code: 1, Stderr: "image is in use"})
 			docker.On("docker", []string{"builder", "prune", "--force"}, execx.FakeResponse{Err: errors.New("docker daemon gone")})
 			c := &gc.Collector{Runner: docker, Store: r.store, StateDir: t.TempDir(), Clock: r.clock,
+				Cfg: config.AgentConfig{Gc: &config.AgentConfigGc{BuildCacheMaxBytes: 1}},
 				Repos: func(context.Context) ([]gc.RepoEnv, error) {
 					return []gc.RepoEnv{{Repo: "acme/web", Env: "production", Project: "web", Retain: 2}}, nil
 				}}

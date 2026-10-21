@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/control"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/gc"
@@ -19,7 +20,8 @@ import (
 
 // serveGC serves the control op "gc" on stateDir from a collector over a
 // fake docker that lists images web:0000001..web:0000004 for an env that
-// keeps 2, plus a failed deploy run with a checkout dir.
+// keeps 2, plus a failed deploy run with a checkout dir. The build cache cap
+// is set to 10 GiB.
 func serveGC(t *testing.T, stateDir string) *execx.Fake {
 	t.Helper()
 	ctx := context.Background()
@@ -49,6 +51,7 @@ func serveGC(t *testing.T, stateDir string) *execx.Fake {
 	fake.On("docker", []string{"builder", "prune", "--help"}, execx.FakeResponse{Stdout: "      --max-used-space bytes\n"})
 	collector := &gc.Collector{
 		Runner: fake, Store: st, StateDir: stateDir, Clock: clk,
+		Cfg: config.AgentConfig{Gc: &config.AgentConfigGc{BuildCacheMaxBytes: 10 << 30}},
 		Repos: func(context.Context) ([]gc.RepoEnv, error) {
 			return []gc.RepoEnv{{Repo: "acme/web", Env: "prod", Project: "web", Retain: 2}}, nil
 		},

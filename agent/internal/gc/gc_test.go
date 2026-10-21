@@ -222,28 +222,73 @@ func TestPlan_SharedProjectSkippedWhileAnyEnvLocked(t *testing.T) {
 	}
 }
 
-func TestPlan_PruneFlagFallback(t *testing.T) {
+// docker builder prune acts on the host's whole default BuildKit cache, so GC
+// leaves it alone unless the operator sets gc.build_cache_max_bytes.
+func TestPlan_BuildCacheOptIn(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		help      string
-		gc        *config.AgentConfigGc
-		wantFlag  string
-		wantBytes int64
+		name string
+		gc   *config.AgentConfigGc
 	}{
-		{"max-used-space", helpNew, nil, FlagMaxUsedSpace, 10737418240},
-		{"keep-storage", helpOld, nil, FlagKeepStorage, 10737418240},
-		{"configured cap", helpOld, &config.AgentConfigGc{BuildCacheMaxBytes: 1 << 20}, FlagKeepStorage, 1 << 20},
+		{"default", nil},
+		{"zero", &config.AgentConfigGc{BuildCacheMaxBytes: 0, CacheMaxBytes: 1 << 30}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, web(5))
+			h.c.Cfg.Gc = tc.gc
+			h.images("web", 1)
+			if p := h.plan(t); p.PruneBuildCache {
+				t.Errorf("PruneBuildCache = true, want false with gc.build_cache_max_bytes %v", tc.gc)
+			}
+			for _, c := range h.exec.Calls {
+				if len(c.Args) > 0 && c.Args[0] == "builder" {
+					t.Errorf("ran docker %s, want no docker builder call", strings.Join(c.Args, " "))
+				}
+			}
+		})
+	}
+}
+
+func TestPlan_BuildCachePrunesWithOldCommand(t *testing.T) {
+	h := newHarness(t, web(5))
+	h.c.Cfg.Gc = &config.AgentConfigGc{BuildCacheMaxBytes: 1 << 30}
+	h.images("web", 1)
+	h.exec.On("docker", []string{"builder", "prune", "--force"}, execx.FakeResponse{})
+	p := h.plan(t)
+	if _, err := h.c.Apply(h.ctx, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	var got []string
+	for _, c := range h.exec.Calls {
+		if c.Args[0] == "builder" {
+			got = append(got, strings.Join(append([]string{c.Name}, c.Args...), " "))
+		}
+	}
+	want := []string{"docker builder prune --help", "docker builder prune --force --max-used-space 1073741824"}
+	if !slices.Equal(got, want) {
+		t.Errorf("builder commands = %q, want %q", got, want)
+	}
+}
+
+func TestPlan_PruneFlagFallback(t *testing.T) {
+	limit := &config.AgentConfigGc{BuildCacheMaxBytes: 1 << 20}
+	for _, tc := range []struct {
+		name     string
+		help     string
+		wantFlag string
+	}{
+		{"max-used-space", helpNew, FlagMaxUsedSpace},
+		{"keep-storage", helpOld, FlagKeepStorage},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, web(5))
 			h.exec = &execx.Fake{}
 			h.c.Runner = h.exec
-			h.c.Cfg.Gc = tc.gc
+			h.c.Cfg.Gc = limit
 			h.exec.On("docker", []string{"builder", "prune", "--help"}, execx.FakeResponse{Stdout: tc.help})
 			h.images("web", 1)
 			p := h.plan(t)
-			if !p.PruneBuildCache || p.PruneFlag != tc.wantFlag || p.KeepStorageBytes != tc.wantBytes {
-				t.Errorf("prune = %v %s %d, want true %s %d", p.PruneBuildCache, p.PruneFlag, p.KeepStorageBytes, tc.wantFlag, tc.wantBytes)
+			if !p.PruneBuildCache || p.PruneFlag != tc.wantFlag || p.KeepStorageBytes != 1<<20 {
+				t.Errorf("prune = %v %s %d, want true %s %d", p.PruneBuildCache, p.PruneFlag, p.KeepStorageBytes, tc.wantFlag, 1<<20)
 			}
 		})
 	}
@@ -251,6 +296,7 @@ func TestPlan_PruneFlagFallback(t *testing.T) {
 		h := newHarness(t, web(5))
 		h.exec = &execx.Fake{}
 		h.c.Runner = h.exec
+		h.c.Cfg.Gc = limit
 		h.exec.On("docker", []string{"builder", "prune", "--help"}, execx.FakeResponse{Code: 1, Stderr: "no docker"})
 		h.images("web", 1)
 		if _, err := h.c.Plan(h.ctx); err == nil {
@@ -259,6 +305,7 @@ func TestPlan_PruneFlagFallback(t *testing.T) {
 	})
 	t.Run("no deploy envs", func(t *testing.T) {
 		h := newHarness(t)
+		h.c.Cfg.Gc = limit
 		if p := h.plan(t); p.PruneBuildCache || len(h.exec.Calls) != 0 {
 			t.Errorf("PruneBuildCache = %v, calls = %v, want no docker work without deploy envs", p.PruneBuildCache, h.exec.Calls)
 		}
@@ -387,6 +434,7 @@ func TestApply_BestEffort(t *testing.T) {
 
 func TestRunBestEffort_LogsRemovalsAndErrors(t *testing.T) {
 	h := newHarness(t, web(2))
+	h.c.Cfg.Gc = &config.AgentConfigGc{BuildCacheMaxBytes: 1 << 30}
 	h.images("web", 3)
 	h.exec.On("docker", []string{"image", "rm"}, execx.FakeResponse{})
 	h.exec.On("docker", []string{"builder", "prune", "--force"}, execx.FakeResponse{Code: 1, Stderr: "daemon down"})

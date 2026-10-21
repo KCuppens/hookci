@@ -1,8 +1,10 @@
 // Package gc keeps a deploy host's disk from filling up: it removes old
-// "<project>:<sha7>" images beyond each env's retain.images, caps the
-// BuildKit cache, deletes run dirs of finished runs and evicts setup step
-// cache entries by age and total size. Removals are best effort; one failure
-// never stops the rest.
+// "<project>:<sha7>" images beyond each env's retain.images, deletes run dirs
+// of finished runs and evicts setup step cache entries by age and total size.
+// Only when gc.build_cache_max_bytes is set does it cap the BuildKit cache,
+// which is the host's whole default builder cache, shared with every other
+// project on the host. Removals are best effort; one failure never stops the
+// rest.
 package gc
 
 import (
@@ -138,11 +140,13 @@ func (c *Collector) Plan(ctx context.Context) (Plan, error) {
 		if err := c.planImages(ctx, envs, &p); err != nil {
 			return Plan{}, err
 		}
-		flag, err := c.pruneFlag(ctx)
-		if err != nil {
-			return Plan{}, err
+		if limit := c.buildCacheMaxBytes(); limit > 0 {
+			flag, err := c.pruneFlag(ctx)
+			if err != nil {
+				return Plan{}, err
+			}
+			p.PruneBuildCache, p.PruneFlag, p.KeepStorageBytes = true, flag, limit
 		}
-		p.PruneBuildCache, p.PruneFlag, p.KeepStorageBytes = true, flag, c.buildCacheMaxBytes()
 	}
 	dirs, err := c.planRunDirs(ctx)
 	if err != nil {

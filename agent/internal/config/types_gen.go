@@ -76,7 +76,10 @@ func (j *AgentConfigDoctor) UnmarshalJSON(value []byte) error {
 
 // Disk cleanup limits.
 type AgentConfigGc struct {
-	// Docker build cache size above which the agent prunes it.
+	// Docker build cache size above which the agent prunes it, with docker builder
+	// prune. 0 (the default) never prunes the build cache. The prune acts on the
+	// host's whole default BuildKit cache, which every other project on the host
+	// shares, so leave 0 on a shared host.
 	BuildCacheMaxBytes int `json:"build_cache_max_bytes,omitempty,omitzero" yaml:"build_cache_max_bytes,omitempty"`
 
 	// Total size of the setup step caches under <state>/cache above which the agent
@@ -84,8 +87,8 @@ type AgentConfigGc struct {
 	// regardless.
 	CacheMaxBytes int `json:"cache_max_bytes,omitempty,omitzero" yaml:"cache_max_bytes,omitempty"`
 
-	// Free disk space below which the agent prunes images and build cache. A deploy
-	// does not start while the docker root dir or the state dir has less free.
+	// Free disk space a deploy needs. A deploy does not start while the docker root
+	// dir or the state dir has less free.
 	MinFreeBytes int `json:"min_free_bytes,omitempty,omitzero" yaml:"min_free_bytes,omitempty"`
 }
 
@@ -101,7 +104,7 @@ func (j *AgentConfigGc) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["build_cache_max_bytes"]; !ok || v == nil {
-		plain.BuildCacheMaxBytes = 10737418240
+		plain.BuildCacheMaxBytes = 0
 	}
 	if 0 > plain.BuildCacheMaxBytes {
 		return fmt.Errorf("field %s: must be >= %v", "build_cache_max_bytes", 0)
