@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bind } from "../src/db/bindings";
 import { upsertInstallation } from "../src/db/installations";
 import { upsertRepos } from "../src/db/repos";
@@ -12,8 +12,7 @@ import type { RunView } from "../src/sinks/types";
 import type { TriggerRequest } from "../src/webhook/route";
 import { clearTables } from "./db/helpers";
 import { type Agent, type AgentSocket, connect, seedAgent } from "./do/agent-socket";
-import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "./fakes/github";
-import { generateAppKey } from "./github/helpers";
+import { type FakeGitHubEnv, useFakeGitHub } from "./fakes/github";
 
 const INSTALLATION = 42;
 const REPO = 1001;
@@ -44,24 +43,19 @@ async function deployRows(): Promise<Row[]> {
 }
 
 describe("deploy chain", () => {
-  let files: Record<string, string>;
-  let restoreGitHub: () => void;
+  let github: FakeGitHubEnv;
 
   beforeEach(async () => {
     await clearTables();
     await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     await upsertRepos(tenantDb(env.DB, INSTALLATION), [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "main" }]);
-    const gh = createFakeGitHub();
-    serveInstallationTokens(gh, Date.now());
-    files = {};
-    serveRepoFiles(gh, files);
-    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
-    env.__TEST_FETCHER = gh.fetcher;
-    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
-    restoreGitHub = () => Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
+    github = await useFakeGitHub(env);
   });
 
-  afterEach(() => restoreGitHub());
+  afterEach(() => {
+    github.restore();
+    vi.restoreAllMocks();
+  });
 
   it("dispatches one trigger per env binding on push success", async () => {
     const t = tenantDb(env.DB, INSTALLATION);
@@ -88,14 +82,40 @@ describe("deploy chain", () => {
     expect(await latestDeployTrigger(env, "acme/widgets", SHA, "staging")).toMatchObject({ env: "staging", attempt: 1 });
   });
 
-  it("deploys only the envs whose on.push names the pushed branch, and envs the hub cannot read a branch for", async () => {
-    const t = tenantDb(env.DB, INSTALLATION);
-    const agent = await seedAgent(INSTALLATION);
-    for (const name of ["staging", "production", "preview"]) await bind(t, REPO, `deploy:${name}`, agent.agentId);
-    files[`acme/widgets@${SHA}:.hookci.yml`] = "deployments:\n  staging:\n    on:\n      push: main\n  production:\n    on:\n      push: release\n";
+  describe("branch filter", () => {
+    const DEPLOYMENTS = "deployments:\n  staging:\n    on:\n      push: main\n  production:\n    on:\n      push: release\n";
 
-    expect(await onCheckConcluded(env, PUSH_SUCCESS)).toBe(2);
-    expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "staging"]);
+    beforeEach(async () => {
+      const agent = await seedAgent(INSTALLATION);
+      for (const name of ["staging", "production", "preview"]) await bind(tenantDb(env.DB, INSTALLATION), REPO, `deploy:${name}`, agent.agentId);
+    });
+
+    it("reads on.push at the default branch; an env without one deploys from the default branch", async () => {
+      github.files["acme/widgets@main:.hookci.yml"] = DEPLOYMENTS;
+      expect(await onCheckConcluded(env, PUSH_SUCCESS)).toBe(2);
+      expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "staging"]);
+      expect(github.refs).toEqual(["main"]);
+    });
+
+    it("deploys a pushed branch only to the env whose on.push names it", async () => {
+      github.files["acme/widgets@main:.hookci.yml"] = DEPLOYMENTS;
+      expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/release" })).toBe(1);
+      expect((await deployRows()).map((r) => r.env)).toEqual(["production"]);
+    });
+
+    it("ignores on.push in the pushed commit's own config", async () => {
+      github.files[`acme/widgets@${SHA}:.hookci.yml`] = "deployments:\n  production:\n    on:\n      push: feature\n";
+      expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/feature" })).toBe(0);
+      expect(await deployRows()).toEqual([]);
+    });
+
+    it("sends every bound env when the default branch's config cannot be read, leaving the check to the agent", async () => {
+      github.gh.respond("GET", "/repos/:owner/:repo/contents/:path", () => Response.json({ message: "Server Error" }, { status: 500 }));
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/feature" })).toBe(3);
+      expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "production", "staging"]);
+      expect(errors).toHaveBeenCalled();
+    });
   });
 
   it("does not dispatch on failure, action_required or pull_request", async () => {
@@ -185,25 +205,8 @@ describe("deploy chain", () => {
   });
 
   describe("check conclusion", () => {
-    const gh = createFakeGitHub();
-    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
-    let pem: string;
-
-    beforeAll(async () => {
-      pem = (await generateAppKey()).pem;
-    });
-
-    afterEach(() => {
-      env.__TEST_FETCHER = saved.fetcher;
-      env.GITHUB_APP_PRIVATE_KEY = saved.key;
-      vi.restoreAllMocks();
-    });
-
     it("chain error does not alter check conclusion", async () => {
-      env.__TEST_FETCHER = gh.fetcher;
-      env.GITHUB_APP_PRIVATE_KEY = pem;
-      gh.respond("POST", "/app/installations/:id/access_tokens", () => Response.json({ token: "ghs_x", expires_at: "2030-01-01T00:00:00Z" }, { status: 201 }));
-      gh.respond("POST", "/repos/:owner/:repo/check-runs", (req) => Response.json({ id: 7, ...(req.body as object) }, { status: 201 }));
+      github.gh.respond("POST", "/repos/:owner/:repo/check-runs", (req) => Response.json({ id: 7, ...(req.body as object) }, { status: 201 }));
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", "agt_unreachable");
       const broken: Env = {
@@ -233,7 +236,7 @@ describe("deploy chain", () => {
 
       await expect(checksSinkFactory(broken, INSTALLATION).onRunUpdate(run)).resolves.toBeUndefined();
 
-      const posted = gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
+      const posted = github.gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
       expect(posted).toHaveLength(1);
       expect(posted[0]?.body).toMatchObject({ name: "hookci", status: "completed", conclusion: "success" });
       expect(errors.mock.calls.some(([line]) => typeof line === "string" && line.includes("agent namespace down"))).toBe(true);

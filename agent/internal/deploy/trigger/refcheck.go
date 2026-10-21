@@ -79,11 +79,11 @@ func (g *GitHubRefChecker) ChangedFiles(ctx context.Context, repo, base, head st
 	return files, len(files) >= compareFileCap, nil
 }
 
-// LoadConfig returns repo's .hookci.yml at sha. A commit without one has an
-// empty configuration; one that does not parse is an error naming its
-// problems.
-func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*config.Config, error) {
-	path := "/repos/" + repo + "/contents/" + configFile + "?ref=" + url.QueryEscape(sha)
+// LoadConfig returns repo's .hookci.yml at ref, a sha or a branch. A ref
+// without one has an empty configuration; one that does not parse is an
+// error naming its problems.
+func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, ref string) (*config.Config, error) {
+	path := "/repos/" + repo + "/contents/" + configFile + "?ref=" + url.QueryEscape(ref)
 	resp, err := g.get(ctx, repo, path, "application/vnd.github.raw+json")
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (g *GitHubRefChecker) LoadConfig(ctx context.Context, repo, sha string) (*c
 	}
 	cfg, diags := config.Parse(data, config.ParseOptions{})
 	if diags.HasErrors() {
-		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(sha), diags.Format(configFile)))
+		return nil, Permanent(fmt.Errorf("%s at %s is invalid:\n%s", configFile, short(ref), diags.Format(configFile)))
 	}
 	return cfg, nil
 }

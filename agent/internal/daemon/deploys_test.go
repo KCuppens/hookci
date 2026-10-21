@@ -276,9 +276,9 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 			return "ghs_fetch", nil
 		},
 	}
-	env := "prod"
+	env, defaultBranch := "prod", "main"
 	dec, err := in.Handle(context.Background(), protocol.Trigger{
-		Attempt: 1, Env: &env, Event: protocol.TriggerEventPush, Ref: "refs/heads/main", Repo: "acme/app",
+		Attempt: 1, DefaultBranch: &defaultBranch, Env: &env, Event: protocol.TriggerEventPush, Ref: "refs/heads/main", Repo: "acme/app",
 		Sha: headSHA, TriggerId: "trg_1", Trust: protocol.TriggerTrustTrusted,
 	})
 	if err != nil || !dec.Accepted || dec.RunID != "run_d" {

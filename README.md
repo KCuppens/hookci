@@ -14,7 +14,7 @@ M0 delivers the agent core only. The hub connection, GitHub reporting and Slack 
 
 ## Which pushes and pull requests run
 
-Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message.
+Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message. A repo with no agent paired is judged by the defaults below without reading its file.
 
 ```yaml
 checks:
@@ -27,7 +27,7 @@ deployments:
     on: { push: develop }       # a deploy branch always runs checks
 ```
 
-`*` matches within one path segment, `**` across segments. A deployment ships only when its checks pass on a push to its `on.push` branch. Each branch pushed keeps its own build cache and falls back to the default branch's. A pull request reads its base branch's cache, then the default branch's, and never writes one.
+`*` matches within one path segment, `**` across segments. A deployment ships only when its checks pass on a push to its `on.push` branch. Its `on.push` is read from the default branch's `.hookci.yml`, never from the pushed commit, so a branch cannot name itself a deploy branch. A deployment without `on.push` ships from the default branch. Each branch pushed keeps its own build cache and falls back to the default branch's. A branch that restores the fallback's cache does not save a copy of its own. A pull request reads its base branch's cache, then the default branch's, and never writes one.
 
 ## Quick start (local)
 

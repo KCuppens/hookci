@@ -9,7 +9,7 @@ import { HubError } from "../errors";
 import { gateForkRun } from "../forks/gate";
 import { isForkPr } from "../forks/policy";
 import type { HubTrigger } from "../github/normalize";
-import { fetchRepoTriggers, triggerConfigRef, triggerWanted } from "../policy/repo-config";
+import { fetchRepoConfig, readRepoTriggers, triggerConfigRef, triggerWanted } from "../policy/repo-config";
 import type { WaitUntil } from "../sinks";
 import { notifyOutcome } from "./outcome";
 
@@ -50,18 +50,20 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
-	// Like an Actions workflow's `on:`, the repo's own config picks the branches; no check, no message otherwise.
-	const cfg = await fetchRepoTriggers(env, trig.installationId, trig.repo, triggerConfigRef(trig));
-	if (!triggerWanted(cfg, trig)) return { kind: "not_wanted" };
-
 	const binding = await getBinding(tenantDb(env.DB, trig.installationId), trig.repoId, trig.target);
 	if (!binding) {
+		// No agent can run it, so the repo's config is not read: the default
+		// triggers (pull requests, default-branch pushes) get the pairing message.
+		if (!triggerWanted(readRepoTriggers(null), trig)) return { kind: "not_wanted" };
 		const outcome = { kind: "no_agent" } as const;
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
+	// Like an Actions workflow's `on:`, the repo's own config picks the branches; no check, no message otherwise.
+	const config = await fetchRepoConfig(env, trig.installationId, trig.repo, triggerConfigRef(trig));
+	if (!triggerWanted(readRepoTriggers(config), trig)) return { kind: "not_wanted" };
 
-	const gate = await gateForkRun(env, trig, binding.agent_id);
+	const gate = await gateForkRun(env, trig, binding.agent_id, config);
 	if (gate.gated) return { kind: "gated", agentId: binding.agent_id, reason: gate.reason };
 	const body: TriggerRequest = { ...trig, trust: isForkPr(trig.pr) ? "untrusted" : "trusted" };
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id));

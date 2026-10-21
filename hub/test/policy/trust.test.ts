@@ -2,9 +2,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bind } from "../../src/db/bindings";
 import { tenantDb } from "../../src/db/tenant";
-import { effectiveTrust, fetchBaseConfig, hubMode, readBaseConfig } from "../../src/policy/trust";
+import { effectiveTrust, hubMode, readBaseConfig } from "../../src/policy/trust";
 import { INSTALLATION, REPO } from "../commands-helpers";
-import { BASE_SHA, type ForkWorld, HEAD_SHA, POLICY_FILE, setUpForkWorld } from "../forks/world";
+import { type ForkWorld, setUpForkWorld } from "../forks/world";
 
 let world: ForkWorld;
 
@@ -58,33 +58,6 @@ describe("effectiveTrust", () => {
   });
 });
 
-describe("fetchBaseConfig", () => {
-  const atBase = () => fetchBaseConfig(env, INSTALLATION, REPO.full_name, BASE_SHA);
-
-  it("reads checks.trust and checks.forks at the base ref only", async () => {
-    world.files[POLICY_FILE] = "checks:\n  trust: all\n  forks: never\n";
-    world.files[`${REPO.full_name}@${HEAD_SHA}:.hookci.yml`] = "checks:\n  trust: collaborators\n";
-    expect(await atBase()).toEqual({ trust: "all", forks: "never" });
-    expect(world.refs).toEqual([BASE_SHA]);
-  });
-
-  it("defaults to collaborators and gated when the base ref has no .hookci.yml", async () => {
-    expect(await atBase()).toEqual({ trust: "collaborators", forks: "gated" });
-  });
-
-  it("defaults when the file does not parse", async () => {
-    world.files[POLICY_FILE] = "checks: [trust: all\n";
-    expect(await atBase()).toEqual({ trust: "collaborators", forks: "gated" });
-  });
-
-  it("defaults each unknown value on its own and ignores top-level keys", async () => {
-    world.files[POLICY_FILE] = "checks:\n  trust: approve\n  forks: never\n";
-    expect(await atBase()).toEqual({ trust: "collaborators", forks: "never" });
-    world.files[POLICY_FILE] = "trust: all\nforks: never\n";
-    expect(await atBase()).toEqual({ trust: "collaborators", forks: "gated" });
-  });
-});
-
 describe("readBaseConfig", () => {
   const defaults = { trust: "collaborators", forks: "gated" };
 
@@ -104,6 +77,10 @@ describe("readBaseConfig", () => {
       "deployments: {}",
     ].join("\r\n");
     expect(readBaseConfig(text)).toEqual({ trust: "all", forks: "never" });
+  });
+
+  it("defaults each unknown value on its own", () => {
+    expect(readBaseConfig("checks:\n  trust: approve\n  forks: never\n")).toEqual({ trust: "collaborators", forks: "never" });
   });
 
   it.each([

@@ -439,15 +439,15 @@ func cachePaths(ps []string) ([]string, error) {
 
 // restoreCaches computes each setup step's cache key before setup runs, so
 // Save stores what this lockfile produced even if setup rewrites it, and
-// restores the first entry found along cacheScopes. Cache errors are logged
-// and never fail the run.
+// restores the first entry found along cacheScopes. A run saves under its own
+// branch unless a fallback branch's entry hit: that entry already holds what
+// the lockfile produced. Cache errors are logged and never fail the run.
 func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 	if e.o.Hooks.Cache == nil {
 		return
 	}
 	platform := runtime.GOOS + "-" + runtime.GOARCH
-	scopes := cacheScopes(rs.run, e.o.CacheFallback)
-	ownScope := rs.run.Event != "pull_request"
+	scopes, ownScope := cacheScopes(rs.run, e.o.CacheFallback)
 	for i, step := range rs.cfg.Setup {
 		if step.Cache == nil {
 			continue
@@ -470,37 +470,41 @@ func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 			rs.logf("cache setup[%d]: key: %v", i, err)
 			continue
 		}
-		if ownScope {
-			rs.cacheKeys = append(rs.cacheKeys, k)
-		}
+		save := ownScope
 		for j, scope := range scopes {
+			lookup := k
 			if j > 0 {
-				k = k.InScope(scope)
+				lookup = k.InScope(scope)
 			}
-			hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, k, rs.dir.Root)
+			hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, lookup, rs.dir.Root)
 			if cleanup != nil {
 				rs.cleanups = append(rs.cleanups, cleanup)
 			}
 			if err != nil {
-				rs.logf("cache setup[%d]: restore %s from %q: %v", i, k.Hash, scope, err)
+				rs.logf("cache setup[%d]: restore %s from %q: %v", i, lookup.Hash, scope, err)
 				break
 			}
 			if hit {
-				rs.logf("cache setup[%d]: hit %s from %q", i, k.Hash, scope)
+				rs.logf("cache setup[%d]: hit %s from %q", i, lookup.Hash, scope)
+				save = save && j == 0
 				break
 			}
-			rs.logf("cache setup[%d]: miss %s in %q", i, k.Hash, scope)
+			rs.logf("cache setup[%d]: miss %s in %q", i, lookup.Hash, scope)
+		}
+		if save {
+			rs.cacheKeys = append(rs.cacheKeys, k)
 		}
 	}
 }
 
 // cacheScopes lists the branches whose caches run restores from, in order:
 // its own branch (Ref without refs/heads/) unless it is a pull request, then
-// fallback, skipping empty and repeated names. A run saves only under its
-// own branch, so pull requests, which have none, never save.
-func cacheScopes(run store.Run, fallback []string) []string {
-	var scopes []string
-	if run.Event != "pull_request" {
+// fallback, skipping empty and repeated names. own reports whether the first
+// scope is the run's own branch. A run saves only under its own branch, so
+// pull requests, which have none, never save.
+func cacheScopes(run store.Run, fallback []string) (scopes []string, own bool) {
+	own = run.Event != "pull_request"
+	if own {
 		scopes = append(scopes, strings.TrimPrefix(run.Ref, "refs/heads/"))
 	}
 	for _, s := range fallback {
@@ -508,7 +512,7 @@ func cacheScopes(run store.Run, fallback []string) []string {
 			scopes = append(scopes, s)
 		}
 	}
-	return scopes
+	return scopes, own
 }
 
 // startServices starts postgres when configured. Its socket dir is PG().

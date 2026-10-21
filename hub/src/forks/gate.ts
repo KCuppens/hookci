@@ -14,7 +14,7 @@ import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
 import { logEvent } from "../observability";
-import { effectiveTrust, fetchBaseConfig } from "../policy/trust";
+import { effectiveTrust, readBaseConfig } from "../policy/trust";
 import type { TriggerRequest } from "../webhook/route";
 import { consumeApproval, isApprovalRecorded, recordApproval, releaseApproval } from "./approvals";
 import { isForkPr } from "./policy";
@@ -31,14 +31,17 @@ async function installationGitHub(env: Env, installationId: number) {
  * Records a fork pull request's run as gated on agentId (the agent bound to
  * its repo) instead of triggering it; non-fork triggers, and forks whose base
  * ref's `trust: all` is honored, pass through. `forks: never` always gates.
+ * baseConfig is the `.hookci.yml` text at triggerConfigRef(trigger), the base
+ * ref for a fork; it is not read for other triggers.
  */
 export async function gateForkRun(
 	env: Env,
 	trigger: HubTrigger,
 	agentId: string,
+	baseConfig: string | null,
 ): Promise<{ gated: false } | { gated: true; runId: string; reason: GateReason }> {
 	if (!isForkPr(trigger.pr)) return { gated: false };
-	const cfg = await fetchBaseConfig(env, trigger.installationId, trigger.repo, trigger.baseSha ?? trigger.defaultBranch);
+	const cfg = readBaseConfig(baseConfig);
 	const trust = await effectiveTrust(env, tenantDb(env.DB, trigger.installationId), trigger.repoId, cfg.trust);
 	if (trust.refused !== null) logEvent("trust_all_refused", { repo: trigger.repo, refused: trust.refused });
 	if (cfg.forks !== "never" && trust.effective === "all") return { gated: false };

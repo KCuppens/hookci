@@ -52,7 +52,16 @@ type fixture struct {
 	in   *Intake
 	st   *store.Store
 	refs *fakeRefs
-	n    int
+	// configs is the .hookci.yml per ref; the trigger sha and main start
+	// with the same prod env.
+	configs map[string]*config.Config
+	n       int
+}
+
+func configWith(dep config.Deployment) *config.Config {
+	return &config.Config{HookCIConfig: config.HookCIConfig{
+		Deployments: config.HookCIConfigDeployments{"prod": dep},
+	}}
 }
 
 func newFixture(t *testing.T, dep config.Deployment) *fixture {
@@ -62,16 +71,16 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{st: st, refs: &fakeRefs{}}
-	cfg := &config.Config{HookCIConfig: config.HookCIConfig{
-		Deployments: config.HookCIConfigDeployments{"prod": dep},
-	}}
+	cfg := configWith(dep)
+	f := &fixture{st: st, refs: &fakeRefs{}, configs: map[string]*config.Config{testSHA: cfg, "main": cfg}}
 	f.in = &Intake{
 		Store: st,
 		Refs:  f.refs,
-		LoadConfig: func(_ context.Context, repo, sha string) (*config.Config, error) {
-			if repo != "acme/web" || sha != testSHA {
-				t.Errorf("LoadConfig(%s, %s), want acme/web at the trigger sha", repo, sha)
+		LoadConfig: func(_ context.Context, repo, ref string) (*config.Config, error) {
+			cfg, ok := f.configs[ref]
+			if repo != "acme/web" || !ok {
+				t.Errorf("LoadConfig(%s, %s), want acme/web at the trigger sha or main", repo, ref)
+				return &config.Config{}, nil
 			}
 			return cfg, nil
 		},
@@ -85,10 +94,11 @@ func newFixture(t *testing.T, dep config.Deployment) *fixture {
 }
 
 func pushTrigger() protocol.Trigger {
-	env := "prod"
+	env, def := "prod", "main"
 	return protocol.Trigger{
 		Type: "trigger", V: 1, TriggerId: "trg-1", Repo: "acme/web", Ref: "refs/heads/main", Sha: testSHA,
 		Event: protocol.TriggerEventPush, Trust: protocol.TriggerTrustTrusted, Env: &env, Attempt: 1,
+		DefaultBranch: &def,
 	}
 }
 
@@ -119,9 +129,9 @@ func TestIntake_AcceptsPushOnRef(t *testing.T) {
 	}
 }
 
-// Any branch a deployment's on.push names deploys; GitHub branch protection
-// is not consulted.
-func TestIntake_AcceptsUnprotectedBranchPush(t *testing.T) {
+// A branch other than the default one deploys when both the pushed commit
+// and the default branch's config name it.
+func TestIntake_DeploysBranchTheDefaultBranchNames(t *testing.T) {
 	dep := deployment()
 	dep.On.Push = "feature/x"
 	f := newFixture(t, dep)
@@ -130,6 +140,26 @@ func TestIntake_AcceptsUnprotectedBranchPush(t *testing.T) {
 	got, err := f.in.Handle(context.Background(), tr)
 	if err != nil || !got.Accepted || got.RunID != "run-1" {
 		t.Fatalf("Handle = %+v, %v; want accepted run-1", got, err)
+	}
+}
+
+// A branch only the pushed commit names is refused, so whoever can push a
+// branch cannot make it deploy.
+func TestIntake_RejectsBranchOnlyThePushNames(t *testing.T) {
+	ctx := context.Background()
+	dep := deployment()
+	dep.On.Push = "feature/x"
+	f := newFixture(t, dep)
+	f.configs["main"] = configWith(deployment())
+	tr := pushTrigger()
+	tr.Ref = "refs/heads/feature/x"
+	got, err := f.in.Handle(ctx, tr)
+	want := "deployments.prod.on.push: branch feature/x is not listed on main"
+	if err != nil || got.Accepted || got.Reason != want {
+		t.Fatalf("Handle = %+v, %v; want rejected %q", got, err, want)
+	}
+	if runs, _ := f.st.ListDeployRunsInStates(ctx, store.DeployQueued); len(runs) != 0 {
+		t.Errorf("a rejection stored runs: %+v", runs)
 	}
 }
 
@@ -200,6 +230,12 @@ func TestIntake_Rejections(t *testing.T) {
 			dep:    deployment(),
 			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.notOnRef = true },
 			want:   "deployments.prod: 0123456 is not on main",
+		},
+		{
+			name:   "default branch unknown",
+			dep:    deployment(),
+			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.DefaultBranch = nil },
+			want:   "deployments.prod: the repository's default branch is unknown",
 		},
 		{
 			name:        "no changed file matches paths",

@@ -671,7 +671,8 @@ func cacheRun(t *testing.T, c *fakeCache, run store.Run, fallback []string) (tri
 }
 
 // Caches are per branch, as on GitHub Actions: a run reads its own branch,
-// then the fallbacks it was given, and writes only its own branch.
+// then the fallbacks it was given, and writes only its own branch, and only
+// when no fallback's entry hit.
 func TestCacheScopesAcrossBranches(t *testing.T) {
 	c := &fakeCache{}
 	push := func(branch string) store.Run {
@@ -689,7 +690,8 @@ func TestCacheScopesAcrossBranches(t *testing.T) {
 	}{
 		{"first push to a branch saves under it", push("feature/a"), []string{"main"}, []string{"feature/a", "main"}, "", []string{"feature/a"}},
 		{"another branch does not see it", push("feature/b"), []string{"main"}, []string{"feature/b", "main"}, "", []string{"feature/b"}},
-		{"a fallback naming the branch reads it", push("feature/c"), []string{"feature/a", "main"}, []string{"feature/c", "feature/a"}, "feature/a", []string{"feature/c"}},
+		{"a fallback hit is not saved again under the branch", push("feature/c"), []string{"feature/a", "main"}, []string{"feature/c", "feature/a"}, "feature/a", nil},
+		{"a fallback miss still saves under the branch", push("feature/d"), []string{"feature/x", "main"}, []string{"feature/d", "feature/x", "main"}, "", []string{"feature/d"}},
 		{"default branch saves under itself", push("main"), []string{"main"}, []string{"main"}, "", []string{"main"}},
 		{"own branch beats the default", push("feature/b"), []string{"main"}, []string{"feature/b"}, "feature/b", []string{"feature/b"}},
 		{"pull request reads its base first", pull, []string{"feature/a", "main"}, []string{"feature/a"}, "feature/a", nil},

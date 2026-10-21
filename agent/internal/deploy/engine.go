@@ -444,11 +444,12 @@ var eventStates = map[string]protocol.EventState{
 
 // sendStateChange sends ev, the deploy job's event in a new state, then the
 // run's own event in that state: the hub moves only the step on job events
-// and the run, its check and its badge on run events. The job event goes
-// first, since the hub ignores job events after the run's terminal one.
+// and the run, its check and its badge on run events. The run event carries
+// the tail too, since the hub's failure alert reads it there. The job event
+// goes first, since the hub ignores job events after the run's terminal one.
 func sendStateChange(sink EventSink, ev protocol.Event) {
 	sink.DeployEvent(ev)
-	sink.DeployEvent(protocol.Event{RunId: ev.RunId, State: ev.State, Reason: ev.Reason, DurationMs: ev.DurationMs})
+	sink.DeployEvent(protocol.Event{RunId: ev.RunId, State: ev.State, Reason: ev.Reason, DurationMs: ev.DurationMs, Tail: ev.Tail})
 }
 
 // event is the event for the current state, on step when step >= 0. Once

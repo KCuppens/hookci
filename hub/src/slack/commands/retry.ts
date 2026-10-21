@@ -11,10 +11,12 @@ import { tenantDb } from "../../db/tenant";
 import type { Env } from "../../env";
 import { HubError } from "../../errors";
 import { gateForkRun } from "../../forks/gate";
+import { isForkPr } from "../../forks/policy";
 import { getPull } from "../../github/api";
 import type { GitHubClient } from "../../github/client";
 import { requireLinkedUser } from "../../identity/link";
 import { reportError } from "../../observability";
+import { fetchRepoConfig, triggerConfigRef } from "../../policy/repo-config";
 import { loadRunView } from "../../sinks/runview";
 import { S } from "../../strings";
 import type { TriggerRequest } from "../../webhook/route";
@@ -72,7 +74,8 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	const trigger = await rebuildTrigger(gh, repo, run, target);
 	const shortSha = run.sha.slice(0, 7);
 	const attempt = run.attempt + 1;
-	const gate = await gateForkRun(env, trigger, binding.agent_id);
+	const baseConfig = isForkPr(trigger.pr) ? await fetchRepoConfig(env, repo.installationId, repo.fullName, triggerConfigRef(trigger)) : null;
+	const gate = await gateForkRun(env, trigger, binding.agent_id, baseConfig);
 	if (gate.gated) {
 		return ephemeral(gate.reason === "fork_never" ? S.slack.retryForkNever(repo.fullName, shortSha) : S.slack.retryGated(repo.fullName, shortSha, attempt));
 	}

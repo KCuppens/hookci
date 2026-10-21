@@ -78,7 +78,7 @@ describe("fork pull request gate", () => {
       target: "checks",
     } satisfies HubTrigger;
 
-    await expect(gateForkRun({ ...env, AGENT_DO: noTriggerId } as unknown as Env, trigger, world.agent.agentId)).rejects.toMatchObject({
+    await expect(gateForkRun({ ...env, AGENT_DO: noTriggerId } as unknown as Env, trigger, world.agent.agentId, null)).rejects.toMatchObject({
       code: "agent_do_failed",
       status: 502,
     });

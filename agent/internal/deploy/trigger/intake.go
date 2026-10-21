@@ -1,7 +1,8 @@
 // Package trigger decides whether a deploy trigger from the hub may deploy:
-// the env must exist at the commit, the push branch must be listed, the
-// commit must be on it, the trigger trusted, and a paths filter must match
-// the files changed since the last success. A retry trigger re-queues the
+// the env must exist at the commit, the push branch must be listed there and,
+// off the default branch, in the default branch's config too, the commit
+// must be on it, the trigger trusted, and a paths filter must match the
+// files changed since the last success. A retry trigger re-queues the
 // commit's Failed or Interrupted run.
 package trigger
 
@@ -55,8 +56,8 @@ func IsPermanent(err error) bool {
 type Intake struct {
 	Store *store.Store
 	Refs  RefChecker
-	// LoadConfig returns the repository configuration at sha.
-	LoadConfig func(ctx context.Context, repo, sha string) (*config.Config, error)
+	// LoadConfig returns the repository configuration at ref, a sha or a branch.
+	LoadConfig func(ctx context.Context, repo, ref string) (*config.Config, error)
 	Clock      func() time.Time // nil means time.Now
 	NewRunID   func() string    // nil means ids.NewRunID
 }
@@ -99,6 +100,21 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	branch := strings.TrimPrefix(t.Ref, "refs/heads/")
 	if dep.On.Push != branch {
 		return rejected("deployments.%s.on.push: branch %s is not listed", env, branch), nil
+	}
+	// The pushed commit names its own deploy branch, so a branch other than
+	// the default one must also be named by the default branch's config:
+	// whoever can push a branch cannot make it deploy.
+	if t.DefaultBranch == nil {
+		return rejected("deployments.%s: the repository's default branch is unknown", env), nil
+	}
+	if def := *t.DefaultBranch; branch != def {
+		trusted, err := in.LoadConfig(ctx, t.Repo, def)
+		if err != nil {
+			return Decision{}, fmt.Errorf("trigger: load config at %s: %w", def, err)
+		}
+		if trusted.Deployments[env].On.Push != branch {
+			return rejected("deployments.%s.on.push: branch %s is not listed on %s", env, branch, def), nil
+		}
 	}
 	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
 	if err != nil {

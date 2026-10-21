@@ -50,11 +50,11 @@ export function readRepoTriggers(text: string | null): RepoTriggers {
 	};
 }
 
-/** The triggers of repo (owner/name) at ref; a missing file gives the defaults. */
-export async function fetchRepoTriggers(env: Env, installationId: number, repo: string, ref: string): Promise<RepoTriggers> {
+/** The `.hookci.yml` text of repo (owner/name) at ref; null when the file or ref does not exist. */
+export async function fetchRepoConfig(env: Env, installationId: number, repo: string, ref: string): Promise<string | null> {
 	const clock = env.__TEST_CLOCK ?? systemClock;
 	const gh = await new GitHubClient(env, env.__TEST_FETCHER ?? defaultFetcher, () => clock.now()).installation(installationId);
-	return readRepoTriggers(await gh.getRepoFileAtRef(repo, ".hookci.yml", ref));
+	return gh.getRepoFileAtRef(repo, ".hookci.yml", ref);
 }
 
 /**

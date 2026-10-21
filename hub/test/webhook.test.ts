@@ -16,8 +16,7 @@ import prOpened from "./fixtures/github/pull_request.opened.json";
 import prFork from "./fixtures/github/pull_request.synchronize.fork.json";
 import pushBranch from "./fixtures/github/push.branch.json";
 import pushMain from "./fixtures/github/push.main.json";
-import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "./fakes/github";
-import { generateAppKey } from "./github/helpers";
+import { type FakeGitHubEnv, useFakeGitHub } from "./fakes/github";
 
 const INSTALLATION = 42;
 const REPO = 1001;
@@ -79,26 +78,17 @@ function reportedErrors(spy: { mock: { calls: unknown[][] } }): Record<string, u
   return spy.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>);
 }
 
-let files: Record<string, string>;
-let configRefs: string[];
-let restoreGitHub: () => void;
+let github: FakeGitHubEnv;
 
 beforeEach(async () => {
   await clearTables();
   agents = fakeAgentDOs();
   await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: NOW });
-  const gh = createFakeGitHub();
-  serveInstallationTokens(gh, Date.now());
-  files = {};
-  configRefs = serveRepoFiles(gh, files);
-  const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
-  env.__TEST_FETCHER = gh.fetcher;
-  env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
-  restoreGitHub = () => Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
+  github = await useFakeGitHub(env);
 });
 
 afterEach(() => {
-  restoreGitHub();
+  github.restore();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -265,7 +255,7 @@ describe("POST /github/webhook routing", () => {
   it("gates a fork pull request instead of triggering it, reading the policy at the base SHA", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
     await deliver("pull_request", prFork);
-    expect(new Set(configRefs)).toEqual(new Set([prFork.pull_request.base.sha]));
+    expect(github.refs).toEqual([prFork.pull_request.base.sha]);
     expect(agents.calls).toHaveLength(1);
     expect(agents.calls[0]!.url).toBe("https://do/gate");
     expect(agents.calls[0]!.body).toMatchObject({ reason: "fork_gated", pr: { number: 9, fork: true } });
@@ -302,6 +292,7 @@ describe("POST /github/webhook routing", () => {
       { op: "onRunUpdate", run: expect.objectContaining({ repoId: REPO, prNumber: 7, target: "checks", state: "pending", reason: "no_agent" }) },
     ]);
     expect(await deliveryRow("d-unbound")).toMatchObject({ status: "processed" });
+    expect(github.refs).toEqual([]);
   });
 
   it("records a pending suspended run instead of dispatching for a suspended installation", async () => {
@@ -333,7 +324,7 @@ describe("POST /github/webhook routing", () => {
   it("drops a push to a branch the repo's config does not name, before any run or check", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
     await deliver("push", pushBranch, { id: "d-branch" });
-    expect(configRefs).toEqual([pushBranch.after]);
+    expect(github.refs).toEqual([pushBranch.after]);
     expect(agents.calls).toEqual([]);
     expect(await deliveryRow("d-branch")).toMatchObject({ status: "dropped", note: "not_wanted" });
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
@@ -341,7 +332,7 @@ describe("POST /github/webhook routing", () => {
 
   it("runs a push to a branch matched by checks.on.push.branches at that commit", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
-    files[`acme/widgets@${pushBranch.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [main, 'feature/*']\n";
+    github.files[`acme/widgets@${pushBranch.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [main, 'feature/*']\n";
     await deliver("push", pushBranch, { id: "d-glob" });
     expect(agents.calls).toEqual([expect.objectContaining({ url: "https://do/trigger", body: expect.objectContaining({ ref: "refs/heads/feature/sizing" }) })]);
     expect(await deliveryRow("d-glob")).toMatchObject({ status: "processed" });
@@ -349,7 +340,7 @@ describe("POST /github/webhook routing", () => {
 
   it("drops a push to the default branch once checks.on.push.branches leaves it out", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
-    files[`acme/widgets@${pushMain.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [release]\n";
+    github.files[`acme/widgets@${pushMain.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [release]\n";
     await deliver("push", pushMain, { id: "d-main" });
     expect(agents.calls).toEqual([]);
     expect(await deliveryRow("d-main")).toMatchObject({ status: "dropped", note: "not_wanted" });
@@ -357,9 +348,17 @@ describe("POST /github/webhook routing", () => {
 
   it("drops a pull request when checks.on.pull_request is false", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
-    files[`acme/widgets@${prOpened.pull_request.head.sha}:.hookci.yml`] = "checks:\n  on:\n    pull_request: false\n";
+    github.files[`acme/widgets@${prOpened.pull_request.head.sha}:.hookci.yml`] = "checks:\n  on:\n    pull_request: false\n";
     await deliver("pull_request", prOpened, { id: "d-pr" });
     expect(agents.calls).toEqual([]);
     expect(await deliveryRow("d-pr")).toMatchObject({ status: "dropped", note: "not_wanted" });
+  });
+
+  it("drops an unbound repo's push to another branch by the default triggers, without reading its config", async () => {
+    github.files[`acme/widgets@${pushBranch.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: ['feature/*']\n";
+    await deliver("push", pushBranch, { id: "d-unbound-branch" });
+    expect(github.refs).toEqual([]);
+    expect(await deliveryRow("d-unbound-branch")).toMatchObject({ status: "dropped", note: "not_wanted" });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
   });
 });
