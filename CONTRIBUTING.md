@@ -59,12 +59,16 @@ make test-integration
 
 Only run them on a disposable VM, never on a workstation.
 
-## Sign-off (DCO)
+## Contributor License Agreement
 
-Every commit must carry a `Signed-off-by:` trailer, added with `git commit -s`. The trailer certifies the [Developer Certificate of Origin](DCO.md), which also explains how to fix a missing sign-off.
+Before your first pull request is merged you must agree to the [CLA](CLA.md) by commenting on the pull request. One agreement covers every later contribution.
+
+## Licenses
+
+The repository is licensed per directory. See [LICENSING.md](LICENSING.md). Your contribution is accepted under the license of the directory you change, and the CLA lets the owner also offer it under other terms.
 
 ## Pull requests
 
 - One pull request per logical change. Split unrelated fixes into separate pull requests.
 - Fill in the pull request template, including the linked ticket.
-- Keep commits focused and signed off.
+- Keep commits focused.

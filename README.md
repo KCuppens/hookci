@@ -42,7 +42,7 @@ Coming from ZeroCI (the earlier name of this project)? Old names keep working. S
 - `make schema-check` fails if the committed generated types differ from what `make schema` would write.
 - `make test-integration` runs the integration tests. They need root, so run them only on a throwaway VM, never on a workstation.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and the sign-off rule ([DCO.md](DCO.md)).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and the contributor license agreement ([CLA.md](CLA.md)).
 
 ## Security
 
@@ -50,4 +50,4 @@ Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Licensed per directory: MIT for the agent and schema, AGPL-3.0 for the hub. See [LICENSING.md](LICENSING.md).
