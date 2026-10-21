@@ -87,6 +87,13 @@ export class Browser {
     return this.jar.get(name);
   }
 
+  /** Puts a cookie the test issued directly (a Set-Cookie value) in the jar, as if the hub had set it. */
+  adopt(setCookie: string): void {
+    const pair = setCookie.split(";")[0] ?? "";
+    const eq = pair.indexOf("=");
+    this.jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+  }
+
   async fetch(path: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}): Promise<Response> {
     const headers: Record<string, string> = { "cf-connecting-ip": this.ip, ...init.headers };
     if (this.jar.size > 0) headers.cookie = this.cookieHeader;
@@ -113,6 +120,11 @@ export class Browser {
   async submit(formPath: string, postPath: string, fields: Record<string, string>, extra: Record<string, string> = {}): Promise<Response> {
     const csrf = await this.csrfFrom(formPath);
     return this.post(postPath, { ...fields, csrf }, extra);
+  }
+
+  /** Follows an emailed verification link the way a person does: opens it, then presses the confirm button. */
+  confirmVerify(token: string): Promise<Response> {
+    return this.submit(`/account/verify?token=${token}`, "/account/verify", { token });
   }
 
   post(path: string, fields: Record<string, string>, extra: Record<string, string> = {}): Promise<Response> {
@@ -185,7 +197,7 @@ export async function registerVerified(mailer: FakeMailer, email: string, passwo
   if (res.status !== 200) throw new Error(`register answered ${res.status}`);
   const mail = mailer.sent[before];
   if (!mail) throw new Error("no verification mail was sent");
-  const verified = await browser.fetch(`/account/verify?token=${tokenIn(mail, "verify")}`);
+  const verified = await browser.confirmVerify(tokenIn(mail, "verify"));
   if (verified.status !== 200) throw new Error(`verify answered ${verified.status}`);
   const row = await env.DB.prepare("SELECT id FROM users WHERE email_norm = ?1").bind(email.toLowerCase()).first<{ id: string }>();
   if (!row) throw new Error("no account row");

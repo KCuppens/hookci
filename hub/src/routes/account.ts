@@ -14,6 +14,7 @@ import { csrfForForm, readCheckedForm } from "../accounts/csrf";
 import { fetchGoogleIdentity, type GoogleIdentity, googleAuthorizeUrl, googleConfigured, newCodeVerifier } from "../accounts/google";
 import {
 	type AccountContext,
+	deleteOwnAccount,
 	login,
 	register,
 	requestReset,
@@ -21,6 +22,7 @@ import {
 	resetTokenLive,
 	signInWithGoogle,
 	verifyEmailToken,
+	verifyTokenLive,
 } from "../accounts/service";
 import { getUserById, type UserRow } from "../db/accounts";
 import { hitIpRate } from "../db/ip-rate";
@@ -29,18 +31,23 @@ import type { Env } from "../env";
 import { HubError } from "../errors";
 import { redirectToAuthorize } from "../github/oauth";
 import { defaultFetcher } from "../http";
-import { CLEAR_STATE_COOKIE, consumeState, issueSession, issueState, readAnySession } from "../oauth/state";
+import { CLEAR_STATE_COOKIE, consumeState, issueSession, issueState, readAnySession, SESSION_COOKIE, type Session, setCookie } from "../oauth/state";
 import {
 	checkEmailPage,
 	connectGithubPage,
+	deleteAccountPage,
+	deleteDonePage,
 	forgotPasswordPage,
 	loginPage,
 	registerPage,
 	resetDonePage,
 	resetInvalidPage,
 	resetPasswordPage,
+	settingsPage,
+	verifyConfirmPage,
 	verifyPage,
 } from "../pages/account";
+import type { DashboardChrome } from "../pages/dashboard";
 import { QUOTAS } from "../quotas";
 import { S } from "../strings";
 
@@ -72,6 +79,13 @@ function contextOf(c: AppContext): AccountContext {
 async function csrfOf(c: AppContext): Promise<{ csrf: string; cookies: string[] }> {
 	const { token, cookie } = await csrfForForm(c.env, c.req.header("cookie") ?? null);
 	return { csrf: token, cookies: cookie === null ? [] : [cookie] };
+}
+
+/** What the signed-in dashboard header needs when accounts are on: a sign out form (and a settings link for an email account) with its csrf token and cookie. Nothing when accounts are off. */
+export async function dashboardChrome(c: AppContext, session: Session): Promise<{ chrome?: DashboardChrome; cookies?: string[] }> {
+	if (!accountsEnabled(c.env)) return {};
+	const { csrf, cookies } = await csrfOf(c);
+	return { chrome: { csrf, settings: session.accountId !== undefined }, cookies };
 }
 
 interface Shown {
@@ -167,8 +181,18 @@ accountRoutes.post("/forgot-password", async (c) => {
 		: renderForgot(c, { status: 400, error: E.invalidEmail, ...email });
 });
 
+/** The emailed link only checks the token and asks for a click: a mail scanner or link preview that fetches it cannot use it up. */
 accountRoutes.get("/verify", async (c) => {
-	const ok = await verifyEmailToken(contextOf(c), c.req.query("token") ?? "");
+	const token = c.req.query("token") ?? "";
+	if (!(await verifyTokenLive(contextOf(c), token))) return verifyPage(false, { status: 400 });
+	const { csrf, cookies } = await csrfOf(c);
+	return verifyConfirmPage({ csrf, token }, { cookies });
+});
+
+accountRoutes.post("/verify", async (c) => {
+	const form = await readCheckedForm(c.env, c.req.raw);
+	if (!form) return renderLogin(c, { status: 403, error: E.csrf });
+	const ok = await verifyEmailToken(contextOf(c), form.token ?? "");
 	return verifyPage(ok, { status: ok ? 200 : 400 });
 });
 
@@ -252,7 +276,7 @@ async function startGithubLink(c: AppContext, account: UserRow): Promise<Respons
 
 accountRoutes.get("/connect-github", async (c) => {
 	const account = await sessionAccount(c);
-	if (!account) return new Response(null, { status: 303, headers: { Location: "/account/login", "Cache-Control": "no-store" } });
+	if (!account) return toLogin();
 	// A linked account has nothing to confirm: GitHub decides what it may see, as at every sign-in.
 	if (account.github_user_id !== null) return startGithubLink(c, account);
 	const { csrf, cookies } = await csrfOf(c);
@@ -266,6 +290,52 @@ accountRoutes.post("/connect-github", async (c) => {
 		return connectGithubPage({ csrf, error: E.csrf }, { status: 403, cookies });
 	}
 	const account = await sessionAccount(c);
-	if (!account) return new Response(null, { status: 303, headers: { Location: "/account/login", "Cache-Control": "no-store" } });
+	if (!account) return toLogin();
 	return startGithubLink(c, account);
+});
+
+const CLEAR_SESSION_COOKIE = setCookie(SESSION_COOKIE, "", 0);
+
+/** Ends the session: the cookie is cleared in the browser. Sessions are stateless, so a copy of the old cookie stays valid until its 30 minutes run out. */
+accountRoutes.post("/logout", async (c) => {
+	const form = await readCheckedForm(c.env, c.req.raw);
+	if (!form) return renderLogin(c, { status: 403, error: E.csrf });
+	return new Response(null, {
+		status: 303,
+		headers: { Location: "/app", "Set-Cookie": CLEAR_SESSION_COOKIE, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+	});
+});
+
+function toLogin(): Response {
+	return new Response(null, { status: 303, headers: { Location: "/account/login", "Cache-Control": "no-store" } });
+}
+
+accountRoutes.get("/settings", async (c) => {
+	const account = await sessionAccount(c);
+	if (!account) return toLogin();
+	const { csrf, cookies } = await csrfOf(c);
+	return settingsPage({ csrf, email: account.email, githubLogin: account.github_login }, { cookies });
+});
+
+accountRoutes.get("/delete", async (c) => {
+	const account = await sessionAccount(c);
+	if (!account) return toLogin();
+	const { csrf, cookies } = await csrfOf(c);
+	return deleteAccountPage({ csrf, hasPassword: account.password_hash !== null }, { cookies });
+});
+
+accountRoutes.post("/delete", async (c) => {
+	const account = await sessionAccount(c);
+	const hasPassword = account === null || account.password_hash !== null;
+	const show = async (status: number, error: string): Promise<Response> => {
+		const { csrf, cookies } = await csrfOf(c);
+		return deleteAccountPage({ csrf, hasPassword, error }, { status, cookies });
+	};
+	const form = await readCheckedForm(c.env, c.req.raw);
+	if (!form) return show(403, E.csrf);
+	if (!account) return toLogin();
+	const result = await deleteOwnAccount(contextOf(c), account, (hasPassword ? form.password : form.email) ?? "");
+	if (result.ok) return deleteDonePage({ cookies: [CLEAR_SESSION_COOKIE] });
+	if (result.reason === "rate_limited") return show(429, E.rateLimited);
+	return show(401, hasPassword ? S.account.delete.wrongPassword : S.account.delete.wrongEmail);
 });

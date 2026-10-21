@@ -47,7 +47,7 @@ describe.each([
   });
 
   it("covers every account route in the endpoint list", () => {
-    expect(ACCOUNT_ENDPOINTS).toHaveLength(13);
+    expect(ACCOUNT_ENDPOINTS).toHaveLength(18);
   });
 
   it.each(ACCOUNT_ENDPOINTS.map((e) => [`${e.method} ${e.path}`, e.method, e.path]))("answers the standard 404 for %s", async (_label, method, path) => {

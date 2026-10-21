@@ -38,6 +38,9 @@ dt{color:var(--muted)}dd{margin:0}
 .notice{border:1px solid var(--busy);border-radius:.375rem;padding:.25rem .5rem;color:var(--busy);font-size:.9rem}
 .button{display:inline-block;padding:.5rem 1rem;border-radius:.375rem;background:var(--link);color:var(--bg);text-decoration:none;font-weight:600}
 .muted{color:var(--muted)}
+.acct{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center}
+.acct form{margin:0}
+.linkbtn{padding:0;border:0;background:none;color:var(--link);font:inherit;text-decoration:underline;cursor:pointer}
 @media (max-width:40rem){main{padding:.75rem}th,td{padding:.35rem .4rem}dl{grid-template-columns:1fr}dt{margin-top:.5rem}}
 `;
 
@@ -53,22 +56,35 @@ function styleHash(): Promise<string> {
 	return styleSource;
 }
 
+/** The signed-in header controls when accounts are on: a sign out form and, for an email account, a link to its settings. */
+export interface DashboardChrome {
+	csrf: string;
+	settings: boolean;
+}
+
 /** A complete dashboard page response; title is escaped here, bodyHtml must already be safe HTML. */
-export async function dashboardPage(title: string, bodyHtml: string, init: PageInit & { who?: string } = {}): Promise<Response> {
+export async function dashboardPage(title: string, bodyHtml: string, init: PageInit & { who?: string; chrome?: DashboardChrome } = {}): Promise<Response> {
+	const formAction = init.chrome === undefined ? "'none'" : "'self'";
 	const headers = new Headers({
 		"Content-Type": "text/html; charset=utf-8",
-		"Content-Security-Policy": `default-src 'self'; style-src ${await styleHash()}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+		"Content-Security-Policy": `default-src 'self'; style-src ${await styleHash()}; base-uri 'none'; form-action ${formAction}; frame-ancestors 'none'`,
 		"X-Content-Type-Options": "nosniff",
 		"Referrer-Policy": "no-referrer",
 		"Cache-Control": "no-store",
 	});
 	for (const cookie of init.cookies ?? []) headers.append("Set-Cookie", cookie);
 	const who = init.who === undefined ? "" : `<span class="who">${escapeHtml(D.signedInAs(init.who))}</span>`;
+	let controls = who;
+	if (init.chrome !== undefined) {
+		const settings = init.chrome.settings ? `<a href="/account/settings">${escapeHtml(D.settings)}</a>` : "";
+		const signOut = `<form method="post" action="/account/logout"><input type="hidden" name="csrf" value="${escapeHtml(init.chrome.csrf)}"><button class="linkbtn" type="submit">${escapeHtml(D.signOut)}</button></form>`;
+		controls = `<div class="acct">${who}${settings}${signOut}</div>`;
+	}
 	const html = `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
 <body>
-<header class="top"><a class="brand" href="/app">HookCI</a>${who}</header>
+<header class="top"><a class="brand" href="/app">HookCI</a>${controls}</header>
 <main>
 ${bodyHtml}
 </main>
@@ -87,13 +103,13 @@ export function signInPage(): Promise<Response> {
 }
 
 /** The page for a user who can access no hub installation; cookies clear the sign-in state cookie. */
-export function noInstallationPage(cookies: string[] = []): Promise<Response> {
+export function noInstallationPage(cookies: string[] = [], chrome?: DashboardChrome): Promise<Response> {
 	return dashboardPage(
 		D.noInstallationTitle,
 		`<h1>${escapeHtml(D.noInstallationTitle)}</h1>
 <p>${escapeHtml(D.noInstallationBody)}</p>
 <p><a class="button" href="/start">${escapeHtml(D.noInstallationButton)}</a></p>`,
-		{ cookies },
+		{ cookies, ...(chrome ? { chrome } : {}) },
 	);
 }
 
@@ -182,10 +198,17 @@ ${rows}
 </table></div>`;
 }
 
+/** The header and cookie settings shared by the signed-in pages. */
+function viewerInit(v: { login: string; chrome?: DashboardChrome; cookies?: string[] }): PageInit & { who: string; chrome?: DashboardChrome } {
+	return { who: v.login, ...(v.chrome ? { chrome: v.chrome } : {}), ...(v.cookies ? { cookies: v.cookies } : {}) };
+}
+
 export interface RunsView {
 	account: InstallationRow;
 	accounts: readonly InstallationRow[];
 	login: string;
+	chrome?: DashboardChrome;
+	cookies?: string[];
 	runs: readonly RunListRow[];
 	/** The rowid to pass as before for the next page; null on the last page. */
 	olderCursor: number | null;
@@ -227,13 +250,15 @@ ${rows}
 ${table}${older}
 <h2>${escapeHtml(D.agents)}</h2>
 ${agentRows(v.agents)}`,
-		{ who: v.login },
+		viewerInit(v),
 	);
 }
 
 export interface RunView {
 	account: InstallationRow;
 	login: string;
+	chrome?: DashboardChrome;
+	cookies?: string[];
 	run: RunListRow;
 	jobs: readonly JobLogRow[];
 }
@@ -289,6 +314,6 @@ ${jobRows}
 ${summary}
 <h2>${escapeHtml(D.jobs)}</h2>
 ${jobs}`,
-		{ who: v.login },
+		viewerInit(v),
 	);
 }

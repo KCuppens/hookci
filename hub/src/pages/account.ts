@@ -162,6 +162,15 @@ input:focus{border-color:var(--orange-line);box-shadow:0 0 0 3px rgba(255,106,44
 .msg{margin:20px auto 0;max-width:410px;font-size:var(--ts);line-height:var(--tl);color:var(--muted)}
 .msg+.msg{margin-top:12px;font-size:var(--ffs)}
 .p-center .card .btn{margin-top:22px}
+.kv{margin-top:24px;border:1px solid #eceef1;border-radius:14px;text-align:left}
+.kv div{display:flex;justify-content:space-between;gap:16px;padding:14px 18px;font-size:15px;line-height:22px}
+.kv div+div{border-top:1px solid #eceef1}
+.kv dt{color:var(--muted)}
+.kv dd{color:var(--ink);font-weight:500;text-align:right;overflow-wrap:anywhere}
+.p-center .card .btn.ghost{border:1px solid #e3e6ea;background:#fff;color:var(--ink)}
+.p-center .card .btn.ghost:hover{background:#fcfcfd}
+.p-center .card .btn.danger{background:#b4350b}
+.p-center .card .btn.danger:hover{background:#962c09}
 @media (min-width:901px) and (max-width:1400px){
 .hero{padding-left:44px;padding-right:12px}
 .s-login .side{padding-left:36px;padding-right:20px}
@@ -285,9 +294,9 @@ const errorBox = (error: string | undefined): string => (error ? `<div class="er
 
 const csrfInput = (csrf: string): string => `<input type="hidden" name="csrf" value="${e(csrf)}">`;
 
-const emailField = (f: { email?: string }): string =>
-	`<div class="fld"><label class="lbl" for="email">${e(D.emailLabel)}</label><div class="in">${icon("mail")}` +
-	`<input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="${e(D.emailPlaceholder)}" value="${e(f.email ?? "")}"></div></div>`;
+const emailField = (f: { email?: string }, label: string = D.emailLabel, placeholder: string = D.emailPlaceholder): string =>
+	`<div class="fld"><label class="lbl" for="email">${e(label)}</label><div class="in">${icon("mail")}` +
+	`<input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="${e(placeholder)}" value="${e(f.email ?? "")}"></div></div>`;
 
 function passwordField(label: string, placeholder: string, autocomplete: string, aside = ""): string {
 	return `<div class="fld"><div class="lrow"><label class="lbl" for="password">${e(label)}</label>${aside}</div><div class="in">${icon("lock")}` +
@@ -436,4 +445,48 @@ export function connectGithubPage(f: { csrf: string; error?: string }, init: Pag
 export function connectConflictPage(init: PageInit = {}): Promise<Response> {
 	const C = D.connect;
 	return respond(C.conflictTitle, "center", stateCard(C.conflictTitle, "alert", "", [C.conflictBody], linkButton("/account/login", C.conflictButton)), false, init);
+}
+
+export function verifyConfirmPage(f: { csrf: string; token: string }, init: PageInit = {}): Promise<Response> {
+	const V = D.verifyConfirm;
+	const form = `<form method="post" action="/account/verify">${csrfInput(f.csrf)}<input type="hidden" name="token" value="${e(f.token)}">${submitButton(V.button)}</form>`;
+	return respond(V.title, "center", stateCard(V.title, "mail", "", [V.body], form), false, init);
+}
+
+export interface SettingsView {
+	csrf: string;
+	email: string;
+	githubLogin: string | null;
+}
+
+export function settingsPage(v: SettingsView, init: PageInit = {}): Promise<Response> {
+	const T = D.settings;
+	const rows =
+		`<dl class="kv"><div><dt>${e(T.emailLabel)}</dt><dd>${e(v.email)}</dd></div>` +
+		`<div><dt>${e(T.githubLabel)}</dt><dd>${e(v.githubLogin ?? T.githubNone)}</dd></div></dl>`;
+	const connect =
+		v.githubLogin === null
+			? `<form method="post" action="/account/connect-github">${csrfInput(v.csrf)}<button class="btn ghost" type="submit">${icon("github", "gh")}${e(T.connectGithub)}</button></form>`
+			: "";
+	const signOut = `<form method="post" action="/account/logout">${csrfInput(v.csrf)}<button class="btn ghost" type="submit">${e(T.signOut)}</button></form>`;
+	const remove = `<a class="btn ghost" href="/account/delete">${e(T.delete)}</a>`;
+	const back = `<div class="back one"><a href="/app">${icon("back")}${e(T.toRuns)}</a></div>`;
+	const card = `<section class="card">${stack()}<h1 class="ttl">${e(T.title)}</h1><p class="sub">${e(T.subtitle)}</p>${rows}${connect}${signOut}${remove}${back}${footer()}</section>`;
+	return respond(T.title, "center", card, false, init);
+}
+
+export function deleteAccountPage(f: { csrf: string; hasPassword: boolean; error?: string }, init: PageInit = {}): Promise<Response> {
+	const X = D.delete;
+	const field = f.hasPassword ? passwordField(X.passwordLabel, X.passwordPlaceholder, "current-password") : emailField({}, X.emailLabel, X.emailPlaceholder);
+	const cancel = `<div class="back one"><a href="/account/settings">${icon("back")}${e(X.cancel)}</a></div>`;
+	const card =
+		`<section class="card">${stack()}<h1 class="ttl">${e(X.title)}</h1><p class="sub">${e(X.subtitle)}</p>${errorBox(f.error)}` +
+		`<form method="post" action="/account/delete">${csrfInput(f.csrf)}${field}` +
+		`<button class="btn danger" type="submit">${e(X.submit)}</button></form>${cancel}${footer()}</section>`;
+	return respond(X.title, "center", card, f.hasPassword, init);
+}
+
+export function deleteDonePage(init: PageInit = {}): Promise<Response> {
+	const X = D.delete;
+	return respond(X.doneTitle, "center", stateCard(X.doneTitle, "check", "", [X.doneBody], linkButton("/account/login", X.doneButton)), false, init);
 }

@@ -27,6 +27,8 @@ Commands available now: `version`, `detect`, `validate`, `init`, `run`, `status`
 
 Coming from ZeroCI (the earlier name of this project)? Old names keep working. See [MIGRATING.md](MIGRATING.md).
 
+The hub also serves a read-only web dashboard of runs, logs and agents. See [docs/dashboard.md](docs/dashboard.md).
+
 ## Repository layout
 
 - `agent/`: Go agent and the `hookci` CLI.

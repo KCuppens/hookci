@@ -224,6 +224,8 @@ const SESSION_REFUSALS: Record<string, Expected> = {
   "/app/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
   "/app/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
   "/account/connect-github": { status: 303, redirect: "/account/login" },
+  "/account/settings": { status: 303, redirect: "/account/login" },
+  "/account/delete": { status: 303, redirect: "/account/login" },
 };
 
 function oauthRefusal(path: string): Expected {

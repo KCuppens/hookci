@@ -43,7 +43,7 @@ describe("register, verify and sign in", () => {
     const early = await browser.submit("/account/login", "/account/login", { email: ALICE, password: GOOD_PASSWORD });
     expect(early.status).toBe(401);
 
-    const verified = await browser.fetch(`/account/verify?token=${token}`);
+    const verified = await browser.confirmVerify(token);
     expect(verified.status).toBe(200);
     expect(await verified.text()).toContain(S.account.verify.okTitle);
 
@@ -136,7 +136,7 @@ describe("register, verify and sign in", () => {
     expect(newToken).not.toBe(oldToken);
 
     expect((await browser.fetch(`/account/verify?token=${oldToken}`)).status).toBe(400);
-    expect((await browser.fetch(`/account/verify?token=${newToken}`)).status).toBe(200);
+    expect((await browser.confirmVerify(newToken)).status).toBe(200);
     const replay = await browser.fetch(`/account/verify?token=${newToken}`);
     expect(replay.status).toBe(400);
     expect(await replay.text()).toContain(S.account.verify.invalidTitle);
@@ -169,7 +169,7 @@ describe("register, verify and sign in", () => {
     const owner = new Browser("203.0.113.51");
     await owner.submit("/account/register", "/account/register", { email: ALICE, password: GOOD_PASSWORD });
     const token = tokenIn(mailer.sent[1]!, "verify");
-    await owner.fetch(`/account/verify?token=${token}`);
+    await owner.confirmVerify(token);
     expect((await squatter.submit("/account/login", "/account/login", { email: ALICE, password: "squatter pass 1" })).status).toBe(401);
     expect((await owner.submit("/account/login", "/account/login", { email: ALICE, password: GOOD_PASSWORD })).status).toBe(303);
   });

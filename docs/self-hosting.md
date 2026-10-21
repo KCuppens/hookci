@@ -19,3 +19,5 @@ By default the hub's dashboard signs people in with GitHub only. A hub can also 
    For the shared hub that is `https://ci.webuno.io/account/google/callback`. Then store the client with `wrangler secret put GOOGLE_CLIENT_ID` and `wrangler secret put GOOGLE_CLIENT_SECRET`. The Google button shows only when both secrets are set. Only Google addresses marked `email_verified` are accepted.
 
 An account proves who a person is, not what they may see. A browser signed in with email or Google sees no runs until the person also connects GitHub (the sign-in page leads them there). What they can open is decided by what GitHub says that user can access, never by their email address.
+
+Signed-in people can sign out, open a small settings page (`/account/settings`) and delete their own account (`/account/delete`) from the dashboard header. The emailed verification link only opens a confirmation page, so a mail scanner that fetches the link cannot use it up; the address is verified when the person presses the button. The dashboard, its sessions and the 404 rules are described in [dashboard.md](dashboard.md).

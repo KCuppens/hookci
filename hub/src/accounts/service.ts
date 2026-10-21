@@ -8,6 +8,7 @@
 import { hex, hmacSha256 } from "../crypto";
 import {
 	clearLoginFailures,
+	deleteAccount,
 	getUserByEmail,
 	getUserByGoogleSub,
 	getUserById,
@@ -208,12 +209,44 @@ export async function resetPassword(ctx: AccountContext, token: string, password
 	return { ok: true };
 }
 
+/** True when the verification token is live; it is not used up. Opening the emailed link only checks, so a mail scanner that fetches it cannot burn it. */
+export async function verifyTokenLive(ctx: AccountContext, token: string): Promise<boolean> {
+	return (await peekToken(ctx.env.DB, token, "verify", ctx.now)) !== null;
+}
+
 /** Uses a verification token and marks the address verified; false for a bad, used or expired token. */
 export async function verifyEmailToken(ctx: AccountContext, token: string): Promise<boolean> {
 	const userId = await consumeToken(ctx.env.DB, token, "verify", ctx.now);
 	if (userId === null) return false;
 	await markEmailVerified(ctx.env.DB, userId, ctx.now);
 	return true;
+}
+
+export type DeleteResult = { ok: true } | { ok: false; reason: "wrong" | "rate_limited" };
+
+/**
+ * Deletes the signed-in account after a confirmation: the password for an
+ * account that has one (wrong guesses count toward the same lockout as
+ * sign-in), the account's own email typed out for one that has none. The
+ * session cookie alone is not enough, so a stolen cookie cannot erase an account.
+ */
+export async function deleteOwnAccount(ctx: AccountContext, user: UserRow, proof: string): Promise<DeleteResult> {
+	if (!(await postAllowed(ctx, "delete"))) return { ok: false, reason: "rate_limited" };
+	const { env, now } = ctx;
+	const key = await emailKey(env, user.email_norm);
+	if ((await loginLockedUntil(env.DB, key)) > now) return { ok: false, reason: "rate_limited" };
+	if (user.password_hash) {
+		if (!(await verifyPassword(proof, user.password_hash))) {
+			await recordLoginFailure(env.DB, key, now, LOGIN_LOCKOUT);
+			return { ok: false, reason: "wrong" };
+		}
+		await clearLoginFailures(env.DB, key);
+	} else if (normalizeEmail(proof) !== user.email_norm) {
+		return { ok: false, reason: "wrong" };
+	}
+	await deleteAccount(env.DB, user.id);
+	logEvent("account_deleted", { account_id: user.id });
+	return { ok: true };
 }
 
 export type GoogleResult =

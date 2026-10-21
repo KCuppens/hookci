@@ -19,7 +19,7 @@ import { logEvent } from "../observability";
 import { noInstallationPage, notFoundPage, runPage, runsPage, signInPage } from "../pages/dashboard";
 import { errorPage } from "../pages/error";
 import { QUOTAS } from "../quotas";
-import { accountsEnabled, renderLogin } from "./account";
+import { accountsEnabled, dashboardChrome, renderLogin } from "./account";
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -61,7 +61,8 @@ export async function dashboardHome(c: AppContext): Promise<Response> {
 		if (session.accountId !== undefined && session.githubUserId === 0) {
 			return new Response(null, { status: 303, headers: { Location: "/account/connect-github", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 		}
-		return noInstallationPage();
+		const { chrome, cookies } = await dashboardChrome(c, session);
+		return noInstallationPage(cookies, chrome);
 	}
 	return new Response(null, { status: 303, headers: { Location: `/app/${first}`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
@@ -86,7 +87,7 @@ export async function dashboardRuns(c: AppContext): Promise<Response> {
 	const runs = fetched.slice(0, limit);
 	const olderCursor = fetched.length > limit ? (runs[limit - 1]?.run_rowid ?? null) : null;
 	const agents = (await listAgents(scope.t)).filter((a) => a.status !== "revoked");
-	return runsPage({ account: scope.account, accounts: scope.accounts, login: scope.session.githubLogin, runs, olderCursor, agents });
+	return runsPage({ account: scope.account, accounts: scope.accounts, login: scope.session.githubLogin, runs, olderCursor, agents, ...(await dashboardChrome(c, scope.session)) });
 }
 
 export async function dashboardRun(c: AppContext): Promise<Response> {
@@ -96,7 +97,7 @@ export async function dashboardRun(c: AppContext): Promise<Response> {
 	const run = await getRunListRow(scope.t, runId);
 	if (!run) return notFoundPage();
 	const jobs = await listJobsOfRun(scope.t, runId);
-	return runPage({ account: scope.account, login: scope.session.githubLogin, run, jobs });
+	return runPage({ account: scope.account, login: scope.session.githubLogin, run, jobs, ...(await dashboardChrome(c, scope.session)) });
 }
 
 /** The job's log, decompressed. It holds output a fork pull request controls, so it is served as inert text. */
