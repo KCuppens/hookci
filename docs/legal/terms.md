@@ -46,4 +46,4 @@ We announce changes to these terms in the repository before they take effect.
 
 ## Contact
 
-Questions about these terms go to privacy@webuno.io.
+Questions about these terms go to privacy@hookci.com.

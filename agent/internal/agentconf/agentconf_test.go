@@ -11,7 +11,7 @@ import (
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	want := &AgentConfig{HubURL: "https://ci.webuno.io", AgentID: "agt_1", Credential: "hci_agent_abc", Name: "build-1", InstallationID: 42}
+	want := &AgentConfig{HubURL: "https://ci.hookci.com", AgentID: "agt_1", Credential: "hci_agent_abc", Name: "build-1", InstallationID: 42}
 	if err := Save(dir, want); err != nil {
 		t.Fatal(err)
 	}

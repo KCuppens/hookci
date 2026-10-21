@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ci.webuno.io/schema/hookci.schema.json",
+  "$id": "https://ci.hookci.com/schema/hookci.schema.json",
   "title": "HookCIConfig",
   "description": "HookCI repository configuration (.hookci.yml).",
   "type": "object",

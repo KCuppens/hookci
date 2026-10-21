@@ -640,10 +640,10 @@ func TestPingTimeout(t *testing.T) {
 
 func TestConnectURL(t *testing.T) {
 	tests := []struct{ in, want, err string }{
-		{"https://ci.webuno.io", "wss://ci.webuno.io/v1/agent/connect", ""},
-		{"https://ci.webuno.io/", "wss://ci.webuno.io/v1/agent/connect", ""},
+		{"https://ci.hookci.com", "wss://ci.hookci.com/v1/agent/connect", ""},
+		{"https://ci.hookci.com/", "wss://ci.hookci.com/v1/agent/connect", ""},
 		{"http://127.0.0.1:8787", "ws://127.0.0.1:8787/v1/agent/connect", ""},
-		{"ftp://ci.webuno.io", "", "scheme must be http or https"},
+		{"ftp://ci.hookci.com", "", "scheme must be http or https"},
 		{"https://", "", "missing host"},
 	}
 	for _, tc := range tests {

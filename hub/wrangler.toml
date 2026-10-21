@@ -1,6 +1,6 @@
 # hookci-hub Worker. Secrets are set with `wrangler secret put` and typed in
-# src/env.ts; none belong in this file. Database ids and SLACK_APP_ID are
-# placeholders until the Cloudflare resources and Slack Apps are created (M1-29).
+# src/env.ts; none belong in this file. The staging database id and both
+# SLACK_APP_IDs are placeholders until those resources and Slack Apps exist.
 
 name = "hookci-hub"
 main = "src/index.ts"
@@ -8,10 +8,10 @@ compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat", "enable_request_signal"]
 
 [vars]
-HUB_ORIGIN = "https://ci.webuno.io"
+HUB_ORIGIN = "https://ci.hookci.com"
 HUB_VERSION = "dev"
-# security.txt Contact (mailto: or https:); the real address is open question Q10.
-SECURITY_CONTACT = "mailto:security@example.invalid"
+# security.txt Contact (mailto: or https:).
+SECURITY_CONTACT = "mailto:security@hookci.com"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci"
@@ -26,7 +26,7 @@ enabled = true
 [[d1_databases]]
 binding = "DB"
 database_name = "hookci-hub"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "cc2a0a92-85fc-4d62-9686-a3b8f6b2719c"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -65,9 +65,9 @@ fallthrough = true
 name = "hookci-hub-staging"
 
 [env.staging.vars]
-HUB_ORIGIN = "https://ci-staging.webuno.io"
+HUB_ORIGIN = "https://ci-staging.hookci.com"
 HUB_VERSION = "dev"
-SECURITY_CONTACT = "mailto:security@example.invalid"
+SECURITY_CONTACT = "mailto:security@hookci.com"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci-staging"

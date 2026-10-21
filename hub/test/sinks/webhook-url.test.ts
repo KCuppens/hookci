@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateWebhookUrl } from "../../src/sinks/webhook";
 
-const HUB = "ci.webuno.io";
+const HUB = "ci.hookci.com";
 
 describe("validateWebhookUrl", () => {
   it.each([
@@ -38,8 +38,8 @@ describe("validateWebhookUrl", () => {
     ["https://[::ffff:127.0.0.1]/hook", "private_host"],
     ["https://[::ffff:10.0.0.1]/hook", "private_host"],
     ["https://[::ffff:a9fe:a9fe]/hook", "private_host"],
-    ["https://ci.webuno.io/hook", "self"],
-    ["https://CI.webuno.io./hook", "self"],
+    ["https://ci.hookci.com/hook", "self"],
+    ["https://CI.hookci.com./hook", "self"],
   ])("rejects %s as %s", (raw, code) => {
     expect(validateWebhookUrl(raw, HUB)).toEqual({ ok: false, code });
   });
@@ -51,7 +51,7 @@ describe("validateWebhookUrl", () => {
     "https://100.128.0.1/hook",
     "https://[2606:4700::1111]/hook",
     "https://[::ffff:8.8.8.8]/hook",
-    "https://hooks.webuno.io/hook",
+    "https://hooks.hookci.com/hook",
   ])("accepts %s", (raw) => {
     const r = validateWebhookUrl(raw, HUB);
     expect(r.ok).toBe(true);

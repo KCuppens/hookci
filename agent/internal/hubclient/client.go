@@ -59,7 +59,7 @@ var ErrNotConnected = errors.New("hubclient: not connected")
 
 // Config configures a Client.
 type Config struct {
-	HubURL     string // e.g. https://ci.webuno.io
+	HubURL     string // e.g. https://ci.hookci.com
 	AgentID    string
 	Credential string // hci_agent_...
 	Version    string
