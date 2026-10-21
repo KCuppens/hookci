@@ -1,7 +1,7 @@
 STATUS  CHECK              DETAIL
 pass    hookci binary      hookci dev
 pass    agent service      hookci-agent@42.service active
-pass    state directory    /var/lib/hookci is 0700 root
+pass    state directory    /var/lib/hookci is 0711 root
 pass    agent credential   agt_1 (installation 42)
 pass    job user           hookci-run exists
 pass    git                git version 2.39.2

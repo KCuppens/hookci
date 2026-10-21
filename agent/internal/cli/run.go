@@ -193,7 +193,8 @@ type host struct {
 // recovers what an earlier crashed process left behind. A code other than
 // ExitOK has been reported on stderr.
 func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*host, int) {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	// Job users must traverse missing parents created here, see executor.OpenTo.
+	if err := os.MkdirAll(stateDir, 0o711); err != nil {
 		fmt.Fprintf(stderr, "hookci: create state directory: %v\n", err)
 		return nil, ExitInternal
 	}

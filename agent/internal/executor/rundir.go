@@ -81,8 +81,8 @@ func OpenTo(stateDir string, cred *syscall.Credential, dirs ...string) error {
 		if err != nil {
 			return err
 		}
-		if !searchable(info, cred) {
-			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; use a state dir every user can reach, such as /var/lib/hookci", dir, info.Mode().Perm(), cred.Uid)
+		if !Searchable(info, cred) {
+			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; run chmod a+x %s or use a state dir every user can reach", dir, info.Mode().Perm(), cred.Uid, dir)
 		}
 		if dir == filepath.Dir(dir) {
 			break
@@ -96,9 +96,9 @@ func OpenTo(stateDir string, cred *syscall.Credential, dirs ...string) error {
 	return nil
 }
 
-// searchable reports whether cred may traverse a dir with info by its owner,
+// Searchable reports whether cred may traverse a dir with info by its owner,
 // group and other bits. Supplementary groups and ACLs are not consulted.
-func searchable(info fs.FileInfo, cred *syscall.Credential) bool {
+func Searchable(info fs.FileInfo, cred *syscall.Credential) bool {
 	perm := info.Mode().Perm()
 	st, ok := info.Sys().(*syscall.Stat_t)
 	switch {

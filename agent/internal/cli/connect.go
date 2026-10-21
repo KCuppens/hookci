@@ -166,9 +166,18 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 			}
 		}
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// Job users must traverse the state dir's parents to reach their run
+	// dirs (executor.OpenTo); agent.json itself stays 0600.
+	if err := os.MkdirAll(dir, 0o711); err != nil {
 		fmt.Fprintf(errw, "hookci: create state directory: %v\n", err)
 		return ExitRunFailed
+	}
+	// MkdirAll is subject to the umask and keeps the mode of an existing root.
+	if dir == defaultDir {
+		if err := os.Chmod(d.StateRoot, 0o711); err != nil {
+			fmt.Fprintf(errw, "hookci: create state directory: %v\n", err)
+			return ExitRunFailed
+		}
 	}
 	cfg := &agentconf.AgentConfig{
 		HubURL:         hubURL,

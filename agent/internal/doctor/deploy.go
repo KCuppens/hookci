@@ -279,6 +279,20 @@ func passwdGID(env Env, name string) (gid string, ok bool, err error) {
 	return fields[3], true, nil
 }
 
+// passwdCred is the uid and primary gid of name in /etc/passwd.
+func passwdCred(env Env, name string) (*syscall.Credential, bool) {
+	fields, ok, err := colonEntry(env, "etc/passwd", name)
+	if err != nil || !ok || len(fields) < 4 {
+		return nil, false
+	}
+	uid, err1 := strconv.ParseUint(fields[2], 10, 32)
+	gid, err2 := strconv.ParseUint(fields[3], 10, 32)
+	if err1 != nil || err2 != nil {
+		return nil, false
+	}
+	return &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}, true
+}
+
 // groupEntry is the gid and member list of group name in /etc/group.
 func groupEntry(env Env, name string) (gid string, members []string, ok bool, err error) {
 	fields, ok, err := colonEntry(env, "etc/group", name)

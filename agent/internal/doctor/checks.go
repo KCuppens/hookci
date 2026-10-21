@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/executor"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/hubclient"
 	"github.com/KCuppens/hookci/agent/internal/isolation"
@@ -172,7 +173,9 @@ func orUnknown(s string) string {
 	return s
 }
 
-// stateDirPermsCheck wants the state root 0700 and owned by root.
+// stateDirPermsCheck wants the state root owned by root, unreadable to other
+// users, and, with every ancestor, searchable by the job user: the executor
+// refuses jobs otherwise, see executor.OpenTo.
 type stateDirPermsCheck struct{}
 
 func (stateDirPermsCheck) ID() string { return "state_dir_perms" }
@@ -186,8 +189,9 @@ func (stateDirPermsCheck) Run(_ context.Context, env Env) Result {
 	if !fi.IsDir() {
 		return fail(title, env.StateRoot+" is not a directory", reinstallFix)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o700 {
-		return fail(title, fmt.Sprintf("%s has mode %04o, want 0700", env.StateRoot, perm), "sudo chmod 0700 "+env.StateRoot)
+	perm := fi.Mode().Perm()
+	if perm&0o066 != 0 {
+		return fail(title, fmt.Sprintf("%s has mode %04o, want 0711", env.StateRoot, perm), "sudo chmod 0711 "+env.StateRoot)
 	}
 	uid, ok := ownerUID(fi)
 	if !ok {
@@ -196,7 +200,37 @@ func (stateDirPermsCheck) Run(_ context.Context, env Env) Result {
 	if uid != 0 {
 		return fail(title, fmt.Sprintf("%s is owned by uid %d, want root", env.StateRoot, uid), "sudo chown root:root "+env.StateRoot)
 	}
-	return pass(title, env.StateRoot+" is 0700 root")
+	if r, ok := jobUserReaches(env, title); !ok {
+		return r
+	}
+	return pass(title, fmt.Sprintf("%s is %04o root", env.StateRoot, perm))
+}
+
+// jobUserReaches fails when the state root or an ancestor is not searchable
+// by the job user, by the executor's own test. Without a job user it passes:
+// runUserCheck reports that.
+func jobUserReaches(env Env, title string) (Result, bool) {
+	cred, ok := passwdCred(env, isolation.DefaultUser)
+	if !ok {
+		return Result{}, true
+	}
+	for dir := path.Clean("/" + env.StateRoot); ; dir = path.Dir(dir) {
+		name := fsPath(dir)
+		if name == "" {
+			name = "."
+		}
+		fi, err := fs.Stat(env.FS, name)
+		if err != nil {
+			return fail(title, fmt.Sprintf("%s: %v", dir, err), reinstallFix), false
+		}
+		if !executor.Searchable(fi, cred) {
+			return fail(title, fmt.Sprintf("%s (mode %04o) is not searchable by %s (uid %d), so the agent refuses every job",
+				dir, fi.Mode().Perm(), isolation.DefaultUser, cred.Uid), "sudo chmod a+x "+dir), false
+		}
+		if dir == "/" {
+			return Result{}, true
+		}
+	}
 }
 
 // credentialCheck wants at least one paired installation with a credential

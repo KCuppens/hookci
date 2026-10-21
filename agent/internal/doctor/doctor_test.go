@@ -58,8 +58,8 @@ func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool)
 
 func healthyFS() fstest.MapFS {
 	return fstest.MapFS{
-		"var/lib/hookci":               {Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}},
-		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o700},
+		"var/lib/hookci":               {Mode: fs.ModeDir | 0o711, Sys: &syscall.Stat_t{Uid: 0}},
+		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o711},
 		"var/lib/hookci/42/agent.json": {Data: []byte(agentJSON), Mode: 0o600},
 		"etc/passwd":                   {Data: []byte("root:x:0:0::/root:/bin/sh\nhookci-run:x:998:998::/nonexistent:/usr/sbin/nologin\n")},
 	}
@@ -160,8 +160,15 @@ func TestChecksWarnOrFail(t *testing.T) {
 			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, Sys: &syscall.Stat_t{Uid: 0}}
 		}, Fail, "mode 0755"},
 		{"state dir owner", stateDirPermsCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 1000}}
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o711, Sys: &syscall.Stat_t{Uid: 1000}}
 		}, Fail, "uid 1000"},
+		// The executor refuses every job when the job user cannot reach its run dirs.
+		{"state dir unsearchable", stateDirPermsCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}}
+		}, Fail, "/var/lib/hookci (mode 0700) is not searchable by hookci-run (uid 998)"},
+		{"state dir ancestor unsearchable", stateDirPermsCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib"] = &fstest.MapFile{Mode: fs.ModeDir | 0o750, Sys: &syscall.Stat_t{Uid: 0}}
+		}, Fail, "/var/lib (mode 0750) is not searchable by hookci-run"},
 		{"state dir missing", stateDirPermsCheck{}, func(e *Env) { e.StateRoot = "/nope" }, Fail, "/nope"},
 		{"credential missing", credentialCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/hookci/42/agent.json") }, Fail, "no agent.json"},
 		{"credential empty", credentialCheck{}, func(e *Env) {

@@ -180,8 +180,9 @@ func TestConnectWritesConfig(t *testing.T) {
 			t.Errorf("agent.json lacks %s:\n%s", want, raw)
 		}
 	}
-	if di, err := os.Stat(dir); err != nil || di.Mode().Perm() != 0o700 {
-		t.Errorf("state dir mode = %v, %v; want 0700", di.Mode().Perm(), err)
+	// root starts 0700 like t.TempDir; jobs could not reach their run dirs.
+	if ri, err := os.Stat(root); err != nil || ri.Mode().Perm() != 0o711 {
+		t.Errorf("state root mode = %v, %v; want 0711", ri.Mode().Perm(), err)
 	}
 
 	for _, secret := range []string{testCredential, testPairToken} {

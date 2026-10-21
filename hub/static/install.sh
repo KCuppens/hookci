@@ -203,7 +203,7 @@ main() {
 		cat "$tmp/agent.service"
 	fi
 	run $sudo mkdir -p /var/lib/hookci
-	run $sudo chmod 0700 /var/lib/hookci
+	run $sudo chmod 0711 /var/lib/hookci
 	run $sudo systemctl daemon-reload
 
 	echo
