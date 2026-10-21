@@ -22,9 +22,12 @@ hookci runs your GitHub builds on a machine you own and reports them where
 your team already talks.
 
 *What you get*
-- One message per run in the channels you choose, updated in place as jobs
-  finish, with a thread reply per finished job.
-- A failure alert with the end of the job's log and a link to the full log.
+- One message per push in the channels you choose, updated in place as jobs
+  finish, with a thread reply per finished job. When the push deploys, the
+  same message shows the deploy until it is done, with a thread reply per
+  deploy step.
+- A failure reply in the thread with the end of the log and a link to the
+  full log.
 - One mention of the commit author on a failure, or a direct message instead.
 - `/hookci` to watch repositories, check status, retry a run and bind agents.
 - An App Home tab that lists your agents and lets admins pair a new one.
@@ -113,7 +116,8 @@ the test workspace is set up (see `docs/marketplace/checklist.md`).
 5. Run `/hookci watch {{TEST_REPO}}`. A test message appears in the channel.
 6. Run `/hookci retry {{TEST_REPO}}`. A run message appears and updates as the
    jobs finish, with a thread reply per job. One job fails on purpose, so a
-   failure alert appears with the end of its log and a link to the full log.
+   failure reply appears in the thread with the end of its log and a link to
+   the full log.
 7. To pair an agent yourself: open the App Home tab, press "Add agent" and run
    the two commands the modal shows on a Linux server or VM. The agent shows
    up online in App Home. Bind it with

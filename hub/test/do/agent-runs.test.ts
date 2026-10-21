@@ -778,6 +778,7 @@ describe("AgentDO run lifecycle", () => {
       step: null,
       step_index: null,
       steps_total: null,
+      rolled_back: 0,
       started_at: 1,
       updated_at: 2,
     });

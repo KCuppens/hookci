@@ -11,10 +11,12 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import type { CheckRunConclusion } from "../github/types";
-import { reportError } from "../observability";
+import { PROVIDER_TIMEOUT_MS } from "../http";
+import { logEvent, reportError } from "../observability";
 import { fetchRepoConfig, readRepoTriggers } from "../policy/repo-config";
-import { renderRejected, reopenDeployRender } from "./render";
+import type { RunView } from "../sinks/types";
 import type { TriggerRequest } from "../webhook/route";
+import { renderRejected, reopenDeployRender } from "./render";
 
 export interface CheckConclusion {
 	installationId: number;
@@ -24,6 +26,8 @@ export interface CheckConclusion {
 	ref: string;
 	event: "push" | "pull_request";
 	conclusion: CheckRunConclusion;
+	/** The checks run that concluded: the deploys fold into its Slack message. */
+	checksRunId: string;
 }
 
 export interface DeployTriggerRow {
@@ -37,6 +41,8 @@ export interface DeployTriggerRow {
 	trigger_id: string;
 	agent_id: string;
 	run_id: string | null;
+	/** The checks run whose pass chained the deploy; null for deploys chained before it was recorded. */
+	checks_run_id: string | null;
 	status: "sent" | "accepted" | "rejected";
 	reason: string | null;
 	created_at: number;
@@ -53,6 +59,8 @@ export interface DeployDispatch {
 	agentId: string;
 	event: "push" | "retry";
 	attempt: number;
+	/** The checks run whose pass chained the deploy, carried over to its retries. */
+	checksRunId: string | null;
 }
 
 export type DeployReply = { type: "accepted"; trigger_id: string; run_id: string } | { type: "rejected"; trigger_id: string; reason: string };
@@ -71,14 +79,13 @@ export async function onCheckConcluded(env: Env, c: CheckConclusion): Promise<nu
 	// Deploy branches are read on the default branch, like the agent's check, so
 	// a pushed commit cannot pick its own. An env that config names no branch
 	// for (gone, or the file broken) still goes out on a default-branch push so
-	// the agent reports why. If the config cannot be fetched every env goes out
-	// and the agent, which reads it again, decides and reports. The full ref
-	// keeps a tag named like the default branch from standing in for it.
+	// the agent reports why. If the config cannot be fetched (GitHub down, rate
+	// limited or slower than PROVIDER_TIMEOUT_MS) every env goes out and the
+	// agent, which reads it again, decides and reports. The full ref keeps a
+	// tag named like the default branch from standing in for it.
 	let deployBranches: Record<string, string> | null;
 	try {
-		({ deployBranches } = readRepoTriggers(
-			await fetchRepoConfig(env, c.installationId, repo.full_name, `refs/heads/${repo.default_branch}`),
-		));
+		deployBranches = await readDeployBranches(env, c.installationId, repo.full_name, `refs/heads/${repo.default_branch}`);
 	} catch (err) {
 		reportError(err, { installation_id: c.installationId, repo: repo.full_name, sha: c.sha });
 		deployBranches = null;
@@ -98,10 +105,59 @@ export async function onCheckConcluded(env: Env, c: CheckConclusion): Promise<nu
 			agentId: binding.agent_id,
 			event: "push",
 			attempt: 1,
+			checksRunId: c.checksRunId,
 		});
 		if (!duplicate) sent++;
 	}
 	return sent;
+}
+
+/**
+ * The deploy branches `.hookci.yml` names at ref. It runs while an agent's
+ * final frame waits for its ack, so it gives up after PROVIDER_TIMEOUT_MS and
+ * throws on a rate limit or a 5xx instead of waiting to retry.
+ */
+async function readDeployBranches(env: Env, installationId: number, repo: string, ref: string): Promise<Record<string, string> | null> {
+	const signal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+	const timedOut = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+	const text = await Promise.race([fetchRepoConfig(env, installationId, repo, ref, { signal, maxAttempts: 1 }), timedOut]);
+	return readRepoTriggers(text).deployBranches;
+}
+
+/**
+ * How long a checks run's final state waits for its deploys: the config read
+ * (PROVIDER_TIMEOUT_MS at most) and as long again for the dispatches.
+ */
+const CHAIN_WAIT_MS = 2 * PROVIDER_TIMEOUT_MS;
+
+/**
+ * Starts the chain for a checks run that concluded: in the AgentDO before
+ * the run's final state is written, so the Slack message of a push that
+ * deploys never shows it passed before its deploys are recorded. Its errors
+ * are reported and never stop the run's final state, and after CHAIN_WAIT_MS
+ * the final state goes ahead while the dispatches finish on their own: an
+ * aborted dispatch could not tell whether its agent got the trigger.
+ */
+export async function chainDeploys(env: Env, run: RunView, conclusion: CheckRunConclusion): Promise<void> {
+	const fields = { installation_id: run.installationId, repo: run.repo, sha: run.sha, op: "deploy_chain" };
+	const chain = onCheckConcluded(env, {
+		installationId: run.installationId,
+		repo: run.repo,
+		sha: run.sha,
+		ref: run.ref ?? "",
+		event: run.event,
+		conclusion,
+		checksRunId: run.runId ?? run.triggerId,
+	}).then(
+		(sent) => {
+			if (sent > 0) logEvent("deploy_chain_dispatched", { installation_id: run.installationId, repo: run.repo, sha: run.sha, sent });
+		},
+		(err: unknown) => reportError(err, fields),
+	);
+	const deadline = AbortSignal.timeout(CHAIN_WAIT_MS);
+	const late = new Promise<"late">((resolve) => deadline.addEventListener("abort", () => resolve("late"), { once: true }));
+	const outcome = await Promise.race([chain.then(() => "done" as const), late]);
+	if (outcome === "late") reportError(new HubError("deploy_chain_slow", 504, `deploy chain still running after ${CHAIN_WAIT_MS} ms`), fields);
 }
 
 /**
@@ -117,8 +173,8 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 	const now = Date.now();
 	const triggerId = crypto.randomUUID();
 	const inserted = await t.run(
-		`INSERT OR IGNORE INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, status, created_at, updated_at)
-		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'sent', ?10, ?10)`,
+		`INSERT OR IGNORE INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, checks_run_id, status, created_at, updated_at)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'sent', ?11, ?11)`,
 		repo.full_name,
 		args.sha,
 		args.envName,
@@ -127,6 +183,7 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 		args.ref,
 		triggerId,
 		args.agentId,
+		args.checksRunId,
 		now,
 	);
 	if (inserted.meta.changes === 0) {
@@ -174,8 +231,10 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 
 /**
  * Stores the agent's reply to one of installationId's deploy triggers and
- * posts the badge of a rejected one; trigger ids that are not the
- * installation's deploy triggers, and replayed replies, change nothing. An
+ * posts the standalone badge of a rejected one whose push has no checks
+ * message (the run's fan-out folds it into that message otherwise); trigger
+ * ids that are not the installation's deploy triggers, and replayed replies,
+ * change nothing. An
  * accepted retry reuses its run id, so the run's finished render is reopened
  * as queued with a new check run.
  */

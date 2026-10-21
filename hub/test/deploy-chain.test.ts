@@ -5,9 +5,8 @@ import { bind } from "../src/db/bindings";
 import { upsertInstallation } from "../src/db/installations";
 import { upsertRepos } from "../src/db/repos";
 import { tenantDb } from "../src/db/tenant";
-import { type CheckConclusion, latestDeployTrigger, onCheckConcluded } from "../src/deploy/chain";
+import { type CheckConclusion, chainDeploys, latestDeployTrigger, onCheckConcluded } from "../src/deploy/chain";
 import type { Env } from "../src/env";
-import { checksSinkFactory } from "../src/sinks/checks";
 import type { RunView } from "../src/sinks/types";
 import type { TriggerRequest } from "../src/webhook/route";
 import { clearTables } from "./db/helpers";
@@ -25,6 +24,7 @@ const PUSH_SUCCESS: CheckConclusion = {
   ref: "refs/heads/main",
   event: "push",
   conclusion: "success",
+  checksRunId: "run_checks",
 };
 
 type Row = Record<string, unknown>;
@@ -74,7 +74,17 @@ describe("deploy chain", () => {
       [production, "production"],
     ] as const) {
       const row = rows.find((r) => r.env === envName);
-      expect(row).toMatchObject({ repo: "acme/widgets", sha: SHA, attempt: 1, event: "push", ref: "refs/heads/main", agent_id: agent.agentId, status: "sent", run_id: null });
+      expect(row).toMatchObject({
+        repo: "acme/widgets",
+        sha: SHA,
+        attempt: 1,
+        event: "push",
+        ref: "refs/heads/main",
+        agent_id: agent.agentId,
+        checks_run_id: "run_checks",
+        status: "sent",
+        run_id: null,
+      });
       const frames = await outbox(agent);
       expect(frames).toHaveLength(1);
       expect(frames[0]).toMatchObject({ v: 1, type: "trigger", trigger_id: row?.trigger_id, repo: "acme/widgets", sha: SHA, ref: "refs/heads/main", event: "push", env: envName, attempt: 1, trust: "trusted" });
@@ -111,12 +121,20 @@ describe("deploy chain", () => {
 
     it("sends every bound env when the default branch's config cannot be read, leaving the check to the agent", async () => {
       github.gh.respond("GET", "/repos/:owner/:repo/contents/:path", () => Response.json({ message: "Server Error" }, { status: 500 }));
-      // withRetry backs off up to 7 s in total on a 5xx with full jitter; zero jitter keeps the test inside its timeout.
-      vi.spyOn(Math, "random").mockReturnValue(0);
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/feature" })).toBe(3);
       expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "production", "staging"]);
       expect(errors).toHaveBeenCalled();
+    });
+
+    it("does not wait out a rate limit on the config read: every env goes out at once", async () => {
+      github.gh.respond("GET", "/repos/:owner/:repo/contents/:path", () => new Response("", { status: 429, headers: { "retry-after": "20" } }));
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const started = Date.now();
+      expect(await onCheckConcluded(env, { ...PUSH_SUCCESS, ref: "refs/heads/feature" })).toBe(3);
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "production", "staging"]);
+      expect(errors.mock.calls.some(([line]) => typeof line === "string" && line.includes("github_unavailable"))).toBe(true);
     });
   });
 
@@ -206,9 +224,8 @@ describe("deploy chain", () => {
     });
   });
 
-  describe("check conclusion", () => {
-    it("chain error does not alter check conclusion", async () => {
-      github.gh.respond("POST", "/repos/:owner/:repo/check-runs", (req) => Response.json({ id: 7, ...(req.body as object) }, { status: 201 }));
+  describe("chain from a concluded checks run", () => {
+    it("reports a chain error instead of throwing it", async () => {
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
       await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", "agt_unreachable");
       const broken: Env = {
@@ -236,11 +253,8 @@ describe("deploy chain", () => {
         jobs: [],
       };
 
-      await expect(checksSinkFactory(broken, INSTALLATION).onRunUpdate(run)).resolves.toBeUndefined();
+      await expect(chainDeploys(broken, run, "success")).resolves.toBeUndefined();
 
-      const posted = github.gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
-      expect(posted).toHaveLength(1);
-      expect(posted[0]?.body).toMatchObject({ name: "hookci", status: "completed", conclusion: "success" });
       expect(errors.mock.calls.some(([line]) => typeof line === "string" && line.includes("agent namespace down"))).toBe(true);
       expect(await deployRows()).toEqual([]);
     });

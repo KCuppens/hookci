@@ -71,6 +71,7 @@ export async function handleDeployRetry(env: Env, payload: SlackBlockActionPaylo
 		agentId: binding.agent_id,
 		event: "retry",
 		attempt: latest.attempt + 1,
+		checksRunId: latest.checks_run_id,
 	});
 	return duplicate ? ephemeral(S.deploy.retryAlreadyRequested) : null;
 }
