@@ -1,0 +1,2 @@
+invalid_duplicate_key.yml:6: error: checks.jobs.test: duplicate key "test", first defined on line 4
+  fix: remove one of the two entries

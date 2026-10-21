@@ -1,0 +1,8 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: go test ./...
+  egress:
+    - api.example.com:443
+    - registry.npmjs.org:8080

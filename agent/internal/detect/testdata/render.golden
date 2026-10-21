@@ -1,0 +1,25 @@
+# package manager: npm (package-lock.json)
+# second note
+
+version: 1
+checks:
+  setup:
+    - run: npm ci
+      cache:
+        key: [package-lock.json]
+        paths: [node_modules]
+    - run: go mod download
+  jobs:
+    alpha:
+      run: npm run lint
+      annotate: eslint
+    mid:
+      run: "true"
+    zeta:
+      run: 'echo ''quoted: yes'' && exit 0'
+      needs: [alpha]
+      timeout: 10m
+  services:
+    postgres:
+      image: postgres:16-alpine
+      tmpfs: true

@@ -1,0 +1,3 @@
+invalid_unicode.yml:3: error: checks.trust: must be one of "collaborators", "approve", "all", got "approve\u2014always"
+invalid_unicode.yml:4: error: checks.jöbs: unknown key "j\u00f6bs"
+  fix: did you mean "jobs"?

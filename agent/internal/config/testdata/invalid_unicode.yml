@@ -1,0 +1,6 @@
+version: 1
+checks:
+  trust: "approve—always"
+  jöbs:
+    test:
+      run: go test ./...

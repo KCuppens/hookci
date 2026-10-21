@@ -1,0 +1,16 @@
+invalid_types.yml:3: error: checks.trust: must be one of "collaborators", "approve", "all", got "everyone"
+invalid_types.yml:5: error: checks.limits.cpus: must be greater than 0, got 0
+invalid_types.yml:6: error: checks.limits.memory: "4GB" is not a memory size
+  fix: use a number with a K, M or G suffix, for example 4G or 512M
+invalid_types.yml:7: error: checks.limits.tasks: must be at least 16, got 8
+invalid_types.yml:8: error: checks.limits.timeout: must be a string, got a number
+invalid_types.yml:9: error: checks.setup: must be a list, got a string
+invalid_types.yml:11: error: checks.jobs.Build: invalid job name "Build": job names start with a lowercase letter or digit and are at most 63 characters of a-z, 0-9, - and _
+  fix: rename it using lowercase letters, digits, - and _
+invalid_types.yml:15: error: checks.jobs.test.annotate: must be one of "eslint", "tsc", got "eslnt"
+  fix: did you mean "eslint"?
+invalid_types.yml:16: error: checks.jobs.test.needs: must be a list, got a string
+invalid_types.yml:19: error: deployments.production.env_file: env_file "etc/production.env" must be an absolute path
+  fix: use a path that starts with /, for example /etc/hookci/production.env
+invalid_types.yml:21: error: deployments.production.health.timeout: "1d" is not a duration
+  fix: use a whole number with an s, m or h suffix, for example 90s, 10m or 1h

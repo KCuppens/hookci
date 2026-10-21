@@ -1,0 +1,13 @@
+version: 1
+checks:
+  limits:
+    memory: 0G
+  jobs:
+    test:
+      run: "   "
+      timeout: 0s
+  setup:
+    - run: npm ci
+      cache:
+        key: [package-lock.json]
+        paths: [/var/cache/npm, ../outside]

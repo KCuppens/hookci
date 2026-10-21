@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "hello",
+  "protocol_version": 1,
+  "agent_version": "0.3.0",
+  "inbound_hwm": -1
+}

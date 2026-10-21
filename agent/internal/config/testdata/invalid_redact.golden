@@ -1,0 +1,4 @@
+invalid_redact.yml:8: error: redact[1]: invalid pattern: invalid or unsupported Perl syntax in "(?="
+  fix: patterns use RE2 syntax: no lookaround or backreferences, and literal ( [ { . * + ? need a \ before them
+invalid_redact.yml:9: error: redact[2]: invalid pattern: missing closing ) in "unclosed(group"
+  fix: patterns use RE2 syntax: no lookaround or backreferences, and literal ( [ { . * + ? need a \ before them

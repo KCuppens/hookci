@@ -1,0 +1,14 @@
+invalid_deployments.yml:7: error: deployments.production.on.push.branch: a deployment must name the branch it deploys from
+  fix: add on: {push: {branch: main}}
+invalid_deployments.yml:11: error: deployments.production.health.url: health.url must use http, got "https"
+  fix: use http, for example http://127.0.0.1:8000/health
+invalid_deployments.yml:11: error: deployments.production.health.url: health.url must point at 127.0.0.1 or localhost, got "example.com"
+  fix: the check runs on the deploy host; point it at the local port, for example http://127.0.0.1:8000/health
+invalid_deployments.yml:11: error: deployments.production.health.url: health.url needs an explicit port
+  fix: add the port, for example http://127.0.0.1:8000/health
+invalid_deployments.yml:17: error: deployments.staging.health.url: health.url needs an explicit port
+  fix: add the port, for example http://127.0.0.1:8000/health
+invalid_deployments.yml:23: warning: deployments.preview.env_file: env_file "/etc/hookci/missing.env" does not exist on this machine
+  fix: create it on the deploy host, owned by root with mode 0600
+invalid_deployments.yml:25: error: deployments.preview.health.url: {port} is only filled in by strategy: compose-bluegreen
+  fix: set strategy: compose-bluegreen, or use a fixed port

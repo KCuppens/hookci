@@ -1,0 +1,69 @@
+name: Bug report
+description: Report unexpected behavior in hookci
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: hookci version
+      description: Output of `hookci version`.
+      placeholder: hookci v0.1.0 (abc1234)
+    validations:
+      required: true
+  - type: input
+    id: os_arch
+    attributes:
+      label: OS and arch
+      placeholder: Ubuntu 24.04, linux/amd64
+    validations:
+      required: true
+  - type: dropdown
+    id: isolation
+    attributes:
+      label: Isolation backend
+      options:
+        - systemd
+        - none
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: .hookci.yml
+      description: Your config file, if the repository has one. Remove secrets.
+      render: yaml
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `hookci run`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output of `hookci run` or `hookci logs`.
+      render: shell
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Secrets
+      options:
+        - label: I removed secrets from logs
+          required: true

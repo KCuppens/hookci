@@ -1,0 +1,2 @@
+invalid_unknown_key.yml:3: error: checks.jbos: unknown key "jbos"
+  fix: did you mean "jobs"?

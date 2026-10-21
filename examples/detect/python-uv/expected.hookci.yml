@@ -1,0 +1,14 @@
+# python: uv (uv.lock)
+
+version: 1
+checks:
+  setup:
+    - run: uv sync --frozen
+      cache:
+        key: [uv.lock]
+        paths: [.venv]
+  jobs:
+    pytest:
+      run: uv run pytest
+    ruff:
+      run: uv run ruff check .

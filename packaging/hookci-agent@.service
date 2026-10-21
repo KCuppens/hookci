@@ -1,0 +1,18 @@
+[Unit]
+Description=HookCI agent (installation %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/hookci agent --installation %i
+Restart=always
+# Exit 3 is a revoked agent, 4 is agent_too_old or another internal error
+# (agent/internal/cli/exit.go); restarting cannot fix either.
+RestartPreventExitStatus=3 4
+RestartSec=5
+Slice=hookci.slice
+StateDirectory=hookci/%i
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

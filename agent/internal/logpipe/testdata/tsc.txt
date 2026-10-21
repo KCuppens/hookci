@@ -1,0 +1,11 @@
+src/index.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.
+/work/src/abs.ts(1,1): error TS1005: ';' expected.
+[96msrc/pretty.ts[0m:[93m5[0m:[93m12[0m - [91merror[0m[90m TS2345: [0mArgument of type 'number' is not assignable to parameter of type 'string'.
+
+[7m5[0m   foo(42);
+[7m [0m [91m           ~~[0m
+
+src/plain2.ts:8:2 - error TS7006: Parameter 'x' implicitly has an 'any' type.
+
+Found 4 errors in 4 files.
+

@@ -1,0 +1,81 @@
+{
+  "action": "closed",
+  "number": 7,
+  "pull_request": {
+    "number": 7,
+    "state": "closed",
+    "draft": false,
+    "title": "Add widget sizing",
+    "user": {
+      "login": "alice",
+      "id": 7001,
+      "type": "User"
+    },
+    "head": {
+      "label": "acme:feature/sizing",
+      "ref": "feature/sizing",
+      "sha": "8d3f9a1c5b7e2d4f6a8c0e1b3d5f7a9c1e3b5d7f",
+      "user": {
+        "login": "acme",
+        "id": 5001,
+        "type": "Organization"
+      },
+      "repo": {
+        "id": 1001,
+        "name": "widgets",
+        "full_name": "acme/widgets",
+        "private": true,
+        "owner": {
+          "login": "acme",
+          "id": 5001,
+          "type": "Organization"
+        },
+        "default_branch": "main"
+      }
+    },
+    "base": {
+      "label": "acme:main",
+      "ref": "main",
+      "sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+      "user": {
+        "login": "acme",
+        "id": 5001,
+        "type": "Organization"
+      },
+      "repo": {
+        "id": 1001,
+        "name": "widgets",
+        "full_name": "acme/widgets",
+        "private": true,
+        "owner": {
+          "login": "acme",
+          "id": 5001,
+          "type": "Organization"
+        },
+        "default_branch": "main"
+      }
+    },
+    "merged": false
+  },
+  "repository": {
+    "id": 1001,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": {
+      "login": "acme",
+      "id": 5001,
+      "type": "Organization"
+    },
+    "default_branch": "main"
+  },
+  "sender": {
+    "login": "alice",
+    "id": 7001,
+    "type": "User"
+  },
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI="
+  }
+}

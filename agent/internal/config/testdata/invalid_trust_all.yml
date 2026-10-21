@@ -1,0 +1,6 @@
+version: 1
+checks:
+  trust: all
+  jobs:
+    test:
+      run: go test ./...

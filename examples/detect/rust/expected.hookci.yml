@@ -1,0 +1,12 @@
+version: 1
+checks:
+  setup:
+    - run: cargo fetch
+      cache:
+        key: [Cargo.lock]
+        paths: [~/.cargo/registry, target]
+  jobs:
+    cargo-test:
+      run: cargo test
+    clippy:
+      run: cargo clippy --all-targets -- -D warnings

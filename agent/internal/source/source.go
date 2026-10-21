@@ -1,0 +1,50 @@
+// Package source turns "repo + sha" into a checked-out working tree in a
+// run directory. Every git call goes through Git, which applies hardened
+// flags and a minimal environment.
+package source
+
+import (
+	"context"
+	"errors"
+	"syscall"
+	"time"
+)
+
+// Source is compiled-in. M0: Local. M1: HubSource (hub-token fetch).
+type Source interface {
+	Name() string
+	// Checkout materialises req.SHA into dir (which must not exist or be empty).
+	Checkout(ctx context.Context, req Request, dir string) (Checkout, error)
+}
+
+// Request names the commit to check out.
+type Request struct {
+	Repo    string              // "owner/name" or "local/<dirname>" for Local
+	SHA     string              // full 40-hex sha; Local fills it from HEAD when empty
+	Ref     string              // "refs/heads/main" or "refs/pull/12/head"
+	BaseSHA string              // pull requests: base commit to fetch alongside; HubSource only
+	RunID   string              // run the fetch token is requested for; HubSource only
+	RunAs   *syscall.Credential // nil means current user; root path sets hookci-run uid/gid
+}
+
+// Checkout describes a materialised working tree.
+type Checkout struct {
+	Repo     string // the checked-out repo; Local fills "local/<basename of the toplevel>"
+	Dir      string
+	SHA      string
+	Ref      string
+	BaseDir  string // HubSource: checkout of Request.BaseSHA, removed by Release; "" when none
+	Dirty    bool   // Local only: working tree had uncommitted changes
+	Duration time.Duration
+	// Release ends the checkout's hold on its mirror, after which GC may
+	// prune the objects it borrowed, or removes HubSource's scratch dir. It
+	// is idempotent; nil when nothing is held.
+	Release func()
+}
+
+var (
+	ErrBusy        = errors.New("source: mirror in use")
+	ErrBadSHA      = errors.New("source: sha must be 40 hex chars")
+	ErrNotGitRepo  = errors.New("source: not inside a git repository")
+	ErrSHAMismatch = errors.New("source: fetched commit is not the requested sha")
+)

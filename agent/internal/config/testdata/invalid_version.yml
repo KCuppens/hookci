@@ -1,0 +1,5 @@
+version: 2
+checks:
+  jobs:
+    test:
+      run: go test ./...

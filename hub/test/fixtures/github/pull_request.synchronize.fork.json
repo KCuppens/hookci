@@ -1,0 +1,82 @@
+{
+  "action": "synchronize",
+  "number": 9,
+  "pull_request": {
+    "number": 9,
+    "state": "open",
+    "draft": false,
+    "title": "Speed up the build",
+    "user": {
+      "login": "mallory",
+      "id": 6002,
+      "type": "User"
+    },
+    "head": {
+      "label": "mallory:patch-1",
+      "ref": "patch-1",
+      "sha": "f00dfacecafebeef0123456789abcdef01234567",
+      "user": {
+        "login": "mallory",
+        "id": 6002,
+        "type": "User"
+      },
+      "repo": {
+        "id": 2002,
+        "name": "widgets",
+        "full_name": "mallory/widgets",
+        "private": false,
+        "owner": {
+          "login": "mallory",
+          "id": 6002,
+          "type": "User"
+        },
+        "default_branch": "main",
+        "fork": true
+      }
+    },
+    "base": {
+      "label": "acme:main",
+      "ref": "main",
+      "sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+      "user": {
+        "login": "acme",
+        "id": 5001,
+        "type": "Organization"
+      },
+      "repo": {
+        "id": 1001,
+        "name": "widgets",
+        "full_name": "acme/widgets",
+        "private": true,
+        "owner": {
+          "login": "acme",
+          "id": 5001,
+          "type": "Organization"
+        },
+        "default_branch": "main"
+      }
+    },
+    "merged": false
+  },
+  "repository": {
+    "id": 1001,
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": true,
+    "owner": {
+      "login": "acme",
+      "id": 5001,
+      "type": "Organization"
+    },
+    "default_branch": "main"
+  },
+  "sender": {
+    "login": "mallory",
+    "id": 6002,
+    "type": "User"
+  },
+  "installation": {
+    "id": 42,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNDI="
+  }
+}

@@ -1,0 +1,2 @@
+invalid_yaml.yml:5: error: invalid YAML: found unexpected end of stream
+  fix: check the indentation and quoting on this line

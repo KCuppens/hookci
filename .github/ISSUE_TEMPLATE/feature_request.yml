@@ -1,0 +1,50 @@
+name: Feature Request
+description: Propose an enhancement or new capability for HookCI
+title: "[Feature]: "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please outline the proposed feature, the problem it solves, and any design considerations.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: Is your feature request related to a specific problem or missing functionality?
+      placeholder: I encounter an issue when trying to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you would like to see implemented.
+      placeholder: Introduce a new flag / command / setting...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component would this change impact?
+      options:
+        - agent (`hookci` CLI / daemon)
+        - hub (Cloudflare Worker)
+        - schema (config format)
+        - build / Makefile / scripts
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative implementations or workarounds you considered.
+    validations:
+      required: false

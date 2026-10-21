@@ -1,0 +1,11 @@
+dist/
+hub/node_modules/
+hub/dist/
+hub/.wrangler/
+schema/node_modules/
+*.db
+*.db-wal
+*.db-shm
+.env*
+!.env.example
+examples/**/node_modules/
