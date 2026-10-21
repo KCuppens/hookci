@@ -1,6 +1,6 @@
 // How a deploy run shows up: one Slack badge per run (posted once, then
 // updated in place), a failure alert when the deploy ends failed, and an
-// informational `zeroci/deploy:<env>` check run. Deploys never touch GitHub
+// informational `hookci/deploy:<env>` check run. Deploys never touch GitHub
 // Deployments. Every sink failure is reported and swallowed here, so the
 // agent's event handler never sees it.
 
@@ -59,7 +59,7 @@ export interface DeployRenderRow {
 }
 
 const SEP = " · ";
-export const RETRY_ACTION = "zeroci_deploy_retry";
+export const RETRY_ACTION = "hookci_deploy_retry";
 
 /** 2m04s from a minute on, 41s below. */
 function deployDuration(ms: number): string {

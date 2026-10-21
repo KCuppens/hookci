@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"text/tabwriter"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
 )
 
 // Status is the outcome of a check.
@@ -62,7 +62,7 @@ type Check interface {
 	Run(ctx context.Context, env Env) Result
 }
 
-// Execer runs host commands (zeroci version, git --version).
+// Execer runs host commands (hookci version, git --version).
 type Execer interface {
 	Run(ctx context.Context, c execx.Cmd) error
 }
@@ -70,7 +70,7 @@ type Execer interface {
 // Env is the host as the checks see it.
 type Env struct {
 	// StateRoot holds one state directory per installation id, as
-	// zeroci connect lays it out (/var/lib/zeroci/<installation_id>).
+	// hookci connect lays it out (/var/lib/hookci/<installation_id>).
 	StateRoot string
 	// HubOrigin is the hub base URL, e.g. https://ci.webuno.io.
 	HubOrigin string
@@ -87,7 +87,7 @@ type Env struct {
 	// Writable is nil when the doctor's user may create files in dir.
 	Writable func(dir string) error
 	// RepoConfigs is what the default-branch runs of the installation in
-	// stateDir saw each repository's .zeroci.yml declare.
+	// stateDir saw each repository's .hookci.yml declare.
 	RepoConfigs func(ctx context.Context, stateDir string) ([]store.RepoConfig, error)
 }
 
@@ -102,7 +102,7 @@ func Run(ctx context.Context, env Env, checks []Check) []Result {
 	return rs
 }
 
-// Default is every check zeroci doctor runs, in display order.
+// Default is every check hookci doctor runs, in display order.
 func Default() []Check {
 	return []Check{
 		versionCheck{},

@@ -66,7 +66,7 @@ func tarball(t *testing.T, binary []byte) []byte {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
-	for name, body := range map[string][]byte{"LICENSE": []byte("license"), "zeroci": binary} {
+	for name, body := range map[string][]byte{"LICENSE": []byte("license"), "hookci": binary} {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ type harness struct {
 
 func newHarness(t *testing.T, rs *releaseServer, v Verifier) *harness {
 	t.Helper()
-	h := &harness{bin: filepath.Join(t.TempDir(), "zeroci")}
+	h := &harness{bin: filepath.Join(t.TempDir(), "hookci")}
 	if err := os.WriteFile(h.bin, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // testSHA abbreviates to abc1234 in needs errors.
@@ -551,7 +551,7 @@ func TestScheduler_InterruptedRunBlocksEnv(t *testing.T) {
 	if got := r.awaitStart(t); got != "s" {
 		t.Fatalf("started %s, want the other env's s", got)
 	}
-	const want = "deployments.production: run x was interrupted and left the environment in an unknown state; finish it with zeroci retry x before deploying again"
+	const want = "deployments.production: run x was interrupted and left the environment in an unknown state; finish it with hookci retry x before deploying again"
 	if run := r.wantState(t, "y", store.DeployFailed); run.Error != want {
 		t.Errorf("y error = %q, want %q", run.Error, want)
 	}

@@ -5,17 +5,17 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 func TestSystemctl(t *testing.T) {
 	ctx := context.Background()
 	ex := &execx.Fake{}
-	ex.On("systemctl", []string{"cat", "--", "zeroci-agent@42.service"}, execx.FakeResponse{})
-	ex.On("systemctl", []string{"cat", "--", "zeroci-agent@7.service"}, execx.FakeResponse{Code: 1})
-	ex.On("systemctl", []string{"enable", "--now", "--", "zeroci-agent@42.service"}, execx.FakeResponse{})
-	ex.On("systemctl", []string{"show", "-p", "ActiveState", "--value", "--", "zeroci-agent@42.service"}, execx.FakeResponse{Stdout: "active\n"})
-	ex.On("systemctl", []string{"try-restart", "--", "zeroci-agent@*.service"}, execx.FakeResponse{})
+	ex.On("systemctl", []string{"cat", "--", "hookci-agent@42.service"}, execx.FakeResponse{})
+	ex.On("systemctl", []string{"cat", "--", "hookci-agent@7.service"}, execx.FakeResponse{Code: 1})
+	ex.On("systemctl", []string{"enable", "--now", "--", "hookci-agent@42.service"}, execx.FakeResponse{})
+	ex.On("systemctl", []string{"show", "-p", "ActiveState", "--value", "--", "hookci-agent@42.service"}, execx.FakeResponse{Stdout: "active\n"})
+	ex.On("systemctl", []string{"try-restart", "--", "hookci-agent@*.service"}, execx.FakeResponse{})
 	s := Systemctl{Runner: ex}
 
 	if ok, err := s.UnitExists(ctx, AgentUnit(42)); !ok || err != nil {
@@ -34,12 +34,12 @@ func TestSystemctl(t *testing.T) {
 		t.Errorf("TryRestart = %v", err)
 	}
 	if !slices.ContainsFunc(ex.Calls, func(c execx.Cmd) bool {
-		return slices.Equal(c.Args, []string{"try-restart", "--", "zeroci-agent@*.service"})
+		return slices.Equal(c.Args, []string{"try-restart", "--", "hookci-agent@*.service"})
 	}) {
 		t.Error("no systemctl try-restart call")
 	}
 	if !slices.ContainsFunc(ex.Calls, func(c execx.Cmd) bool {
-		return slices.Equal(c.Args, []string{"enable", "--now", "--", "zeroci-agent@42.service"})
+		return slices.Equal(c.Args, []string{"enable", "--now", "--", "hookci-agent@42.service"})
 	}) {
 		t.Error("no systemctl enable --now call")
 	}

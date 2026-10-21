@@ -16,7 +16,7 @@ while IFS= read -r f; do
 done < <(cd "$tmp" && find . -type f | sed 's|^\./||' | sort)
 
 if [ "$status" -ne 0 ]; then
-	echo "schema-check: generated files differ from schema/zeroci.schema.json; run 'make schema'" >&2
+	echo "schema-check: generated files differ from schema/hookci.schema.json; run 'make schema'" >&2
 	exit 1
 fi
 echo "schema-check: ok"

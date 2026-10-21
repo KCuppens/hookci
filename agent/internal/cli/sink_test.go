@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
 )
 
 const sinkTestToken = "123:abc"
@@ -195,7 +195,7 @@ func TestSinkAddLinearWithoutKeyExits2(t *testing.T) {
 	h := &sinkHub{status: http.StatusCreated, answer: linearSinkJSON}
 	d := newSinkDeps(t, h, "")
 	code, _, stderr := runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG")
-	if code != ExitUsage || !strings.Contains(stderr, "ZEROCI_LINEAR_API_KEY not set and no key on stdin") {
+	if code != ExitUsage || !strings.Contains(stderr, "HOOKCI_LINEAR_API_KEY not set and no key on stdin") {
 		t.Fatalf("exit = %d, stderr %q", code, stderr)
 	}
 	code, _, stderr = runSink(d, "add", "linear", "--repo", "o/r", "--team", "ENG", "--api-key", linearTestKey)

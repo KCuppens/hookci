@@ -1,5 +1,5 @@
 {
-  "name": "zeroci-staging",
+  "name": "hookci-staging",
   "url": "https://ci-staging.webuno.io",
   "hook_attributes": { "url": "https://ci-staging.webuno.io/github/webhook", "active": true },
   "redirect_url": "https://ci-staging.webuno.io/github/oauth/callback",

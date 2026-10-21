@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/egress"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 type fakeProxy struct{}
@@ -108,17 +108,17 @@ func TestParseGlobalsDefaults(t *testing.T) {
 		want Globals
 	}{
 		{"home", map[string]string{"HOME": "/home/u"}, []string{"run"},
-			Globals{StateDir: "/home/u/.local/state/zeroci", Slots: scheduler.DefaultSlots(), Isolation: "auto"}},
+			Globals{StateDir: "/home/u/.local/state/hookci", Slots: scheduler.DefaultSlots(), Isolation: "auto"}},
 		{"xdg", map[string]string{"HOME": "/home/u", "XDG_STATE_HOME": "/xdg"}, []string{"run"},
-			Globals{StateDir: "/xdg/zeroci", Slots: scheduler.DefaultSlots(), Isolation: "auto"}},
-		{"env", map[string]string{"HOME": "/home/u", "XDG_STATE_HOME": "/xdg", "ZEROCI_STATE_DIR": "/srv/z"}, []string{"run"},
+			Globals{StateDir: "/xdg/hookci", Slots: scheduler.DefaultSlots(), Isolation: "auto"}},
+		{"env", map[string]string{"HOME": "/home/u", "XDG_STATE_HOME": "/xdg", "HOOKCI_STATE_DIR": "/srv/z"}, []string{"run"},
 			Globals{StateDir: "/srv/z", Slots: scheduler.DefaultSlots(), Isolation: "auto"}},
-		{"flags", map[string]string{"ZEROCI_STATE_DIR": "/srv/z"}, []string{"--state-dir", "/s", "--slots", "3", "--isolation", "none", "-v", "run"},
+		{"flags", map[string]string{"HOOKCI_STATE_DIR": "/srv/z"}, []string{"--state-dir", "/s", "--slots", "3", "--isolation", "none", "-v", "run"},
 			Globals{StateDir: "/s", Slots: 3, Isolation: "none", Verbose: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
+			fs := flag.NewFlagSet("hookci", flag.ContinueOnError)
 			fs.SetOutput(&bytes.Buffer{})
 			g, rest, err := parseGlobals(fs, append(tc.args, "lint"), envOf(tc.env))
 			if err != nil {
@@ -150,7 +150,7 @@ func TestParseGlobalsInvalid(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
+			fs := flag.NewFlagSet("hookci", flag.ContinueOnError)
 			fs.SetOutput(&bytes.Buffer{})
 			_, _, err := parseGlobals(fs, tc.args, envOf(tc.env))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -163,7 +163,7 @@ func TestParseGlobalsInvalid(t *testing.T) {
 	if code := Main([]string{"--slots", "0", "run"}, &stdout, &stderr); code != ExitUsage {
 		t.Errorf("Main(--slots 0 run) = %d, want %d", code, ExitUsage)
 	}
-	if !strings.Contains(stderr.String(), "zeroci: --slots must be at least 1") {
+	if !strings.Contains(stderr.String(), "hookci: --slots must be at least 1") {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 }
@@ -212,7 +212,7 @@ func TestRunNothingDetected(t *testing.T) {
 			if code != ExitNoChecks {
 				t.Fatalf("exit = %d, want %d\nstderr:\n%s", code, ExitNoChecks, stderr)
 			}
-			if want := "zeroci: no checks detected. Add a .zeroci.yml or run zeroci init.\n"; !strings.HasSuffix(stderr, want) {
+			if want := "hookci: no checks detected. Add a .hookci.yml or run hookci init.\n"; !strings.HasSuffix(stderr, want) {
 				t.Errorf("stderr = %q, want it to end with %q", stderr, want)
 			}
 		})
@@ -221,7 +221,7 @@ func TestRunNothingDetected(t *testing.T) {
 
 func TestRunFailedJobExit1(t *testing.T) {
 	wd := commitWorkDir(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo boom; exit 3\n",
+		".hookci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo boom; exit 3\n",
 	})
 	d, _ := testDeps(t, wd)
 
@@ -239,7 +239,7 @@ func TestRunFailedJobExit1(t *testing.T) {
 
 func TestRunSingleJobWithNeeds(t *testing.T) {
 	wd := commitWorkDir(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n" +
+		".hookci.yml": "version: 1\nchecks:\n  jobs:\n" +
 			"    build:\n      run: echo build\n" +
 			"    lint:\n      run: echo lint\n" +
 			"    gen:\n      run: echo gen\n      needs: [build]\n" +
@@ -259,7 +259,7 @@ func TestRunSingleJobWithNeeds(t *testing.T) {
 
 func TestRunUnknownJob(t *testing.T) {
 	wd := commitWorkDir(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo lint\n    test:\n      run: echo test\n",
+		".hookci.yml": "version: 1\nchecks:\n  jobs:\n    lint:\n      run: echo lint\n    test:\n      run: echo test\n",
 	})
 	d, _ := testDeps(t, wd)
 
@@ -267,7 +267,7 @@ func TestRunUnknownJob(t *testing.T) {
 	if code != ExitUsage {
 		t.Fatalf("exit = %d, want %d\nstderr:\n%s", code, ExitUsage, stderr)
 	}
-	if want := `zeroci: unknown job "deploy" (jobs: lint, test)`; !strings.Contains(stderr, want) {
+	if want := `hookci: unknown job "deploy" (jobs: lint, test)`; !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q, want %q", stderr, want)
 	}
 	runs, err := openState(t, d).ListRuns(context.Background(), store.RunFilter{})
@@ -278,7 +278,7 @@ func TestRunUnknownJob(t *testing.T) {
 
 func TestRunRecoversFirst(t *testing.T) {
 	wd := commitWorkDir(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo ok\n",
+		".hookci.yml": "version: 1\nchecks:\n  jobs:\n    test:\n      run: echo ok\n",
 	})
 	d, _ := testDeps(t, wd)
 	if err := os.MkdirAll(d.Globals.StateDir, 0o700); err != nil {
@@ -318,7 +318,7 @@ func TestRunRecoversFirst(t *testing.T) {
 	if got.State != store.RunInterrupted {
 		t.Errorf("crashed run state = %s, want interrupted", got.State)
 	}
-	if !strings.Contains(stderr, "zeroci: warning: recovery: ") || !strings.Contains(stderr, "docker exploded") {
+	if !strings.Contains(stderr, "hookci: warning: recovery: ") || !strings.Contains(stderr, "docker exploded") {
 		t.Errorf("stderr lacks the recovery error:\n%s", stderr)
 	}
 }
@@ -326,7 +326,7 @@ func TestRunRecoversFirst(t *testing.T) {
 func TestRunSIGINTCancels(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "started")
 	wd := commitWorkDir(t, map[string]string{
-		".zeroci.yml": "version: 1\nchecks:\n  jobs:\n    slow:\n      run: touch " + marker + " && sleep 60\n",
+		".hookci.yml": "version: 1\nchecks:\n  jobs:\n    slow:\n      run: touch " + marker + " && sleep 60\n",
 	})
 	d, iso := testDeps(t, wd)
 

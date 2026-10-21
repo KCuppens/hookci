@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // osExec runs deploy commands directly on the host.
@@ -43,7 +43,7 @@ func TestRunBeforeHook_PgDumpIntegration(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not in PATH")
 	}
-	name := "zeroci-itest-migrate-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	name := "hookci-itest-migrate-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	docker(t, "network", "create", name)
 	t.Cleanup(func() { _ = exec.Command("docker", "network", "rm", name).Run() })
 	docker(t, "run", "-d", "--name", name, "--network", name, "-e", "POSTGRES_PASSWORD=secret", "postgres:16")

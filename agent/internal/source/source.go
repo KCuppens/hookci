@@ -24,7 +24,7 @@ type Request struct {
 	Ref     string              // "refs/heads/main" or "refs/pull/12/head"
 	BaseSHA string              // pull requests: base commit to fetch alongside; HubSource only
 	RunID   string              // run the fetch token is requested for; HubSource only
-	RunAs   *syscall.Credential // nil means current user; root path sets zeroci-run uid/gid
+	RunAs   *syscall.Credential // nil means current user; root path sets hookci-run uid/gid
 }
 
 // Checkout describes a materialised working tree.

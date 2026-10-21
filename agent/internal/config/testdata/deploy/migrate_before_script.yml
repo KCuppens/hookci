@@ -8,4 +8,4 @@ deployments:
       run: "./migrate up"
       before:
         run: "pg_dump -Fc -f /backup/{env}-{ts}.dump \"$DATABASE_URL\""
-        output_dir: /var/backups/zeroci/app
+        output_dir: /var/backups/hookci/app

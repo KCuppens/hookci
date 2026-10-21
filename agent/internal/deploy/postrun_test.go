@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/gc"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/gc"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestRunBestEffort_DoesNotAffectRunOutcome(t *testing.T) {

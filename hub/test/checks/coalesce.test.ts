@@ -7,7 +7,7 @@ import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { seedAgent } from "../do/agent-socket";
 
-const TARGET = { installationId: 42, repoId: 1001, repo: "acme/widgets", headSha: "1".repeat(40), name: "zeroci/test" };
+const TARGET = { installationId: 42, repoId: 1001, repo: "acme/widgets", headSha: "1".repeat(40), name: "hookci/test" };
 
 function update(title: string, status: UpdateCheckRunBody["status"] = "in_progress"): CheckUpdate {
   return { ...TARGET, body: { status, output: { title, summary: title } } };
@@ -102,7 +102,7 @@ describe("CheckUpdateCoalescer", () => {
       expect(c.reserveAnnotations(TARGET, 300, 500)).toBe(200);
       expect(c.reserveAnnotations(TARGET, 10, 500)).toBe(0);
       expect(c.annotationsSeen(TARGET)).toBe(610);
-      expect(c.reserveAnnotations({ ...TARGET, name: "zeroci/lint" }, 10, 500)).toBe(10);
+      expect(c.reserveAnnotations({ ...TARGET, name: "hookci/lint" }, 10, 500)).toBe(10);
     });
   });
 });

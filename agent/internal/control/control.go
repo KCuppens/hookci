@@ -1,4 +1,4 @@
-// Package control is the agent's local control socket: the zeroci CLI asks
+// Package control is the agent's local control socket: the hookci CLI asks
 // the running agent to do things (a GC pass, a deploy plan, a retry) over
 // <state dir>/control.sock. Each connection carries one JSON request,
 // {"op": ..., "body": ...}, and one JSON response, {"ok": true, "result": ...}

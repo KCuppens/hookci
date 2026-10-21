@@ -21,7 +21,7 @@ async function requestApproval(headSha = HEAD_SHA): Promise<void> {
   await deliver("check_run", {
     action: "requested_action",
     requested_action: { identifier: "approve_run" },
-    check_run: { name: "zeroci", head_sha: headSha, external_id: row!.run_id, app: { id: Number(env.GITHUB_APP_ID) } },
+    check_run: { name: "hookci", head_sha: headSha, external_id: row!.run_id, app: { id: Number(env.GITHUB_APP_ID) } },
     installation: { id: INSTALLATION },
     repository: { id: REPO.repo_id, full_name: REPO.full_name },
     sender: { id: 8080, login: SENDER },

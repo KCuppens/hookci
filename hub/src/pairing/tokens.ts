@@ -16,7 +16,7 @@ import { checkQuota } from "../quotas";
 import { ulid } from "../ulid";
 import { rotateCredential } from "./agents";
 
-export const PAIR_TOKEN_PREFIX = "zc_pair_";
+export const PAIR_TOKEN_PREFIX = "hci_pair_";
 export const PAIR_TOKEN_TTL_MS = 15 * 60_000;
 const HOUR_MS = 60 * 60_000;
 /** Redeem attempts one IP may make per hour. */

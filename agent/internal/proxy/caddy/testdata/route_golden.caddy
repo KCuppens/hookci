@@ -1,2 +1,2 @@
-# managed by zeroci: myapp production color=green. Do not edit.
+# managed by hookci: myapp production color=green. Do not edit.
 reverse_proxy 127.0.0.1:20001

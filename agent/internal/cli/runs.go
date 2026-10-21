@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/runstats"
+	"github.com/KCuppens/hookci/agent/internal/runstats"
 )
 
-const runsUsage = `usage: zeroci [global flags] runs <command> [--state-dir DIR | --installation ID]
+const runsUsage = `usage: hookci [global flags] runs <command> [--state-dir DIR | --installation ID]
 
 Export the finished check and deploy runs of the agent database, and report
 their median and p90 durations and the runner money saved against a hosted
@@ -45,7 +45,7 @@ func cmdRuns(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		fmt.Fprint(stderr, runsUsage)
 		return ExitOK
 	default:
-		fmt.Fprintf(stderr, "zeroci: runs: unknown command %q\n", args[0])
+		fmt.Fprintf(stderr, "hookci: runs: unknown command %q\n", args[0])
 		fmt.Fprint(stderr, runsUsage)
 		return ExitUsage
 	}
@@ -72,7 +72,7 @@ func newRunsFlags(d Deps, usage string, stderr io.Writer) *runsFlags {
 		repo:     fs.String("repo", "", "only runs of this repo (OWNER/NAME)"),
 	}
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "usage: zeroci [global flags] runs %s [--state-dir DIR | --installation ID]\n", usage)
+		fmt.Fprintf(stderr, "usage: hookci [global flags] runs %s [--state-dir DIR | --installation ID]\n", usage)
 		fs.PrintDefaults()
 	}
 	return f
@@ -140,31 +140,31 @@ func runsExport(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		return code
 	}
 	if *f.since == "" {
-		fmt.Fprintln(stderr, "zeroci: runs export: --since is required")
+		fmt.Fprintln(stderr, "hookci: runs export: --since is required")
 		return ExitUsage
 	}
 	if *kind != "" && *kind != runstats.KindCheck && *kind != runstats.KindDeploy {
-		fmt.Fprintf(stderr, "zeroci: runs export: --kind must be check or deploy, not %q\n", *kind)
+		fmt.Fprintf(stderr, "hookci: runs export: --kind must be check or deploy, not %q\n", *kind)
 		return ExitUsage
 	}
 	if *format != "jsonl" {
-		fmt.Fprintf(stderr, "zeroci: runs export: --format must be jsonl, not %q\n", *format)
+		fmt.Fprintf(stderr, "hookci: runs export: --format must be jsonl, not %q\n", *format)
 		return ExitUsage
 	}
 	since, until, err := f.window(d)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: runs export: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: runs export: %v\n", err)
 		return ExitUsage
 	}
 	runs, err := f.list(ctx, d, since, until, *kind)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: runs export: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: runs export: %v\n", err)
 		return ExitInternal
 	}
 	enc := json.NewEncoder(stdout)
 	for _, r := range runs {
 		if err := enc.Encode(r); err != nil {
-			fmt.Fprintf(stderr, "zeroci: runs export: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: runs export: %v\n", err)
 			return ExitInternal
 		}
 	}
@@ -174,7 +174,7 @@ func runsExport(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 func runsStats(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	f := newRunsFlags(d, "stats (--input FILE.jsonl | --since RFC3339 [--repo OWNER/NAME]) [--until RFC3339] "+
 		"--baseline-check SECONDS --baseline-deploy SECONDS --price-per-minute USD [--markdown]", stderr)
-	input := f.String("input", "", "JSONL file written by zeroci runs export, instead of the agent database")
+	input := f.String("input", "", "JSONL file written by hookci runs export, instead of the agent database")
 	var b runstats.Baseline
 	f.Float64Var(&b.CheckSeconds, "baseline-check", 0, "wall seconds of one check run on the hosted CI baseline")
 	f.Float64Var(&b.DeploySeconds, "baseline-deploy", 0, "wall seconds of one deploy run on the hosted CI baseline")
@@ -185,33 +185,33 @@ func runsStats(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	}
 	switch {
 	case b.PricePerMinuteUSD <= 0:
-		fmt.Fprintln(stderr, "zeroci: runs stats: --price-per-minute is required: the USD the hosted CI baseline bills per runner minute")
+		fmt.Fprintln(stderr, "hookci: runs stats: --price-per-minute is required: the USD the hosted CI baseline bills per runner minute")
 		return ExitUsage
 	case b.CheckSeconds <= 0 || b.DeploySeconds <= 0:
-		fmt.Fprintln(stderr, "zeroci: runs stats: --baseline-check and --baseline-deploy are required: the seconds one check and one deploy take on the hosted CI baseline")
+		fmt.Fprintln(stderr, "hookci: runs stats: --baseline-check and --baseline-deploy are required: the seconds one check and one deploy take on the hosted CI baseline")
 		return ExitUsage
 	case *input == "" && *f.since == "":
-		fmt.Fprintln(stderr, "zeroci: runs stats: give --input FILE.jsonl or --since RFC3339")
+		fmt.Fprintln(stderr, "hookci: runs stats: give --input FILE.jsonl or --since RFC3339")
 		return ExitUsage
 	case *input != "" && *f.repo != "":
-		fmt.Fprintln(stderr, "zeroci: runs stats: --repo filters the agent database; export one repo to the --input file instead")
+		fmt.Fprintln(stderr, "hookci: runs stats: --repo filters the agent database; export one repo to the --input file instead")
 		return ExitUsage
 	}
 	since, until, err := f.window(d)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: runs stats: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: runs stats: %v\n", err)
 		return ExitUsage
 	}
 	var runs []runstats.RunRecord
 	if *input != "" {
 		runs, err = readRunsFile(*input)
 		if err != nil {
-			fmt.Fprintf(stderr, "zeroci: runs stats: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: runs stats: %v\n", err)
 			return ExitInternal
 		}
 		since, until = inputWindow(runs, since, until, *f.since != "", *f.until != "")
 	} else if runs, err = f.list(ctx, d, since, until, ""); err != nil {
-		fmt.Fprintf(stderr, "zeroci: runs stats: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: runs stats: %v\n", err)
 		return ExitInternal
 	}
 	rep := runstats.Compute(runs, b, since, until)

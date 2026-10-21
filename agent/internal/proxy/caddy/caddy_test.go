@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // scriptedRunner records every argv and fails the call numbers in fail
@@ -78,7 +78,7 @@ func assertNoTemp(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if strings.Contains(e.Name(), ".zeroci-tmp-") {
+		if strings.Contains(e.Name(), ".hookci-tmp-") {
 			t.Errorf("temp file %s left behind", e.Name())
 		}
 	}

@@ -4,12 +4,12 @@
 Total Upload: 812.34 KiB / gzip: 160.12 KiB
 Your Worker has access to the following bindings:
 Binding                         Resource
-env.DB (zeroci-hub-db)          D1 Database
-env.LOGS (zeroci-hub-logs)      R2 Bucket
+env.DB (hookci-hub-db)          D1 Database
+env.LOGS (hookci-hub-logs)      R2 Bucket
 
-Uploaded zeroci-hub (3.21 sec)
-Deployed zeroci-hub triggers (1.02 sec)
-  https://zeroci-hub.acme.workers.dev
+Uploaded hookci-hub (3.21 sec)
+Deployed hookci-hub triggers (1.02 sec)
+  https://hookci-hub.acme.workers.dev
   schedule: */5 * * * *
   schedule: 17 3 * * *
 Current Version ID: 6a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d

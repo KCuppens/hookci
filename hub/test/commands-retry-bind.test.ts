@@ -12,7 +12,7 @@ import {
   OTHER_INSTALLATION,
   REPO,
   setUpCommandWorld,
-  zeroci,
+  hookci,
 } from "./commands-helpers";
 import { seedAgent } from "./do/agent-socket";
 
@@ -60,14 +60,14 @@ async function runsOfRepo(): Promise<{ attempt: number; sha: string; agent_id: s
   return results;
 }
 
-describe("/zeroci retry", () => {
+describe("/hookci retry", () => {
   it("sends the bound agent's AgentDO the latest run again as attempt + 1", async () => {
     world.roles[LOGIN] = "write";
     const agent = await seedAgent(INSTALLATION);
     await bind(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks", agent.agentId);
     await seedRun({ agent_id: agent.agentId });
 
-    const reply = await zeroci(world, "retry acme/api");
+    const reply = await hookci(world, "retry acme/api");
 
     expect(reply.text).toBe(S.slack.retryOffline("acme/api", "abcdef1", 2));
     expect(await runsOfRepo()).toEqual([
@@ -83,7 +83,7 @@ describe("/zeroci retry", () => {
     await seedRun({ attempt: 3 });
     await seedRun({ run_id: "01HBBBBBBBBBBBBBBBBBBBBBBB", trigger_id: "01HBBBBBBBBBBBBBBBBBBBBBBB", sha: "1".repeat(40) });
 
-    await zeroci(world, "retry acme/api abcdef1");
+    await hookci(world, "retry acme/api abcdef1");
 
     expect((await runsOfRepo()).filter((run) => run.sha === SHA).map((run) => run.attempt)).toEqual([3, 4]);
   });
@@ -102,7 +102,7 @@ describe("/zeroci retry", () => {
       }),
     } as unknown as typeof env.AGENT_DO;
     try {
-      const reply = await zeroci(world, "retry acme/api");
+      const reply = await hookci(world, "retry acme/api");
       expect(reply.text).toBe(S.slack.retried("acme/api", "abcdef1", 2, "received"));
     } finally {
       env.AGENT_DO = real;
@@ -112,10 +112,10 @@ describe("/zeroci retry", () => {
 
   it("says so when the repo has no run or no bound agent", async () => {
     world.roles[LOGIN] = "write";
-    expect((await zeroci(world, "retry acme/api")).text).toBe(S.slack.retryNoRun("acme/api", undefined));
+    expect((await hookci(world, "retry acme/api")).text).toBe(S.slack.retryNoRun("acme/api", undefined));
 
     await seedRun();
-    expect((await zeroci(world, "retry acme/api")).text).toBe(S.slack.retryNoAgent("acme/api", "checks"));
+    expect((await hookci(world, "retry acme/api")).text).toBe(S.slack.retryNoAgent("acme/api", "checks"));
     expect(await runsOfRepo()).toHaveLength(1);
   });
 
@@ -123,17 +123,17 @@ describe("/zeroci retry", () => {
     world.roles[LOGIN] = "read";
     await seedRun();
 
-    expect((await zeroci(world, "retry acme/api")).text).toBe(S.slack.forbidden);
+    expect((await hookci(world, "retry acme/api")).text).toBe(S.slack.forbidden);
     expect(await runsOfRepo()).toHaveLength(1);
   });
 });
 
-describe("/zeroci bind", () => {
+describe("/hookci bind", () => {
   it("binds an agent of the repo's installation by name for an admin", async () => {
     world.roles[LOGIN] = "admin";
     const agent = await seedAgent(INSTALLATION);
 
-    expect((await zeroci(world, "bind acme/api builder deploy:prod")).text).toBe(S.slack.bound("acme/api", "deploy:prod", "builder"));
+    expect((await hookci(world, "bind acme/api builder deploy:prod")).text).toBe(S.slack.bound("acme/api", "deploy:prod", "builder"));
     expect(await getBinding(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "deploy:prod")).toMatchObject({ agent_id: agent.agentId });
   });
 
@@ -143,7 +143,7 @@ describe("/zeroci bind", () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks", mine.agentId);
     const foreign = await seedAgent(OTHER_INSTALLATION);
 
-    expect((await zeroci(world, `bind acme/api ${foreign.agentId}`)).text).toBe(S.slack.agentNotFound(foreign.agentId));
+    expect((await hookci(world, `bind acme/api ${foreign.agentId}`)).text).toBe(S.slack.agentNotFound(foreign.agentId));
     expect(await getBinding(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks")).toMatchObject({ agent_id: mine.agentId });
   });
 
@@ -152,7 +152,7 @@ describe("/zeroci bind", () => {
     await seedAgent(INSTALLATION);
     await seedAgent(INSTALLATION);
 
-    expect((await zeroci(world, "bind acme/api builder")).text).toBe(S.slack.agentAmbiguous("builder"));
+    expect((await hookci(world, "bind acme/api builder")).text).toBe(S.slack.agentAmbiguous("builder"));
     expect(await getBinding(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks")).toBeNull();
   });
 
@@ -160,13 +160,13 @@ describe("/zeroci bind", () => {
     world.roles[LOGIN] = "write";
     const agent = await seedAgent(INSTALLATION);
 
-    expect((await zeroci(world, `bind acme/api ${agent.agentId}`)).text).toBe(S.slack.forbidden);
+    expect((await hookci(world, `bind acme/api ${agent.agentId}`)).text).toBe(S.slack.forbidden);
     expect(await getBinding(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks")).toBeNull();
   });
 
   it("rejects a target that is not checks or deploy:<env>", async () => {
     world.roles[LOGIN] = "admin";
 
-    expect((await zeroci(world, "bind acme/api builder staging")).text).toBe(S.slack.badTarget);
+    expect((await hookci(world, "bind acme/api builder staging")).text).toBe(S.slack.badTarget);
   });
 });

@@ -1,5 +1,5 @@
-// The agent API over the sink config service, for `zeroci sink add|ls|rm|test`.
-// Every route takes the agent's `zc_agent_` credential and acts on the
+// The agent API over the sink config service, for `hookci sink add|ls|rm|test`.
+// Every route takes the agent's `hci_agent_` credential and acts on the
 // agent's installation only. Bodies and answers use snake_case fields.
 
 import type { Context } from "hono";

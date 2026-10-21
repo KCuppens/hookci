@@ -3,9 +3,9 @@ package executor
 import (
 	"context"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // appendStep writes a step event for a running job. It is not a job state

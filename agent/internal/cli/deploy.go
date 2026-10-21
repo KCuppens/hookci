@@ -16,15 +16,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/strategies"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
@@ -50,7 +50,7 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	shaFlag := fs.String("sha", "", "commit to preview (default: the last deployed commit, else HEAD)")
 	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci [global flags] deploy <env> --dry-run [--repo owner/name] [--sha SHA] [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] deploy <env> --dry-run [--repo owner/name] [--sha SHA] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Print what a deploy of env from the current checkout would do. Nothing runs and nothing changes.")
 		fs.PrintDefaults()
@@ -67,12 +67,12 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		return ExitUsage
 	}
 	if !*dryRun {
-		fmt.Fprintln(stderr, "deploy: only --dry-run is supported; deploys start from a push or zeroci retry")
+		fmt.Fprintln(stderr, "deploy: only --dry-run is supported; deploys start from a push or hookci retry")
 		return ExitUsage
 	}
 	env := pos[0]
 	if *shaFlag != "" && !commitRE.MatchString(*shaFlag) {
-		fmt.Fprintf(stderr, "zeroci: deploy: --sha %q must be a full 40-character lowercase commit\n", *shaFlag)
+		fmt.Fprintf(stderr, "hookci: deploy: --sha %q must be a full 40-character lowercase commit\n", *shaFlag)
 		return ExitUsage
 	}
 	stateDir, ok := dirFlags.resolve(stderr)
@@ -83,12 +83,12 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 
 	wd, err := d.Getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	top, gitDir, err := gitCheckout(wd)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: deploy: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: deploy: %v\n", err)
 		return ExitUsage
 	}
 	cfg, code := loadDeployment(top, env, stderr)
@@ -98,18 +98,18 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	repo := *repoFlag
 	if repo == "" {
 		if repo, err = originRepo(gitDir); err != nil {
-			fmt.Fprintf(stderr, "zeroci: deploy: %v; pass --repo owner/name\n", err)
+			fmt.Fprintf(stderr, "hookci: deploy: %v; pass --repo owner/name\n", err)
 			return ExitUsage
 		}
 	}
 	if !repoRE.MatchString(repo) {
-		fmt.Fprintf(stderr, "zeroci: deploy: --repo %q must be owner/name\n", repo)
+		fmt.Fprintf(stderr, "hookci: deploy: --repo %q must be owner/name\n", repo)
 		return ExitUsage
 	}
 
 	db, err := openStateStore(d)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	var ps deploy.PreviewStore = emptyPreviewStore{}
@@ -119,7 +119,7 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	}
 	sha, err := previewSHA(ctx, *shaFlag, ps, repo, env, gitDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: deploy: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: deploy: %v\n", err)
 		return ExitInternal
 	}
 
@@ -141,7 +141,7 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 		Repo: repo, Env: env, SHA: sha, Cfg: cfg, Store: ps, ReadFile: os.ReadFile,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
 	printPreview(stdout, pv)
@@ -149,13 +149,13 @@ func cmdDeploy(ctx context.Context, d Deps, args []string, stdout, stderr io.Wri
 	return ExitOK
 }
 
-// loadDeployment loads deployments.<env> of <top>/.zeroci.yml, printing
+// loadDeployment loads deployments.<env> of <top>/.hookci.yml, printing
 // every config error as "<path>: <message>; <fix>".
 func loadDeployment(top, env string, stderr io.Writer) (config.Deployment, int) {
-	path := filepath.Join(top, ".zeroci.yml")
+	path := filepath.Join(top, ".hookci.yml")
 	cfg, diags, err := config.Load(path, config.ParseOptions{})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: deploy: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: deploy: %v\n", err)
 		return config.Deployment{}, ExitUsage
 	}
 	if diags.HasErrors() {
@@ -168,7 +168,7 @@ func loadDeployment(top, env string, stderr io.Writer) (config.Deployment, int) 
 	}
 	dep, ok := cfg.Deployments[env]
 	if !ok {
-		fmt.Fprintf(stderr, "zeroci: deploy: %s has no deployments.%s\n", path, env)
+		fmt.Fprintf(stderr, "hookci: deploy: %s has no deployments.%s\n", path, env)
 		return config.Deployment{}, ExitUsage
 	}
 	return dep, ExitOK
@@ -234,7 +234,7 @@ func indent(s string) string {
 func renderBadge(ctx context.Context, stateDir string, pv deploy.PlanPreview, sha string) string {
 	ac, err := agentconf.Load(stateDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "badge preview unavailable: not connected to a hub; run zeroci connect"
+		return "badge preview unavailable: not connected to a hub; run hookci connect"
 	}
 	if err != nil {
 		return fmt.Sprintf("badge preview unavailable: %v", err)
@@ -255,7 +255,7 @@ func renderBadge(ctx context.Context, stateDir string, pv deploy.PlanPreview, sh
 	}
 	req.Header.Set("Authorization", "Bearer "+ac.Credential)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "zeroci-agent/"+version.Version)
+	req.Header.Set("User-Agent", "hookci-agent/"+version.Version)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "badge preview unavailable: hub offline"

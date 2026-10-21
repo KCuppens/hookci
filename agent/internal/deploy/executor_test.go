@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestUnitExecutor_Argv(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("systemd-run", nil, execx.FakeResponse{})
-	u := &UnitExecutor{Runner: fake, RunID: "r1", User: DeployUser, EnvFile: "/etc/zeroci/production.env"}
+	u := &UnitExecutor{Runner: fake, RunID: "r1", User: DeployUser, EnvFile: "/etc/hookci/production.env"}
 	err := u.Run(context.Background(), "build", []string{"docker", "compose", "build"}, ExecOpts{
 		Dir: "/srv/app", Env: map[string]string{"IMAGE": "web:abc", "TOKEN": "override"}, Timeout: 90500 * time.Millisecond,
 	})
@@ -33,11 +33,11 @@ func TestUnitExecutor_Argv(t *testing.T) {
 		t.Fatalf("binary = %q, want systemd-run", c.Name)
 	}
 	want := []string{
-		"--unit=zeroci-run-r1-deploy", "--uid=zeroci-deploy", "--gid=zeroci-deploy",
+		"--unit=hookci-run-r1-deploy", "--uid=hookci-deploy", "--gid=hookci-deploy",
 		"--pipe", "--wait", "--collect", "--quiet", "--property=RuntimeMaxSec=91",
-		"--property=StateDirectory=zeroci-deploy", "--property=StateDirectoryMode=0700",
-		"--property=EnvironmentFile=/etc/zeroci/production.env",
-		"--setenv=HOME=/var/lib/zeroci-deploy",
+		"--property=StateDirectory=hookci-deploy", "--property=StateDirectoryMode=0700",
+		"--property=EnvironmentFile=/etc/hookci/production.env",
+		"--setenv=HOME=/var/lib/hookci-deploy",
 		"--setenv=IMAGE=web:abc", "--setenv=TOKEN=override",
 		"--working-directory=/srv/app", "--", "docker", "compose", "build",
 	}
@@ -62,7 +62,7 @@ func TestUnitExecutor_NoTimeoutIsInfinity(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	args := fake.Calls[0].Args
-	if !slices.Contains(args, "--property=RuntimeMaxSec=infinity") || !slices.Contains(args, "--uid=zeroci-deploy") {
+	if !slices.Contains(args, "--property=RuntimeMaxSec=infinity") || !slices.Contains(args, "--uid=hookci-deploy") {
 		t.Errorf("args = %q", args)
 	}
 	if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "--working-directory") }) {
@@ -132,12 +132,12 @@ func TestUnitExecutor_CancelStopsUnit(t *testing.T) {
 		cancel()
 		return context.Canceled
 	}})
-	fake.On("systemctl", []string{"stop", "zeroci-run-r1-deploy.service"}, execx.FakeResponse{})
+	fake.On("systemctl", []string{"stop", "hookci-run-r1-deploy.service"}, execx.FakeResponse{})
 	u := &UnitExecutor{Runner: fake, RunID: "r1"}
 	if err := u.Run(ctx, "start", []string{"sleep", "60"}, ExecOpts{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
-	if !fake.Called("systemctl", "stop", "zeroci-run-r1-deploy.service") {
+	if !fake.Called("systemctl", "stop", "hookci-run-r1-deploy.service") {
 		t.Error("cancel did not stop the deploy unit")
 	}
 }
@@ -167,7 +167,7 @@ func TestNewExecutor_EnvFileByPathNotArgv(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	args := fake.Calls[0].Args
-	if !slices.Contains(args, "--property=EnvironmentFile="+envFile) || !slices.Contains(args, "--uid=zeroci-deploy") {
+	if !slices.Contains(args, "--property=EnvironmentFile="+envFile) || !slices.Contains(args, "--uid=hookci-deploy") {
 		t.Errorf("args = %q, want the env_file path and the deploy user", args)
 	}
 	for _, a := range args {

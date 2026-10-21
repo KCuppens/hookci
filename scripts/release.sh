@@ -30,4 +30,4 @@ done
 
 goreleaser release --clean
 scripts/provenance.sh "$tag"
-echo "release: $tag is a draft; upload dist/zeroci_${tag#v}.intoto.jsonl and its .sigstore.json, then publish it"
+echo "release: $tag is a draft; upload dist/hookci_${tag#v}.intoto.jsonl and its .sigstore.json, then publish it"

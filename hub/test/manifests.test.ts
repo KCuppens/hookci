@@ -40,8 +40,8 @@ describe("Slack App manifest", () => {
     expect([...slackApp.settings.event_subscriptions.bot_events].sort()).toEqual(registeredEventTypes().sort());
   });
 
-  it("declares the /zeroci slash command", () => {
-    expect(slackApp.features.slash_commands.map((c) => c.command)).toEqual(["/zeroci"]);
+  it("declares the /hookci slash command", () => {
+    expect(slackApp.features.slash_commands.map((c) => c.command)).toEqual(["/hookci"]);
   });
 });
 

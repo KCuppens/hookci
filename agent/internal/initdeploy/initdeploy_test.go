@@ -11,8 +11,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // repoDir returns a temp repo holding the files of the named testdata
@@ -47,9 +47,9 @@ func readFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// decodeConfig decodes a written .zeroci.yml into the config type and fails
+// decodeConfig decodes a written .hookci.yml into the config type and fails
 // the test unless it passes ValidateDeployments.
-func decodeConfig(t *testing.T, data []byte) *config.ZeroCIConfig {
+func decodeConfig(t *testing.T, data []byte) *config.HookCIConfig {
 	t.Helper()
 	var raw any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -59,7 +59,7 @@ func decodeConfig(t *testing.T, data []byte) *config.ZeroCIConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg config.ZeroCIConfig
+	var cfg config.HookCIConfig
 	if err := json.Unmarshal(encoded, &cfg); err != nil {
 		t.Fatalf("decode %s: %v", data, err)
 	}
@@ -123,7 +123,7 @@ func TestRun_YesSingle(t *testing.T) {
 	if err := Run(Options{Dir: dir, Repo: "Shop_App", Yes: true, Out: &out}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 	data := readFile(t, path)
 	testutil.Golden(t, "yes_single", data)
 
@@ -139,9 +139,9 @@ func TestRun_YesSingle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"wrote deployments.production to " + path,
-		"chmod 600 /etc/zeroci/env/Shop_App/production.env",
+		"chmod 600 /etc/hookci/env/Shop_App/production.env",
 		"import /etc/caddy/routes/Shop_App-production.caddy",
-		"zeroci doctor",
+		"hookci doctor",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output does not contain %q:\n%s", want, out.String())
@@ -165,7 +165,7 @@ func TestRun_PromptChoice(t *testing.T) {
 		if err := Run(Options{Dir: dir, Repo: "shop", In: strings.NewReader(tc.input), Out: &out}); err != nil {
 			t.Fatalf("input %q: %v", tc.input, err)
 		}
-		d := decodeConfig(t, readFile(t, filepath.Join(dir, ".zeroci.yml"))).Deployments["production"]
+		d := decodeConfig(t, readFile(t, filepath.Join(dir, ".hookci.yml"))).Deployments["production"]
 		if d.Compose.Service != tc.service || d.Health.Url != tc.url {
 			t.Errorf("input %q: service = %q, health.url = %q; want %q, %q", tc.input, d.Compose.Service, d.Health.Url, tc.service, tc.url)
 		}
@@ -183,7 +183,7 @@ func TestRun_PromptChoice(t *testing.T) {
 
 func TestRun_PreservesComments(t *testing.T) {
 	dir := repoDir(t, "existing", "single")
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 	original := readFile(t, path)
 	if err := Run(Options{Dir: dir, Repo: "shop", Yes: true, Out: &bytes.Buffer{}}); err != nil {
 		t.Fatal(err)
@@ -210,18 +210,18 @@ func TestRun_ExistingDeployments(t *testing.T) {
 	if err := Run(Options{Dir: dir, Repo: "shop", Yes: true, Out: &bytes.Buffer{}}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 	before := readFile(t, path)
 
 	err := Run(Options{Dir: dir, Repo: "shop", Yes: true, Out: &bytes.Buffer{}})
-	want := "deployments: already present in .zeroci.yml; edit it or remove it to re-run init --deploy"
+	want := "deployments: already present in .hookci.yml; edit it or remove it to re-run init --deploy"
 	if err == nil || err.Error() != want {
 		t.Fatalf("second run: err = %v, want %q", err, want)
 	}
 	if after := readFile(t, path); !bytes.Equal(after, before) {
 		t.Errorf("file changed:\n%s", after)
 	}
-	assertOnlyFiles(t, dir, ".zeroci.yml", "compose.yaml")
+	assertOnlyFiles(t, dir, ".hookci.yml", "compose.yaml")
 }
 
 func TestRun_NoService(t *testing.T) {
@@ -245,7 +245,7 @@ func TestRun_InvalidDraftWritesNothing(t *testing.T) {
 
 func TestRun_FlowStyleConfig(t *testing.T) {
 	dir := repoDir(t, "single")
-	path := filepath.Join(dir, ".zeroci.yml")
+	path := filepath.Join(dir, ".hookci.yml")
 	if err := os.WriteFile(path, []byte("{version: 1}"), 0o600); err != nil {
 		t.Fatal(err)
 	}

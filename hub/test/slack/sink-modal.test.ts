@@ -44,8 +44,8 @@ describe("parseSinkAddSubmission", () => {
   });
 
   it("turns a webhook submission into the config service's input and leaves out an empty label", () => {
-    const parsed = parseSinkAddSubmission(submitted({ kind: "webhook", webhook_url: "https://hooks.example.com/zeroci", label: "  " }));
-    expect(parsed).toEqual({ repo: "acme/api", channel: "C0CHAN", input: { kind: "webhook", repo: "acme/api", url: "https://hooks.example.com/zeroci" } });
+    const parsed = parseSinkAddSubmission(submitted({ kind: "webhook", webhook_url: "https://hooks.example.com/hookci", label: "  " }));
+    expect(parsed).toEqual({ repo: "acme/api", channel: "C0CHAN", input: { kind: "webhook", repo: "acme/api", url: "https://hooks.example.com/hookci" } });
   });
 
   it("names the missing token and chat id of a Telegram sink", () => {
@@ -66,7 +66,7 @@ describe("parseSinkAddSubmission", () => {
         linear_team: "ENG",
         linear_assignee_email: " dana@acme.test ",
         bot_token: BOT_TOKEN,
-        webhook_url: "https://hooks.example.com/zeroci",
+        webhook_url: "https://hooks.example.com/hookci",
         label: "deploys",
       }),
     );
@@ -92,12 +92,12 @@ describe("parseSinkAddSubmission", () => {
   });
 
   it("asks for a kind when none is chosen", () => {
-    expect(parseSinkAddSubmission(submitted({ webhook_url: "https://hooks.example.com/zeroci" }))).toEqual({ errors: { kind: S.slack.sinkModal.chooseKind } });
+    expect(parseSinkAddSubmission(submitted({ webhook_url: "https://hooks.example.com/hookci" }))).toEqual({ errors: { kind: S.slack.sinkModal.chooseKind } });
   });
 
   it("refuses a submission whose private_metadata it did not write", () => {
     for (const metadata of [undefined, "", "acme/api", JSON.stringify({ repo: "acme/api" })]) {
-      const view = { ...submitted({ kind: "webhook", webhook_url: "https://hooks.example.com/zeroci" }), private_metadata: metadata };
+      const view = { ...submitted({ kind: "webhook", webhook_url: "https://hooks.example.com/hookci" }), private_metadata: metadata };
       expect(parseSinkAddSubmission(view)).toEqual({
         errors: { kind: S.slack.sinkModal.expired },
       });

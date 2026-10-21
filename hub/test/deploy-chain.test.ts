@@ -149,7 +149,7 @@ describe("deploy chain", () => {
         target: "checks",
         trust: "trusted",
       };
-      const res = await agent.stub.fetch("https://do/trigger", { method: "POST", headers: { "x-zeroci-agent-id": agent.agentId }, body: JSON.stringify(ci) });
+      const res = await agent.stub.fetch("https://do/trigger", { method: "POST", headers: { "x-hookci-agent-id": agent.agentId }, body: JSON.stringify(ci) });
       const { trigger_id } = await res.json<{ trigger_id: string }>();
       const frame = await sock.next();
       expect(frame).toMatchObject({ type: "trigger", trigger_id });
@@ -212,7 +212,7 @@ describe("deploy chain", () => {
 
       const posted = gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
       expect(posted).toHaveLength(1);
-      expect(posted[0]?.body).toMatchObject({ name: "zeroci", status: "completed", conclusion: "success" });
+      expect(posted[0]?.body).toMatchObject({ name: "hookci", status: "completed", conclusion: "success" });
       expect(errors.mock.calls.some(([line]) => typeof line === "string" && line.includes("agent namespace down"))).toBe(true);
       expect(await deployRows()).toEqual([]);
     });

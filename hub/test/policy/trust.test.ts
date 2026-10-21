@@ -63,12 +63,12 @@ describe("fetchBaseConfig", () => {
 
   it("reads checks.trust and checks.forks at the base ref only", async () => {
     world.files[POLICY_FILE] = "checks:\n  trust: all\n  forks: never\n";
-    world.files[`${REPO.full_name}@${HEAD_SHA}:.zeroci.yml`] = "checks:\n  trust: collaborators\n";
+    world.files[`${REPO.full_name}@${HEAD_SHA}:.hookci.yml`] = "checks:\n  trust: collaborators\n";
     expect(await atBase()).toEqual({ trust: "all", forks: "never" });
     expect(world.refs).toEqual([BASE_SHA]);
   });
 
-  it("defaults to collaborators and gated when the base ref has no .zeroci.yml", async () => {
+  it("defaults to collaborators and gated when the base ref has no .hookci.yml", async () => {
     expect(await atBase()).toEqual({ trust: "collaborators", forks: "gated" });
   });
 
@@ -90,7 +90,7 @@ describe("readBaseConfig", () => {
 
   it("reads nested values with comments, quotes and other keys around them", () => {
     const text = [
-      "# zeroci",
+      "# hookci",
       "version: 1",
       "checks:  # who runs",
       "",

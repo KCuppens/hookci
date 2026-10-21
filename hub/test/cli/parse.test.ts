@@ -42,18 +42,18 @@ describe("parseD1Create", () => {
 
 	it("reads the database_id from the TOML snippet", () => {
 		const out = [
-			"\u001b[32m✅ Successfully created DB 'zeroci-hub-db'\u001b[39m",
+			"\u001b[32m✅ Successfully created DB 'hookci-hub-db'\u001b[39m",
 			"",
 			"[[d1_databases]]",
-			'binding = "zeroci_hub_db"',
-			'database_name = "zeroci-hub-db"',
+			'binding = "hookci_hub_db"',
+			'database_name = "hookci-hub-db"',
 			'database_id = "0f1e2d3c-4b5a-4697-8877-665544332211"',
 		].join("\n");
 		expect(parseD1Create(out)).toBe("0f1e2d3c-4b5a-4697-8877-665544332211");
 	});
 
 	it("rejects output without a database_id", () => {
-		parseFailure(() => parseD1Create("✅ Successfully created DB 'zeroci-hub-db'\n"));
+		parseFailure(() => parseD1Create("✅ Successfully created DB 'hookci-hub-db'\n"));
 	});
 });
 
@@ -61,7 +61,7 @@ describe("parseD1List", () => {
 	it("reads uuid and name of every database", async () => {
 		expect(parseD1List(await fixture("d1-list.json"))).toEqual([
 			{ uuid: "9d2f3c1a-7b6e-4f5d-8c9b-0a1b2c3d4e5f", name: "other-app-db" },
-			{ uuid: "1f2e3d4c-5b6a-4789-8a7b-6c5d4e3f2a1b", name: "zeroci-hub-db" },
+			{ uuid: "1f2e3d4c-5b6a-4789-8a7b-6c5d4e3f2a1b", name: "hookci-hub-db" },
 		]);
 		expect(parseD1List("[]\n")).toEqual([]);
 	});
@@ -69,13 +69,13 @@ describe("parseD1List", () => {
 	it("rejects anything but an array of databases", () => {
 		parseFailure(() => parseD1List("✘ [ERROR] Authentication error"));
 		parseFailure(() => parseD1List('{"uuid":"x"}'));
-		parseFailure(() => parseD1List('[{"name":"zeroci-hub-db"}]'));
+		parseFailure(() => parseD1List('[{"name":"hookci-hub-db"}]'));
 	});
 });
 
 describe("parseR2List", () => {
 	it("reads every bucket name", async () => {
-		expect(parseR2List(await fixture("r2-list.txt"))).toEqual(["other-app-assets", "zeroci-hub-logs"]);
+		expect(parseR2List(await fixture("r2-list.txt"))).toEqual(["other-app-assets", "hookci-hub-logs"]);
 		expect(parseR2List("Listing buckets...\n")).toEqual([]);
 	});
 
@@ -86,15 +86,15 @@ describe("parseR2List", () => {
 
 describe("parseDeployUrl", () => {
 	it("returns the workers.dev URL from the trigger list", async () => {
-		expect(parseDeployUrl(await fixture("deploy.txt"))).toBe("https://zeroci-hub.acme.workers.dev");
+		expect(parseDeployUrl(await fixture("deploy.txt"))).toBe("https://hookci-hub.acme.workers.dev");
 	});
 
 	it("returns a custom domain target as an https URL", () => {
-		expect(parseDeployUrl("Deployed zeroci-hub triggers (0.80 sec)\n  ci.acme.dev (custom domain)\n  schedule: */5 * * * *\n")).toBe("https://ci.acme.dev");
+		expect(parseDeployUrl("Deployed hookci-hub triggers (0.80 sec)\n  ci.acme.dev (custom domain)\n  schedule: */5 * * * *\n")).toBe("https://ci.acme.dev");
 	});
 
 	it("returns null when wrangler lists no URL", () => {
-		expect(parseDeployUrl("No targets deployed for zeroci-hub (0.20 sec)\n")).toBeNull();
+		expect(parseDeployUrl("No targets deployed for hookci-hub (0.20 sec)\n")).toBeNull();
 	});
 });
 
@@ -108,7 +108,7 @@ describe("parseMigrationsList", () => {
 	});
 
 	it("rejects output with neither a table nor the nothing-to-apply line", () => {
-		parseFailure(() => parseMigrationsList("✘ [ERROR] Couldn't find a D1 DB with the name or binding 'zeroci-hub-db'\n"));
+		parseFailure(() => parseMigrationsList("✘ [ERROR] Couldn't find a D1 DB with the name or binding 'hookci-hub-db'\n"));
 		parseFailure(() => parseMigrationsList("Migrations to be applied:\n┌──────┐\n│ Name │\n└──────┘\n"));
 	});
 });

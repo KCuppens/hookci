@@ -3,12 +3,12 @@ import type { Env } from "../env";
 import { hubMode } from "../policy/trust";
 import { PROTOCOL_VERSIONS } from "../version";
 
-/** The name every zeroci hub reports, so an agent can tell a hub from any other HTTPS server. */
-export const HUB_NAME = "zeroci-hub";
+/** The name every hookci hub reports, so an agent can tell a hub from any other HTTPS server. */
+export const HUB_NAME = "hookci-hub";
 
 /**
- * GET /v1/info: unauthenticated hub description that `zeroci connect` and
- * `zeroci doctor` read. Any HUB_MODE but "self_hosted" reports the shared hub.
+ * GET /v1/info: unauthenticated hub description that `hookci connect` and
+ * `hookci doctor` read. Any HUB_MODE but "self_hosted" reports the shared hub.
  */
 export function info(c: Context<{ Bindings: Env }>): Response {
 	return Response.json(

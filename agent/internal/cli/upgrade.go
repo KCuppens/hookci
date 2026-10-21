@@ -12,12 +12,12 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/selfupdate"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/selfupdate"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
-// Releases is where `zeroci upgrade` fetches signed releases from.
+// Releases is where `hookci upgrade` fetches signed releases from.
 type Releases struct {
 	HTTP    *http.Client
 	BaseURL string
@@ -51,7 +51,7 @@ func defaultReleases() Releases {
 }
 
 // cmdUpgrade replaces this binary with a signed release and restarts the
-// running zeroci-agent@ units.
+// running hookci-agent@ units.
 func cmdUpgrade(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -60,9 +60,9 @@ func cmdUpgrade(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	allowDowngrade := fs.Bool("allow-downgrade", false, "allow installing a release older than this binary")
 	refresh := fs.Bool("refresh-trust-root", false, "replace the sigstore trusted root with the one published in the release")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: zeroci upgrade [--version vX.Y.Z] [--check] [--allow-downgrade] [--refresh-trust-root]")
+		fmt.Fprintln(stderr, "usage: hookci upgrade [--version vX.Y.Z] [--check] [--allow-downgrade] [--refresh-trust-root]")
 		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Install a signed zeroci release and restart the running agents.")
+		fmt.Fprintln(stderr, "Install a signed hookci release and restart the running agents.")
 	}
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -76,7 +76,7 @@ func cmdUpgrade(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		return ExitUsage
 	}
 	fail := func(err error) int {
-		fmt.Fprintf(stderr, "zeroci: upgrade: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: upgrade: %v\n", err)
 		return ExitInternal
 	}
 

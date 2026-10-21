@@ -11,11 +11,11 @@ const root = packageRoot();
 const hosted = parse(await readFile(join(root, "wrangler.toml"), "utf8")) as Toml;
 const selfHosted = parse(
 	renderWranglerToml(await readTemplate(root), {
-		name: "zeroci-hub",
+		name: "hookci-hub",
 		accountId: "00000000000000000000000000000000",
 		d1DatabaseId: "00000000-0000-0000-0000-000000000000",
-		r2Bucket: "zeroci-hub-logs",
-		baseUrl: "https://zeroci-hub.workers.dev",
+		r2Bucket: "hookci-hub-logs",
+		baseUrl: "https://hookci-hub.workers.dev",
 		hubVersion: "0.0.0",
 	}),
 ) as Toml;

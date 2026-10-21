@@ -50,7 +50,7 @@ deployments:
       file: deploy/compose.yml
       service: web
       shared_network: edge
-      marker: /var/lib/zeroci/app.color
+      marker: /var/lib/hookci/app.color
     migrate:
       run: ./manage.py migrate
     route:
@@ -58,7 +58,7 @@ deployments:
       file: /etc/caddy/routes/app.caddy
       reload: caddy reload --config /etc/caddy/Caddyfile
       upstream_host: 127.0.0.1
-    env_file: /etc/zeroci/production.env
+    env_file: /etc/hookci/production.env
     health:
       url: http://127.0.0.1:{port}/health
       expect: 204

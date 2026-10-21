@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // Run is one persisted run.

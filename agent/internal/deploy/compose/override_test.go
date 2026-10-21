@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 func TestRenderOverride_Golden(t *testing.T) {

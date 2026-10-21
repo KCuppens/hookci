@@ -1,5 +1,5 @@
 // Agent to hub WebSocket frames: the types generated from
-// schema/zeroci.schema.json ($defs.protocol) into types.gen.ts, plus parsing
+// schema/hookci.schema.json ($defs.protocol) into types.gen.ts, plus parsing
 // and encoding. Run `make schema` after changing the schema.
 
 import type { Frame } from "./types.gen";

@@ -6,7 +6,7 @@ import { verifySlackRequest } from "../src/slack/verify";
 const CURRENT = "current-signing-secret";
 const PREVIOUS = "previous-signing-secret";
 const NOW_MS = 1_767_225_600_000;
-const BODY = "token=x&team_id=T1&user_id=U1&command=%2Fzeroci&text=status";
+const BODY = "token=x&team_id=T1&user_id=U1&command=%2Fhookci&text=status";
 
 async function signed(secret: string, timestampSec: number, body: string): Promise<Headers> {
   const signature = `v0=${hex(await hmacSha256(secret, `v0:${timestampSec}:${body}`))}`;

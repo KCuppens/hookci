@@ -105,7 +105,7 @@ function reauthorized(res: Response): { state: string; cookie: string } {
   const state = location.searchParams.get("state") ?? "";
   expect(Object.fromEntries(location.searchParams)).toEqual({ client_id: env.GITHUB_CLIENT_ID, state, redirect_uri: `${env.HUB_ORIGIN}/github/oauth/callback` });
   const setCookie = res.headers.getSetCookie();
-  expect(setCookie).toEqual([expect.stringMatching(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/)]);
+  expect(setCookie).toEqual([expect.stringMatching(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/)]);
   return { state, cookie: cookiePair(setCookie[0] ?? "") };
 }
 
@@ -117,7 +117,7 @@ async function install(query: Record<string, string> = {}): Promise<Response> {
 
 /** The session cookie a response sets, as a Cookie header value. */
 function sessionCookie(res: Response): string {
-  const session = res.headers.getSetCookie().find((c) => c.startsWith("__Host-zeroci_session="));
+  const session = res.headers.getSetCookie().find((c) => c.startsWith("__Host-hookci_session="));
   expect(session).toBeDefined();
   return cookiePair(session ?? "");
 }
@@ -130,7 +130,7 @@ describe("GET /start", () => {
   it("links the Install button to the app with a fresh state and sets the __Host- state cookie", async () => {
     const res = await exports.default.fetch("https://hub.test/start");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
-    expect(res.headers.get("set-cookie")).toMatch(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+    expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
     expect(await res.text()).toContain(`https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=`);
     expect(await rows("SELECT kind FROM oauth_states")).toEqual([{ kind: "github_install" }]);
   });
@@ -152,13 +152,13 @@ describe("GET /github/oauth/callback", () => {
     expect(await rows("SELECT installation_id, created_by_github_id FROM pair_tokens")).toEqual([
       { installation_id: ACME, created_by_github_id: GITHUB_USER.id },
     ]);
-    const token = /sudo zeroci connect --hub \S+ (zc_pair_[A-Za-z0-9_-]+)/.exec(html)?.[1];
+    const token = /sudo hookci connect --hub \S+ (hci_pair_[A-Za-z0-9_-]+)/.exec(html)?.[1];
     expect(token).toBeDefined();
     expect(html).toContain(`curl -fsSL ${env.HUB_ORIGIN}/install | sh -s -- ${token}`);
-    expect(html).toContain(`sudo zeroci connect --hub ${env.HUB_ORIGIN} ${token}`);
+    expect(html).toContain(`sudo hookci connect --hub ${env.HUB_ORIGIN} ${token}`);
     expect(html).toContain("expires in 15 minutes");
     expect(html).toContain(`/slack/install?installation_id=${ACME}`);
-    expect(res.headers.getSetCookie()).toContain("__Host-zeroci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
+    expect(res.headers.getSetCookie()).toContain("__Host-hookci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
   });
 
   it("refuses an installation_id the user cannot access and stores nothing", async () => {
@@ -214,7 +214,7 @@ describe("GET /github/oauth/callback", () => {
 
       const res = await callback({ code: "oauth-code", state }, bound);
       expect(res.status).toBe(200);
-      expect(await res.text()).toContain("zc_pair_");
+      expect(await res.text()).toContain("hci_pair_");
       expect(await rows("SELECT installation_id FROM pair_tokens")).toEqual([{ installation_id: ACME }]);
       await clearTables();
       gh.calls.length = 0;
@@ -244,7 +244,7 @@ describe("GET /github/oauth/callback", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Permissions updated");
-    expect(html).not.toContain("zc_pair_");
+    expect(html).not.toContain("hci_pair_");
     expect(await rows("SELECT token_hash FROM pair_tokens")).toEqual([]);
     expect(await rows("SELECT id FROM installations")).toEqual([{ id: ACME }]);
   });
@@ -271,7 +271,7 @@ describe("GET /github/oauth/callback", () => {
     const session = sessionCookie(picker);
     const picked = await exports.default.fetch(`https://hub.test/start?installation_id=${UMBRELLA}`, { headers: { cookie: session } });
     expect(picked.status).toBe(200);
-    expect(await picked.text()).toContain(`sudo zeroci connect --hub ${env.HUB_ORIGIN} zc_pair_`);
+    expect(await picked.text()).toContain(`sudo hookci connect --hub ${env.HUB_ORIGIN} hci_pair_`);
     expect(await rows("SELECT installation_id, created_by_github_id FROM pair_tokens")).toEqual([
       { installation_id: UMBRELLA, created_by_github_id: GITHUB_USER.id },
     ]);
@@ -283,12 +283,12 @@ describe("GET /github/oauth/callback", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Only an admin of acme");
-    expect(html).not.toContain("zc_pair_");
+    expect(html).not.toContain("hci_pair_");
     expect(html).not.toContain("/slack/install");
 
     const picked = await exports.default.fetch(`https://hub.test/start?installation_id=${ACME}`, { headers: { cookie: sessionCookie(res) } });
     expect(picked.status).toBe(200);
-    expect(await picked.text()).not.toContain("zc_pair_");
+    expect(await picked.text()).not.toContain("hci_pair_");
     expect(await rows("SELECT token_hash FROM pair_tokens")).toEqual([]);
   });
 });

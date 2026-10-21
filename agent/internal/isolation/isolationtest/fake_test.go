@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
 )
 
 var _ isolation.Isolation = (*Fake)(nil)
@@ -30,15 +30,15 @@ func TestFakeIsolation(t *testing.T) {
 		{Name: isolation.UnitName("run1", "lint"), Active: "active"},
 		{Name: isolation.UnitName("run2", "lint"), Active: "active"},
 	}
-	units, _ := fake.ListUnits(ctx, "zeroci-run-run1-")
-	if len(units) != 1 || units[0].Name != "zeroci-run-run1-lint" {
+	units, _ := fake.ListUnits(ctx, "hookci-run-run1-")
+	if len(units) != 1 || units[0].Name != "hookci-run-run1-lint" {
 		t.Fatalf("ListUnits = %v, want only run1's unit", units)
 	}
 	_ = fake.Stop(ctx, units[0].Name)
-	if !slices.Equal(fake.Stops, []string{"zeroci-run-run1-lint"}) {
+	if !slices.Equal(fake.Stops, []string{"hookci-run-run1-lint"}) {
 		t.Errorf("Stops = %v", fake.Stops)
 	}
-	if left, _ := fake.ListUnits(ctx, "zeroci-run-run1-"); len(left) != 0 {
+	if left, _ := fake.ListUnits(ctx, "hookci-run-run1-"); len(left) != 0 {
 		t.Errorf("stopped unit still listed: %v", left)
 	}
 }

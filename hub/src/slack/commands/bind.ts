@@ -1,4 +1,4 @@
-// /zeroci bind <owner/repo> <agent> [checks|deploy:<env>]: makes a paired,
+// /hookci bind <owner/repo> <agent> [checks|deploy:<env>]: makes a paired,
 // non-revoked agent of the repo's installation run the target (default
 // checks) for the repo.
 
@@ -11,7 +11,7 @@ import { registerCommand } from "../registry";
 import { requireRepoAccess } from "../resolve";
 import { commandArgs, ephemeral } from "./common";
 
-const USAGE = "/zeroci bind <owner/repo> <agent> [checks|deploy:<env>]";
+const USAGE = "/hookci bind <owner/repo> <agent> [checks|deploy:<env>]";
 
 function isBindingTarget(value: string): value is BindingTarget {
 	return value === "checks" || /^deploy:[a-z0-9_-]+$/i.test(value);

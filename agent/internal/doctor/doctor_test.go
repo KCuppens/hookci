@@ -15,15 +15,15 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 var now = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 
-const agentJSON = `{"hub_url":"https://hub","agent_id":"agt_1","credential":"zc_agent_x","name":"b","installation_id":42}`
+const agentJSON = `{"hub_url":"https://hub","agent_id":"agt_1","credential":"hci_agent_x","name":"b","installation_id":42}`
 
 // fakeHub serves /healthz with a Date header dateOffset from now, /v1/info,
 // and /v1/agent/connect the way the hub does: 426 without Upgrade, else 401.
@@ -35,7 +35,7 @@ func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool)
 		w.WriteHeader(healthStatus)
 	})
 	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"name":"zeroci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,1],"github_app":{"slug":"acme-ci"},"slack":{"enabled":false}}`))
+		_, _ = w.Write([]byte(`{"name":"hookci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,1],"github_app":{"slug":"acme-ci"},"slack":{"enabled":false}}`))
 	})
 	mux.HandleFunc("GET /v1/agent/connect", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -58,10 +58,10 @@ func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool)
 
 func healthyFS() fstest.MapFS {
 	return fstest.MapFS{
-		"var/lib/zeroci":               {Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}},
-		"var/lib/zeroci/42":            {Mode: fs.ModeDir | 0o700},
-		"var/lib/zeroci/42/agent.json": {Data: []byte(agentJSON), Mode: 0o600},
-		"etc/passwd":                   {Data: []byte("root:x:0:0::/root:/bin/sh\nzeroci-run:x:998:998::/nonexistent:/usr/sbin/nologin\n")},
+		"var/lib/hookci":               {Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}},
+		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o700},
+		"var/lib/hookci/42/agent.json": {Data: []byte(agentJSON), Mode: 0o600},
+		"etc/passwd":                   {Data: []byte("root:x:0:0::/root:/bin/sh\nhookci-run:x:998:998::/nonexistent:/usr/sbin/nologin\n")},
 	}
 }
 
@@ -79,7 +79,7 @@ func (f fakeSystemd) ActiveState(_ context.Context, unit string) (string, error)
 
 func healthyExec() *execx.Fake {
 	ex := &execx.Fake{}
-	ex.On("zeroci", []string{"version"}, execx.FakeResponse{Stdout: version.String() + "\n"})
+	ex.On("hookci", []string{"version"}, execx.FakeResponse{Stdout: version.String() + "\n"})
 	ex.On("git", []string{"--version"}, execx.FakeResponse{Stdout: "git version 2.39.2\n"})
 	return ex
 }
@@ -87,7 +87,7 @@ func healthyExec() *execx.Fake {
 // healthyEnv passes every check against srv.
 func healthyEnv(srv *httptest.Server) Env {
 	return Env{
-		StateRoot: "/var/lib/zeroci",
+		StateRoot: "/var/lib/hookci",
 		HubOrigin: srv.URL,
 		HTTP:      srv.Client(),
 		Clock:     clock.NewFake(now),
@@ -110,7 +110,7 @@ func runOne(t *testing.T, c Check, env Env) Result {
 func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	srv := fakeHub(t, 0, http.StatusOK, true)
 	rs := Run(context.Background(), healthyEnv(srv), Default())
-	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "zeroci_run_user", "git_present", "disk_space", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
+	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "hookci_run_user", "git_present", "disk_space", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
 	if len(rs) != len(want) {
 		t.Fatalf("got %d results, want %d", len(rs), len(want))
 	}
@@ -150,36 +150,36 @@ func TestChecksWarnOrFail(t *testing.T) {
 	}{
 		{"version mismatch", versionCheck{}, func(e *Env) {
 			ex := &execx.Fake{}
-			ex.On("zeroci", []string{"version"}, execx.FakeResponse{Stdout: "zeroci v0.0.1\n"})
+			ex.On("hookci", []string{"version"}, execx.FakeResponse{Stdout: "hookci v0.0.1\n"})
 			e.Exec = ex
-		}, Warn, "zeroci v0.0.1"},
-		{"version missing", versionCheck{}, func(e *Env) { e.Exec = &execx.Fake{} }, Fail, "zeroci version"},
-		{"unit failed", systemdUnitCheck{}, func(e *Env) { e.Systemd = fakeSystemd{state: "failed"} }, Fail, "zeroci-agent@42.service is failed"},
-		{"unit unpaired", systemdUnitCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/zeroci/42/agent.json") }, Warn, "no paired installation"},
+		}, Warn, "hookci v0.0.1"},
+		{"version missing", versionCheck{}, func(e *Env) { e.Exec = &execx.Fake{} }, Fail, "hookci version"},
+		{"unit failed", systemdUnitCheck{}, func(e *Env) { e.Systemd = fakeSystemd{state: "failed"} }, Fail, "hookci-agent@42.service is failed"},
+		{"unit unpaired", systemdUnitCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/hookci/42/agent.json") }, Warn, "no paired installation"},
 		{"state dir mode", stateDirPermsCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, Sys: &syscall.Stat_t{Uid: 0}}
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, Sys: &syscall.Stat_t{Uid: 0}}
 		}, Fail, "mode 0755"},
 		{"state dir owner", stateDirPermsCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 1000}}
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 1000}}
 		}, Fail, "uid 1000"},
 		{"state dir missing", stateDirPermsCheck{}, func(e *Env) { e.StateRoot = "/nope" }, Fail, "/nope"},
-		{"credential missing", credentialCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/zeroci/42/agent.json") }, Fail, "no agent.json"},
+		{"credential missing", credentialCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/hookci/42/agent.json") }, Fail, "no agent.json"},
 		{"credential empty", credentialCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"] = &fstest.MapFile{Data: []byte(`{"agent_id":"agt_1","installation_id":42}`)}
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"] = &fstest.MapFile{Data: []byte(`{"agent_id":"agt_1","installation_id":42}`)}
 		}, Fail, "has no credential"},
 		// A broken agent.json is named, not skipped as an unpaired directory.
 		{"credential undecodable", credentialCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":`)
-		}, Fail, "/var/lib/zeroci/42/agent.json: unexpected end of JSON input"},
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/hookci/42/agent.json: unexpected end of JSON input"},
 		{"unit undecodable agent.json", systemdUnitCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":`)
-		}, Fail, "/var/lib/zeroci/42/agent.json: unexpected end of JSON input"},
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/hookci/42/agent.json: unexpected end of JSON input"},
 		{"credential readable by others", credentialCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Mode = 0o644
-		}, Fail, "/var/lib/zeroci/42/agent.json has mode 0644, want 0600"},
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Mode = 0o644
+		}, Fail, "/var/lib/hookci/42/agent.json has mode 0644, want 0600"},
 		{"run user missing", runUserCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["etc/passwd"] = &fstest.MapFile{Data: []byte("root:x:0:0::/root:/bin/sh\n")}
-		}, Fail, "no zeroci-run user"},
+		}, Fail, "no hookci-run user"},
 		{"git old", gitCheck{}, func(e *Env) {
 			ex := &execx.Fake{}
 			ex.On("git", []string{"--version"}, execx.FakeResponse{Stdout: "git version 2.29.9"})
@@ -204,7 +204,7 @@ func TestChecksWarnOrFail(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
-		}, Warn, "not a zeroci hub"},
+		}, Warn, "not a hookci hub"},
 		{"hub down", hubReachableCheck{}, func(e *Env) { e.HubOrigin = "https://127.0.0.1:1" }, Fail, "127.0.0.1:1"},
 		{"tls untrusted", hubTLSCheck{}, func(e *Env) { e.HTTP = &http.Client{} }, Fail, "certificate"},
 		{"tls plain http", hubTLSCheck{}, func(e *Env) {

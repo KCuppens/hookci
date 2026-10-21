@@ -13,7 +13,7 @@ async function run(argv: string[]): Promise<{ code: number; out: string; err: st
 	return { code, out, err };
 }
 
-describe("zeroci-hub CLI", () => {
+describe("hookci-hub CLI", () => {
 	it("exits 2 with usage on an unknown command", async () => {
 		const r = await run(["frobnicate"]);
 		expect(r.code).toBe(2);
@@ -39,24 +39,24 @@ describe("zeroci-hub CLI", () => {
 	});
 
 	it("refuses upgrade without a setup state, with the setup hint", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "zeroci-hub-cli-"));
+		const dir = await mkdtemp(join(tmpdir(), "hookci-hub-cli-"));
 		try {
 			const r = await run(["upgrade", "--dir", dir, "--dry-run"]);
 			expect(r.code).toBe(1);
-			expect(r.err).toBe(`zeroci-hub: no zeroci-hub setup state in ${dir}\nhint: run zeroci-hub setup first\n`);
+			expect(r.err).toBe(`hookci-hub: no hookci-hub setup state in ${dir}\nhint: run hookci-hub setup first\n`);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
 
 	it("prints a setup error as one line and a hint, without a stack", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "zeroci-hub-cli-"));
+		const dir = await mkdtemp(join(tmpdir(), "hookci-hub-cli-"));
 		try {
 			await saveState(dir, { account_id: "a".repeat(32), version: "0.0.0", steps_done: ["preflight", "account"] });
 			const r = await run(["setup", "--dir", dir]);
 			expect(r.code).toBe(1);
 			expect(r.err).toBe(
-				"zeroci-hub: the setup state has no hub name\nhint: Use 3 to 41 lowercase letters, digits or dashes, starting with a letter.\n",
+				"hookci-hub: the setup state has no hub name\nhint: Use 3 to 41 lowercase letters, digits or dashes, starting with a letter.\n",
 			);
 		} finally {
 			await rm(dir, { recursive: true, force: true });

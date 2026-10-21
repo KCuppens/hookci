@@ -25,9 +25,9 @@ export type NewAgent = Pick<
 	"agent_id" | "name" | "hostname" | "os" | "arch" | "credential_hash" | "agent_version" | "paired_by_github_id" | "paired_at"
 >;
 
-export const AGENT_CREDENTIAL_PREFIX = "zc_agent_";
+export const AGENT_CREDENTIAL_PREFIX = "hci_agent_";
 
-/** The credential_hash of an agent credential: sha256 hex of the whole `zc_agent_` string. */
+/** The credential_hash of an agent credential: sha256 hex of the whole `hci_agent_` string. */
 export function agentCredentialHash(credential: string): Promise<string> {
 	return sha256Hex(credential);
 }

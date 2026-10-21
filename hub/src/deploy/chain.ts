@@ -1,4 +1,4 @@
-// The push-to-deploy chain: when the aggregate `zeroci` check of a push
+// The push-to-deploy chain: when the aggregate `hookci` check of a push
 // concludes success, every `deploy:<env>` binding of the repo gets one deploy
 // trigger through its agent's AgentDO, recorded once per
 // (repo, sha, env, attempt) in deploy_triggers together with the agent's reply.
@@ -139,7 +139,7 @@ export async function dispatchDeployTrigger(env: Env, args: DeployDispatch): Pro
 	try {
 		const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(args.agentId)).fetch("https://do/trigger", {
 			method: "POST",
-			headers: { "x-zeroci-agent-id": args.agentId },
+			headers: { "x-hookci-agent-id": args.agentId },
 			body: JSON.stringify(body),
 		});
 		if (!res.ok) throw new HubError("agent_do_failed", 502, `deploy trigger for ${args.agentId} answered ${res.status}`);

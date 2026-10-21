@@ -1,5 +1,5 @@
 // GET /v1/export?token=: the JSON copy of one Slack user's data behind the
-// signed link /zeroci export hands out. Never cached.
+// signed link /hookci export hands out. Never cached.
 
 import type { Context } from "hono";
 import { systemClock } from "../do/clock";
@@ -22,6 +22,6 @@ export async function exportData(c: AppContext): Promise<Response> {
 		throw err;
 	}
 	return Response.json(await collectUserData(env, user.teamId, user.slackUserId, now), {
-		headers: { ...NO_STORE, "Content-Disposition": 'attachment; filename="zeroci-export.json"' },
+		headers: { ...NO_STORE, "Content-Disposition": 'attachment; filename="hookci-export.json"' },
 	});
 }

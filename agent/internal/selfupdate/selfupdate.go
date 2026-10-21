@@ -1,4 +1,4 @@
-// Package selfupdate replaces the running zeroci binary with a signed
+// Package selfupdate replaces the running hookci binary with a signed
 // release: it fetches SHA256SUMS and its sigstore bundle, verifies the
 // bundle against the pinned release identity, checks the tarball against
 // SHA256SUMS and swaps the binary atomically before restarting the agents.
@@ -21,19 +21,19 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 // DefaultBaseURL is where releases are published. Assets live under
 // BaseURL/download/<tag>/ and BaseURL/latest redirects to the newest tag.
-const DefaultBaseURL = "https://github.com/KCuppens/zerocideploy/releases"
+const DefaultBaseURL = "https://github.com/KCuppens/hookci/releases"
 
 // Release asset names, matching .goreleaser.yaml and hub/static/install.sh.
 const (
 	SumsName        = "SHA256SUMS"
 	BundleName      = SumsName + ".sigstore.json"
 	TrustedRootName = "trusted_root.json"
-	binaryName      = "zeroci"
+	binaryName      = "hookci"
 )
 
 // Size caps for downloads.
@@ -79,7 +79,7 @@ type Updater struct {
 
 // AssetName is the linux tarball of version for arch.
 func AssetName(tag, arch string) string {
-	return "zeroci_" + strings.TrimPrefix(tag, "v") + "_linux_" + arch + ".tar.gz"
+	return "hookci_" + strings.TrimPrefix(tag, "v") + "_linux_" + arch + ".tar.gz"
 }
 
 // Tagged returns the release with tag, e.g. v1.2.3.
@@ -225,7 +225,7 @@ func checkSum(sums []byte, name string, b []byte) error {
 	return fmt.Errorf("%w: %s is not listed in %s", ErrChecksum, name, SumsName)
 }
 
-// extractBinary returns the zeroci file of a release tarball.
+// extractBinary returns the hookci file of a release tarball.
 func extractBinary(archive []byte) ([]byte, error) {
 	zr, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {

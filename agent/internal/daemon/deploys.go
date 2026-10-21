@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/trigger"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubtokens"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/hubtokens"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // DeployIntake decides deploy triggers, the triggers that name an env.
@@ -205,7 +205,7 @@ func (d *Daemon) decideDeploy(ctx context.Context, t protocol.Trigger, failed in
 
 // recoverDeploys settles the deploy runs an earlier agent left behind: it
 // stops their leftover units and marks the ones still going Interrupted,
-// then queues the Queued ones. An Interrupted run waits for `zeroci retry`.
+// then queues the Queued ones. An Interrupted run waits for `hookci retry`.
 func (d *Daemon) recoverDeploys(ctx context.Context) error {
 	runner := d.o.DeployRunner
 	if runner == nil {

@@ -14,7 +14,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // JobRunner executes one unit of work (setup or a job). It MUST return when

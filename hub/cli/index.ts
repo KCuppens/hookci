@@ -8,16 +8,16 @@ import { SetupError, runSetup } from "./setup.js";
 import { runUpgrade } from "./upgrade.js";
 import { nodeExec } from "./wrangler.js";
 
-export const USAGE = `Usage: zeroci-hub <command> [options]
+export const USAGE = `Usage: hookci-hub <command> [options]
 
 Commands:
   setup     Create the Cloudflare resources and deploy a self-hosted hub
   upgrade   Deploy the hub version in this package to an existing setup
   render    Write wrangler.toml, the Worker and migrations into the state dir
-  version   Print the zeroci-hub version
+  version   Print the hookci-hub version
 
 Options:
-  --dir <path>     State directory (default: ./zeroci-hub)
+  --dir <path>     State directory (default: ./hookci-hub)
   --yes            Answer yes to every confirmation and take the defaults
   --force-render   setup: render wrangler.toml and deploy again even if done
   --dry-run        upgrade: print the plan and change nothing
@@ -26,7 +26,7 @@ Options:
   -h, --help       Show this help
 `;
 
-export const DEFAULT_DIR = "./zeroci-hub";
+export const DEFAULT_DIR = "./hookci-hub";
 
 const COMMANDS = ["setup", "upgrade", "render", "version"] as const;
 type Command = (typeof COMMANDS)[number];
@@ -103,7 +103,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 		return 0;
 	}
 	if (parsed.kind === "usage-error") {
-		io.err(`zeroci-hub: ${parsed.message}\n\n${USAGE}`);
+		io.err(`hookci-hub: ${parsed.message}\n\n${USAGE}`);
 		return 2;
 	}
 	const { command, dir, yes, forceRender, dryRun, noSlack, org } = parsed.args;
@@ -145,10 +145,10 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 	} catch (err) {
 		if (err instanceof SetupError) {
 			const detail = err.detail ? `${err.detail.replace(/^/gm, "  ")}\n` : "";
-			io.err(`zeroci-hub: ${err.message}\n${detail}hint: ${err.hint}\n`);
+			io.err(`hookci-hub: ${err.message}\n${detail}hint: ${err.hint}\n`);
 			return 1;
 		}
-		io.err(`zeroci-hub: ${err instanceof Error ? err.message : String(err)}\n`);
+		io.err(`hookci-hub: ${err instanceof Error ? err.message : String(err)}\n`);
 		return 1;
 	}
 }

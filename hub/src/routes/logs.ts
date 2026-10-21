@@ -49,10 +49,10 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	}
 
 	if (c.req.header("content-encoding")?.toLowerCase() !== "gzip") throw new HubError("log_not_gzip", 415);
-	const declared = c.req.header("x-zeroci-log-bytes") ?? "";
+	const declared = c.req.header("x-hookci-log-bytes") ?? "";
 	if (!/^[0-9]{1,15}$/.test(declared)) throw new HubError("bad_log_bytes", 400);
 	const bytes = Number(declared);
-	const truncated = c.req.header("x-zeroci-log-truncated");
+	const truncated = c.req.header("x-hookci-log-truncated");
 	if (truncated !== "0" && truncated !== "1") throw new HubError("bad_log_truncated", 400);
 	const length = Number(c.req.header("content-length") ?? 0);
 	const limit = quotaLimit(env, "logBytes");

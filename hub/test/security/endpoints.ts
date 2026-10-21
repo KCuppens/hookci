@@ -7,7 +7,7 @@ export type EndpointAuth =
   | "github_sig"
   /** Slack's v0 signature over the timestamp and body. */
   | "slack_sig"
-  /** An agent's `zc_agent_` credential, or a pair token on /v1/pair/redeem. */
+  /** An agent's `hci_agent_` credential, or a pair token on /v1/pair/redeem. */
   | "agent_bearer"
   /** The i, r, j, exp, kid and sig query parameters of a signed log URL. */
   | "log_sig"
@@ -57,7 +57,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/logs/raw", auth: "log_sig" },
   { method: "GET", path: "/logs/stream", auth: "log_sig" },
   { method: "GET", path: "/logs/viewer.css", auth: "public" },
-  // The stable log link: a public repo's log opens for anyone; a private repo's needs the zc_session cookie, else it starts sign-in.
+  // The stable log link: a public repo's log opens for anyone; a private repo's needs the hci_session cookie, else it starts sign-in.
   { method: "GET", path: "/runs/:runId/logs", auth: "public" },
   { method: "GET", path: "/auth/github/callback", auth: "oauth_state" },
   { method: "GET", path: "/logs/viewer.js", auth: "public" },

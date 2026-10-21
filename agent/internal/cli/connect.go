@@ -18,23 +18,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
 	defaultHubURL      = "https://ci.webuno.io"
-	defaultStateRoot   = "/var/lib/zeroci"
+	defaultStateRoot   = "/var/lib/hookci"
 	redeemTimeout      = 30 * time.Second
 	handshakeTimeout   = 15 * time.Second
 	maxRedeemRespBytes = 1 << 20
 	// pairTokenEnv holds the pair token when connect gets no argument.
-	pairTokenEnv = "ZEROCI_PAIR_TOKEN"
-	connectUsage = "usage: zeroci connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]"
+	pairTokenEnv = "HOOKCI_PAIR_TOKEN"
+	connectUsage = "usage: hookci connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]"
 )
 
 // redeemRequest is the body of POST /v1/pair/redeem.
@@ -56,19 +56,19 @@ type redeemResponse struct {
 }
 
 // cmdConnect pairs this machine and, unless --no-service, enables and starts
-// the zeroci-agent@<installation_id> unit the installer wrote, restarting it
+// the hookci-agent@<installation_id> unit the installer wrote, restarting it
 // when it already runs so it picks up the new identity. It never opens
 // agent.db: the agent binds its store to the new identity when it starts.
 func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	hub := fs.String("hub", "", "hub base URL (default $ZEROCI_HUB_URL, else "+defaultHubURL+")")
+	hub := fs.String("hub", "", "hub base URL (default $HOOKCI_HUB_URL, else "+defaultHubURL+")")
 	name := fs.String("name", "", "agent name shown in Slack (default the hostname)")
-	stateDir := fs.String("state-dir", "", "agent state directory (default $ZEROCI_STATE_DIR or "+d.StateRoot+"/<installation_id>)")
+	stateDir := fs.String("state-dir", "", "agent state directory (default $HOOKCI_STATE_DIR or "+d.StateRoot+"/<installation_id>)")
 	force := fs.Bool("force", false, "replace an agent already configured in the state directory")
-	noService := fs.Bool("no-service", false, "do not enable and start the zeroci-agent@<installation_id> systemd unit")
+	noService := fs.Bool("no-service", false, "do not enable and start the hookci-agent@<installation_id> systemd unit")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: zeroci connect [pair-token] [flags]")
+		fmt.Fprintln(stdout, "Usage: hookci connect [pair-token] [flags]")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Pair this machine with the hub using a pair token from Slack App Home,")
 		fmt.Fprintln(stdout, "save the agent credential and check that the hub accepts it. Without a")
@@ -94,7 +94,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	if len(pos) == 1 {
 		pairToken = pos[0]
 	} else if pairToken, err = readSecret(pairTokenEnv, "Pair token", d.Stdin, stderr); err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if pairToken == "" {
@@ -104,37 +104,37 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 
 	hostname, err := os.Hostname()
 	if err != nil && *name == "" {
-		fmt.Fprintf(stderr, "zeroci: cannot read the hostname (%v): pass --name\n", err)
+		fmt.Fprintf(stderr, "hookci: cannot read the hostname (%v): pass --name\n", err)
 		return ExitUsage
 	}
 	if *name == "" {
 		*name = hostname
 	}
-	hubURL, err := resolveHubURL(*hub, os.Getenv("ZEROCI_HUB_URL"))
+	hubURL, err := resolveHubURL(*hub, os.Getenv("HOOKCI_HUB_URL"))
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitUsage
 	}
 	dir := *stateDir
 	if dir == "" {
-		dir = os.Getenv("ZEROCI_STATE_DIR")
+		dir = os.Getenv("HOOKCI_STATE_DIR")
 	}
 	// A known state dir is checked before redeeming so a refusal does not
 	// burn the single-use pair token.
 	if dir != "" && !*force {
 		if err := checkNoAgent(dir); err != nil {
-			fmt.Fprintf(stderr, "zeroci: %v\n", err)
+			fmt.Fprintf(stderr, "hookci: %v\n", err)
 			return ExitRunFailed
 		}
 	}
 	// The hub must speak our protocol before the single-use token is spent.
 	info, err := hubclient.FetchInfo(ctx, http.DefaultClient, hubURL)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if !compatible(info.ProtocolVersions, protocol.Version, protocol.Version) {
-		fmt.Fprintf(stderr, "zeroci: hub speaks protocol versions %d..%d, this agent speaks %d; upgrade with `zeroci upgrade`\n",
+		fmt.Fprintf(stderr, "hookci: hub speaks protocol versions %d..%d, this agent speaks %d; upgrade with `hookci upgrade`\n",
 			info.ProtocolVersions[0], info.ProtocolVersions[1], protocol.Version)
 		return ExitRunFailed
 	}
@@ -148,7 +148,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		Arch:         runtime.GOARCH,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 
@@ -161,13 +161,13 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		dir = defaultDir
 		if !*force {
 			if err := checkNoAgent(dir); err != nil {
-				fmt.Fprintf(errw, "zeroci: %v\n", err)
+				fmt.Fprintf(errw, "hookci: %v\n", err)
 				return ExitRunFailed
 			}
 		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		fmt.Fprintf(errw, "zeroci: create state directory: %v\n", err)
+		fmt.Fprintf(errw, "hookci: create state directory: %v\n", err)
 		return ExitRunFailed
 	}
 	cfg := &agentconf.AgentConfig{
@@ -179,7 +179,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		HubMode:        info.Mode,
 	}
 	if err := agentconf.Save(dir, cfg); err != nil {
-		fmt.Fprintf(errw, "zeroci: %v\n", err)
+		fmt.Fprintf(errw, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 
@@ -193,16 +193,16 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	if _, err := client.Handshake(hctx); err != nil {
-		fmt.Fprintf(errw, "zeroci: agent saved to %s but the hub handshake failed: %v\n", filepath.Join(dir, agentconf.FileName), err)
+		fmt.Fprintf(errw, "hookci: agent saved to %s but the hub handshake failed: %v\n", filepath.Join(dir, agentconf.FileName), err)
 		return ExitRunFailed
 	}
 
 	fmt.Fprintf(stdout, "Connected to %s as %s (agent %s)\n", cfg.HubURL, cfg.Name, cfg.AgentID)
 	unit := systemd.AgentUnit(cfg.InstallationID)
-	// The unit runs zeroci agent --installation <id>, which reads defaultDir;
+	// The unit runs hookci agent --installation <id>, which reads defaultDir;
 	// starting it would not run the agent saved anywhere else.
 	if filepath.Clean(dir) != defaultDir {
-		fmt.Fprintf(stdout, "%s runs the agent in %s, not %s; start this agent with zeroci agent --state-dir %s\n", unit, defaultDir, dir, dir)
+		fmt.Fprintf(stdout, "%s runs the agent in %s, not %s; start this agent with hookci agent --state-dir %s\n", unit, defaultDir, dir, dir)
 		return ExitOK
 	}
 	if *noService {
@@ -215,7 +215,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	}
 	exists, err := d.Services.UnitExists(ctx, unit)
 	if err != nil {
-		fmt.Fprintf(errw, "zeroci: %v\n", err)
+		fmt.Fprintf(errw, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if !exists {
@@ -224,11 +224,11 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	}
 	state, err := d.Services.ActiveState(ctx, unit)
 	if err != nil {
-		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		fmt.Fprintf(errw, "hookci: agent saved but %v\n", err)
 		return ExitRunFailed
 	}
 	if err := d.Services.EnableNow(ctx, unit); err != nil {
-		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		fmt.Fprintf(errw, "hookci: agent saved but %v\n", err)
 		return ExitRunFailed
 	}
 	if !unitRunning(state) {
@@ -238,7 +238,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	// enable --now leaves a running unit alone, still serving the agent it
 	// loaded before agent.json changed.
 	if err := d.Services.TryRestart(ctx, unit); err != nil {
-		fmt.Fprintf(errw, "zeroci: agent saved but %v\n", err)
+		fmt.Fprintf(errw, "hookci: agent saved but %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "Restarted %s\n", unit)
@@ -254,7 +254,7 @@ func unitRunning(state string) bool {
 	return false
 }
 
-// resolveHubURL picks the hub from --hub, else $ZEROCI_HUB_URL, else the
+// resolveHubURL picks the hub from --hub, else $HOOKCI_HUB_URL, else the
 // shared hub. It must be https, except on loopback where a local hub runs
 // over plain http.
 func resolveHubURL(flagURL, envURL string) (string, error) {
@@ -311,7 +311,7 @@ func redeemPairToken(ctx context.Context, hubURL string, body redeemRequest) (*r
 		return nil, fmt.Errorf("cli: redeem: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "zeroci-agent/"+version.Version)
+	req.Header.Set("User-Agent", "hookci-agent/"+version.Version)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cli: redeem: %w", err)

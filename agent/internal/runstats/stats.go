@@ -21,7 +21,7 @@ const (
 	StatusSuccess = "success"
 )
 
-// RunRecord is one finished run as zeroci runs export writes it. Durations
+// RunRecord is one finished run as hookci runs export writes it. Durations
 // are the agent's recorded start to finish; hub queue time is not in them.
 type RunRecord struct {
 	RunID      string    `json:"run_id"`
@@ -35,7 +35,7 @@ type RunRecord struct {
 	DurationMS int64     `json:"duration_ms"`
 }
 
-// ReadJSONL decodes the RunRecords of a zeroci runs export stream.
+// ReadJSONL decodes the RunRecords of a hookci runs export stream.
 func ReadJSONL(r io.Reader) ([]RunRecord, error) {
 	dec := json.NewDecoder(r)
 	var out []RunRecord
@@ -161,7 +161,7 @@ func percentile(ms []int64, p float64) int64 {
 func (r Report) Markdown() string {
 	var sb strings.Builder
 	days := r.Until.Sub(r.Since).Hours() / 24
-	sb.WriteString("## ZeroCI run stats\n\n")
+	sb.WriteString("## HookCI run stats\n\n")
 	fmt.Fprintf(&sb, "Window: %s to %s (%.1f days).\n\n", r.Since.UTC().Format(time.RFC3339), r.Until.UTC().Format(time.RFC3339), days)
 	fmt.Fprintf(&sb, "Baseline: check %s s, deploy %s s per run, billed per started minute at $%s per minute.\n\n",
 		trimFloat(r.Baseline.CheckSeconds), trimFloat(r.Baseline.DeploySeconds), trimFloat(r.Baseline.PricePerMinuteUSD))

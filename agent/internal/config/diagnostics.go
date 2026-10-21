@@ -26,7 +26,7 @@ func (s Severity) String() string {
 }
 
 // MarshalText encodes the severity as "error" or "warning", which is how it
-// appears in zeroci validate --json output.
+// appears in hookci validate --json output.
 func (s Severity) MarshalText() ([]byte, error) {
 	return []byte(s.String()), nil
 }

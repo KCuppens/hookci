@@ -4,7 +4,7 @@ import (
 	_ "embed"
 )
 
-// SchemaJSON contains the embedded canonical ZeroCI JSON schema.
+// SchemaJSON contains the embedded canonical HookCI JSON schema.
 //
-//go:embed zeroci.schema.json
+//go:embed hookci.schema.json
 var SchemaJSON []byte

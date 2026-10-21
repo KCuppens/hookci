@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // Render emits YAML equivalent to r.Config with r.Notes as a header comment.
@@ -19,7 +19,7 @@ func Render(r *Result) ([]byte, error) {
 	if r == nil || r.Config == nil {
 		return nil, errors.New("render: no configuration")
 	}
-	root := r.Config.ZeroCIConfig
+	root := r.Config.HookCIConfig
 
 	doc := mapping()
 	add(doc, "version", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(root.Version)})

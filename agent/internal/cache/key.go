@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/source"
 )
 
 // Key identifies one snapshot.

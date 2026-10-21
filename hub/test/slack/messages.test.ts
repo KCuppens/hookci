@@ -81,7 +81,7 @@ describe("Slack messages", () => {
 
   it("renders no_config as the exact hint", () => {
     const msg = renderRunMessage(runView({ state: "pending", reason: "no_config" }), { notify: "normal" });
-    expect(blockTexts(msg.blocks)).toContain("No checks detected: add `.zeroci.yml`");
+    expect(blockTexts(msg.blocks)).toContain("No checks detected: add `.hookci.yml`");
   });
 
   it("keeps the last 40 tail lines, each cut to 300 chars, in a block under 2900 chars", () => {

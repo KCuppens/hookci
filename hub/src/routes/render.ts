@@ -1,5 +1,5 @@
 // POST /v1/render: an agent asks how the hub would render a deploy badge, for
-// `zeroci deploy <env> --dry-run`. The agent holds no copy of the strings.
+// `hookci deploy <env> --dry-run`. The agent holds no copy of the strings.
 
 import type { Context } from "hono";
 import { listBindingsForAgent } from "../db/bindings";

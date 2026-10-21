@@ -17,15 +17,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const (
@@ -189,7 +189,7 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 		h.mu.Unlock()
 		return runner, nil
 	}
-	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x", HubMode: hubMode}
+	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "hci_agent_x", HubMode: hubMode}
 	dialer := &idleDialer{dialed: make(chan struct{})}
 	noHub := func(context.Context) (hubclient.HubInfo, error) {
 		return hubclient.HubInfo{}, errors.New("hub unreachable")
@@ -365,7 +365,7 @@ func TestDaemonBaseConfigBootstrap(t *testing.T) {
 	}
 }
 
-// A default-branch run records the fork policy its .zeroci.yml declares,
+// A default-branch run records the fork policy its .hookci.yml declares,
 // even when the agent refuses that configuration; pull requests record
 // nothing.
 func TestDaemonRecordsDefaultBranchPolicy(t *testing.T) {
@@ -704,7 +704,7 @@ func TestDaemonDropsReplacedAgentSession(t *testing.T) {
 	}
 
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "zc_agent_x"}, st, nil,
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "hci_agent_x"}, st, nil,
 		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}, DeployRunner: noDeployUnits()})
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
@@ -790,7 +790,7 @@ func TestDaemonJobLogs(t *testing.T) {
 				t.Fatalf("hub saw %d log PUTs, want %d", len(calls), tc.wantPuts)
 			}
 			for _, c := range calls {
-				if c.path != "/v1/logs/"+runID+"/unit" || c.auth != "Bearer zc_agent_x" || c.body != "hello\n" {
+				if c.path != "/v1/logs/"+runID+"/unit" || c.auth != "Bearer hci_agent_x" || c.body != "hello\n" {
 					t.Errorf("log PUT = %+v", c)
 				}
 				if c.jobState != store.JobRunning {

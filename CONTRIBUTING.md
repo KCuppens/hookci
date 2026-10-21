@@ -1,4 +1,4 @@
-# Contributing to zerocideploy
+# Contributing to hookci
 
 Thanks for helping. This document covers what you need to build, test and submit a change. By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -23,7 +23,7 @@ It runs `scripts/check.sh`, which must end with `check: ok`. The script:
 3. Checks Go formatting with `gofmt -l`.
 4. Runs `go vet ./...` and `go test ./...` in `agent/`.
 5. Runs `scripts/gen-install.sh --check`, `scripts/test-install.sh` and `node scripts/gen-manifests.mjs --check`; the last fails when the dev and staging App manifests in `hub/manifests/generated/` differ from what `node scripts/gen-manifests.mjs` writes from `hub/manifests/`.
-6. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`. `npm test` also runs the `zeroci-hub` CLI tests in `hub/test/cli/` under `vitest.cli.config.ts`.
+6. Runs `npm ci`, `npm test` and `npm run typecheck` in `hub/`. `npm test` also runs the `hookci-hub` CLI tests in `hub/test/cli/` under `vitest.cli.config.ts`.
 7. Runs `npx wrangler deploy --dry-run` in `hub/` for production and staging.
 8. Runs `npm run prepack` in `hub/`, renders a self-hosted config with `node dist/cli/index.js render --yes` into a temp dir, and dry-runs `wrangler deploy` against it.
 
@@ -31,7 +31,7 @@ The project has no GitHub Actions workflows and never will. It verifies itself w
 
 ## Regenerating types
 
-`schema/zeroci.schema.json` is the source of truth for the config format and the agent/hub protocol. The TypeScript generator is pinned in `schema/package.json`, so run `cd schema && npm ci` once. After changing the schema, run:
+`schema/hookci.schema.json` is the source of truth for the config format and the agent/hub protocol. The TypeScript generator is pinned in `schema/package.json`, so run `cd schema && npm ci` once. After changing the schema, run:
 
 ```sh
 make schema
@@ -52,7 +52,7 @@ and commit the regenerated Go and TypeScript files together with the schema chan
 
 ## Integration tests
 
-Tests that need root (systemd units, network namespaces, containers) start with `//go:build integration` and call `testutil.RequireIntegration(t)`, which skips unless `ZEROCI_INTEGRATION=1`, the OS is Linux and the user is root. Run them with:
+Tests that need root (systemd units, network namespaces, containers) start with `//go:build integration` and call `testutil.RequireIntegration(t)`, which skips unless `HOOKCI_INTEGRATION=1`, the OS is Linux and the user is root. Run them with:
 
 ```sh
 make test-integration

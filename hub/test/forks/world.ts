@@ -15,8 +15,8 @@ export const PR = 9;
 export const BASE_SHA = prFork.pull_request.base.sha;
 export const HEAD_SHA = prFork.pull_request.head.sha;
 const ACTION_URL = "https://hooks.slack.com/actions/T0ACME/1/xyz";
-/** The files key of `.zeroci.yml` on the fork PR's base SHA. */
-export const POLICY_FILE = `${REPO.full_name}@${BASE_SHA}:.zeroci.yml`;
+/** The files key of `.hookci.yml` on the fork PR's base SHA. */
+export const POLICY_FILE = `${REPO.full_name}@${BASE_SHA}:.hookci.yml`;
 
 export interface ForkWorld extends CommandWorld {
   agent: Agent;

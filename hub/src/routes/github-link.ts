@@ -1,5 +1,5 @@
 // GET and POST /github/link/start and GET /github/link/callback: the browser half of
-// /zeroci me. GET start shows which Slack user the state from the Slack button
+// /hookci me. GET start shows which Slack user the state from the Slack button
 // links and marks the browser; the page's POST trades that mark for the state
 // cookie and sends the browser to GitHub's user authorization. A link sent by
 // someone else, or a form on another site, cannot skip the page: the mark is

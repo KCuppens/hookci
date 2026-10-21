@@ -3,7 +3,7 @@ package scheduler
 import (
 	"strconv"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 const kindDeploy = "deploy"

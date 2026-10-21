@@ -1,5 +1,5 @@
 {
-  "name": "zeroci-dev",
+  "name": "hookci-dev",
   "url": "https://DEV-TUNNEL.example",
   "hook_attributes": { "url": "https://DEV-TUNNEL.example/github/webhook", "active": true },
   "redirect_url": "https://DEV-TUNNEL.example/github/oauth/callback",

@@ -82,7 +82,7 @@ func OpenTo(stateDir string, cred *syscall.Credential, dirs ...string) error {
 			return err
 		}
 		if !searchable(info, cred) {
-			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; use a state dir every user can reach, such as /var/lib/zeroci", dir, info.Mode().Perm(), cred.Uid)
+			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; use a state dir every user can reach, such as /var/lib/hookci", dir, info.Mode().Perm(), cred.Uid)
 		}
 		if dir == filepath.Dir(dir) {
 			break

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PACKAGE_NAME = "zeroci-hub";
+const PACKAGE_NAME = "hookci-hub";
 
 interface PackageJson {
 	name?: string;
@@ -16,8 +16,8 @@ function readPackageJson(dir: string): PackageJson | null {
 }
 
 /**
- * The zeroci-hub package root, found by walking up from this module to the
- * package.json named zeroci-hub. Works from both cli/ (tests) and dist/cli/
+ * The hookci-hub package root, found by walking up from this module to the
+ * package.json named hookci-hub. Works from both cli/ (tests) and dist/cli/
  * (the installed package), which sit at different depths.
  */
 export function packageRoot(): string {

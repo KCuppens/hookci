@@ -1,5 +1,5 @@
-// /zeroci export: a signed link, valid 15 minutes, to a JSON copy of what
-// ZeroCI stores about one Slack user: the GitHub link, the author mappings
+// /hookci export: a signed link, valid 15 minutes, to a JSON copy of what
+// HookCI stores about one Slack user: the GitHub link, the author mappings
 // and the runs that GitHub user authored within the retention window.
 
 import { base64url, hmacSha256, timingSafeEqual } from "../crypto";
@@ -63,7 +63,7 @@ export async function verifyExportToken(env: Env, token: string, now: number): P
 	return { teamId, slackUserId };
 }
 
-/** Everything ZeroCI stores about the Slack user in the team; runs are those of the linked GitHub login in the last retentionDays. */
+/** Everything HookCI stores about the Slack user in the team; runs are those of the linked GitHub login in the last retentionDays. */
 export async function collectUserData(env: Env, teamId: string, slackUserId: string, now: number): Promise<UserDataExport> {
 	const link = await getUserLink(env.DB, teamId, slackUserId);
 	const runs: ExportedRun[] = [];

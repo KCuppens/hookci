@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 const (
@@ -499,7 +499,7 @@ func TestOverlayRestoreMounts(t *testing.T) {
 	dst := newWorkdir(t, nil)
 	cleanup := mustRestore(t, c, k, dst)
 	target := filepath.Join(dst, "node_modules")
-	scratch := filepath.Join(dst, ".zeroci-cache", "0")
+	scratch := filepath.Join(dst, ".hookci-cache", "0")
 	opts := "lowerdir=" + filepath.Join(entryDir(t, c, k), "p0") + ",upperdir=" + filepath.Join(scratch, "upper") + ",workdir=" + filepath.Join(scratch, "work")
 	if want := []string{"-t", "overlay", "overlay", "-o", opts, target}; len(fake.Calls) != 1 || !slices.Equal(fake.Calls[0].Args, want) {
 		t.Errorf("calls = %v, want mount %v", fake.Calls, want)
@@ -513,7 +513,7 @@ func TestOverlayRestoreMounts(t *testing.T) {
 	if !fake.Called("umount", target) || len(fake.Calls) != 2 {
 		t.Errorf("calls = %v, want one umount", fake.Calls)
 	}
-	if _, err := os.Lstat(filepath.Join(dst, ".zeroci-cache")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(dst, ".hookci-cache")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("scratch left: %v", err)
 	}
 }
@@ -534,7 +534,7 @@ func TestOverlayRestoreFailureUndoes(t *testing.T) {
 	if hit, _, err := c.Restore(context.Background(), k, dst); hit || err == nil {
 		t.Fatalf("Restore = %v, %v, want an error", hit, err)
 	}
-	for _, p := range []string{"node_modules", ".zeroci-cache"} {
+	for _, p := range []string{"node_modules", ".hookci-cache"} {
 		if _, err := os.Lstat(filepath.Join(dst, p)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s left after a failed restore: %v", p, err)
 		}
@@ -586,7 +586,7 @@ func TestOverlayRestoreFailedUndoReturnsRetryingCleanup(t *testing.T) {
 	if runner.umounts != 2 {
 		t.Errorf("umounts = %d, want cleanup to retry the failed umount", runner.umounts)
 	}
-	if _, err := os.Lstat(filepath.Join(dst, ".zeroci-cache")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(dst, ".hookci-cache")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("scratch left after cleanup retry: %v", err)
 	}
 }

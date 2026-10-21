@@ -1,5 +1,5 @@
 #!/bin/sh
-# Embeds packaging/zeroci.slice and packaging/zeroci-agent@.service into
+# Embeds packaging/hookci.slice and packaging/hookci-agent@.service into
 # hub/static/install.sh between its "# BEGIN packaging/<file>" and
 # "# END packaging/<file>" markers. With --check, fails instead when the
 # embedded copies differ from packaging/.

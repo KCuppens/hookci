@@ -1,4 +1,4 @@
-// The Add sink modal `/zeroci sink add <owner/repo>` opens, and the parse of
+// The Add sink modal `/hookci sink add <owner/repo>` opens, and the parse of
 // its submission into the config service's input. Every input is optional at
 // Slack level, since which ones a sink needs depends on its kind: the parse
 // names the missing ones, and the config service checks what was given.
@@ -9,7 +9,7 @@ import { S } from "../strings";
 import { section } from "./blocks";
 import type { SlackView } from "./views";
 
-export const SINK_ADD_CALLBACK_ID = "zeroci_sink_add";
+export const SINK_ADD_CALLBACK_ID = "hookci_sink_add";
 
 /** Each field's block_id and action_id, so the errors of a submission are keyed by field. */
 export type SinkField = "kind" | "bot_token" | "chat_id" | "webhook_url" | "linear_api_key" | "linear_team" | "linear_assignee_email" | "label";

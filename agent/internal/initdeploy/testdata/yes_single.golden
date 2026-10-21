@@ -15,4 +15,4 @@ deployments:
       upstream_host: 127.0.0.1
     health:
       url: http://127.0.0.1:{port}/healthz
-    env_file: /etc/zeroci/env/Shop_App/production.env
+    env_file: /etc/hookci/env/Shop_App/production.env

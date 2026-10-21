@@ -1,4 +1,4 @@
-// Slack views (the App Home tab and modals) and the confirm dialogs ZeroCI shows.
+// Slack views (the App Home tab and modals) and the confirm dialogs HookCI shows.
 
 import { S } from "../strings";
 import { type SlackConfirm, context, section } from "./blocks";
@@ -25,7 +25,7 @@ export function pairTokenModal(token: string, installUrl: string, expiresAt: num
 		close: { type: "plain_text", text: S.home.close },
 		blocks: [
 			section(S.home.pairTokenRun),
-			section(`\`\`\`curl -fsSL ${installUrl} | sh\nsudo zeroci connect ${token}\`\`\``),
+			section(`\`\`\`curl -fsSL ${installUrl} | sh\nsudo hookci connect ${token}\`\`\``),
 			context(S.home.pairTokenExpires(`<!date^${seconds}^{date_short_pretty} at {time}|${iso}>`)),
 		],
 	};

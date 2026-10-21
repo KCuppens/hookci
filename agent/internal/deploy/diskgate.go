@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // StatfsFunc returns the bytes available to unprivileged users on the file
@@ -53,7 +53,7 @@ func CheckDiskHeadroom(paths []string, min int64, statfs StatfsFunc) error {
 			return fmt.Errorf("deploy: statfs %s: %w", path, err)
 		}
 		if min > 0 && free < uint64(min) {
-			return fmt.Errorf("gc.min_free_bytes: free disk %d on %s below %d; run zeroci gc or raise the limit", free, path, min)
+			return fmt.Errorf("gc.min_free_bytes: free disk %d on %s below %d; run hookci gc or raise the limit", free, path, min)
 		}
 	}
 	return nil

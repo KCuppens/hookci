@@ -32,7 +32,7 @@ describe("GET /.well-known/security.txt", () => {
   it("sets Expires a year past now and falls back to GitHub advisories without SECURITY_CONTACT", () => {
     const body = securityTxt({ ...env, SECURITY_CONTACT: "" }, new Date("2030-01-01T00:00:00Z"));
     expect(body).toContain("Expires: 2031-01-01T00:00:00Z\n");
-    expect(body).toContain("Contact: https://github.com/KCuppens/zerocideploy/security/advisories/new\n");
+    expect(body).toContain("Contact: https://github.com/KCuppens/hookci/security/advisories/new\n");
   });
 });
 

@@ -1,6 +1,6 @@
 // Who may run without approval. `trust: all` lets fork pull requests run
 // unattended; only a self-hosted hub whose repo has no deploy bindings honors
-// it. Policy is read from `.zeroci.yml` on the base ref, never the PR head.
+// it. Policy is read from `.hookci.yml` on the base ref, never the PR head.
 
 import type { Checks } from "../config/generated";
 import type { TenantDb } from "../db/tenant";
@@ -51,7 +51,7 @@ export async function effectiveTrust(env: Env, t: TenantDb, repoId: number, decl
 const CHECKS_SCALAR = /^(trust|forks):[ \t]*(["']?)([\w-]+)\2[ \t]*(#.*)?$/;
 
 /**
- * The `checks.trust` and `checks.forks` of a `.zeroci.yml` text. Only these
+ * The `checks.trust` and `checks.forks` of a `.hookci.yml` text. Only these
  * two scalars matter, so the lines are scanned instead of parsed as YAML
  * (a parser slows isolate start). Anything the scan cannot read, including a
  * flow-style `checks`, a repeated key or an unknown value, keeps the default.
@@ -89,5 +89,5 @@ export function readBaseConfig(text: string | null): BaseConfig {
 export async function fetchBaseConfig(env: Env, installationId: number, repo: string, baseRef: string): Promise<BaseConfig> {
 	const clock = env.__TEST_CLOCK ?? systemClock;
 	const gh = await new GitHubClient(env, env.__TEST_FETCHER ?? defaultFetcher, () => clock.now()).installation(installationId);
-	return readBaseConfig(await gh.getRepoFileAtRef(repo, ".zeroci.yml", baseRef));
+	return readBaseConfig(await gh.getRepoFileAtRef(repo, ".hookci.yml", baseRef));
 }

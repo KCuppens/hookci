@@ -3,7 +3,7 @@ package detect
 import (
 	"io/fs"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 func detectGo(fsys fs.FS) (*partial, error) {

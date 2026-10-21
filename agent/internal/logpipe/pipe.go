@@ -1,7 +1,7 @@
 // Package logpipe carries a job's output: every line is redacted, appended to
 // the job's log file (up to MaxLogBytes), kept in a tail ring for failure
 // events, mirrored when asked, scanned for eslint/tsc diagnostics and for
-// `::zeroci step` markers (the first MaxSteps).
+// `::hookci step` markers (the first MaxSteps).
 package logpipe
 
 import (
@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
 const (
@@ -28,7 +28,7 @@ const (
 	MaxSteps = 500
 )
 
-// StepEvent reports a `::zeroci step <name>` marker.
+// StepEvent reports a `::hookci step <name>` marker.
 type StepEvent struct {
 	Name  string
 	Index int // 1-based
@@ -135,7 +135,7 @@ func (p *Pipe) Close() error {
 	p.closed = true
 	err := errors.Join(p.stdout.w.Close(), p.stderr.w.Close())
 	if p.droppedSteps > 0 {
-		note := fmt.Appendf(nil, "[zeroci: ignored %d step markers past the first %d]\n", p.droppedSteps, MaxSteps)
+		note := fmt.Appendf(nil, "[hookci: ignored %d step markers past the first %d]\n", p.droppedSteps, MaxSteps)
 		if p.midLine {
 			note = append([]byte("\n"), note...)
 		}
@@ -232,9 +232,9 @@ func (p *Pipe) writeFile(b []byte) error {
 // truncationNote ends a log cut at maxBytes.
 func truncationNote(maxBytes int64) string {
 	if maxBytes >= 1<<20 {
-		return fmt.Sprintf("[zeroci: log truncated at %d MiB; later output is not saved]\n", maxBytes>>20)
+		return fmt.Sprintf("[hookci: log truncated at %d MiB; later output is not saved]\n", maxBytes>>20)
 	}
-	return fmt.Sprintf("[zeroci: log truncated at %d bytes; later output is not saved]\n", maxBytes)
+	return fmt.Sprintf("[hookci: log truncated at %d bytes; later output is not saved]\n", maxBytes)
 }
 
 func (p *Pipe) addAnnotation(a Annotation) {

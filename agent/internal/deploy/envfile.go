@@ -6,8 +6,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
 // fstatFunc stats the opened env_file for the owner and mode check; tests

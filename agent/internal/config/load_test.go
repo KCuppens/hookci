@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/egress"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // fakeInfo is an env_file as Stat reports it; sys carries the owner.
@@ -111,21 +111,21 @@ func TestFromRoot(t *testing.T) {
 	if len(diags) > 0 {
 		t.Fatalf("unexpected diagnostics:\n%s", diags.Format("test.yml"))
 	}
-	built, diags := FromRoot(ZeroCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{
+	built, diags := FromRoot(HookCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{
 		"lint": {Run: "npm run lint"},
 		"test": {Run: "go test ./...", Needs: []string{"lint"}},
 	}}})
 	if len(diags) > 0 {
 		t.Fatalf("unexpected diagnostics:\n%s", diags.Format("root"))
 	}
-	if !reflect.DeepEqual(built.ZeroCIConfig, parsed.ZeroCIConfig) {
-		t.Errorf("FromRoot config = %+v\nParse config = %+v", built.ZeroCIConfig, parsed.ZeroCIConfig)
+	if !reflect.DeepEqual(built.HookCIConfig, parsed.HookCIConfig) {
+		t.Errorf("FromRoot config = %+v\nParse config = %+v", built.HookCIConfig, parsed.HookCIConfig)
 	}
 	if !reflect.DeepEqual(built.Checks(), parsed.Checks()) {
 		t.Errorf("FromRoot Checks() = %+v\nParse Checks() = %+v", built.Checks(), parsed.Checks())
 	}
 
-	_, diags = FromRoot(ZeroCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{"Bad Name": {Run: "true"}}}})
+	_, diags = FromRoot(HookCIConfig{Version: 1, Checks: &Checks{Jobs: ChecksJobs{"Bad Name": {Run: "true"}}}})
 	if !diags.HasErrors() {
 		t.Error("FromRoot accepted an invalid job name")
 	}

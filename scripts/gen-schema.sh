@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generates Go and TypeScript types from schema/zeroci.schema.json. Idempotent.
+# Generates Go and TypeScript types from schema/hookci.schema.json. Idempotent.
 # Usage: scripts/gen-schema.sh [outdir]
 # Files are written at their repo-relative paths under outdir, which defaults
 # to the repo root. scripts/schema-check.sh passes a temp dir.
@@ -19,7 +19,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$out/agent/internal/config" "$out/agent/internal/protocol" "$out/hub/src/config" "$out/hub/src/protocol"
-cp schema/zeroci.schema.json "$out/agent/internal/config/zeroci.schema.json"
+cp schema/hookci.schema.json "$out/agent/internal/config/hookci.schema.json"
 
 # protocol.schema.json: $defs.protocol as its own root, with its refs
 # rewritten from #/$defs/protocol/$defs/X to #/$defs/X.
@@ -39,7 +39,7 @@ const protocolJSON = JSON.stringify(protocol, null, 2).replaceAll("\"#/$defs/pro
 fs.writeFileSync(protocolOut, protocolJSON + "\n");
 delete schema.$defs.protocol;
 fs.writeFileSync(configOut, JSON.stringify(schema, null, 2) + "\n");
-' schema/zeroci.schema.json "$tmp/protocol.schema.json" "$tmp/config.schema.json"
+' schema/hookci.schema.json "$tmp/protocol.schema.json" "$tmp/config.schema.json"
 
 (
 	cd agent
@@ -49,7 +49,7 @@ fs.writeFileSync(configOut, JSON.stringify(schema, null, 2) + "\n");
 		-o "$out/agent/internal/config/types_gen.go" "$tmp/config.schema.json"
 )
 
-"$json2ts" -i schema/zeroci.schema.json -o "$out/hub/src/config/generated.ts" --bannerComment "$banner"
+"$json2ts" -i schema/hookci.schema.json -o "$out/hub/src/config/generated.ts" --bannerComment "$banner"
 "$json2ts" -i "$tmp/protocol.schema.json" -o "$out/hub/src/protocol/types.gen.ts" --unreachableDefinitions --bannerComment "$banner"
 
 # Replace the generator's own header line with the shared banner.

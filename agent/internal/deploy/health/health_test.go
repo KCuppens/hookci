@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/clock"
 )
 
 var epoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -174,7 +174,7 @@ func TestExpandURL(t *testing.T) {
 
 func TestProbe_DoesNotFollowNonLoopbackRedirect(t *testing.T) {
 	port := serverPort(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://zeroci.invalid/health", http.StatusFound)
+		http.Redirect(w, r, "http://hookci.invalid/health", http.StatusFound)
 	})
 	c := &Checker{}
 

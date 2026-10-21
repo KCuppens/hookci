@@ -10,18 +10,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
 	infoTimeout = 10 * time.Second
 	// maxInfoBytes bounds the /v1/info body; the real one is under 300 bytes.
 	maxInfoBytes = 64 << 10
-	hubName      = "zeroci-hub"
+	hubName      = "hookci-hub"
 )
 
-// ErrNotAHub means the URL answered /v1/info but not as a zeroci hub.
-var ErrNotAHub = errors.New("hubclient: not a zeroci hub")
+// ErrNotAHub means the URL answered /v1/info but not as a hookci hub.
+var ErrNotAHub = errors.New("hubclient: not a hookci hub")
 
 // HubInfo is the body of GET /v1/info.
 type HubInfo struct {
@@ -50,7 +50,7 @@ func FetchInfo(ctx context.Context, c *http.Client, baseURL string) (HubInfo, er
 	if err != nil {
 		return HubInfo{}, fmt.Errorf("hubclient: info: %w", err)
 	}
-	req.Header.Set("User-Agent", "zeroci-agent/"+version.Version)
+	req.Header.Set("User-Agent", "hookci-agent/"+version.Version)
 	res, err := c.Do(req)
 	if err != nil {
 		return HubInfo{}, fmt.Errorf("hubclient: info: %w", err)

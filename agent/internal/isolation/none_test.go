@@ -95,7 +95,7 @@ func TestNoneStopAndListUnits(t *testing.T) {
 	unit := UnitName("r1", "long")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		units, _ := n.ListUnits(context.Background(), "zeroci-run-r1-")
+		units, _ := n.ListUnits(context.Background(), "hookci-run-r1-")
 		if len(units) == 1 && units[0] == (Unit{Name: unit, Active: "active"}) {
 			break
 		}
@@ -121,7 +121,7 @@ func TestNoneStopAndListUnits(t *testing.T) {
 }
 
 func TestNoneRunEnvIsExact(t *testing.T) {
-	t.Setenv("ZEROCI_AGENT_ONLY", "agent-secret")
+	t.Setenv("HOOKCI_AGENT_ONLY", "agent-secret")
 	out := &strings.Builder{}
 	_, err := (&None{}).Run(context.Background(), Spec{
 		RunID:  "r1",

@@ -1,4 +1,4 @@
-// Package cli implements the zeroci command-line interface: argument
+// Package cli implements the hookci command-line interface: argument
 // parsing, subcommand dispatch, and help/version output.
 //
 // Subcommands live in the commands map below, one entry per command. Global
@@ -16,7 +16,7 @@ import (
 	"sort"
 	"syscall"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 type command struct {
@@ -58,18 +58,18 @@ func commandTable() map[string]command {
 			run:     cmdGC,
 		},
 		"help": {
-			summary: "show help for zeroci",
+			summary: "show help for hookci",
 			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {
 				printUsage(stdout)
 				return ExitOK
 			},
 		},
 		"hub": {
-			summary: "set up or upgrade a self-hosted hub on Cloudflare through npx zeroci-hub: hub setup|upgrade [zeroci-hub options]",
+			summary: "set up or upgrade a self-hosted hub on Cloudflare through npx hookci-hub: hub setup|upgrade [hookci-hub options]",
 			run:     cmdHub,
 		},
 		"init": {
-			summary: "scaffold a .zeroci.yml config file for the project (--deploy adds a deployment)",
+			summary: "scaffold a .hookci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),
 		},
 		"logs": {
@@ -101,11 +101,11 @@ func commandTable() map[string]command {
 			run:     cmdUpgrade,
 		},
 		"validate": {
-			summary: "validate a zeroci configuration file",
+			summary: "validate a hookci configuration file",
 			run:     noDeps(runValidate),
 		},
 		"version": {
-			summary: "print the zeroci version",
+			summary: "print the hookci version",
 			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {
 				fmt.Fprintln(stdout, version.String())
 				return ExitOK
@@ -114,7 +114,7 @@ func commandTable() map[string]command {
 	}
 }
 
-// Main runs the zeroci CLI with args (excluding the program name) and
+// Main runs the hookci CLI with args (excluding the program name) and
 // returns the process exit code. stdout and stderr receive command output;
 // callers typically pass os.Stdout and os.Stderr. SIGINT and SIGTERM cancel
 // the context passed to the running command.
@@ -146,7 +146,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newD
 		fmt.Fprintln(stdout, version.String())
 		return ExitOK
 	}
-	fs := flag.NewFlagSet("zeroci", flag.ContinueOnError)
+	fs := flag.NewFlagSet("hookci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() { printUsage(stdout) }
 
@@ -155,7 +155,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newD
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitOK
 		}
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		printUsage(stderr)
 		return ExitUsage
 	}
@@ -167,7 +167,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newD
 	name := rest[0]
 	cmd, ok := commandTable()[name]
 	if !ok {
-		fmt.Fprintf(stderr, "zeroci: unknown command %q\n", name)
+		fmt.Fprintf(stderr, "hookci: unknown command %q\n", name)
 		printUsage(stderr)
 		return ExitUsage
 	}
@@ -175,10 +175,10 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer, newD
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: zeroci [global flags] <command> [arguments]")
+	fmt.Fprintln(w, "usage: hookci [global flags] <command> [arguments]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "global flags:")
-	fmt.Fprintln(w, "  --state-dir DIR   state directory (default $ZEROCI_STATE_DIR, $XDG_STATE_HOME/zeroci or ~/.local/state/zeroci)")
+	fmt.Fprintln(w, "  --state-dir DIR   state directory (default $HOOKCI_STATE_DIR, $XDG_STATE_HOME/hookci or ~/.local/state/hookci)")
 	fmt.Fprintln(w, "  --slots N         parallel job slots (default half the CPUs, at least 1)")
 	fmt.Fprintln(w, "  --isolation MODE  job isolation: auto, systemd or none (default auto)")
 	fmt.Fprintln(w, "  -v                print step events and mirror job output")

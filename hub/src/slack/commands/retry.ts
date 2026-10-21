@@ -1,4 +1,4 @@
-// /zeroci retry <owner/repo> [sha]: runs the repo's latest run, or the
+// /hookci retry <owner/repo> [sha]: runs the repo's latest run, or the
 // latest run of the commit, again as the next attempt through the bound
 // agent's AgentDO. A fork pull request's attempt passes the fork gate like a
 // new fork run: it waits as gated until a writer approves it. No trigger is
@@ -61,7 +61,7 @@ async function agentOnline(env: Env, agentId: string): Promise<boolean> {
 registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	const user = await requireLinkedUser(env, teamId, userId);
 	const [fullName, sha, ...rest] = commandArgs(text);
-	if (!fullName || rest.length > 0 || (sha !== undefined && !SHA.test(sha))) return ephemeral(S.slack.usage("/zeroci retry <owner/repo> [sha]"));
+	if (!fullName || rest.length > 0 || (sha !== undefined && !SHA.test(sha))) return ephemeral(S.slack.usage("/hookci retry <owner/repo> [sha]"));
 	const { repo, gh } = await requireRepoAccess(env, teamId, user, fullName, "write");
 	const t = tenantDb(env.DB, repo.installationId);
 	const run = await findLatestRun(t, repo.repoId, sha);
@@ -78,7 +78,7 @@ registerCommand("retry", async ({ env, teamId, userId, text }) => {
 	}
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id)).fetch("https://do/trigger", {
 		method: "POST",
-		headers: { "x-zeroci-agent-id": binding.agent_id },
+		headers: { "x-hookci-agent-id": binding.agent_id },
 		body: JSON.stringify(trigger),
 	});
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `trigger for ${binding.agent_id} answered ${res.status}`);

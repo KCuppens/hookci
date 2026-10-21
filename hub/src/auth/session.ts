@@ -1,4 +1,4 @@
-// The log sign-in session: the zc_session cookie a browser gets once GitHub
+// The log sign-in session: the hci_session cookie a browser gets once GitHub
 // told the hub who it is (routes/log-links.ts). It names the GitHub user and
 // holds no GitHub token; each private log link checks that user's role on the
 // repo with the installation token. The value is
@@ -10,7 +10,7 @@ import type { Env } from "../env";
 import { logSigningKey } from "../logs/signing";
 import { readCookie, setCookie } from "../oauth/state";
 
-export const SESSION_COOKIE = "zc_session";
+export const SESSION_COOKIE = "hci_session";
 export const SESSION_TTL_SEC = 8 * 3600;
 
 const VERSION = "sess1";
@@ -23,11 +23,11 @@ export interface Session {
 	exp: number;
 }
 
-/** HMAC-SHA256 of the versioned payload under HKDF-SHA256(LOG_SIGNING_KEY, "zeroci-session-v1"), base64url; throws log_signing_key_missing when the key is empty. */
+/** HMAC-SHA256 of the versioned payload under HKDF-SHA256(LOG_SIGNING_KEY, "hookci-session-v1"), base64url; throws log_signing_key_missing when the key is empty. */
 async function mac(env: Env, payload: string): Promise<string> {
 	const base = await crypto.subtle.importKey("raw", utf8.encode(logSigningKey(env)), "HKDF", false, ["deriveBits"]);
 	const bits = await crypto.subtle.deriveBits(
-		{ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8.encode("zeroci-session-v1") },
+		{ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8.encode("hookci-session-v1") },
 		base,
 		256,
 	);

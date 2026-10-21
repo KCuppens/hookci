@@ -1,8 +1,8 @@
 DRAFT: requires human legal review before publication
 
-# ZeroCI privacy policy
+# HookCI privacy policy
 
-This policy covers the shared ZeroCI hub, its GitHub App and its Slack App.
+This policy covers the shared HookCI hub, its GitHub App and its Slack App.
 
 ## Who operates the shared hub
 
@@ -52,8 +52,8 @@ The hub sets only strictly necessary cookies that keep a sign in or install flow
 
 ## Your rights
 
-- Export: run `/zeroci export` in Slack to download what ZeroCI stores about you.
-- Deletion: run `/zeroci delete-my-data` in Slack to delete your Slack to GitHub link and author mappings at once. Uninstall the GitHub App or the Slack App to delete the installation data within 30 days.
+- Export: run `/hookci export` in Slack to download what HookCI stores about you.
+- Deletion: run `/hookci delete-my-data` in Slack to delete your Slack to GitHub link and author mappings at once. Uninstall the GitHub App or the Slack App to delete the installation data within 30 days.
 - Access, correction and objection: email privacy@webuno.io. You may also complain to your data protection authority.
 
 ## Self hosted hubs

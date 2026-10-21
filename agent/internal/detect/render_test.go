@@ -4,15 +4,15 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 func renderResult(t *testing.T) *Result {
 	t.Helper()
 	eslint := config.JobAnnotateEslint
 	timeout := "10m"
-	cfg, diags := config.FromRoot(config.ZeroCIConfig{
+	cfg, diags := config.FromRoot(config.HookCIConfig{
 		Version: 1,
 		Checks: &config.Checks{
 			Setup: []config.SetupStep{
@@ -51,8 +51,8 @@ func TestRenderRoundTrip(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("Parse: %s\n%s", diags.Format("render"), out)
 	}
-	if !reflect.DeepEqual(parsed.ZeroCIConfig, r.Config.ZeroCIConfig) {
-		t.Errorf("parsed config differs from rendered one:\n got %+v\nwant %+v", parsed.ZeroCIConfig, r.Config.ZeroCIConfig)
+	if !reflect.DeepEqual(parsed.HookCIConfig, r.Config.HookCIConfig) {
+		t.Errorf("parsed config differs from rendered one:\n got %+v\nwant %+v", parsed.HookCIConfig, r.Config.HookCIConfig)
 	}
 	if !reflect.DeepEqual(parsed.Checks(), r.Config.Checks()) {
 		t.Errorf("resolved checks differ after round trip")

@@ -16,10 +16,10 @@ func TestHubArgv(t *testing.T) {
 		extra        []string
 		want         []string
 	}{
-		{"upgrade", "v0.4.0", []string{"--yes"}, []string{"npx", "--yes", "zeroci-hub@0.4.0", "upgrade", "--yes"}},
-		{"setup", "0.4.0", nil, []string{"npx", "--yes", "zeroci-hub@0.4.0", "setup"}},
-		{"setup", "dev", []string{"--dir", "hub"}, []string{"npx", "--yes", "zeroci-hub@latest", "setup", "--dir", "hub"}},
-		{"upgrade", "", nil, []string{"npx", "--yes", "zeroci-hub@latest", "upgrade"}},
+		{"upgrade", "v0.4.0", []string{"--yes"}, []string{"npx", "--yes", "hookci-hub@0.4.0", "upgrade", "--yes"}},
+		{"setup", "0.4.0", nil, []string{"npx", "--yes", "hookci-hub@0.4.0", "setup"}},
+		{"setup", "dev", []string{"--dir", "hub"}, []string{"npx", "--yes", "hookci-hub@latest", "setup", "--dir", "hub"}},
+		{"upgrade", "", nil, []string{"npx", "--yes", "hookci-hub@latest", "upgrade"}},
 	} {
 		if got := hubArgv(tc.sub, tc.version, tc.extra); !slices.Equal(got, tc.want) {
 			t.Errorf("hubArgv(%q, %q, %q) = %q, want %q", tc.sub, tc.version, tc.extra, got, tc.want)
@@ -27,7 +27,7 @@ func TestHubArgv(t *testing.T) {
 	}
 }
 
-// fakeHub records the command zeroci hub runs and answers with err.
+// fakeHub records the command hookci hub runs and answers with err.
 type fakeHub struct {
 	npx   bool
 	err   error
@@ -58,7 +58,7 @@ func TestRunHubPassesArgvAndStdioToRun(t *testing.T) {
 	if err := runHub(context.Background(), f.deps("v0.4.0"), "upgrade", []string{"--yes"}, stdio); err != nil {
 		t.Fatalf("runHub: %v", err)
 	}
-	if want := []string{"npx", "--yes", "zeroci-hub@0.4.0", "upgrade", "--yes"}; !slices.Equal(f.argv, want) {
+	if want := []string{"npx", "--yes", "hookci-hub@0.4.0", "upgrade", "--yes"}; !slices.Equal(f.argv, want) {
 		t.Errorf("argv = %q, want %q", f.argv, want)
 	}
 	if f.stdio != stdio {
@@ -77,7 +77,7 @@ func TestRunHubReturnsRunError(t *testing.T) {
 func TestRunHubWithoutNpx(t *testing.T) {
 	f := &fakeHub{}
 	err := runHub(context.Background(), f.deps("v0.4.0"), "setup", nil, Stdio{})
-	want := "zeroci hub needs Node.js 20+ and npx on this machine (it runs wrangler against your Cloudflare account); install Node or run it from your laptop"
+	want := "hookci hub needs Node.js 20+ and npx on this machine (it runs wrangler against your Cloudflare account); install Node or run it from your laptop"
 	if err == nil || err.Error() != want {
 		t.Errorf("runHub error = %v, want %q", err, want)
 	}
@@ -97,7 +97,7 @@ func TestCmdHub(t *testing.T) {
 	if code, _, stderr := run(f, "setup", "--dir", "hub", "--org", "acme"); code != ExitOK || stderr != "" {
 		t.Errorf("hub setup: exit %d, stderr %q", code, stderr)
 	}
-	if want := []string{"npx", "--yes", "zeroci-hub@0.4.0", "setup", "--dir", "hub", "--org", "acme"}; !slices.Equal(f.argv, want) {
+	if want := []string{"npx", "--yes", "hookci-hub@0.4.0", "setup", "--dir", "hub", "--org", "acme"}; !slices.Equal(f.argv, want) {
 		t.Errorf("hub setup argv = %q, want %q", f.argv, want)
 	}
 
@@ -107,17 +107,17 @@ func TestCmdHub(t *testing.T) {
 
 	for _, args := range [][]string{nil, {"render"}} {
 		f := &fakeHub{npx: true}
-		if code, _, stderr := run(f, args...); code != ExitUsage || !strings.HasPrefix(stderr, "usage: zeroci hub setup|upgrade") || f.argv != nil {
+		if code, _, stderr := run(f, args...); code != ExitUsage || !strings.HasPrefix(stderr, "usage: hookci hub setup|upgrade") || f.argv != nil {
 			t.Errorf("hub %q: exit %d, stderr %q, ran %q", args, code, stderr, f.argv)
 		}
 	}
 }
 
-func TestCmdHubReturnsZerociHubExitCode(t *testing.T) {
+func TestCmdHubReturnsHookciHubExitCode(t *testing.T) {
 	failed := exec.Command("sh", "-c", "exit 2").Run()
 	f := &fakeHub{npx: true, err: failed}
 	var stdout, stderr bytes.Buffer
 	if code := cmdHub(context.Background(), Deps{Hub: f.deps("dev")}, []string{"upgrade", "--bogus"}, &stdout, &stderr); code != 2 || stderr.Len() != 0 {
-		t.Errorf("exit %d, stderr %q; want 2 and zeroci-hub's own output only", code, stderr.String())
+		t.Errorf("exit %d, stderr %q; want 2 and hookci-hub's own output only", code, stderr.String())
 	}
 }

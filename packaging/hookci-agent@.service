@@ -1,17 +1,17 @@
 [Unit]
-Description=ZeroCI agent (installation %i)
+Description=HookCI agent (installation %i)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/zeroci agent --installation %i
+ExecStart=/usr/local/bin/hookci agent --installation %i
 Restart=always
 # Exit 3 is a revoked agent or no usable agent.json, 4 is agent_too_old
 # (agent/internal/cli/exit.go); restarting cannot fix either.
 RestartPreventExitStatus=3 4
 RestartSec=5
-Slice=zeroci.slice
-StateDirectory=zeroci/%i
+Slice=hookci.slice
+StateDirectory=hookci/%i
 NoNewPrivileges=no
 
 [Install]

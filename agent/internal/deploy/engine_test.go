@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func TestEngine_HappyPath(t *testing.T) {
@@ -336,10 +336,10 @@ func TestEngine_FailsBeforeSteps(t *testing.T) {
 			name: "config load error",
 			setup: func(r *testRig) {
 				r.engine.LoadDeployment = func(context.Context, store.DeployRun) (config.Deployment, error) {
-					return config.Deployment{}, errors.New("fetch zeroci.yml at abc123: 404")
+					return config.Deployment{}, errors.New("fetch hookci.yml at abc123: 404")
 				}
 			},
-			wantErr: "deployments.production: load config: fetch zeroci.yml at abc123: 404",
+			wantErr: "deployments.production: load config: fetch hookci.yml at abc123: 404",
 		},
 		{
 			name:    "plan error",
@@ -392,13 +392,13 @@ func TestEngine_PreflightFailure_NoStepsNoRollback(t *testing.T) {
 	r := newRig(t, store.DeployQueued, fourSteps)
 	checkedOut := false
 	r.engine.Checkout = func(context.Context, store.DeployRun) error { checkedOut = true; return nil }
-	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/zeroci", 5*gib,
-		statfsMap(map[string]uint64{"/var/lib/docker": 1 * gib, "/var/lib/zeroci": 50 * gib}))}
+	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/hookci", 5*gib,
+		statfsMap(map[string]uint64{"/var/lib/docker": 1 * gib, "/var/lib/hookci": 50 * gib}))}
 	if err := r.engine.Start(context.Background(), "r1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	wantErr := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run zeroci gc or raise the limit"
+	wantErr := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run hookci gc or raise the limit"
 	if run := r.run(t); run.State != store.DeployFailed || run.Error != wantErr || run.FinishedAt.IsZero() {
 		t.Errorf("run = %s %q finished %v, want Failed %q", run.State, run.Error, run.FinishedAt, wantErr)
 	}
@@ -415,8 +415,8 @@ func TestEngine_PreflightFailure_NoStepsNoRollback(t *testing.T) {
 
 func TestEngine_PreflightPasses(t *testing.T) {
 	r := newRig(t, store.DeployQueued, fourSteps)
-	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/zeroci", 5*gib,
-		statfsMap(map[string]uint64{"/var/lib/docker": 6 * gib, "/var/lib/zeroci": 50 * gib}))}
+	r.engine.Preflight = []PreflightFunc{DiskPreflight(fakeDockerInfo("/var/lib/docker"), "/var/lib/hookci", 5*gib,
+		statfsMap(map[string]uint64{"/var/lib/docker": 6 * gib, "/var/lib/hookci": 50 * gib}))}
 	if err := r.engine.Start(context.Background(), "r1"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

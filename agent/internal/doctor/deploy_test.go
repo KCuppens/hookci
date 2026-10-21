@@ -12,14 +12,14 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 const (
-	deployPasswd = "root:x:0:0::/root:/bin/sh\nzeroci-deploy:x:997:997::/nonexistent:/usr/sbin/nologin\n"
-	deployGroup  = "root:x:0:\nzeroci-deploy:x:997:\ndocker:x:999:alice,zeroci-deploy\n"
-	envFile      = "/etc/zeroci/app.env"
+	deployPasswd = "root:x:0:0::/root:/bin/sh\nhookci-deploy:x:997:997::/nonexistent:/usr/sbin/nologin\n"
+	deployGroup  = "root:x:0:\nhookci-deploy:x:997:\ndocker:x:999:alice,hookci-deploy\n"
+	envFile      = "/etc/hookci/app.env"
 	routeFile    = "/etc/caddy/routes/app.caddy"
 )
 
@@ -53,7 +53,7 @@ func deployFS() fstest.MapFS {
 	m := healthyFS()
 	m["etc/passwd"] = &fstest.MapFile{Data: []byte(deployPasswd)}
 	m["etc/group"] = &fstest.MapFile{Data: []byte(deployGroup)}
-	m["etc/zeroci/app.env"] = &fstest.MapFile{Data: []byte("TOKEN=x\n"), Mode: 0o600, Sys: &syscall.Stat_t{Uid: 0}}
+	m["etc/hookci/app.env"] = &fstest.MapFile{Data: []byte("TOKEN=x\n"), Mode: 0o600, Sys: &syscall.Stat_t{Uid: 0}}
 	m["etc/caddy/routes"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755}
 	return m
 }
@@ -73,7 +73,7 @@ func closedAddr(t *testing.T) string {
 func deployEnv(t *testing.T) Env {
 	t.Helper()
 	return Env{
-		StateRoot: "/var/lib/zeroci",
+		StateRoot: "/var/lib/hookci",
 		HTTP:      &http.Client{},
 		Exec:      deployExec(nil),
 		FS:        deployFS(),
@@ -83,9 +83,9 @@ func deployEnv(t *testing.T) Env {
 }
 
 // caddyRepos has one production deployment with a caddy route and an env file.
-func caddyRepos(context.Context) ([]config.ZeroCIConfig, error) {
+func caddyRepos(context.Context) ([]config.HookCIConfig, error) {
 	file := envFile
-	return []config.ZeroCIConfig{{Deployments: config.ZeroCIConfigDeployments{
+	return []config.HookCIConfig{{Deployments: config.HookCIConfigDeployments{
 		"production": {EnvFile: &file, Route: &config.DeploymentRoute{Kind: config.DeploymentRouteKindCaddy, File: routeFile}},
 	}}}, nil
 }
@@ -177,9 +177,9 @@ func TestDoctor_EnvFilePerms(t *testing.T) {
 			env := deployEnv(t)
 			m := env.FS.(fstest.MapFS)
 			if tt.file == nil {
-				delete(m, "etc/zeroci/app.env")
+				delete(m, "etc/hookci/app.env")
 			} else {
-				m["etc/zeroci/app.env"] = tt.file
+				m["etc/hookci/app.env"] = tt.file
 			}
 			r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.env_file"), env)
 			if r.Status != tt.want || !strings.Contains(r.Detail, tt.in) {
@@ -201,9 +201,9 @@ func TestDoctor_DeployUser(t *testing.T) {
 		fix    string
 	}{
 		{"member", deployPasswd, deployGroup, Pass, ""},
-		{"primary group", "zeroci-deploy:x:997:999::/nonexistent:/usr/sbin/nologin\n", "docker:x:999:\n", Pass, ""},
-		{"not a member", deployPasswd, "docker:x:999:alice\n", Fail, "sudo usermod -aG docker zeroci-deploy"},
-		{"no docker group", deployPasswd, "root:x:0:\n", Fail, dockerFix + ", then sudo usermod -aG docker zeroci-deploy"},
+		{"primary group", "hookci-deploy:x:997:999::/nonexistent:/usr/sbin/nologin\n", "docker:x:999:\n", Pass, ""},
+		{"not a member", deployPasswd, "docker:x:999:alice\n", Fail, "sudo usermod -aG docker hookci-deploy"},
+		{"no docker group", deployPasswd, "root:x:0:\n", Fail, dockerFix + ", then sudo usermod -aG docker hookci-deploy"},
 		{"no deploy user", "root:x:0:0::/root:/bin/sh\n", deployGroup, Fail, reinstallFix},
 	}
 	for _, tt := range tests {
@@ -248,7 +248,7 @@ func TestDoctor_CaddyAdmin(t *testing.T) {
 	})
 	t.Run("allow_caddy_tcp_admin warns", func(t *testing.T) {
 		env := deployEnv(t)
-		env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"doctor":{"allow_caddy_tcp_admin":true}}`)
+		env.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"doctor":{"allow_caddy_tcp_admin":true}}`)
 		r := runOne(t, checkByID(t, DeployCheckDeps{CaddyAdmin: admin.URL + "/config/"}, "deploy.caddy_admin"), env)
 		if r.Status != Warn || r.Fix != caddyAdminFix {
 			t.Errorf("result = %+v", r)
@@ -262,11 +262,11 @@ type failTransport struct{ err error }
 func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
 
 func TestDoctor_CaddySkippedWithoutCaddyRoutes(t *testing.T) {
-	noRepos := func(context.Context) ([]config.ZeroCIConfig, error) { return nil, nil }
-	noRoute := func(context.Context) ([]config.ZeroCIConfig, error) {
-		return []config.ZeroCIConfig{{Deployments: config.ZeroCIConfigDeployments{"staging": {}}}}, nil
+	noRepos := func(context.Context) ([]config.HookCIConfig, error) { return nil, nil }
+	noRoute := func(context.Context) ([]config.HookCIConfig, error) {
+		return []config.HookCIConfig{{Deployments: config.HookCIConfigDeployments{"staging": {}}}}, nil
 	}
-	for name, repos := range map[string]func(context.Context) ([]config.ZeroCIConfig, error){"no repos": noRepos, "no route": noRoute, "nil": nil} {
+	for name, repos := range map[string]func(context.Context) ([]config.HookCIConfig, error){"no repos": noRepos, "no route": noRoute, "nil": nil} {
 		t.Run(name, func(t *testing.T) {
 			env := deployEnv(t)
 			ex := deployExec(nil)
@@ -283,8 +283,8 @@ func TestDoctor_CaddySkippedWithoutCaddyRoutes(t *testing.T) {
 	}
 
 	t.Run("repo config error fails", func(t *testing.T) {
-		bad := func(context.Context) ([]config.ZeroCIConfig, error) {
-			return nil, errors.New(".zeroci.yml: version: required")
+		bad := func(context.Context) ([]config.HookCIConfig, error) {
+			return nil, errors.New(".hookci.yml: version: required")
 		}
 		for _, id := range []string{"deploy.caddy", "deploy.route_file", "deploy.env_file"} {
 			r := runOne(t, checkByID(t, DeployCheckDeps{Repos: bad}, id), deployEnv(t))
@@ -326,22 +326,22 @@ func TestDoctor_RouteFile(t *testing.T) {
 	t.Run("outside route_dirs", func(t *testing.T) {
 		env := deployEnv(t)
 		m := env.FS.(fstest.MapFS)
-		m["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes"]}}`)
+		m["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes"]}}`)
 		r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env)
 		if r.Status != Fail || !strings.Contains(r.Detail, "deployments.production.route.file") ||
-			!strings.Contains(r.Fix, "/var/lib/zeroci/42/agent.json") {
+			!strings.Contains(r.Fix, "/var/lib/hookci/42/agent.json") {
 			t.Errorf("result = %+v", r)
 		}
-		m["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes","/etc/caddy/routes"]}}`)
+		m["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"deploy":{"route_dirs":["/opt/routes","/etc/caddy/routes"]}}`)
 		if r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env); r.Status != Pass {
 			t.Errorf("result = %+v, want pass inside a listed dir", r)
 		}
 	})
 	t.Run("outside default route_dirs when unpaired", func(t *testing.T) {
 		env := deployEnv(t)
-		delete(env.FS.(fstest.MapFS), "var/lib/zeroci/42/agent.json")
-		repos := func(context.Context) ([]config.ZeroCIConfig, error) {
-			return []config.ZeroCIConfig{{Deployments: config.ZeroCIConfigDeployments{
+		delete(env.FS.(fstest.MapFS), "var/lib/hookci/42/agent.json")
+		repos := func(context.Context) ([]config.HookCIConfig, error) {
+			return []config.HookCIConfig{{Deployments: config.HookCIConfigDeployments{
 				"production": {Route: &config.DeploymentRoute{Kind: config.DeploymentRouteKindCaddy, File: "/srv/routes/app.caddy"}},
 			}}}, nil
 		}
@@ -351,16 +351,16 @@ func TestDoctor_RouteFile(t *testing.T) {
 	})
 	t.Run("broken agent.json fails", func(t *testing.T) {
 		env := deployEnv(t)
-		env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{`)
+		env.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{`)
 		r := runOne(t, checkByID(t, DeployCheckDeps{Repos: caddyRepos}, "deploy.route_file"), env)
-		if r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/zeroci/42/agent.json") {
+		if r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/hookci/42/agent.json") {
 			t.Errorf("result = %+v", r)
 		}
 	})
 }
 
 func TestDoctor_DiskCheck(t *testing.T) {
-	free := map[string]uint64{"/var/lib/docker": 1 << 30, "/var/lib/zeroci/42": 50 << 30}
+	free := map[string]uint64{"/var/lib/docker": 1 << 30, "/var/lib/hookci/42": 50 << 30}
 	env := deployEnv(t)
 	env.DiskFree = func(p string) (uint64, error) {
 		v, ok := free[p]
@@ -372,13 +372,13 @@ func TestDoctor_DiskCheck(t *testing.T) {
 	c := checkByID(t, DeployCheckDeps{}, "deploy.disk")
 
 	r := runOne(t, c, env)
-	want := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run zeroci gc or raise the limit"
+	want := "gc.min_free_bytes: free disk 1073741824 on /var/lib/docker below 5368709120; run hookci gc or raise the limit"
 	if r.Status != Fail || r.Detail != want {
 		t.Errorf("result = %s %q, want fail %q", r.Status, r.Detail, want)
 	}
 
 	// The installation's gc.min_free_bytes applies.
-	env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"gc":{"min_free_bytes":536870912}}`)
+	env.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":"agt_1","credential":"c","installation_id":42,"gc":{"min_free_bytes":536870912}}`)
 	if r := runOne(t, c, env); r.Status != Pass {
 		t.Errorf("result = %s %q, want pass under a 512 MiB limit", r.Status, r.Detail)
 	}
@@ -390,8 +390,8 @@ func TestDoctor_DiskCheck(t *testing.T) {
 
 	// A broken agent.json fails instead of falling back to the default limit.
 	env.Exec = deployExec(nil)
-	env.FS.(fstest.MapFS)["var/lib/zeroci/42/agent.json"].Data = []byte(`{"gc":`)
-	if r := runOne(t, c, env); r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/zeroci/42/agent.json") {
+	env.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"gc":`)
+	if r := runOne(t, c, env); r.Status != Fail || !strings.Contains(r.Detail, "/var/lib/hookci/42/agent.json") {
 		t.Errorf("result = %+v, want agent.json failure", r)
 	}
 }

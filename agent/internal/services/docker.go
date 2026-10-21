@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // Docker drives the docker CLI through an execx.Runner.

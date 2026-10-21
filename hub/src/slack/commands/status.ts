@@ -1,4 +1,4 @@
-// /zeroci status [owner/repo]: the agents of the installations linked to the
+// /hookci status [owner/repo]: the agents of the installations linked to the
 // workspace with their online state, and the repo's last 5 runs when named.
 
 import { listAgents } from "../../db/agents";
@@ -45,7 +45,7 @@ async function agentLines(env: Env, teamId: string): Promise<string[]> {
 registerCommand("status", async ({ env, teamId, userId, text }) => {
 	const user = await requireLinkedUser(env, teamId, userId);
 	const [fullName, ...rest] = commandArgs(text);
-	if (rest.length > 0) return ephemeral(S.slack.usage("/zeroci status [owner/repo]"));
+	if (rest.length > 0) return ephemeral(S.slack.usage("/hookci status [owner/repo]"));
 	const repo = fullName ? (await requireRepoAccess(env, teamId, user, fullName, "read")).repo : null;
 	const lines = [S.slack.statusAgents, ...(await agentLines(env, teamId))];
 	if (repo) {

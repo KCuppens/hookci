@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 // MaxAnnotationsPerFrame bounds the items of one annotations frame.

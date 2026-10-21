@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // diamond is a -> b,c -> d, listed out of order on purpose.

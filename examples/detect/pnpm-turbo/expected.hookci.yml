@@ -1,5 +1,5 @@
 # package manager: pnpm (pnpm-lock.yaml)
-# node 20 (from .nvmrc), not installed by zeroci
+# node 20 (from .nvmrc), not installed by hookci
 # turbo runs as pnpm exec turbo, so turbo must be a devDependency
 
 version: 1
@@ -11,10 +11,10 @@ checks:
         paths: [apps/web/node_modules, node_modules, packages/ui/node_modules]
   jobs:
     lint:
-      run: sh -c 'pnpm exec turbo run lint ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'
+      run: sh -c 'pnpm exec turbo run lint ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'
       annotate: eslint
     typecheck:
-      run: sh -c 'pnpm exec turbo run typecheck ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'
+      run: sh -c 'pnpm exec turbo run typecheck ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'
       annotate: tsc
     unit:
-      run: sh -c 'pnpm exec turbo run test:unit ${ZEROCI_BASE_SHA:+--filter=...[$ZEROCI_BASE_SHA]}'
+      run: sh -c 'pnpm exec turbo run test:unit ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'

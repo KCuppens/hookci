@@ -1,5 +1,5 @@
 // Package protocol holds the agent to hub WebSocket messages generated from
-// schema/zeroci.schema.json ($defs.protocol) and the frame helpers around them.
+// schema/hookci.schema.json ($defs.protocol) and the frame helpers around them.
 // Envelope is generated into types_gen.go from $defs.protocol.Envelope.
 package protocol
 

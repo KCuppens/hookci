@@ -1,6 +1,6 @@
 #!/bin/sh
 # Writes the SLSA v1 provenance of the goreleaser build in dist/ to
-# dist/zeroci_<ver>.intoto.jsonl and signs it with cosign attest-blob.
+# dist/hookci_<ver>.intoto.jsonl and signs it with cosign attest-blob.
 #
 #   scripts/provenance.sh vX.Y.Z
 set -eu
@@ -15,11 +15,11 @@ sums=dist/SHA256SUMS
 }
 
 commit=$(git rev-parse HEAD)
-repo=https://github.com/KCuppens/zerocideploy
+repo=https://github.com/KCuppens/hookci
 goreleaser_version=$(goreleaser --version 2>/dev/null | awk '/^GitVersion:/ { print $2 }')
 go_version=$(go env GOVERSION)
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-out=dist/zeroci_${ver}.intoto.jsonl
+out=dist/hookci_${ver}.intoto.jsonl
 
 subjects=$(awk '{ printf "%s{\"name\":\"%s\",\"digest\":{\"sha256\":\"%s\"}}", (NR > 1 ? "," : ""), $2, $1 }' "$sums")
 

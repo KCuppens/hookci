@@ -1,5 +1,5 @@
-// What ZeroCI stores about one Slack user, for /zeroci delete-my-data and
-// /zeroci export. user_links, author_map and author_cache rows are keyed by
+// What HookCI stores about one Slack user, for /hookci delete-my-data and
+// /hookci export. user_links, author_map and author_cache rows are keyed by
 // Slack team and user across installations, so these helpers take the raw
 // D1Database; runs go through TenantDb per installation.
 

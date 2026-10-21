@@ -56,7 +56,7 @@ describe("POST /v1/render", () => {
   it("render route auth", async () => {
     const missing = await render(VALID, null);
     expect(missing.status).toBe(401);
-    expect(await render(VALID, "zc_agent_nobody")).toMatchObject({ status: 401 });
+    expect(await render(VALID, "hci_agent_nobody")).toMatchObject({ status: 401 });
 
     const unbound = await render({ ...VALID, repo: "acme/web" });
     expect(unbound.status).toBe(403);

@@ -34,8 +34,8 @@ function put(credential: string, body: BodyInit, headers: Record<string, string>
     headers: {
       authorization: `Bearer ${credential}`,
       "content-encoding": "gzip",
-      "x-zeroci-log-bytes": String(LOG.length),
-      "x-zeroci-log-truncated": "0",
+      "x-hookci-log-bytes": String(LOG.length),
+      "x-hookci-log-truncated": "0",
       ...headers,
     },
     body,
@@ -50,7 +50,7 @@ async function jobLog(): Promise<{ log_key: string | null; log_bytes: number | n
 
 describe("PUT /v1/logs/:runId/:job", () => {
   it("stores the gzipped log under the installation's prefix and records it on the job", async () => {
-    const res = await put(owner, await gzip(LOG), { "x-zeroci-log-truncated": "1" });
+    const res = await put(owner, await gzip(LOG), { "x-hookci-log-truncated": "1" });
     expect(res.status).toBe(204);
     const object = await env.LOGS.get(KEY);
     expect(object?.httpMetadata).toMatchObject({ contentEncoding: "gzip", contentType: "text/plain; charset=utf-8" });
@@ -72,7 +72,7 @@ describe("PUT /v1/logs/:runId/:job", () => {
   });
 
   it("refuses a missing or unknown credential with 401", async () => {
-    expect((await put("zc_agent_nobody", await gzip(LOG))).status).toBe(401);
+    expect((await put("hci_agent_nobody", await gzip(LOG))).status).toBe(401);
     expect((await put("ghs_token", await gzip(LOG))).status).toBe(401);
   });
 
@@ -84,7 +84,7 @@ describe("PUT /v1/logs/:runId/:job", () => {
   });
 
   it("refuses a declared size over the cap with 413 log_too_large", async () => {
-    const res = await put(owner, await gzip(LOG), { "x-zeroci-log-bytes": String(QUOTAS.logBytes + 1) });
+    const res = await put(owner, await gzip(LOG), { "x-hookci-log-bytes": String(QUOTAS.logBytes + 1) });
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: "log_too_large" });
   });
@@ -92,7 +92,7 @@ describe("PUT /v1/logs/:runId/:job", () => {
   it("keeps the log size cap on a self-hosted hub", async () => {
     const req = new Request(`https://hub.test/v1/logs/${RUN}/test`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${owner}`, "content-encoding": "gzip", "x-zeroci-log-bytes": String(QUOTAS.logBytes + 1), "x-zeroci-log-truncated": "0" },
+      headers: { authorization: `Bearer ${owner}`, "content-encoding": "gzip", "x-hookci-log-bytes": String(QUOTAS.logBytes + 1), "x-hookci-log-truncated": "0" },
       body: await gzip(LOG),
     });
     const res = await worker.fetch(req, { ...env, HUB_MODE: "self_hosted" }, createExecutionContext());
@@ -120,8 +120,8 @@ describe("PUT /v1/logs/:runId/:job", () => {
 
   it.each([
     ["no gzip encoding", { "content-encoding": "identity" }, 415, "log_not_gzip"],
-    ["a size that is not a number", { "x-zeroci-log-bytes": "12kB" }, 400, "bad_log_bytes"],
-    ["a truncated flag other than 0 or 1", { "x-zeroci-log-truncated": "yes" }, 400, "bad_log_truncated"],
+    ["a size that is not a number", { "x-hookci-log-bytes": "12kB" }, 400, "bad_log_bytes"],
+    ["a truncated flag other than 0 or 1", { "x-hookci-log-truncated": "yes" }, 400, "bad_log_truncated"],
   ])("refuses %s", async (_name, headers, status, error) => {
     const res = await put(owner, await gzip(LOG), headers);
     expect(res.status).toBe(status);

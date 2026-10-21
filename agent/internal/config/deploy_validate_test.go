@@ -11,7 +11,7 @@ import (
 
 // decodeDeployFixture decodes testdata/deploy/<name> into the generated root
 // type after the schema accepts it, without running the semantic checks.
-func decodeDeployFixture(t *testing.T, name string) *ZeroCIConfig {
+func decodeDeployFixture(t *testing.T, name string) *HookCIConfig {
 	t.Helper()
 	raw, lines, diags := decodeYAML([]byte(readFixture(t, filepath.Join("deploy", name))))
 	if diags.HasErrors() {
@@ -24,7 +24,7 @@ func decodeDeployFixture(t *testing.T, name string) *ZeroCIConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg ZeroCIConfig
+	var cfg HookCIConfig
 	if err := json.Unmarshal(encoded, &cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestValidateDeployments_NeedsCycle(t *testing.T) {
 		t.Errorf("error = %+v", e)
 	}
 
-	cfg := &ZeroCIConfig{Deployments: ZeroCIConfigDeployments{
+	cfg := &HookCIConfig{Deployments: HookCIConfigDeployments{
 		"production": {Strategy: DeploymentStrategyScript, Run: new("./deploy.sh"), Needs: []string{"production", "qa"}},
 	}}
 	got := errorStrings(ValidateDeployments(cfg))
@@ -113,7 +113,7 @@ func TestValidateDeployments_Script(t *testing.T) {
 }
 
 func TestValidateDeployments_RequiredByStrategy(t *testing.T) {
-	cfg := &ZeroCIConfig{Deployments: ZeroCIConfigDeployments{
+	cfg := &HookCIConfig{Deployments: HookCIConfigDeployments{
 		"production": {Strategy: DeploymentStrategyComposeBluegreen, Rollback: new("./undo.sh")},
 		"staging":    {Strategy: DeploymentStrategyComposeInplace},
 	}}
@@ -143,7 +143,7 @@ func TestValidateDeployments_RelativePaths(t *testing.T) {
 	cfg.Deployments["production"] = d
 	got := errorStrings(ValidateDeployments(cfg))
 	for _, want := range []string{
-		`deployments.production.env_file: env_file "timeuno.env" must be an absolute path; use a path that starts with /, for example /etc/zeroci/production.env`,
+		`deployments.production.env_file: env_file "timeuno.env" must be an absolute path; use a path that starts with /, for example /etc/hookci/production.env`,
 		`deployments.production.compose.marker: compose.marker "./.active-color" must be an absolute path`,
 	} {
 		if !strings.Contains(got, want) {

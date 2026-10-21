@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// ForkTrust warns once per repository whose .zeroci.yml, as the last
+// ForkTrust warns once per repository whose .hookci.yml, as the last
 // default-branch run on this host saw it, declares trust: all. It returns
 // nothing when no repository does.
 func ForkTrust(ctx context.Context, env Env) []Result {
@@ -17,7 +17,7 @@ func ForkTrust(ctx context.Context, env Env) []Result {
 	for _, in := range ins {
 		repos, err := env.RepoConfigs(ctx, in.dir)
 		if err != nil {
-			rs = append(rs, warn("fork trust", fmt.Sprintf("cannot read the repositories %s has run: %v", in.dir, err), "rerun as root: sudo zeroci doctor"))
+			rs = append(rs, warn("fork trust", fmt.Sprintf("cannot read the repositories %s has run: %v", in.dir, err), "rerun as root: sudo hookci doctor"))
 			continue
 		}
 		for _, r := range repos {
@@ -28,7 +28,7 @@ func ForkTrust(ctx context.Context, env Env) []Result {
 			if r.HasDeployments {
 				detail += " and is ignored by the hub because deployments are configured"
 			}
-			rs = append(rs, warn("fork trust", detail, "set checks.trust: collaborators in "+r.Repo+"'s .zeroci.yml unless every fork PR may run here"))
+			rs = append(rs, warn("fork trust", detail, "set checks.trust: collaborators in "+r.Repo+"'s .hookci.yml unless every fork PR may run here"))
 		}
 	}
 	for i := range rs {

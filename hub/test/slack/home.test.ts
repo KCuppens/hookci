@@ -87,7 +87,7 @@ describe("renderHome", () => {
 
   it("prompts unlinked users to link", () => {
     const text = json({ linked: false, installations: [] });
-    expect(text).toContain("/zeroci me");
+    expect(text).toContain("/hookci me");
   });
 
   it("leads with the notice and still caps at 100 blocks", () => {
@@ -122,7 +122,7 @@ describe("upgradeHint", () => {
 
   it("gives no version hint when the hub names no recommended version", () => {
     expect(upgradeHint(1, "0.1.0", "")).toBeUndefined();
-    expect(upgradeHint(0, "0.1.0", "")).toBe("upgrade available: run sudo zeroci upgrade");
+    expect(upgradeHint(0, "0.1.0", "")).toBe("upgrade available: run sudo hookci upgrade");
   });
 });
 
@@ -155,7 +155,7 @@ describe("with the database", () => {
     await insertAgent(t, { agent_id: "agt_1", name: "box", hostname: "box.local", os: "linux", arch: "amd64", credential_hash: "h", agent_version: "0.1.0", paired_by_github_id: 7001, paired_at: 1 });
     const hint = async (latest: string) =>
       (await loadHomeData({ ...env, LATEST_AGENT_VERSION: latest, HUB_VERSION: "9.9.0" }, TEAM, USER)).installations[0]?.agents[0]?.upgradeHint;
-    expect(await hint("v0.3.0")).toBe("upgrade available (v0.3.0): run sudo zeroci upgrade");
+    expect(await hint("v0.3.0")).toBe("upgrade available (v0.3.0): run sudo hookci upgrade");
     expect(await hint("v0.1.0")).toBeUndefined();
     expect(await hint("")).toBeUndefined();
   });

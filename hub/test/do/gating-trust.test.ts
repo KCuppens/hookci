@@ -13,8 +13,8 @@ const savedMode = env.HUB_MODE;
 
 beforeEach(async () => {
   world = await setUpForkWorld();
-  // The fork's own .zeroci.yml always asks for trust: all; only the base ref may grant it.
-  world.files[`${REPO.full_name}@${HEAD_SHA}:.zeroci.yml`] = "checks:\n  trust: all\n";
+  // The fork's own .hookci.yml always asks for trust: all; only the base ref may grant it.
+  world.files[`${REPO.full_name}@${HEAD_SHA}:.hookci.yml`] = "checks:\n  trust: all\n";
 });
 
 afterEach(() => {

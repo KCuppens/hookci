@@ -136,7 +136,7 @@ describe("installation_repositories removed", () => {
     ]);
     for (const repoId of [1001, 1002, 1003]) {
       await bind(t, repoId, "checks", "agt_a");
-      await putCheckRun(t, { repo_id: repoId, head_sha: "1".repeat(40), name: "zeroci", check_run_id: repoId });
+      await putCheckRun(t, { repo_id: repoId, head_sha: "1".repeat(40), name: "hookci", check_run_id: repoId });
       await insertRun(t, {
         run_id: `run_${repoId}`,
         repo_id: repoId,
@@ -180,6 +180,6 @@ describe("installation_repositories removed", () => {
       { url: "https://slack.com/api/chat.postMessage", channel: "C1", text: S.slack.repoRemoved(["acme/widgets", "acme/gizmos"]) },
       { url: "https://slack.com/api/chat.postMessage", channel: "C2", text: S.slack.repoRemoved(["acme/widgets"]) },
     ]);
-    expect(S.slack.repoRemoved(["acme/widgets"])).toBe("acme/widgets was removed from the ZeroCI GitHub App installation, so this channel no longer watches it.");
+    expect(S.slack.repoRemoved(["acme/widgets"])).toBe("acme/widgets was removed from the HookCI GitHub App installation, so this channel no longer watches it.");
   });
 });

@@ -8,9 +8,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // Phase says which run state a step runs in.
@@ -43,7 +43,7 @@ type StepContext struct {
 	Log     io.Writer // run log, redacted
 	Clock   clock.Clock
 	// Progress reports a sub-step inside the running step, such as a
-	// `::zeroci step <name>` marker of a script deploy. It emits a progress
+	// `::hookci step <name>` marker of a script deploy. It emits a progress
 	// event with step=name and the next 1-based step_index of this engine
 	// pass, without steps_total. It may be nil.
 	Progress func(name string)

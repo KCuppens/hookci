@@ -16,12 +16,12 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/systemd"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/systemd"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
@@ -31,7 +31,7 @@ const (
 	minFreeBytes      = 2 << 30
 	certExpiryWarning = 14 * 24 * time.Hour
 	reinstallFix      = "rerun the installer: curl -fsSL https://ci.webuno.io/install | sh"
-	connectFix        = "pair this host: sudo zeroci connect <pair-token>"
+	connectFix        = "pair this host: sudo hookci connect <pair-token>"
 )
 
 // minGit is the oldest git the agent's checkouts support.
@@ -116,25 +116,25 @@ func output(ctx context.Context, ex Execer, name string, args ...string) (string
 	return strings.TrimSpace(out.String()), err
 }
 
-// versionCheck compares the zeroci on PATH with the running binary.
+// versionCheck compares the hookci on PATH with the running binary.
 type versionCheck struct{}
 
 func (versionCheck) ID() string { return "version" }
 
 func (versionCheck) Run(ctx context.Context, env Env) Result {
-	const title = "zeroci binary"
+	const title = "hookci binary"
 	want := version.String()
-	got, err := output(ctx, env.Exec, "zeroci", "version")
+	got, err := output(ctx, env.Exec, "hookci", "version")
 	switch {
 	case err != nil:
-		return fail(title, fmt.Sprintf("zeroci version: %v", err), reinstallFix)
+		return fail(title, fmt.Sprintf("hookci version: %v", err), reinstallFix)
 	case got != want:
-		return warn(title, fmt.Sprintf("zeroci on PATH is %q, this binary is %q", got, want), reinstallFix)
+		return warn(title, fmt.Sprintf("hookci on PATH is %q, this binary is %q", got, want), reinstallFix)
 	}
 	return pass(title, got)
 }
 
-// systemdUnitCheck wants the zeroci-agent@ unit of every paired
+// systemdUnitCheck wants the hookci-agent@ unit of every paired
 // installation active.
 type systemdUnitCheck struct{}
 
@@ -235,7 +235,7 @@ func (credentialCheck) Run(_ context.Context, env Env) Result {
 // runUserCheck wants the unprivileged account jobs run as.
 type runUserCheck struct{}
 
-func (runUserCheck) ID() string { return "zeroci_run_user" }
+func (runUserCheck) ID() string { return "hookci_run_user" }
 
 func (runUserCheck) Run(_ context.Context, env Env) Result {
 	const title = "job user"
@@ -361,7 +361,7 @@ func (hubInfoCheck) Run(ctx context.Context, env Env) Result {
 	defer cancel()
 	info, err := hubclient.FetchInfo(ctx, env.HTTP, env.HubOrigin)
 	if errors.Is(err, hubclient.ErrNotAHub) {
-		return warn(title, err.Error(), "point --hub at a zeroci hub, or pair again with zeroci connect --hub <url>")
+		return warn(title, err.Error(), "point --hub at a hookci hub, or pair again with hookci connect --hub <url>")
 	}
 	if err != nil {
 		return warn(title, err.Error(), hubFix(env))

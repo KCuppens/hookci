@@ -12,8 +12,8 @@ import { TERMINAL } from "../../src/slack/badge";
 import { clearTables } from "../db/helpers";
 
 const INSTALLATION = 61;
-const TARGET = "https://hooks.example.com/zeroci";
-const SECRET = "zcwh_" + "ab".repeat(32);
+const TARGET = "https://hooks.example.com/hookci";
+const SECRET = "hciwh_" + "ab".repeat(32);
 const t = tenantDb(env.DB, INSTALLATION);
 
 interface Sent {
@@ -93,12 +93,12 @@ describe("webhookDeliverer", () => {
     expect(s.init.signal).toBeInstanceOf(AbortSignal);
     const ts = Math.floor(at / 1000);
     expect(header(s, "Content-Type")).toBe("application/json");
-    expect(header(s, "User-Agent")).toBe("ZeroCI-Hookshot/1");
-    expect(header(s, "X-ZeroCI-Event")).toBe("run.updated");
-    expect(header(s, "X-ZeroCI-Delivery")).toBe("01DELIVERY");
-    expect(header(s, "X-ZeroCI-Timestamp")).toBe(String(ts));
+    expect(header(s, "User-Agent")).toBe("HookCI-Hookshot/1");
+    expect(header(s, "X-HookCI-Event")).toBe("run.updated");
+    expect(header(s, "X-HookCI-Delivery")).toBe("01DELIVERY");
+    expect(header(s, "X-HookCI-Timestamp")).toBe(String(ts));
     const body = String(s.init.body);
-    expect(header(s, "X-ZeroCI-Signature")).toBe(await signWebhook(SECRET, ts, body));
+    expect(header(s, "X-HookCI-Signature")).toBe(await signWebhook(SECRET, ts, body));
 
     const payload = JSON.parse(body) as WebhookPayloadV1;
     expect(payload).toEqual({
@@ -171,7 +171,7 @@ describe("webhookDeliverer", () => {
     expect(sent).toHaveLength(1);
 
     await webhookDeliverer.deliver(env, cfg, delivery(view("success"), "01C"), 1);
-    expect(sent.map((s) => header(s, "X-ZeroCI-Delivery"))).toEqual(["01A", "01C"]);
+    expect(sent.map((s) => header(s, "X-HookCI-Delivery"))).toEqual(["01A", "01C"]);
   });
 
   it("sends the state again when the earlier attempt did not succeed", async () => {

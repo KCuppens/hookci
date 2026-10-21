@@ -69,7 +69,7 @@ describe("purgeExpired sink rows", () => {
 describe("r2-lifecycle.json", () => {
   it("expires logs/ after 14 days", () => {
     expect(lifecycle.rules).toEqual([
-      expect.objectContaining({ id: "zeroci-log-retention", enabled: true, conditions: { prefix: "logs/" } }),
+      expect.objectContaining({ id: "hookci-log-retention", enabled: true, conditions: { prefix: "logs/" } }),
     ]);
     expect(lifecycle.rules[0]!.deleteObjectsTransition.condition).toEqual({ type: "Age", maxAge: 14 * 86_400 });
   });

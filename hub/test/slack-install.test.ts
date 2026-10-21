@@ -138,7 +138,7 @@ describe("GET /slack/install", () => {
     const res = await slackInstall(await sessionCookie());
     expect(res.status).toBe(302);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("set-cookie")).toMatch(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+    expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
     const location = res.headers.get("location") ?? "";
     expect(location.startsWith("https://slack.com/oauth/v2/authorize?")).toBe(true);
     expect(location).toContain(`scope=${SCOPES}&`);
@@ -187,10 +187,10 @@ describe("GET /slack/oauth/callback", () => {
   it("stores the encrypted bot token, links the workspace and the installing admin", async () => {
     const res = await install();
     expect(res.status).toBe(200);
-    expect(res.headers.get("set-cookie")).toMatch(/^__Host-zeroci_oauth=; .*Max-Age=0$/);
+    expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_oauth=; .*Max-Age=0$/);
     const html = await res.text();
-    expect(html).toContain("ZeroCI is in Acme &amp; Co.");
-    expect(html).toContain("Next: invite @zeroci to a channel and run <code>/zeroci watch &lt;owner/repo&gt;</code>");
+    expect(html).toContain("HookCI is in Acme &amp; Co.");
+    expect(html).toContain("Next: invite @hookci to a channel and run <code>/hookci watch &lt;owner/repo&gt;</code>");
     expect(html).toContain(`href="slack://app?team=${TEAM}&amp;id=${env.SLACK_APP_ID}&amp;tab=home"`);
 
     expect(slack.calls).toEqual([

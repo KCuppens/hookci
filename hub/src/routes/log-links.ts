@@ -1,6 +1,6 @@
 // GET /runs/:runId/logs?job=: the stable log link (logs/links.ts). It answers
 // with a redirect to a fresh signed viewer URL: at once for a public repo;
-// for a private one once the browser holds a zc_session (auth/session.ts) of a
+// for a private one once the browser holds a hci_session (auth/session.ts) of a
 // GitHub user with a role on the repo. Without a session it sends the browser
 // through GitHub's user authorization; GET /auth/github/callback reads who
 // that is, discards the user token, sets the session and returns to the link.

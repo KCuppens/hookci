@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func wantStarts(t *testing.T, r *fakeRunner, want ...string) {

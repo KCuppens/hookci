@@ -8,5 +8,5 @@ if [ "$#" -ne 1 ]; then
 	exit 2
 fi
 
-npx wrangler r2 bucket lifecycle add "$1" zeroci-log-retention --expire-days 14 --prefix logs/
+npx wrangler r2 bucket lifecycle add "$1" hookci-log-retention --expire-days 14 --prefix logs/
 npx wrangler r2 bucket lifecycle list "$1"

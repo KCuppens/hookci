@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 var statusBase = time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
@@ -152,7 +152,7 @@ func TestStatusRunJobs(t *testing.T) {
 	}
 
 	code, _, stderr = statusOf(d, "01JNDQ9000CCCCCCCCCCCCCCCC")
-	if code != ExitUsage || stderr != "zeroci: run 01JNDQ9000CCCCCCCCCCCCCCCC not found\n" {
+	if code != ExitUsage || stderr != "hookci: run 01JNDQ9000CCCCCCCCCCCCCCCC not found\n" {
 		t.Errorf("unknown run = %d, %q", code, stderr)
 	}
 }

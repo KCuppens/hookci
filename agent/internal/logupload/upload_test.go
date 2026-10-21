@@ -118,7 +118,7 @@ func TestUpload(t *testing.T) {
 			var slept []time.Duration
 			u := &Uploader{
 				HubURL: srv.URL,
-				Token:  func() string { return "zc_agent_secret" },
+				Token:  func() string { return "hci_agent_secret" },
 				HTTP:   srv.Client(),
 				sleep: func(_ context.Context, d time.Duration) error {
 					slept = append(slept, d)
@@ -142,17 +142,17 @@ func TestUpload(t *testing.T) {
 			if c.path != "/v1/logs/run_1/build" {
 				t.Errorf("path = %q", c.path)
 			}
-			if got := c.header.Get("Authorization"); got != "Bearer zc_agent_secret" {
+			if got := c.header.Get("Authorization"); got != "Bearer hci_agent_secret" {
 				t.Errorf("Authorization = %q", got)
 			}
 			if got := c.header.Get("Content-Encoding"); got != "gzip" {
 				t.Errorf("Content-Encoding = %q", got)
 			}
-			if got := c.header.Get("X-Zeroci-Log-Bytes"); got != tc.wantBytes {
-				t.Errorf("X-Zeroci-Log-Bytes = %q, want %q", got, tc.wantBytes)
+			if got := c.header.Get("X-Hookci-Log-Bytes"); got != tc.wantBytes {
+				t.Errorf("X-Hookci-Log-Bytes = %q, want %q", got, tc.wantBytes)
 			}
-			if got := c.header.Get("X-Zeroci-Log-Truncated"); got != tc.wantTrunc {
-				t.Errorf("X-Zeroci-Log-Truncated = %q, want %q", got, tc.wantTrunc)
+			if got := c.header.Get("X-Hookci-Log-Truncated"); got != tc.wantTrunc {
+				t.Errorf("X-Hookci-Log-Truncated = %q, want %q", got, tc.wantTrunc)
 			}
 			if c.body != tc.wantBody {
 				t.Errorf("body = %d bytes ending %q, want %d bytes ending %q",

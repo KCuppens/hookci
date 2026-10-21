@@ -8,12 +8,12 @@ import "reflect"
 import "regexp"
 import "unicode/utf8"
 
-// Settings of the agent host (agent.json), not part of .zeroci.yml.
+// Settings of the agent host (agent.json), not part of .hookci.yml.
 type AgentConfig struct {
 	// Deploy settings.
 	Deploy *AgentConfigDeploy `json:"deploy,omitempty,omitzero" yaml:"deploy,omitempty"`
 
-	// zeroci doctor settings.
+	// hookci doctor settings.
 	Doctor *AgentConfigDoctor `json:"doctor,omitempty,omitzero" yaml:"doctor,omitempty"`
 
 	// Disk cleanup limits.
@@ -50,7 +50,7 @@ func (j *AgentConfigDeploy) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// zeroci doctor settings.
+// hookci doctor settings.
 type AgentConfigDoctor struct {
 	// Report a Caddy admin API that answers on TCP as a warning instead of a failure.
 	AllowCaddyTcpAdmin bool `json:"allow_caddy_tcp_admin,omitempty,omitzero" yaml:"allow_caddy_tcp_admin,omitempty"`
@@ -358,13 +358,13 @@ type Deployment struct {
 	Retain *DeploymentRetain `json:"retain,omitempty,omitzero" yaml:"retain,omitempty"`
 
 	// Command that restores the previous version. Optional, strategy: script only.
-	// Runs when run fails, with ZEROCI_FAILED_STEP set to the last step run reported.
+	// Runs when run fails, with HOOKCI_FAILED_STEP set to the last step run reported.
 	Rollback *string `json:"rollback,omitempty,omitzero" yaml:"rollback,omitempty"`
 
 	// Reverse proxy route switched between colors. Required for compose-bluegreen.
 	Route *DeploymentRoute `json:"route,omitempty,omitzero" yaml:"route,omitempty"`
 
-	// Deploy command. Required for strategy: script. Each stdout line "::zeroci step
+	// Deploy command. Required for strategy: script. Each stdout line "::hookci step
 	// <name>" (name: lowercase letters, digits, "_", "." and "-", up to 40
 	// characters) reports a progress step. A resumed deploy re-runs the command from
 	// the start.
@@ -657,7 +657,7 @@ func (j *DeploymentRetain) UnmarshalJSON(value []byte) error {
 
 // Reverse proxy route switched between colors. Required for compose-bluegreen.
 type DeploymentRoute struct {
-	// Absolute, clean path of the route file zeroci writes. It must be inside one of
+	// Absolute, clean path of the route file hookci writes. It must be inside one of
 	// the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink
 	// leading out of it.
 	File string `json:"file" yaml:"file"`
@@ -823,6 +823,229 @@ func (j *Deployment) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s length: must be >= %d", "run", 1)
 	}
 	*j = Deployment(plain)
+	return nil
+}
+
+// HookCI repository configuration (.hookci.yml).
+type HookCIConfig struct {
+	// Checks that run on pull requests and pushes.
+	Checks *Checks `json:"checks,omitempty,omitzero" yaml:"checks,omitempty"`
+
+	// Deployments keyed by environment name, for example production.
+	Deployments HookCIConfigDeployments `json:"deployments,omitempty,omitzero" yaml:"deployments,omitempty"`
+
+	// Where job logs go: hub uploads each job log to the hub for signed View log
+	// links; local keeps logs on the agent only.
+	Logs HookCIConfigLogs `json:"logs,omitempty,omitzero" yaml:"logs,omitempty"`
+
+	// Notification targets.
+	Notify *HookCIConfigNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
+
+	// Extra RE2 patterns whose matches are masked in logs.
+	Redact []string `json:"redact,omitempty,omitzero" yaml:"redact,omitempty"`
+
+	// Configuration format version. Must be 1.
+	Version int `json:"version" yaml:"version"`
+}
+
+// Deployments keyed by environment name, for example production.
+type HookCIConfigDeployments map[string]Deployment
+
+type HookCIConfigLogs string
+
+const HookCIConfigLogsHub HookCIConfigLogs = "hub"
+const HookCIConfigLogsLocal HookCIConfigLogs = "local"
+
+var enumValues_HookCIConfigLogs = []interface{}{
+	"hub",
+	"local",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfigLogs) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_HookCIConfigLogs {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_HookCIConfigLogs, v)
+	}
+	*j = HookCIConfigLogs(v)
+	return nil
+}
+
+// Notification targets.
+type HookCIConfigNotify struct {
+	// Slack notifications.
+	Slack *HookCIConfigNotifySlack `json:"slack,omitempty,omitzero" yaml:"slack,omitempty"`
+}
+
+// Slack notifications.
+type HookCIConfigNotifySlack struct {
+	// Where the failure alert goes, over the channel's /hookci watch setting: the
+	// message thread, or a DM to the commit author.
+	Alert *HookCIConfigNotifySlackAlert `json:"alert,omitempty,omitzero" yaml:"alert,omitempty"`
+
+	// Slack channel name, with or without the leading #.
+	Channel string `json:"channel" yaml:"channel"`
+
+	// How much the run message says, over the channel's /hookci watch setting: quiet
+	// lists job results in the message, normal also replies in its thread per
+	// finished job. verbose means normal.
+	Notify *HookCIConfigNotifySlackNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
+
+	// Outcomes that send a notification.
+	On []HookCIConfigNotifySlackOnElem `json:"on,omitempty,omitzero" yaml:"on,omitempty"`
+}
+
+type HookCIConfigNotifySlackAlert string
+
+const HookCIConfigNotifySlackAlertChannel HookCIConfigNotifySlackAlert = "channel"
+const HookCIConfigNotifySlackAlertDm HookCIConfigNotifySlackAlert = "dm"
+
+var enumValues_HookCIConfigNotifySlackAlert = []interface{}{
+	"channel",
+	"dm",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfigNotifySlackAlert) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_HookCIConfigNotifySlackAlert {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_HookCIConfigNotifySlackAlert, v)
+	}
+	*j = HookCIConfigNotifySlackAlert(v)
+	return nil
+}
+
+type HookCIConfigNotifySlackNotify string
+
+const HookCIConfigNotifySlackNotifyNormal HookCIConfigNotifySlackNotify = "normal"
+const HookCIConfigNotifySlackNotifyQuiet HookCIConfigNotifySlackNotify = "quiet"
+const HookCIConfigNotifySlackNotifyVerbose HookCIConfigNotifySlackNotify = "verbose"
+
+var enumValues_HookCIConfigNotifySlackNotify = []interface{}{
+	"quiet",
+	"normal",
+	"verbose",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfigNotifySlackNotify) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_HookCIConfigNotifySlackNotify {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_HookCIConfigNotifySlackNotify, v)
+	}
+	*j = HookCIConfigNotifySlackNotify(v)
+	return nil
+}
+
+type HookCIConfigNotifySlackOnElem string
+
+const HookCIConfigNotifySlackOnElemAll HookCIConfigNotifySlackOnElem = "all"
+const HookCIConfigNotifySlackOnElemDeploy HookCIConfigNotifySlackOnElem = "deploy"
+const HookCIConfigNotifySlackOnElemFailure HookCIConfigNotifySlackOnElem = "failure"
+const HookCIConfigNotifySlackOnElemSuccess HookCIConfigNotifySlackOnElem = "success"
+
+var enumValues_HookCIConfigNotifySlackOnElem = []interface{}{
+	"failure",
+	"success",
+	"deploy",
+	"all",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfigNotifySlackOnElem) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_HookCIConfigNotifySlackOnElem {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_HookCIConfigNotifySlackOnElem, v)
+	}
+	*j = HookCIConfigNotifySlackOnElem(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfigNotifySlack) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["channel"]; raw != nil && !ok {
+		return fmt.Errorf("field channel in HookCIConfigNotifySlack: required")
+	}
+	type Plain HookCIConfigNotifySlack
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if matched, _ := regexp.MatchString(`^#?[a-z0-9._-]+$`, string(plain.Channel)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "Channel", `^#?[a-z0-9._-]+$`)
+	}
+	*j = HookCIConfigNotifySlack(plain)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *HookCIConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["version"]; raw != nil && !ok {
+		return fmt.Errorf("field version in HookCIConfig: required")
+	}
+	type Plain HookCIConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["logs"]; !ok || v == nil {
+		plain.Logs = "hub"
+	}
+	if len(plain.Redact) > 50 {
+		return fmt.Errorf("field %s length: must be <= %d", "redact", 50)
+	}
+	if plain.Version != 1 {
+		return fmt.Errorf("field %s: must be equal to %v", "version", 1)
+	}
+	*j = HookCIConfig(plain)
 	return nil
 }
 
@@ -1020,228 +1243,5 @@ func (j *SetupStep) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("field %s length: must be >= %d", "run", 1)
 	}
 	*j = SetupStep(plain)
-	return nil
-}
-
-// ZeroCI repository configuration (.zeroci.yml).
-type ZeroCIConfig struct {
-	// Checks that run on pull requests and pushes.
-	Checks *Checks `json:"checks,omitempty,omitzero" yaml:"checks,omitempty"`
-
-	// Deployments keyed by environment name, for example production.
-	Deployments ZeroCIConfigDeployments `json:"deployments,omitempty,omitzero" yaml:"deployments,omitempty"`
-
-	// Where job logs go: hub uploads each job log to the hub for signed View log
-	// links; local keeps logs on the agent only.
-	Logs ZeroCIConfigLogs `json:"logs,omitempty,omitzero" yaml:"logs,omitempty"`
-
-	// Notification targets.
-	Notify *ZeroCIConfigNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
-
-	// Extra RE2 patterns whose matches are masked in logs.
-	Redact []string `json:"redact,omitempty,omitzero" yaml:"redact,omitempty"`
-
-	// Configuration format version. Must be 1.
-	Version int `json:"version" yaml:"version"`
-}
-
-// Deployments keyed by environment name, for example production.
-type ZeroCIConfigDeployments map[string]Deployment
-
-type ZeroCIConfigLogs string
-
-const ZeroCIConfigLogsHub ZeroCIConfigLogs = "hub"
-const ZeroCIConfigLogsLocal ZeroCIConfigLogs = "local"
-
-var enumValues_ZeroCIConfigLogs = []interface{}{
-	"hub",
-	"local",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfigLogs) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_ZeroCIConfigLogs {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigLogs, v)
-	}
-	*j = ZeroCIConfigLogs(v)
-	return nil
-}
-
-// Notification targets.
-type ZeroCIConfigNotify struct {
-	// Slack notifications.
-	Slack *ZeroCIConfigNotifySlack `json:"slack,omitempty,omitzero" yaml:"slack,omitempty"`
-}
-
-// Slack notifications.
-type ZeroCIConfigNotifySlack struct {
-	// Where the failure alert goes, over the channel's /zeroci watch setting: the
-	// message thread, or a DM to the commit author.
-	Alert *ZeroCIConfigNotifySlackAlert `json:"alert,omitempty,omitzero" yaml:"alert,omitempty"`
-
-	// Slack channel name, with or without the leading #.
-	Channel string `json:"channel" yaml:"channel"`
-
-	// How much the run message says, over the channel's /zeroci watch setting: quiet
-	// lists job results in the message, normal also replies in its thread per
-	// finished job. verbose means normal.
-	Notify *ZeroCIConfigNotifySlackNotify `json:"notify,omitempty,omitzero" yaml:"notify,omitempty"`
-
-	// Outcomes that send a notification.
-	On []ZeroCIConfigNotifySlackOnElem `json:"on,omitempty,omitzero" yaml:"on,omitempty"`
-}
-
-type ZeroCIConfigNotifySlackAlert string
-
-const ZeroCIConfigNotifySlackAlertChannel ZeroCIConfigNotifySlackAlert = "channel"
-const ZeroCIConfigNotifySlackAlertDm ZeroCIConfigNotifySlackAlert = "dm"
-
-var enumValues_ZeroCIConfigNotifySlackAlert = []interface{}{
-	"channel",
-	"dm",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfigNotifySlackAlert) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_ZeroCIConfigNotifySlackAlert {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigNotifySlackAlert, v)
-	}
-	*j = ZeroCIConfigNotifySlackAlert(v)
-	return nil
-}
-
-type ZeroCIConfigNotifySlackNotify string
-
-const ZeroCIConfigNotifySlackNotifyNormal ZeroCIConfigNotifySlackNotify = "normal"
-const ZeroCIConfigNotifySlackNotifyQuiet ZeroCIConfigNotifySlackNotify = "quiet"
-const ZeroCIConfigNotifySlackNotifyVerbose ZeroCIConfigNotifySlackNotify = "verbose"
-
-var enumValues_ZeroCIConfigNotifySlackNotify = []interface{}{
-	"quiet",
-	"normal",
-	"verbose",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfigNotifySlackNotify) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_ZeroCIConfigNotifySlackNotify {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigNotifySlackNotify, v)
-	}
-	*j = ZeroCIConfigNotifySlackNotify(v)
-	return nil
-}
-
-type ZeroCIConfigNotifySlackOnElem string
-
-const ZeroCIConfigNotifySlackOnElemAll ZeroCIConfigNotifySlackOnElem = "all"
-const ZeroCIConfigNotifySlackOnElemDeploy ZeroCIConfigNotifySlackOnElem = "deploy"
-const ZeroCIConfigNotifySlackOnElemFailure ZeroCIConfigNotifySlackOnElem = "failure"
-const ZeroCIConfigNotifySlackOnElemSuccess ZeroCIConfigNotifySlackOnElem = "success"
-
-var enumValues_ZeroCIConfigNotifySlackOnElem = []interface{}{
-	"failure",
-	"success",
-	"deploy",
-	"all",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfigNotifySlackOnElem) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_ZeroCIConfigNotifySlackOnElem {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_ZeroCIConfigNotifySlackOnElem, v)
-	}
-	*j = ZeroCIConfigNotifySlackOnElem(v)
-	return nil
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfigNotifySlack) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["channel"]; raw != nil && !ok {
-		return fmt.Errorf("field channel in ZeroCIConfigNotifySlack: required")
-	}
-	type Plain ZeroCIConfigNotifySlack
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if matched, _ := regexp.MatchString(`^#?[a-z0-9._-]+$`, string(plain.Channel)); !matched {
-		return fmt.Errorf("field %s pattern match: must match %s", "Channel", `^#?[a-z0-9._-]+$`)
-	}
-	*j = ZeroCIConfigNotifySlack(plain)
-	return nil
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ZeroCIConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["version"]; raw != nil && !ok {
-		return fmt.Errorf("field version in ZeroCIConfig: required")
-	}
-	type Plain ZeroCIConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["logs"]; !ok || v == nil {
-		plain.Logs = "hub"
-	}
-	if len(plain.Redact) > 50 {
-		return fmt.Errorf("field %s length: must be <= %d", "redact", 50)
-	}
-	if plain.Version != 1 {
-		return fmt.Errorf("field %s: must be equal to %v", "version", 1)
-	}
-	*j = ZeroCIConfig(plain)
 	return nil
 }

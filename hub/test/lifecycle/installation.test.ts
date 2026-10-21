@@ -60,7 +60,7 @@ async function acceptedRun(agent: Agent, sock: AgentSocket, runId: string): Prom
     target: "checks",
     trust: "trusted",
   };
-  const res = await agent.stub.fetch("https://do/trigger", { method: "POST", headers: { "x-zeroci-agent-id": agent.agentId }, body: JSON.stringify(trigger) });
+  const res = await agent.stub.fetch("https://do/trigger", { method: "POST", headers: { "x-hookci-agent-id": agent.agentId }, body: JSON.stringify(trigger) });
   const { trigger_id } = await res.json<{ trigger_id: string }>();
   expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id });
   expect(await sock.request({ type: "accepted", trigger_id, run_id: runId })).toEqual([]);

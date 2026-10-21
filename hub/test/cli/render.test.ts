@@ -77,7 +77,7 @@ describe("renderStateDir", () => {
 	let dir: string;
 
 	beforeEach(async () => {
-		tmp = await mkdtemp(join(tmpdir(), "zeroci-hub-render-"));
+		tmp = await mkdtemp(join(tmpdir(), "hookci-hub-render-"));
 		root = join(tmp, "pkg");
 		dir = join(tmp, "state");
 		await mkdir(join(root, "templates"), { recursive: true });

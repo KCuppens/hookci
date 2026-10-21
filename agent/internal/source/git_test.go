@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 var wantHardened = []string{
@@ -77,7 +77,7 @@ func TestSafeGitEnvMinimal(t *testing.T) {
 	t.Setenv("GIT_DIR", "/elsewhere/.git")
 	t.Setenv("PATH", "/usr/bin:/bin")
 
-	env := SafeGitEnv("/home/run", "GIT_ASKPASS=/bin/zeroci")
+	env := SafeGitEnv("/home/run", "GIT_ASKPASS=/bin/hookci")
 	for _, want := range []string{
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
@@ -86,7 +86,7 @@ func TestSafeGitEnvMinimal(t *testing.T) {
 		"LANG=C",
 		"PATH=/usr/bin:/bin",
 		"HOME=/home/run",
-		"GIT_ASKPASS=/bin/zeroci",
+		"GIT_ASKPASS=/bin/hookci",
 	} {
 		if !slices.Contains(env, want) {
 			t.Errorf("env lacks %q: %q", want, env)

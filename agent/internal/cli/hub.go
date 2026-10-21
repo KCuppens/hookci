@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 // Stdio is the terminal a passthrough command inherits, so its prompts work.
@@ -18,21 +18,21 @@ type Stdio struct {
 	Stderr io.Writer
 }
 
-// HubDeps are what `zeroci hub` needs to run the zeroci-hub CLI through npx.
+// HubDeps are what `hookci hub` needs to run the hookci-hub CLI through npx.
 type HubDeps struct {
 	LookPath func(string) (string, error)
 	Run      func(ctx context.Context, name string, args []string, stdio Stdio) error
-	// Version is this zeroci's version; it picks the zeroci-hub release.
+	// Version is this hookci's version; it picks the hookci-hub release.
 	Version string
 }
 
-const hubUsage = `usage: zeroci hub setup|upgrade [zeroci-hub options]
+const hubUsage = `usage: hookci hub setup|upgrade [hookci-hub options]
 
-Run zeroci-hub setup or upgrade for this zeroci version through npx. All
-arguments after the subcommand go to zeroci-hub; see zeroci hub setup --help.
+Run hookci-hub setup or upgrade for this hookci version through npx. All
+arguments after the subcommand go to hookci-hub; see hookci hub setup --help.
 `
 
-const errHubNeedsNode = "zeroci hub needs Node.js 20+ and npx on this machine (it runs wrangler against your Cloudflare account); install Node or run it from your laptop"
+const errHubNeedsNode = "hookci hub needs Node.js 20+ and npx on this machine (it runs wrangler against your Cloudflare account); install Node or run it from your laptop"
 
 func defaultHubDeps() HubDeps {
 	return HubDeps{
@@ -46,17 +46,17 @@ func defaultHubDeps() HubDeps {
 	}
 }
 
-// hubArgv is the npx command line that runs zeroci-hub sub at the release
+// hubArgv is the npx command line that runs hookci-hub sub at the release
 // matching version; a dev build runs the latest release.
 func hubArgv(sub, version string, extra []string) []string {
-	pkg := "zeroci-hub@latest"
+	pkg := "hookci-hub@latest"
 	if v := strings.TrimPrefix(version, "v"); v != "" && v != "dev" {
-		pkg = "zeroci-hub@" + v
+		pkg = "hookci-hub@" + v
 	}
 	return append([]string{"npx", "--yes", pkg, sub}, extra...)
 }
 
-// runHub runs zeroci-hub sub with extra through npx on stdio.
+// runHub runs hookci-hub sub with extra through npx on stdio.
 func runHub(ctx context.Context, d HubDeps, sub string, extra []string, stdio Stdio) error {
 	if _, err := d.LookPath("npx"); err != nil {
 		return errors.New(errHubNeedsNode)
@@ -65,7 +65,7 @@ func runHub(ctx context.Context, d HubDeps, sub string, extra []string, stdio St
 	return d.Run(ctx, argv[0], argv[1:], stdio)
 }
 
-// cmdHub passes setup and upgrade through to the zeroci-hub CLI. zeroci-hub
+// cmdHub passes setup and upgrade through to the hookci-hub CLI. hookci-hub
 // reports its own failures, so its exit code is returned as is.
 func cmdHub(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
@@ -84,7 +84,7 @@ func cmdHub(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	case errors.As(err, &exit) && exit.ExitCode() > 0:
 		return exit.ExitCode()
 	default:
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 }

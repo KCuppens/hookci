@@ -1,6 +1,6 @@
 # Self-host the hub
 
-This guide stands up your own zeroci hub on your Cloudflare account and pairs an agent with it. The `zeroci-hub` CLI does the work. You answer a few prompts and create a GitHub App and a Slack App in the browser.
+This guide stands up your own hookci hub on your Cloudflare account and pairs an agent with it. The `hookci-hub` CLI does the work. You answer a few prompts and create a GitHub App and a Slack App in the browser.
 
 ## What you get
 
@@ -23,17 +23,17 @@ This guide stands up your own zeroci hub on your Cloudflare account and pairs an
 Run setup in an empty directory:
 
 ```sh
-npx zeroci-hub setup
+npx hookci-hub setup
 ```
 
-Setup keeps its state in `./zeroci-hub` (change it with `--dir <path>`). The state file `zeroci-hub.state.json` holds resource ids and the steps done, never secret values. Each finished step is saved at once. If setup stops, fix the cause and run the same command again: finished steps print `done earlier` and are skipped.
+Setup keeps its state in `./hookci-hub` (change it with `--dir <path>`). The state file `hookci-hub.state.json` holds resource ids and the steps done, never secret values. Each finished step is saved at once. If setup stops, fix the cause and run the same command again: finished steps print `done earlier` and are skipped.
 
 Options for `setup`:
 
 | Option | Effect |
 | --- | --- |
-| `--dir <path>` | State directory (default: `./zeroci-hub`) |
-| `--yes` | Answer yes to every confirmation and take the defaults: hub name `zeroci-hub`, no custom domain |
+| `--dir <path>` | State directory (default: `./hookci-hub`) |
+| `--yes` | Answer yes to every confirmation and take the defaults: hub name `hookci-hub`, no custom domain |
 | `--org <login>` | Create the GitHub App under this organization instead of your user |
 | `--no-slack` | Skip the Slack App; a later setup run adds it |
 | `--force-render` | Render wrangler.toml and deploy again even if done |
@@ -42,10 +42,10 @@ Options for `setup`:
 Setup runs twelve steps and prints each one as `[n/12] <label>`. The times are rough.
 
 1. `preflight`, "Checking Node.js and the wrangler login". Checks Node.js 20+ and runs `wrangler whoami`. A few seconds.
-2. `account`, "Choosing the Cloudflare account and hub name". Picks the Cloudflare account (it asks when wrangler can use more than one; `CLOUDFLARE_ACCOUNT_ID` skips the question). Asks `Hub name` (default `zeroci-hub`) and `Custom domain (empty for workers.dev)`. The hub name is the Worker name and the prefix of the database and bucket names. Under a minute.
+2. `account`, "Choosing the Cloudflare account and hub name". Picks the Cloudflare account (it asks when wrangler can use more than one; `CLOUDFLARE_ACCOUNT_ID` skips the question). Asks `Hub name` (default `hookci-hub`) and `Custom domain (empty for workers.dev)`. The hub name is the Worker name and the prefix of the database and bucket names. Under a minute.
 3. `d1`, "Creating the D1 database". Creates `<name>-db`, or reuses it if it exists. A few seconds.
 4. `r2`, "Creating the R2 log bucket". Creates `<name>-logs`, or reuses it. A few seconds.
-5. `r2_lifecycle`, "Adding the 14-day log retention rule". Adds the R2 lifecycle rule `zeroci-log-retention`. A few seconds.
+5. `r2_lifecycle`, "Adding the 14-day log retention rule". Adds the R2 lifecycle rule `hookci-log-retention`. A few seconds.
 6. `render`, "Writing wrangler.toml and the Worker bundle". Copies the prebuilt Worker and the D1 migrations into the state dir and writes `wrangler.toml`. Under a second.
 7. `migrate`, "Applying D1 migrations". Runs `wrangler d1 migrations apply <name>-db --remote`. Under a minute.
 8. `deploy`, "Deploying the Worker". Runs `wrangler deploy` and records the hub URL. On a workers.dev hub, the first deploy learns the URL, so setup renders again and deploys a second time. About a minute.
@@ -86,7 +86,7 @@ Open the link, create the app from the manifest, and choose your workspace. On t
 
 Each prompt allows three tries. Setup then prints `Add to Slack: <hub>/slack/install`.
 
-With `--no-slack`, setup prints `Skipping Slack (--no-slack). Run zeroci-hub setup again later to add it.`
+With `--no-slack`, setup prints `Skipping Slack (--no-slack). Run hookci-hub setup again later to add it.`
 
 ### The final summary
 
@@ -98,8 +98,8 @@ Install the GitHub App: https://github.com/apps/<slug>/installations/new
 Add to Slack: https://<your-hub>/slack/install
 Pair an agent with the pair token shown after the GitHub App install or in Slack App Home:
   curl -fsSL https://<your-hub>/install | sh
-  zeroci connect --hub https://<your-hub> <pair-token>
-Upgrade later with: npx zeroci-hub upgrade
+  hookci connect --hub https://<your-hub> <pair-token>
+Upgrade later with: npx hookci-hub upgrade
 ```
 
 Keep the state directory. Upgrades and reruns need it.
@@ -118,14 +118,14 @@ The hub refuses to sign or check log links and sign-in sessions while `LOG_SIGNI
 
 ```sh
 curl -fsSL https://<your-hub>/install | sh -s -- <pair-token>
-zeroci doctor
+hookci doctor
 ```
 
-The installer needs `curl`, and `cosign` to check the release signature. Without cosign it stops; set `ZEROCI_ALLOW_UNSIGNED=1` (`curl -fsSL https://<your-hub>/install | ZEROCI_ALLOW_UNSIGNED=1 sh -s -- <pair-token>`) to install with only the checksum checked. With a pair token it runs `sudo zeroci connect --hub https://<your-hub> <pair-token>` after the install. Without one it only installs, and you pair later with that command.
+The installer needs `curl`, and `cosign` to check the release signature. Without cosign it stops; set `HOOKCI_ALLOW_UNSIGNED=1` (`curl -fsSL https://<your-hub>/install | HOOKCI_ALLOW_UNSIGNED=1 sh -s -- <pair-token>`) to install with only the checksum checked. With a pair token it runs `sudo hookci connect --hub https://<your-hub> <pair-token>` after the install. Without one it only installs, and you pair later with that command.
 
-`zeroci connect` stores the agent credential under `/var/lib/zeroci/<installation_id>` and enables the `zeroci-agent@<installation_id>` systemd unit, so it runs as root. Without `--hub` the agent pairs with `ZEROCI_HUB_URL` if set, else the shared hub. A pair token works once. `zeroci doctor` checks the agent and its hub connection, and prints a fix for each problem.
+`hookci connect` stores the agent credential under `/var/lib/hookci/<installation_id>` and enables the `hookci-agent@<installation_id>` systemd unit, so it runs as root. Without `--hub` the agent pairs with `HOOKCI_HUB_URL` if set, else the shared hub. A pair token works once. `hookci doctor` checks the agent and its hub connection, and prints a fix for each problem.
 
-The agent can run the hub CLI for you on a machine with Node.js 20+ and npx: `zeroci hub setup` and `zeroci hub upgrade` run `npx --yes zeroci-hub@<agent version> setup` or `upgrade` (`zeroci-hub@latest` for a dev build), and pass every later argument to `zeroci-hub`.
+The agent can run the hub CLI for you on a machine with Node.js 20+ and npx: `hookci hub setup` and `hookci hub upgrade` run `npx --yes hookci-hub@<agent version> setup` or `upgrade` (`hookci-hub@latest` for a dev build), and pass every later argument to `hookci-hub`.
 
 ## Custom domain
 
@@ -137,20 +137,20 @@ Setup renders the domain as a Workers Custom Domain route in `wrangler.toml`:
 routes = [{ pattern = "ci.example.com", custom_domain = true }]
 ```
 
-The hub URL, the GitHub App and the Slack App all use the domain. Do not edit `wrangler.toml` by hand to add a route: `zeroci-hub upgrade` renders it again from the state and your edit is lost.
+The hub URL, the GitHub App and the Slack App all use the domain. Do not edit `wrangler.toml` by hand to add a route: `hookci-hub upgrade` renders it again from the state and your edit is lost.
 
-To move an existing hub to a domain, set `"custom_domain": "ci.example.com"` in `zeroci-hub/zeroci-hub.state.json`, then run `npx zeroci-hub setup --force-render`. This renders and deploys again with the new URL. The GitHub App and Slack App keep their old URLs, so change every URL that starts with the old hub URL in the GitHub App settings and the Slack App settings. Pair agents again with `sudo zeroci connect --hub https://ci.example.com --force <pair-token>`.
+To move an existing hub to a domain, set `"custom_domain": "ci.example.com"` in `hookci-hub/hookci-hub.state.json`, then run `npx hookci-hub setup --force-render`. This renders and deploys again with the new URL. The GitHub App and Slack App keep their old URLs, so change every URL that starts with the old hub URL in the GitHub App settings and the Slack App settings. Pair agents again with `sudo hookci connect --hub https://ci.example.com --force <pair-token>`.
 
 ## Upgrading
 
-Run from the directory that holds the state dir, with a newer `zeroci-hub`:
+Run from the directory that holds the state dir, with a newer `hookci-hub`:
 
 ```sh
-npx zeroci-hub upgrade --dry-run
-npx zeroci-hub upgrade
+npx hookci-hub upgrade --dry-run
+npx hookci-hub upgrade
 ```
 
-Or from a server with the agent: `zeroci hub upgrade`, which runs the `zeroci-hub` of the agent's version.
+Or from a server with the agent: `hookci hub upgrade`, which runs the `hookci-hub` of the agent's version.
 
 Upgrade prints its plan first:
 
@@ -164,11 +164,11 @@ With `--dry-run` it stops there and prints `Dry run: nothing changed.` Otherwise
 
 Options for `upgrade`: `--dir <path>`, `--yes`, `--dry-run`.
 
-D1 migrations only move forward. There is no downgrade: a `zeroci-hub` older than the deployed hub stops with `downgrade` and changes nothing.
+D1 migrations only move forward. There is no downgrade: a `hookci-hub` older than the deployed hub stops with `downgrade` and changes nothing.
 
 ## Trust policy on self-hosted hubs
 
-`checks.trust` in `.zeroci.yml` decides who may run without approval. The hub reads it from the base branch, never from the pull request head.
+`checks.trust` in `.hookci.yml` decides who may run without approval. The hub reads it from the base branch, never from the pull request head.
 
 ```yaml
 checks:
@@ -186,16 +186,16 @@ Only use `trust: all` when anyone who can open a pull request may run code on yo
 
 Job logs are kept 14 days.
 
-- The `r2_lifecycle` setup step adds the R2 lifecycle rule `zeroci-log-retention`. It expires objects under `logs/` in `<name>-logs` 14 days after upload.
+- The `r2_lifecycle` setup step adds the R2 lifecycle rule `hookci-log-retention`. It expires objects under `logs/` in `<name>-logs` 14 days after upload.
 - A daily cron backstop (`17 3 * * *`, UTC) deletes log objects older than 14 days that the rule has not removed yet. It works through a large bucket in slices over several days.
 - A log link for an expired log shows `Log expired (14-day retention) or kept local on the agent.`
 
 ## Troubleshooting
 
-`zeroci-hub` prints errors as:
+`hookci-hub` prints errors as:
 
 ```
-zeroci-hub: <message>
+hookci-hub: <message>
   <last lines wrangler printed, if any>
 hint: <what to do>
 ```
@@ -204,8 +204,8 @@ It exits 1 on an error and 2 on a usage error. Setup saves each finished step, s
 
 ### `node_too_old`
 
-Cause: Node.js is older than 20 (`zeroci-hub needs Node.js 20 or newer, this is <version>`).
-Fix: install Node.js 20 or newer, then run `npx zeroci-hub setup` again.
+Cause: Node.js is older than 20 (`hookci-hub needs Node.js 20 or newer, this is <version>`).
+Fix: install Node.js 20 or newer, then run `npx hookci-hub setup` again.
 
 ### `not_logged_in`
 
@@ -245,32 +245,32 @@ Fix: run setup again.
 ### `github_app_verify_failed`
 
 Cause: signing in as the new GitHub App failed, or GitHub reported a different app id or slug.
-Fix: delete the new app in GitHub settings, remove `github_app_id` from `zeroci-hub.state.json` in the state dir, then run setup again.
+Fix: delete the new app in GitHub settings, remove `github_app_id` from `hookci-hub.state.json` in the state dir, then run setup again.
 
 ### `github_app_incomplete`
 
 Cause: an earlier setup run created the GitHub App named in the message but failed before it stored all of the app's credentials as Worker secrets. GitHub hands out those credentials only once, and setup never writes them to disk, so it cannot finish that app. A run that fails after storing all of them, for example at the redeploy, does not hit this: the next run resumes at the redeploy with the same app.
-Fix: delete that app on its settings page (the URL in the message), remove `github_app_id` from `zeroci-hub.state.json` in the state dir, then run setup again. It creates a new app.
+Fix: delete that app on its settings page (the URL in the message), remove `github_app_id` from `hookci-hub.state.json` in the state dir, then run setup again. It creates a new app.
 
 ### `not_set_up`
 
 Cause: `upgrade` found no setup state in the state dir, or setup has not deployed the hub yet.
-Fix: run `npx zeroci-hub setup` first, or pass the right `--dir`.
+Fix: run `npx hookci-hub setup` first, or pass the right `--dir`.
 
 ### `downgrade`
 
-Cause: the deployed hub is newer than this `zeroci-hub`.
-Fix: run a `zeroci-hub` as new as the hub or newer. D1 migrations only move forward.
+Cause: the deployed hub is newer than this `hookci-hub`.
+Fix: run a `hookci-hub` as new as the hub or newer. D1 migrations only move forward.
 
 ### `version_mismatch`
 
 Cause: after the upgrade deploy, `/v1/info` failed or reported a version other than the new one.
-Fix: check `npx wrangler deployments list` in the state dir, then run `npx zeroci-hub upgrade` again.
+Fix: check `npx wrangler deployments list` in the state dir, then run `npx hookci-hub upgrade` again.
 
 ### `bad_manifest`
 
 Cause: the packaged Slack manifest asks for other bot scopes than the hub uses. The package is damaged or mismatched.
-Fix: reinstall `zeroci-hub`.
+Fix: reinstall `hookci-hub`.
 
 ### `missing_input`
 
@@ -284,7 +284,7 @@ Fix: check `npx wrangler deployments list` in the state dir, then run setup agai
 
 ## Uninstall
 
-Run these in the state dir (`cd zeroci-hub`), with `<name>` your hub name (default `zeroci-hub`):
+Run these in the state dir (`cd hookci-hub`), with `<name>` your hub name (default `hookci-hub`):
 
 ```sh
 npx wrangler delete <name>
@@ -299,4 +299,4 @@ Then delete the apps:
 - GitHub App: your user's or organization's Settings, Developer settings, GitHub Apps, the app, Advanced, Delete GitHub App.
 - Slack App: https://api.slack.com/apps, the app, Basic Information, Delete App.
 
-Last, remove the local state dir (`zeroci-hub`) and stop the agents paired with the hub.
+Last, remove the local state dir (`hookci-hub`) and stop the agents paired with the hub.

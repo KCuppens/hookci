@@ -12,8 +12,8 @@ const manifests = join(dirname(fileURLToPath(import.meta.url)), "..", "hub", "ma
 const PROD_HOST = "https://ci.webuno.io";
 
 const ENVIRONMENTS = {
-	dev: { host: "https://DEV-TUNNEL.example", name: "zeroci-dev" },
-	staging: { host: "https://ci-staging.webuno.io", name: "zeroci-staging" },
+	dev: { host: "https://DEV-TUNNEL.example", name: "hookci-dev" },
+	staging: { host: "https://ci-staging.webuno.io", name: "hookci-staging" },
 };
 
 // Each pattern must match in the production manifest, so a renamed key fails loudly instead of leaking production values.
@@ -30,11 +30,11 @@ function render(file, { host, name }) {
 	const text = readFileSync(join(manifests, file), "utf8");
 	const rules =
 		file === "github-app.json"
-			? [[/"name": "zeroci"/g, `"name": "${name}"`]]
+			? [[/"name": "hookci"/g, `"name": "${name}"`]]
 			: [
-					[/^  name: zeroci$/gm, `  name: ${name}`],
-					[/^    display_name: zeroci$/gm, `    display_name: ${name}`],
-					[/^    - command: \/zeroci$/gm, `    - command: /${name}`],
+					[/^  name: hookci$/gm, `  name: ${name}`],
+					[/^    display_name: hookci$/gm, `    display_name: ${name}`],
+					[/^    - command: \/hookci$/gm, `    - command: /${name}`],
 				];
 	return replaceAll(text, file, [[new RegExp(PROD_HOST.replaceAll(".", "\\."), "g"), host], ...rules]);
 }

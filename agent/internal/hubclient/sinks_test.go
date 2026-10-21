@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const sinkCred = "zc_agent_sinksinksinksink"
+const sinkCred = "hci_agent_sinksinksinksink"
 
 // sinkCall is one request the fake hub saw.
 type sinkCall struct {
@@ -48,7 +48,7 @@ func checkCall(t *testing.T, got *sinkCall, method, uri, body string) {
 	}
 }
 
-const sinkJSON = `{"id":"snk_1","kind":"webhook","repo":"acme/web","label":null,"target":"https://hooks.example.com/zeroci","created_at":"2026-01-02T03:04:05.000Z","disabled_at":null,"last_error":null}`
+const sinkJSON = `{"id":"snk_1","kind":"webhook","repo":"acme/web","label":null,"target":"https://hooks.example.com/hookci","created_at":"2026-01-02T03:04:05.000Z","disabled_at":null,"last_error":null}`
 
 func TestListSinks(t *testing.T) {
 	c, got := sinkHub(t, http.StatusOK, `{"sinks":[`+sinkJSON+`]}`)
@@ -59,7 +59,7 @@ func TestListSinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkCall(t, got, http.MethodGet, "/v1/agent/sinks?repo=acme%2Fweb", "")
-	if len(sinks) != 1 || sinks[0].ID != "snk_1" || sinks[0].Target.String() != "https://hooks.example.com/zeroci" || sinks[0].Label != nil || sinks[0].DisabledAt != nil {
+	if len(sinks) != 1 || sinks[0].ID != "snk_1" || sinks[0].Target.String() != "https://hooks.example.com/hookci" || sinks[0].Label != nil || sinks[0].DisabledAt != nil {
 		t.Errorf("sinks = %+v, want snk_1", sinks)
 	}
 }
@@ -91,12 +91,12 @@ func TestAddSinkTelegram(t *testing.T) {
 func TestAddSinkWebhook(t *testing.T) {
 	c, got := sinkHub(t, http.StatusCreated, `{"sink":`+sinkJSON+`,"generated_secret":"whsec_abc"}`)
 
-	res, err := c.AddSink(context.Background(), AddSinkRequest{Kind: "webhook", Repo: "acme/web", URL: "https://hooks.example.com/zeroci"})
+	res, err := c.AddSink(context.Background(), AddSinkRequest{Kind: "webhook", Repo: "acme/web", URL: "https://hooks.example.com/hookci"})
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkCall(t, got, http.MethodPost, "/v1/agent/sinks", `{"kind":"webhook","repo":"acme/web","url":"https://hooks.example.com/zeroci"}`)
+	checkCall(t, got, http.MethodPost, "/v1/agent/sinks", `{"kind":"webhook","repo":"acme/web","url":"https://hooks.example.com/hookci"}`)
 	if res.Sink.ID != "snk_1" || res.GeneratedSecret != "whsec_abc" {
 		t.Errorf("AddSink = %+v, want snk_1 with secret whsec_abc", res)
 	}

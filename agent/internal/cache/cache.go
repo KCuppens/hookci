@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 var (
@@ -34,7 +34,7 @@ var (
 )
 
 // scratchDir holds the overlay upper and work dirs inside a workdir.
-const scratchDir = ".zeroci-cache"
+const scratchDir = ".hookci-cache"
 
 // Policy decides whether a run may write cache entries.
 type Policy struct {
@@ -197,7 +197,7 @@ type restore struct {
 	held    bool     // counted in c.inUse
 	created []string // targets this call created
 	mounts  []string // overlay targets still mounted, relative to workdir
-	scratch string   // <workdir>/.zeroci-cache once created
+	scratch string   // <workdir>/.hookci-cache once created
 }
 
 // path restores entry dir src to workdir/rel.
@@ -228,7 +228,7 @@ func (r *restore) path(ctx context.Context, src, rel string, i int) error {
 }
 
 // overlay mounts lower at target with a fresh upper/work pair under
-// <workdir>/.zeroci-cache/<i>/.
+// <workdir>/.hookci-cache/<i>/.
 func (r *restore) overlay(ctx context.Context, lower, target, rel string, i int, lowerInfo fs.FileInfo) error {
 	if r.scratch == "" {
 		s := filepath.Join(r.workdir, scratchDir)

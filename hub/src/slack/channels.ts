@@ -1,5 +1,5 @@
 // In-isolate cache of the channels the bot is in, by name, in each Slack
-// workspace, for the .zeroci.yml notify.slack override, which names its
+// workspace, for the .hookci.yml notify.slack override, which names its
 // channel. An entry lives at most 10 minutes, so a channel created, renamed or
 // joined later is found within that time.
 

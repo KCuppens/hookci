@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/clock"
 )
 
 const (

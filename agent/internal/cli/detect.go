@@ -10,19 +10,19 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/detect"
+	"github.com/KCuppens/hookci/agent/internal/detect"
 )
 
-const noChecksMessage = "no checks detected: add .zeroci.yml (run zeroci init)"
+const noChecksMessage = "no checks detected: add .hookci.yml (run hookci init)"
 
 func runDetect(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("detect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print the resolved config as JSON instead of YAML")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: zeroci detect [dir] [flags]")
+		fmt.Fprintln(stdout, "Usage: hookci detect [dir] [flags]")
 		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Infer checks from the project files in dir (default .) and print them as .zeroci.yml.")
+		fmt.Fprintln(stdout, "Infer checks from the project files in dir (default .) and print them as .hookci.yml.")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Flags:")
 		fs.SetOutput(stdout)
@@ -39,11 +39,11 @@ func runDetect(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitNoChecks
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitUsage
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".zeroci.yml")); err == nil {
-		fmt.Fprintln(stderr, "note: .zeroci.yml exists and takes precedence over detection")
+	if _, err := os.Stat(filepath.Join(dir, ".hookci.yml")); err == nil {
+		fmt.Fprintln(stderr, "note: .hookci.yml exists and takes precedence over detection")
 	}
 
 	var out []byte
@@ -54,7 +54,7 @@ func runDetect(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		out, err = detect.Render(res)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: encode detected config: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: encode detected config: %v\n", err)
 		return ExitInternal
 	}
 	_, _ = stdout.Write(out)
@@ -87,14 +87,14 @@ func parseDirArgs(fs *flag.FlagSet, args []string, stderr io.Writer) (dir string
 	case 1:
 		dir = positional[0]
 	default:
-		fmt.Fprintf(stderr, "zeroci: %s takes at most one dir\n", fs.Name())
+		fmt.Fprintf(stderr, "hookci: %s takes at most one dir\n", fs.Name())
 		return "", ExitUsage, false
 	}
 	if info, err := os.Stat(dir); err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return "", ExitUsage, false
 	} else if !info.IsDir() {
-		fmt.Fprintf(stderr, "zeroci: %s is not a directory\n", dir)
+		fmt.Fprintf(stderr, "hookci: %s is not a directory\n", dir)
 		return "", ExitUsage, false
 	}
 	return dir, ExitOK, true

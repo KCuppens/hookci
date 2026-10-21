@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 func fullSpec() Spec {
@@ -16,7 +16,7 @@ func fullSpec() Spec {
 		RunID: "01HXRUN",
 		Job:   "lint",
 		Argv:  []string{"/bin/sh", "-ec", "npm run lint"},
-		Dir:   "/var/lib/zeroci/runs/01HXRUN/src",
+		Dir:   "/var/lib/hookci/runs/01HXRUN/src",
 		Env:   []string{"PATH=/usr/bin:/bin", "CI=true"},
 		Limits: Limits{
 			CPUs:        1.5,
@@ -24,9 +24,9 @@ func fullSpec() Spec {
 			Tasks:       512,
 			Timeout:     90500 * time.Millisecond,
 		},
-		NetNSPath:      "/run/netns/zc-01HXRUN",
-		ReadWritePaths: []string{"/var/lib/zeroci/runs/01HXRUN"},
-		Hide:           "/var/lib/zeroci/runs",
+		NetNSPath:      "/run/netns/hci-01HXRUN",
+		ReadWritePaths: []string{"/var/lib/hookci/runs/01HXRUN"},
+		Hide:           "/var/lib/hookci/runs",
 	}
 }
 
@@ -35,8 +35,8 @@ func goldenArgv(argv []string) []byte {
 }
 
 func TestBuildSystemdRunArgvFull(t *testing.T) {
-	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", fullSpec())
-	for _, want := range []string{"IPAddressDeny=any", "IPAddressAllow=localhost", "NetworkNamespacePath=/run/netns/zc-01HXRUN"} {
+	argv := BuildSystemdRunArgv("systemd-run", "hookci.slice", fullSpec())
+	for _, want := range []string{"IPAddressDeny=any", "IPAddressAllow=localhost", "NetworkNamespacePath=/run/netns/hci-01HXRUN"} {
 		if !slices.Contains(argv, want) {
 			t.Errorf("argv lacks %q", want)
 		}
@@ -47,7 +47,7 @@ func TestBuildSystemdRunArgvFull(t *testing.T) {
 func TestBuildSystemdRunArgvNoNetNS(t *testing.T) {
 	spec := fullSpec()
 	spec.NetNSPath = ""
-	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	argv := BuildSystemdRunArgv("systemd-run", "hookci.slice", spec)
 	for _, d := range []string{"localhost", "link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
 		if want := "IPAddressDeny=" + d; !slices.Contains(argv, want) {
 			t.Errorf("argv lacks %q:\n%s", want, goldenArgv(argv))
@@ -64,13 +64,13 @@ func TestBuildSystemdRunArgvNoNetNS(t *testing.T) {
 // only this run's ReadWritePaths stay visible under Hide.
 func TestBuildSystemdRunArgvHidesOtherRuns(t *testing.T) {
 	spec := fullSpec()
-	spec.ReadWritePaths = []string{"/var/lib/zeroci/runs/01HXRUN/src", "/var/lib/zeroci/runs/01HXRUN/home"}
-	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	spec.ReadWritePaths = []string{"/var/lib/hookci/runs/01HXRUN/src", "/var/lib/hookci/runs/01HXRUN/home"}
+	argv := BuildSystemdRunArgv("systemd-run", "hookci.slice", spec)
 	for _, want := range []string{
 		"ProtectProc=invisible",
 		"ProcSubset=pid",
-		"TemporaryFileSystem=/var/lib/zeroci/runs:ro",
-		"BindPaths=/var/lib/zeroci/runs/01HXRUN/src /var/lib/zeroci/runs/01HXRUN/home",
+		"TemporaryFileSystem=/var/lib/hookci/runs:ro",
+		"BindPaths=/var/lib/hookci/runs/01HXRUN/src /var/lib/hookci/runs/01HXRUN/home",
 	} {
 		if !slices.Contains(argv, want) {
 			t.Errorf("argv lacks %q:\n%s", want, goldenArgv(argv))
@@ -81,7 +81,7 @@ func TestBuildSystemdRunArgvHidesOtherRuns(t *testing.T) {
 	}
 
 	spec.Hide = ""
-	for _, a := range BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec) {
+	for _, a := range BuildSystemdRunArgv("systemd-run", "hookci.slice", spec) {
 		if strings.HasPrefix(a, "TemporaryFileSystem=") || strings.HasPrefix(a, "BindPaths=") {
 			t.Errorf("argv has %q without Hide", a)
 		}
@@ -109,10 +109,10 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 		netNSPath string
 		want      []string
 	}{
-		{"netns", "/run/netns/zc-01hxrun", []string{
+		{"netns", "/run/netns/hci-01hxrun", []string{
 			"IPAddressDeny=any",
 			"IPAddressAllow=localhost",
-			"NetworkNamespacePath=/run/netns/zc-01hxrun",
+			"NetworkNamespacePath=/run/netns/hci-01hxrun",
 		}},
 		{"deny", "", []string{
 			"IPAddressDeny=localhost",
@@ -134,7 +134,7 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := fullSpec()
 			spec.NetNSPath = tc.netNSPath
-			got := networkProps(BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec))
+			got := networkProps(BuildSystemdRunArgv("systemd-run", "hookci.slice", spec))
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("network properties = %q, want %q", got, tc.want)
 			}
@@ -147,7 +147,7 @@ func TestBuildSystemdRunArgvNetNS(t *testing.T) {
 func TestBuildSystemdRunArgvEscapesDollarSigns(t *testing.T) {
 	spec := fullSpec()
 	spec.Argv = []string{"/bin/sh", "-ec", `for f in *; do echo "${HOME}/${f}"; done; echo $$ $1 100%`}
-	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	argv := BuildSystemdRunArgv("systemd-run", "hookci.slice", spec)
 	sep := slices.Index(argv, "--")
 	want := []string{"/bin/sh", "-ec", `for f in *; do echo "$${HOME}/$${f}"; done; echo $$$$ $$1 100%`}
 	if sep < 0 || !slices.Equal(argv[sep+1:], want) {
@@ -176,11 +176,11 @@ func TestBuildSystemdRunArgvOmitsZeroLimits(t *testing.T) {
 		RunID:          "01HXRUN",
 		Job:            "setup",
 		Argv:           []string{"/bin/sh", "-ec", "npm ci"},
-		Dir:            "/var/lib/zeroci/runs/01HXRUN/src",
-		ReadWritePaths: []string{"/var/lib/zeroci/runs/01HXRUN"},
-		Hide:           "/var/lib/zeroci/runs",
+		Dir:            "/var/lib/hookci/runs/01HXRUN/src",
+		ReadWritePaths: []string{"/var/lib/hookci/runs/01HXRUN"},
+		Hide:           "/var/lib/hookci/runs",
 	}
-	argv := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	argv := BuildSystemdRunArgv("systemd-run", "hookci.slice", spec)
 	for _, a := range argv {
 		for _, banned := range []string{"CPUQuota=", "MemoryMax=", "TasksMax=", "RuntimeMaxSec=", "IOWeight"} {
 			if strings.HasPrefix(a, banned) {
@@ -188,7 +188,7 @@ func TestBuildSystemdRunArgvOmitsZeroLimits(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"Nice=10", "User=zeroci-run", "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes", "ProtectProc=invisible", "ProcSubset=pid"} {
+	for _, want := range []string{"Nice=10", "User=hookci-run", "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "PrivateDevices=yes", "ProtectProc=invisible", "ProcSubset=pid"} {
 		if !slices.Contains(argv, want) {
 			t.Errorf("argv lacks %q", want)
 		}
@@ -234,7 +234,7 @@ func TestSystemdRunUsesRunner(t *testing.T) {
 	if res.ExitCode != 3 || res.TimedOut || res.Cancelled {
 		t.Errorf("Result = %+v, want exit 3 only", res)
 	}
-	want := BuildSystemdRunArgv("systemd-run", "zeroci.slice", spec)
+	want := BuildSystemdRunArgv("systemd-run", "hookci.slice", spec)
 	got := fake.Calls[0]
 	if got.Name != want[0] || !slices.Equal(got.Args, want[1:]) {
 		t.Errorf("call = %s %q, want %q", got.Name, got.Args, want)
@@ -244,8 +244,8 @@ func TestSystemdRunUsesRunner(t *testing.T) {
 		rest = append(rest, c.Name+" "+strings.Join(c.Args, " "))
 	}
 	wantRest := []string{
-		"systemctl show -p Result --value zeroci-run-01HXRUN-lint.service",
-		"systemctl reset-failed zeroci-run-01HXRUN-lint.service",
+		"systemctl show -p Result --value hookci-run-01HXRUN-lint.service",
+		"systemctl reset-failed hookci-run-01HXRUN-lint.service",
 	}
 	if !slices.Equal(rest, wantRest) {
 		t.Errorf("calls after systemd-run = %q, want %q", rest, wantRest)
@@ -266,8 +266,8 @@ func TestSystemdRunSuccessSkipsResetFailed(t *testing.T) {
 func TestSystemdRunTimeoutDetected(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("systemd-run", nil, execx.FakeResponse{Code: 1})
-	fake.On("systemctl", []string{"show", "-p", "Result", "--value", "zeroci-run-01HXRUN-lint.service"}, execx.FakeResponse{Stdout: "timeout\n"})
-	fake.On("systemctl", []string{"reset-failed", "zeroci-run-01HXRUN-lint.service"}, execx.FakeResponse{})
+	fake.On("systemctl", []string{"show", "-p", "Result", "--value", "hookci-run-01HXRUN-lint.service"}, execx.FakeResponse{Stdout: "timeout\n"})
+	fake.On("systemctl", []string{"reset-failed", "hookci-run-01HXRUN-lint.service"}, execx.FakeResponse{})
 	res, err := (&Systemd{Runner: fake}).Run(context.Background(), fullSpec())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -286,11 +286,11 @@ func TestSystemdRunCancelStopsUnit(t *testing.T) {
 		<-stopped
 		return nil
 	}})
-	fake.On("systemctl", []string{"stop", "zeroci-run-01HXRUN-lint.service"}, execx.FakeResponse{Fn: func(execx.Cmd) error {
+	fake.On("systemctl", []string{"stop", "hookci-run-01HXRUN-lint.service"}, execx.FakeResponse{Fn: func(execx.Cmd) error {
 		close(stopped)
 		return nil
 	}})
-	fake.On("systemctl", []string{"reset-failed", "zeroci-run-01HXRUN-lint.service"}, execx.FakeResponse{})
+	fake.On("systemctl", []string{"reset-failed", "hookci-run-01HXRUN-lint.service"}, execx.FakeResponse{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -304,24 +304,24 @@ func TestSystemdRunCancelStopsUnit(t *testing.T) {
 	if !res.Cancelled || res.TimedOut {
 		t.Errorf("Result = %+v, want Cancelled", res)
 	}
-	if !fake.Called("systemctl", "stop", "zeroci-run-01HXRUN-lint.service") {
-		t.Error("cancel did not run systemctl stop zeroci-run-01HXRUN-lint.service")
+	if !fake.Called("systemctl", "stop", "hookci-run-01HXRUN-lint.service") {
+		t.Error("cancel did not run systemctl stop hookci-run-01HXRUN-lint.service")
 	}
-	if !fake.Called("systemctl", "reset-failed", "zeroci-run-01HXRUN-lint.service") {
-		t.Error("cancel did not run systemctl reset-failed zeroci-run-01HXRUN-lint.service")
+	if !fake.Called("systemctl", "reset-failed", "hookci-run-01HXRUN-lint.service") {
+		t.Error("cancel did not run systemctl reset-failed hookci-run-01HXRUN-lint.service")
 	}
 }
 
 func TestSystemdListUnitsParses(t *testing.T) {
-	const out = "zeroci-run-01HX-lint.service loaded active running zeroci job\n" +
-		"zeroci-run-01HX-setup.service loaded failed failed zeroci job\n"
+	const out = "hookci-run-01HX-lint.service loaded active running hookci job\n" +
+		"hookci-run-01HX-setup.service loaded failed failed hookci job\n"
 	fake := &execx.Fake{}
-	fake.On("systemctl", []string{"list-units", "--plain", "--no-legend", "--all", "zeroci-run-01HX-*"}, execx.FakeResponse{Stdout: out})
-	units, err := (&Systemd{Runner: fake}).ListUnits(context.Background(), "zeroci-run-01HX-")
+	fake.On("systemctl", []string{"list-units", "--plain", "--no-legend", "--all", "hookci-run-01HX-*"}, execx.FakeResponse{Stdout: out})
+	units, err := (&Systemd{Runner: fake}).ListUnits(context.Background(), "hookci-run-01HX-")
 	if err != nil {
 		t.Fatalf("ListUnits: %v", err)
 	}
-	want := []Unit{{Name: "zeroci-run-01HX-lint", Active: "active"}, {Name: "zeroci-run-01HX-setup", Active: "failed"}}
+	want := []Unit{{Name: "hookci-run-01HX-lint", Active: "active"}, {Name: "hookci-run-01HX-setup", Active: "failed"}}
 	if !slices.Equal(units, want) {
 		t.Errorf("units = %+v, want %+v", units, want)
 	}
@@ -330,7 +330,7 @@ func TestSystemdListUnitsParses(t *testing.T) {
 func TestSystemdStopNotLoadedIsNotError(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("systemctl", []string{"stop"}, execx.FakeResponse{Code: 5})
-	if err := (&Systemd{Runner: fake}).Stop(context.Background(), "zeroci-run-01HX-lint"); err != nil {
+	if err := (&Systemd{Runner: fake}).Stop(context.Background(), "hookci-run-01HX-lint"); err != nil {
 		t.Errorf("Stop of unloaded unit: %v", err)
 	}
 	if fake.Called("systemctl", "reset-failed") {
@@ -343,14 +343,14 @@ func TestSystemdStopNotLoadedIsNotError(t *testing.T) {
 func TestSystemdStopResetsFailed(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("systemctl", nil, execx.FakeResponse{})
-	if err := (&Systemd{Runner: fake}).Stop(context.Background(), "zeroci-run-01HX-lint"); err != nil {
+	if err := (&Systemd{Runner: fake}).Stop(context.Background(), "hookci-run-01HX-lint"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	var got []string
 	for _, c := range fake.Calls {
 		got = append(got, c.Name+" "+strings.Join(c.Args, " "))
 	}
-	want := []string{"systemctl stop zeroci-run-01HX-lint.service", "systemctl reset-failed zeroci-run-01HX-lint.service"}
+	want := []string{"systemctl stop hookci-run-01HX-lint.service", "systemctl reset-failed hookci-run-01HX-lint.service"}
 	if !slices.Equal(got, want) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 import Ajv2020 from "ajv/dist/2020.js";
 
-const schemaURL = new URL("../zeroci.schema.json", import.meta.url);
+const schemaURL = new URL("../hookci.schema.json", import.meta.url);
 const fixturesURL = new URL("../testdata/protocol/", import.meta.url);
 
 const schema = JSON.parse(readFileSync(schemaURL, "utf8"));

@@ -47,7 +47,7 @@ describe("countingD1", () => {
     env.DB = counter.db;
     const res = await agent.stub.fetch("https://do/trigger", {
       method: "POST",
-      headers: { "x-zeroci-agent-id": agent.agentId },
+      headers: { "x-hookci-agent-id": agent.agentId },
       body: JSON.stringify({
         installationId: 42,
         repoId: 1,

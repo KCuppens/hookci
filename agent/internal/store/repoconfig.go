@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// RepoConfig is the fork policy of a repository's .zeroci.yml as the last
+// RepoConfig is the fork policy of a repository's .hookci.yml as the last
 // default-branch run saw it.
 type RepoConfig struct {
 	Repo           string
@@ -19,7 +19,7 @@ type RepoConfig struct {
 	SeenAt         time.Time
 }
 
-// SaveRepoConfig records what the .zeroci.yml of repo at sha declares,
+// SaveRepoConfig records what the .hookci.yml of repo at sha declares,
 // replacing what an earlier run of repo saw.
 func (s *Store) SaveRepoConfig(ctx context.Context, repo, sha, trust string, hasDeployments bool) error {
 	_, err := s.db.ExecContext(ctx,

@@ -126,12 +126,12 @@ describe("ChecksSink", () => {
       await sink.onJobPlanned(runView({ jobs: PLANNED }));
     });
     expect(checkCalls()).toEqual([
-      expect.objectContaining({ method: "POST", name: "zeroci", status: "in_progress", external_id: "run_1" }),
-      expect.objectContaining({ method: "POST", name: "zeroci/lint", status: "queued" }),
-      expect.objectContaining({ method: "POST", name: "zeroci/test", status: "queued" }),
-      expect.objectContaining({ method: "POST", name: "zeroci/config", status: "completed", conclusion: "neutral" }),
+      expect.objectContaining({ method: "POST", name: "hookci", status: "in_progress", external_id: "run_1" }),
+      expect.objectContaining({ method: "POST", name: "hookci/lint", status: "queued" }),
+      expect.objectContaining({ method: "POST", name: "hookci/test", status: "queued" }),
+      expect.objectContaining({ method: "POST", name: "hookci/config", status: "completed", conclusion: "neutral" }),
     ]);
-    expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "zeroci/test")).toBe(102);
+    expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "hookci/test")).toBe(102);
   });
 
   it("20 job updates within a second make at most 2 update calls, the completed one at once", async () => {
@@ -247,7 +247,7 @@ describe("ChecksSink", () => {
     await inAgent(agent, async (sink) => {
       const run = runView({ jobs: [{ name: "_config", state: "failed", reason: "jobs.test: unknown key" }] });
       await sink.onJobPlanned(run);
-      await sink.onAnnotations(run, "_config", [{ path: ".zeroci.yml", start_line: 4, end_line: 4, level: "failure", message: "unknown key" }]);
+      await sink.onAnnotations(run, "_config", [{ path: ".hookci.yml", start_line: 4, end_line: 4, level: "failure", message: "unknown key" }]);
     });
     expect(checkCalls().at(-1)).toMatchObject({ method: "PATCH", id: 101, conclusion: "neutral", title: S.checks.configInvalid, annotations: 1 });
   });
@@ -327,8 +327,8 @@ describe("ChecksSink", () => {
     });
     expect(checkCalls()).toEqual([
       expect.objectContaining({ method: "PATCH", id: 102 }),
-      expect.objectContaining({ method: "POST", name: "zeroci/test", status: "completed", conclusion: "failure" }),
+      expect.objectContaining({ method: "POST", name: "hookci/test", status: "completed", conclusion: "failure" }),
     ]);
-    expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "zeroci/test")).toBe(104);
+    expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "hookci/test")).toBe(104);
   });
 });

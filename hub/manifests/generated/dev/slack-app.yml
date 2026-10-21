@@ -1,5 +1,5 @@
 display_information:
-  name: zeroci-dev
+  name: hookci-dev
   description: CI on your own machine, reported to GitHub Checks and Slack.
   background_color: "#1d1c1d"
 features:
@@ -8,10 +8,10 @@ features:
     messages_tab_enabled: false
     messages_tab_read_only_enabled: false
   bot_user:
-    display_name: zeroci-dev
+    display_name: hookci-dev
     always_online: false
   slash_commands:
-    - command: /zeroci-dev
+    - command: /hookci-dev
       url: https://DEV-TUNNEL.example/slack/commands
       description: Watch repos, check status, retry runs and link your GitHub account.
       usage_hint: "watch|unwatch|status|retry|bind|me|help"

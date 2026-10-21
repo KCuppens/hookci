@@ -80,7 +80,7 @@ describe("GET /runs/:runId/logs", () => {
     expect(`${location.origin}${location.pathname}`).toBe("https://github.com/login/oauth/authorize");
     expect(location.searchParams.get("client_id")).toBe(env.GITHUB_CLIENT_ID);
     expect(location.searchParams.get("redirect_uri")).toBe(`${env.HUB_ORIGIN}/auth/github/callback`);
-    expect(res.headers.get("set-cookie")).toMatch(/^__Host-zeroci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+    expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
     expect(await env.DB.prepare("SELECT kind, payload FROM oauth_states").all()).toMatchObject({
       results: [{ kind: "github_logs", payload: JSON.stringify({ return_to: `/runs/${RUN}/logs?job=test` }) }],
     });
@@ -94,8 +94,8 @@ describe("GET /runs/:runId/logs", () => {
     expect(done.status).toBe(302);
     expect(done.headers.get("location")).toBe(stableLogLink(env, RUN, "test"));
     const cookies = done.headers.getSetCookie();
-    expect(cookies).toContain("__Host-zeroci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
-    const session = cookies.find((c) => c.startsWith("zc_session="));
+    expect(cookies).toContain("__Host-hookci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
+    const session = cookies.find((c) => c.startsWith("hci_session="));
     expect(session).toMatch(/; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=28800$/);
     expect(world.gh.calls.filter((c) => c.method === "DELETE" && new URL(c.url).pathname === TOKEN_PATH)).toHaveLength(1);
 
@@ -142,7 +142,7 @@ describe("GET /auth/github/callback", () => {
     ] as const) {
       const res = await get(callback(state), cookie);
       expect(res.status).toBe(400);
-      expect(res.headers.getSetCookie().some((c) => c.startsWith("zc_session="))).toBe(false);
+      expect(res.headers.getSetCookie().some((c) => c.startsWith("hci_session="))).toBe(false);
     }
     expect(exchangeCalls()).toBe(0);
   });

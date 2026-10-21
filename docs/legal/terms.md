@@ -1,12 +1,12 @@
 DRAFT: requires human legal review before publication
 
-# ZeroCI terms of service
+# HookCI terms of service
 
-These terms cover the shared ZeroCI hub operated by {{OPERATOR}}, its GitHub App and its Slack App. By installing either app you accept them.
+These terms cover the shared HookCI hub operated by {{OPERATOR}}, its GitHub App and its Slack App. By installing either app you accept them.
 
 ## The service
 
-ZeroCI is free. The shared hub enforces daily caps per installation, such as a maximum number of runs per day. When an installation reaches a cap, the hub refuses further work until the next day.
+HookCI is free. The shared hub enforces daily caps per installation, such as a maximum number of runs per day. When an installation reaches a cap, the hub refuses further work until the next day.
 
 ## No service level
 
@@ -18,19 +18,19 @@ You must not:
 
 - mine cryptocurrency or run other workloads unrelated to building, testing and deploying your code;
 - abuse the shared hub, for example by overloading it, attacking other users or bypassing quotas and access controls;
-- use ZeroCI to break the law or the terms of GitHub or Slack.
+- use HookCI to break the law or the terms of GitHub or Slack.
 
 ## Your agent and your machines
 
-The ZeroCI agent runs on machines you control. You are responsible for those machines, for what the agent runs on them, and for the code you choose to run, including code from pull requests.
+The HookCI agent runs on machines you control. You are responsible for those machines, for what the agent runs on them, and for the code you choose to run, including code from pull requests.
 
 ## License
 
-The ZeroCI source code is released under the MIT License. These terms cover your use of the shared hub, not your use of the code.
+The HookCI source code is released under the MIT License. These terms cover your use of the shared hub, not your use of the code.
 
 ## Termination
 
-You may stop using ZeroCI at any time by uninstalling the GitHub App and the Slack App. We may suspend or end an installation that breaks these terms or puts the shared hub or its users at risk.
+You may stop using HookCI at any time by uninstalling the GitHub App and the Slack App. We may suspend or end an installation that breaks these terms or puts the shared hub or its users at risk.
 
 ## No warranty and limitation of liability
 

@@ -1,6 +1,6 @@
 // Package caddy implements proxy.ProxyAdapter for Caddy through a route
 // snippet file that the operator's Caddyfile imports inside its site block.
-// zeroci owns only that snippet: it never edits the main Caddyfile and never
+// hookci owns only that snippet: it never edits the main Caddyfile and never
 // uses the Caddy admin API.
 package caddy
 
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
 )
 
 const (
@@ -182,7 +182,7 @@ func (a *Adapter) Render(route proxy.RouteSpec) ([]byte, error) {
 	if strings.ContainsFunc(route.UpstreamHost, func(r rune) bool { return r == '{' || isSpace(r) }) {
 		return nil, fmt.Errorf("deployments.%s.route: upstream_host %q must not contain whitespace, newlines or '{'", route.Env, route.UpstreamHost)
 	}
-	return fmt.Appendf(nil, "# managed by zeroci: %s %s color=%s. Do not edit.\nreverse_proxy %s:%d\n",
+	return fmt.Appendf(nil, "# managed by hookci: %s %s color=%s. Do not edit.\nreverse_proxy %s:%d\n",
 		route.Repo, route.Env, route.Color, route.UpstreamHost, route.Port), nil
 }
 
@@ -204,7 +204,7 @@ func (a *Adapter) Apply(_ context.Context, file string, content []byte) ([]byte,
 	}
 
 	dir := filepath.Dir(file)
-	tmp, err := a.FS.CreateTemp(dir, "."+filepath.Base(file)+".zeroci-tmp-*")
+	tmp, err := a.FS.CreateTemp(dir, "."+filepath.Base(file)+".hookci-tmp-*")
 	if err != nil {
 		return nil, fmt.Errorf("caddy: create temp route in %s: %w", dir, err)
 	}

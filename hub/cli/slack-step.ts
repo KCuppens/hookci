@@ -9,7 +9,7 @@ import type { HubState } from "./state.js";
 /** The bot scopes the hub's Slack features need, in the hosted manifest's order. */
 export const SLACK_BOT_SCOPES = ["chat:write", "commands", "channels:read", "groups:read", "im:write", "users:read", "users:read.email"] as const;
 
-export const NO_SLACK_REMINDER = "Skipping Slack (--no-slack). Run zeroci-hub setup again later to add it.";
+export const NO_SLACK_REMINDER = "Skipping Slack (--no-slack). Run hookci-hub setup again later to add it.";
 
 const INPUT_ATTEMPTS = 3;
 const CLIENT_ID = /^\d+\.\d+$/;
@@ -103,7 +103,7 @@ async function promptValue(
 export async function slackAppStep(ctx: SetupContext): Promise<HubState> {
 	const { options: o, state: s, exec, log } = ctx;
 	const base = needBaseUrl(s);
-	log(`Create the Slack App: ${slackNewAppUrl(renderSlackManifest(base, s.name ?? "zeroci"))}`);
+	log(`Create the Slack App: ${slackNewAppUrl(renderSlackManifest(base, s.name ?? "hookci"))}`);
 	log("Create the app from the manifest, choose the workspace, then open Basic Information and copy its App Credentials here.");
 	const secrets: [string, string][] = [
 		["SLACK_SIGNING_SECRET", await promptValue(log, "Slack Signing Secret", () => o.prompter.secret("Slack Signing Secret"))],
@@ -172,7 +172,7 @@ export function setupSummary(s: HubState): string {
 		s.slack_configured ? `Add to Slack: ${base}/slack/install` : NO_SLACK_REMINDER,
 		"Pair an agent with the pair token shown after the GitHub App install or in Slack App Home:",
 		`  curl -fsSL ${base}/install | sh`,
-		`  zeroci connect --hub ${base} <pair-token>`,
-		"Upgrade later with: npx zeroci-hub upgrade",
+		`  hookci connect --hub ${base} <pair-token>`,
+		"Upgrade later with: npx hookci-hub upgrade",
 	].join("\n");
 }

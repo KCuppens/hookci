@@ -13,8 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // fixtureDir returns examples/detect/<name>, located from this file so the
@@ -70,17 +70,17 @@ func detectFS(t *testing.T, fsys fs.FS) *Result {
 
 func checksOf(t *testing.T, r *Result) *config.Checks {
 	t.Helper()
-	if r.Config.ZeroCIConfig.Checks == nil {
+	if r.Config.HookCIConfig.Checks == nil {
 		t.Fatal("no checks in detected config")
 	}
-	return r.Config.ZeroCIConfig.Checks
+	return r.Config.HookCIConfig.Checks
 }
 
 func jobNames(r *Result) []string {
-	if r.Config.ZeroCIConfig.Checks == nil {
+	if r.Config.HookCIConfig.Checks == nil {
 		return nil
 	}
-	return sortedKeys(r.Config.ZeroCIConfig.Checks.Jobs)
+	return sortedKeys(r.Config.HookCIConfig.Checks.Jobs)
 }
 
 func mustJob(t *testing.T, r *Result, name string) config.Job {
@@ -94,7 +94,7 @@ func mustJob(t *testing.T, r *Result, name string) config.Job {
 
 func setupRuns(r *Result) []string {
 	var runs []string
-	for _, s := range r.Config.ZeroCIConfig.Checks.Setup {
+	for _, s := range r.Config.HookCIConfig.Checks.Setup {
 		runs = append(runs, s.Run)
 	}
 	return runs
@@ -120,9 +120,9 @@ func TestDetectFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Render: %v", err)
 			}
-			testutil.GoldenFile(t, filepath.Join(dir, "expected.zeroci.yml"), out)
+			testutil.GoldenFile(t, filepath.Join(dir, "expected.hookci.yml"), out)
 			if _, diags := config.Parse(out, config.ParseOptions{}); diags.HasErrors() {
-				t.Fatalf("rendered output does not parse:\n%s\n%s", diags.Format("expected.zeroci.yml"), out)
+				t.Fatalf("rendered output does not parse:\n%s\n%s", diags.Format("expected.hookci.yml"), out)
 			}
 		})
 	}

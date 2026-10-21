@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // errAutoNeedsSystemd is the auto-selection failure on Linux hosts that
@@ -31,7 +31,7 @@ func HostSelectEnv() SelectEnv {
 		EUID:     os.Geteuid(),
 		LookPath: func(name string) (string, error) { return execx.LookPath(name) },
 		Runner:   execx.OS{},
-		Warn:     func(msg string) { fmt.Fprintln(os.Stderr, "zeroci: warning: "+msg) },
+		Warn:     func(msg string) { fmt.Fprintln(os.Stderr, "hookci: warning: "+msg) },
 	}
 }
 

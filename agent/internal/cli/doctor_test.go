@@ -14,13 +14,13 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/doctor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/doctor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-// runDoctorCLI runs zeroci doctor in wd, a fresh temp dir when empty,
+// runDoctorCLI runs hookci doctor in wd, a fresh temp dir when empty,
 // against an empty host whose hub is srv.
 func runDoctorCLI(t *testing.T, srv *httptest.Server, wd string, args ...string) (int, string, string) {
 	t.Helper()
@@ -63,8 +63,8 @@ func TestDoctorForkTrust(t *testing.T) {
 	srv := httptest.NewTLSServer(http.NotFoundHandler())
 	defer srv.Close()
 	host := fstest.MapFS{
-		"var/lib/zeroci/42":            {Mode: fs.ModeDir | 0o700},
-		"var/lib/zeroci/42/agent.json": {Data: []byte(`{"hub_url":"` + srv.URL + `","agent_id":"agt_1","credential":"zc_agent_x","installation_id":42}`), Mode: 0o600},
+		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o700},
+		"var/lib/hookci/42/agent.json": {Data: []byte(`{"hub_url":"` + srv.URL + `","agent_id":"agt_1","credential":"hci_agent_x","installation_id":42}`), Mode: 0o600},
 	}
 	const open = "trust: all lets any fork PR run on this machine without approval"
 	const ignored = " and is ignored by the hub because deployments are configured"
@@ -85,7 +85,7 @@ func TestDoctorForkTrust(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, out, stderr := runDoctorCLIOn(t, srv, "", host, map[string][]store.RepoConfig{"/var/lib/zeroci/42": tc.repos}, "--hub", srv.URL)
+			_, out, stderr := runDoctorCLIOn(t, srv, "", host, map[string][]store.RepoConfig{"/var/lib/hookci/42": tc.repos}, "--hub", srv.URL)
 			var got []string
 			for _, line := range strings.SplitAfter(out, "\n") {
 				if strings.Contains(line, "fork trust") {
@@ -104,7 +104,7 @@ func TestDoctorForkTrust(t *testing.T) {
 	}
 }
 
-// doctorJSON runs zeroci doctor --json in wd and indexes the results by id.
+// doctorJSON runs hookci doctor --json in wd and indexes the results by id.
 func doctorJSON(t *testing.T, wd string) map[string]map[string]any {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +154,7 @@ func TestDoctorDeployChecksReadCheckout(t *testing.T) {
 	top := t.TempDir()
 	route := filepath.Join(top, "routes", "web.caddy")
 	mkFile(t, filepath.Join(top, ".git", "HEAD"), "ref: refs/heads/main\n")
-	mkFile(t, filepath.Join(top, ".zeroci.yml"), "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n"+
+	mkFile(t, filepath.Join(top, ".hookci.yml"), "version: 1\nchecks:\n  jobs:\n    test:\n      run: go test ./...\n"+
 		"deployments:\n  staging:\n    on: { push: main }\n    strategy: compose-bluegreen\n"+
 		"    compose: { project: web, service: web }\n"+
 		"    route: { kind: caddy, file: "+route+" }\n"+
@@ -171,9 +171,9 @@ func TestDoctorDeployChecksReadCheckout(t *testing.T) {
 		}
 	}
 
-	mkFile(t, filepath.Join(top, ".zeroci.yml"), "version: 1\ndeployments: 3\n")
+	mkFile(t, filepath.Join(top, ".hookci.yml"), "version: 1\ndeployments: 3\n")
 	byID = doctorJSON(t, top)
-	if r := byID["deploy.caddy"]; r["status"] != "fail" || !strings.Contains(r["detail"].(string), ".zeroci.yml") {
+	if r := byID["deploy.caddy"]; r["status"] != "fail" || !strings.Contains(r["detail"].(string), ".hookci.yml") {
 		t.Errorf("deploy.caddy = %v, want a config error", r)
 	}
 }

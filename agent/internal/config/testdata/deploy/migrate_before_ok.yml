@@ -17,10 +17,10 @@ deployments:
       before:
         run: "pg_dump -Fc -f /backup/{env}-{sha7}-{ts}.dump \"$DATABASE_URL\""
         image: "postgres:16"
-        output_dir: /var/backups/zeroci/app
+        output_dir: /var/backups/hookci/app
         retain: 5
     route:
       kind: caddy
       file: /etc/caddy/routes/app.caddy
     health: { url: "http://127.0.0.1:{port}/health" }
-    env_file: /etc/zeroci/env/app.env
+    env_file: /etc/hookci/env/app.env

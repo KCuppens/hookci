@@ -1,6 +1,6 @@
 # Marketplace submission checklist
 
-Walk this list before submitting zeroci to the GitHub Marketplace and the Slack
+Walk this list before submitting hookci to the GitHub Marketplace and the Slack
 App Directory. The listing copy is in `docs/marketplace/github-listing.md` and
 `docs/marketplace/slack-directory.md`.
 
@@ -31,7 +31,7 @@ This kit assumes the listings go out after M1 ships (pending decision Q4).
       the manifest.
 - [ ] Install tested end to end on a clean GitHub account and a clean Slack
       workspace: install the GitHub App, pair an agent, add to Slack, run
-      `/zeroci watch`, push a commit, see the check and the Slack message,
+      `/hookci watch`, push a commit, see the check and the Slack message,
       then uninstall both.
 - [ ] Slack review test account ready: a test workspace, a reviewer Slack
       account, a GitHub account that admins the test organization, a test
@@ -70,7 +70,7 @@ This kit assumes the listings go out after M1 ships (pending decision Q4).
    "Activate Public Distribution".
 2. Leave "Direct install URL" empty. The `/slack/install` route only works
    with a GitHub installation and a signed in GitHub session, so a workspace
-   starts from the GitHub App install and then adds zeroci to Slack from the
+   starts from the GitHub App install and then adds hookci to Slack from the
    page the hub shows.
 3. Open "Submit to App Directory" and fill it from
    `docs/marketplace/slack-directory.md`: short and long descriptions, the

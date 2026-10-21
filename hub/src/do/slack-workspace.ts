@@ -26,7 +26,7 @@ const REFUSAL_TEXT: Record<string, string> = {
 };
 
 /**
- * The reply for a handler that threw: the /zeroci me prompt when
+ * The reply for a handler that threw: the /hookci me prompt when
  * requireLinkedUser refused the caller, the matching text when the caller
  * lacks the GitHub role or named an unknown repo, else a reported failure.
  */

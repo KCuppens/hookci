@@ -90,9 +90,9 @@ describe("home:add_agent", () => {
     expect(opens.length).toBe(1);
     const body = opens[0]?.body as { trigger_id: string; view: string };
     expect(body.trigger_id).toBe("1.2.trig");
-    expect(body.view).toContain("zc_pair_");
+    expect(body.view).toContain("hci_pair_");
     expect(body.view).toContain(`curl -fsSL ${env.HUB_ORIGIN}/install | sh`);
-    expect(body.view).toContain("sudo zeroci connect zc_pair_");
+    expect(body.view).toContain("sudo hookci connect hci_pair_");
     expect(await pairTokens()).toBe(1);
   });
 

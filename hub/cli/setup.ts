@@ -70,22 +70,22 @@ export type SetupErrorCode =
 	| "verify_failed";
 
 const HINTS: Record<SetupErrorCode, string> = {
-	node_too_old: "Install Node.js 20 or newer, then run zeroci-hub setup again.",
-	not_logged_in: "Or set CLOUDFLARE_API_TOKEN, then run zeroci-hub setup again.",
+	node_too_old: "Install Node.js 20 or newer, then run hookci-hub setup again.",
+	not_logged_in: "Or set CLOUDFLARE_API_TOKEN, then run hookci-hub setup again.",
 	multiple_accounts: "Set CLOUDFLARE_ACCOUNT_ID to the account to use, or run without --yes to pick one.",
-	wrangler_failed: "Fix the cause shown above, then run zeroci-hub setup again; finished steps are skipped.",
-	parse_failed: "Run zeroci-hub setup again; if it fails the same way, report it with the wrangler output.",
+	wrangler_failed: "Fix the cause shown above, then run hookci-hub setup again; finished steps are skipped.",
+	parse_failed: "Run hookci-hub setup again; if it fails the same way, report it with the wrangler output.",
 	bad_name: "Use 3 to 41 lowercase letters, digits or dashes, starting with a letter.",
-	manifest_timeout: "Run zeroci-hub setup again and finish creating the GitHub App in the browser within 10 minutes.",
-	manifest_conversion_failed: "The manifest code is single-use and expires after an hour; run zeroci-hub setup again.",
-	github_app_verify_failed: "Delete the new app in GitHub settings, remove github_app_id from zeroci-hub.state.json in the state dir, then run zeroci-hub setup again.",
-	github_app_incomplete: "Delete that app on its GitHub settings page, remove github_app_id from zeroci-hub.state.json in the state dir, then run zeroci-hub setup again.",
-	not_set_up: "run zeroci-hub setup first",
-	downgrade: "Run a zeroci-hub as new as the hub or newer; D1 migrations only move forward.",
-	version_mismatch: "Check npx wrangler deployments list in the state dir, then run zeroci-hub upgrade again.",
-	bad_manifest: "Reinstall zeroci-hub; its Slack manifest must ask for exactly the bot scopes the hub uses.",
-	missing_input: "Copy the value from the Slack App's Basic Information page, then run zeroci-hub setup again.",
-	verify_failed: "Check npx wrangler deployments list in the state dir, then run zeroci-hub setup again; finished steps are skipped.",
+	manifest_timeout: "Run hookci-hub setup again and finish creating the GitHub App in the browser within 10 minutes.",
+	manifest_conversion_failed: "The manifest code is single-use and expires after an hour; run hookci-hub setup again.",
+	github_app_verify_failed: "Delete the new app in GitHub settings, remove github_app_id from hookci-hub.state.json in the state dir, then run hookci-hub setup again.",
+	github_app_incomplete: "Delete that app on its GitHub settings page, remove github_app_id from hookci-hub.state.json in the state dir, then run hookci-hub setup again.",
+	not_set_up: "run hookci-hub setup first",
+	downgrade: "Run a hookci-hub as new as the hub or newer; D1 migrations only move forward.",
+	version_mismatch: "Check npx wrangler deployments list in the state dir, then run hookci-hub upgrade again.",
+	bad_manifest: "Reinstall hookci-hub; its Slack manifest must ask for exactly the bot scopes the hub uses.",
+	missing_input: "Copy the value from the Slack App's Basic Information page, then run hookci-hub setup again.",
+	verify_failed: "Check npx wrangler deployments list in the state dir, then run hookci-hub setup again; finished steps are skipped.",
 };
 
 export class SetupError extends Error {
@@ -106,8 +106,8 @@ export class SetupError extends Error {
 
 const MIN_NODE_MAJOR = 20;
 const NAME = /^[a-z][a-z0-9-]{2,40}$/;
-const DEFAULT_NAME = "zeroci-hub";
-const LIFECYCLE_RULE = "zeroci-log-retention";
+const DEFAULT_NAME = "hookci-hub";
+const LIFECYCLE_RULE = "hookci-log-retention";
 const STDERR_TAIL_LINES = 20;
 
 const STEP_LABELS: Record<SetupStep, string> = {
@@ -162,13 +162,13 @@ function hubName(s: HubState): string {
 }
 
 function need(value: string | undefined, what: string): string {
-	if (!value) throw new Error(`the setup state has no ${what}; run zeroci-hub setup without --force-render`);
+	if (!value) throw new Error(`the setup state has no ${what}; run hookci-hub setup without --force-render`);
 	return value;
 }
 
 export async function preflight(o: SetupOptions): Promise<void> {
 	const major = Number(process.versions.node.split(".")[0]);
-	if (major < MIN_NODE_MAJOR) throw new SetupError("node_too_old", `zeroci-hub needs Node.js ${MIN_NODE_MAJOR} or newer, this is ${process.versions.node}`);
+	if (major < MIN_NODE_MAJOR) throw new SetupError("node_too_old", `hookci-hub needs Node.js ${MIN_NODE_MAJOR} or newer, this is ${process.versions.node}`);
 	const r = await whoami(o);
 	if (/not authenticated/i.test(stripVTControlCharacters(r.stdout)) && !process.env.CLOUDFLARE_API_TOKEN) {
 		throw new SetupError("not_logged_in", "run: npx wrangler login");

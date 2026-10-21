@@ -1,5 +1,5 @@
 # package manager: npm (package-lock.json)
-# node >=20 (from engines.node), not installed by zeroci
+# node >=20 (from engines.node), not installed by hookci
 
 version: 1
 checks:

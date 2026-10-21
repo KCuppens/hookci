@@ -75,7 +75,7 @@ describe("Telegram sink in a run's fan-out", () => {
     expect(await sock.hello()).toMatchObject({ type: "welcome" });
     const res = await agent.stub.fetch("https://do/trigger", {
       method: "POST",
-      headers: { "x-zeroci-agent-id": agent.agentId },
+      headers: { "x-hookci-agent-id": agent.agentId },
       body: JSON.stringify(TRIGGER),
     });
     expect(res.status).toBe(202);

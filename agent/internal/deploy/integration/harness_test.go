@@ -30,35 +30,35 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/control"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/compose"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/strategies"
-	"github.com/KCuppens/zerocideploy/agent/internal/executor"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/gc"
-	"github.com/KCuppens/zerocideploy/agent/internal/ids"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/compose"
+	"github.com/KCuppens/hookci/agent/internal/deploy/health"
+	"github.com/KCuppens/hookci/agent/internal/deploy/strategies"
+	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/gc"
+	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 const (
 	itRepo = "itest/compose-app"
 	itEnv  = "staging"
 
-	// agentStateEnv, when set, makes the test binary run as a zeroci agent
+	// agentStateEnv, when set, makes the test binary run as a hookci agent
 	// over that state dir instead of running tests (see TestMain).
-	agentStateEnv = "ZEROCI_ITEST_AGENT_STATE"
+	agentStateEnv = "HOOKCI_ITEST_AGENT_STATE"
 	// holdStepEnv names a step the agent subprocess blocks in until killed.
-	holdStepEnv = "ZEROCI_ITEST_HOLD_STEP"
+	holdStepEnv = "HOOKCI_ITEST_HOLD_STEP"
 	specName    = "itest-agent.json"
 
 	runTimeout  = 10 * time.Minute
@@ -103,7 +103,7 @@ func (s agentSpec) workDir(run store.DeployRun) string {
 // deployment is deployments.<env> of the fixture, pointed at this test's
 // compose project and caddy, with the run's env file when it has one.
 func (s agentSpec) deployment(env, runID string) (config.Deployment, error) {
-	path := filepath.Join(s.Fixture, ".zeroci.yml")
+	path := filepath.Join(s.Fixture, ".hookci.yml")
 	cfg, diags, err := config.Load(path, config.ParseOptions{})
 	if err != nil {
 		return config.Deployment{}, fmt.Errorf("integration: %w", err)
@@ -185,7 +185,7 @@ func (s agentSpec) checkout(_ context.Context, run store.DeployRun) error {
 	return nil
 }
 
-// agent is the deploy lane of a zeroci agent, wired like the daemon's:
+// agent is the deploy lane of a hookci agent, wired like the daemon's:
 // engine, scheduler, recovery and GC after each run, with real docker and
 // caddy. It has no disk preflight.
 type agent struct {
@@ -292,7 +292,7 @@ func (h holdAt) Plan(run store.DeployRun, cfg config.Deployment) ([]deploy.Step,
 }
 
 // agentMain is the agent subprocess: it serves the control socket, so
-// `zeroci retry` reaches it, and deploys until SIGTERM.
+// `hookci retry` reaches it, and deploys until SIGTERM.
 func agentMain(stateDir, holdStep string) int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := runAgent(stateDir, holdStep, log); err != nil {
@@ -406,11 +406,11 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateDir, err := os.MkdirTemp("", "zeroci-m2-")
+	stateDir, err := os.MkdirTemp("", "hookci-m2-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := "zcit" + randHex(t, 4)
+	project := "hciit" + randHex(t, 4)
 	// Registered first, so it runs after the agent and caddy have stopped.
 	t.Cleanup(func() {
 		for _, c := range colors {
@@ -889,15 +889,15 @@ func (l *load) stop() {
 	l.wg.Wait()
 }
 
-// buildZeroci builds the zeroci binary for `zeroci retry`.
-func buildZeroci(t *testing.T) string {
+// buildHookci builds the hookci binary for `hookci retry`.
+func buildHookci(t *testing.T) string {
 	t.Helper()
 	gobin, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("go is not in PATH: %v", err)
 	}
-	bin := filepath.Join(t.TempDir(), "zeroci")
-	mustRun(t, gobin, "build", "-o", bin, "github.com/KCuppens/zerocideploy/agent/cmd/zeroci")
+	bin := filepath.Join(t.TempDir(), "hookci")
+	mustRun(t, gobin, "build", "-o", bin, "github.com/KCuppens/hookci/agent/cmd/hookci")
 	return bin
 }
 

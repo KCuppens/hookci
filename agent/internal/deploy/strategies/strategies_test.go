@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // TestNew_CoversSchemaStrategies checks that every strategy the config schema

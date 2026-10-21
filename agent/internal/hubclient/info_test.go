@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const validInfo = `{"name":"zeroci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,2],"github_app":{"slug":"acme-ci"},"slack":{"enabled":true}}`
+const validInfo = `{"name":"hookci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,2],"github_app":{"slug":"acme-ci"},"slack":{"enabled":true}}`
 
 func infoServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
@@ -33,7 +33,7 @@ func TestFetchInfoParsesHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want HubInfo
-	want.Name, want.Version, want.Mode, want.ProtocolVersions = "zeroci-hub", "1.4.0", "self_hosted", []int{1, 2}
+	want.Name, want.Version, want.Mode, want.ProtocolVersions = "hookci-hub", "1.4.0", "self_hosted", []int{1, 2}
 	want.GithubApp.Slug = "acme-ci"
 	want.Slack.Enabled = true
 	if !reflect.DeepEqual(got, want) {
@@ -49,12 +49,12 @@ func TestFetchInfoErrors(t *testing.T) {
 		notAHub bool
 		want    string
 	}{
-		{"other name", http.StatusOK, `{"name":"gitea","version":"1.0"}`, true, "not a zeroci hub"},
-		{"not json", http.StatusOK, `<html>hello</html>`, true, "not a zeroci hub"},
+		{"other name", http.StatusOK, `{"name":"gitea","version":"1.0"}`, true, "not a hookci hub"},
+		{"not json", http.StatusOK, `<html>hello</html>`, true, "not a hookci hub"},
 		{"404", http.StatusNotFound, `{"error":"not_found"}`, false, "HTTP 404"},
 		{"500", http.StatusInternalServerError, validInfo, false, "HTTP 500"},
-		{"bad protocol range", http.StatusOK, `{"name":"zeroci-hub","protocol_versions":[2,1]}`, false, "protocol_versions"},
-		{"no protocol range", http.StatusOK, `{"name":"zeroci-hub"}`, false, "protocol_versions"},
+		{"bad protocol range", http.StatusOK, `{"name":"hookci-hub","protocol_versions":[2,1]}`, false, "protocol_versions"},
+		{"no protocol range", http.StatusOK, `{"name":"hookci-hub"}`, false, "protocol_versions"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
 )
 
 // Fake records executions and allows configuring mock results. Units are

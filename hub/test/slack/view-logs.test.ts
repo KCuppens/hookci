@@ -105,7 +105,7 @@ describe("View logs button", () => {
     expect(permissionCalls(world)).toHaveLength(2);
   });
 
-  it("tells an unlinked Slack user to link with /zeroci me", async () => {
+  it("tells an unlinked Slack user to link with /hookci me", async () => {
     world.roles[LOGIN] = "read";
     expect(await clickViewLogs(`${RUN}:test`, "U0STRANGER")).toEqual({ response_type: "ephemeral", text: S.slack.viewLogsNotLinked });
   });

@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy"
-	"github.com/KCuppens/zerocideploy/agent/internal/deploy/health"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/health"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/proxy"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 var bgT0 = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -581,7 +581,7 @@ func TestBlueGreen_FirstDeployVerifyFailure_EmptiesRoute(t *testing.T) {
 	if run.State != store.DeployFailed {
 		t.Fatalf("state = %s, want Failed", run.State)
 	}
-	if got, want := r.routeFile(t), "# zerocideploy: no active route for "+bgRepo+" production\n"; got != want {
+	if got, want := r.routeFile(t), "# hookci: no active route for "+bgRepo+" production\n"; got != want {
 		t.Fatalf("route = %q, want the empty route %q", got, want)
 	}
 	if got := r.proxy.servedRoute(); got != r.routeFile(t) {

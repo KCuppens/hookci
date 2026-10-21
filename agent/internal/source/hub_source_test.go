@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/askpass"
+	"github.com/KCuppens/hookci/agent/internal/askpass"
 )
 
-// TestMain lets the test binary stand in for the zeroci binary as git's
-// GIT_ASKPASS helper, the way cmd/zeroci dispatches it.
+// TestMain lets the test binary stand in for the hookci binary as git's
+// GIT_ASKPASS helper, the way cmd/hookci dispatches it.
 func TestMain(m *testing.M) {
 	if os.Getenv(askpass.EnvSock) != "" && len(os.Args) == 2 {
 		os.Exit(askpass.Main(os.Args, os.Stdout))

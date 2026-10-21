@@ -18,8 +18,8 @@ import (
 )
 
 // EnvSock names the variable holding the socket path. Its presence makes the
-// zeroci binary answer a git prompt instead of running the CLI.
-const EnvSock = "ZEROCI_ASKPASS_SOCK"
+// hookci binary answer a git prompt instead of running the CLI.
+const EnvSock = "HOOKCI_ASKPASS_SOCK"
 
 // User is the username GitHub expects with an installation token.
 const User = "x-access-token"
@@ -78,11 +78,11 @@ func answer(ctx context.Context, c net.Conn, token func(ctx context.Context) (st
 }
 
 // Main answers the git prompt in args[1]: "Username..." prints User and
-// "Password..." prints the token read from $ZEROCI_ASKPASS_SOCK. Any other
+// "Password..." prints the token read from $HOOKCI_ASKPASS_SOCK. Any other
 // prompt or a socket failure exits 1 with nothing on stdout.
 func Main(args []string, stdout io.Writer) int {
 	if len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "zeroci askpass: want exactly one prompt argument")
+		fmt.Fprintln(os.Stderr, "hookci askpass: want exactly one prompt argument")
 		return 1
 	}
 	switch prompt := args[1]; {
@@ -92,13 +92,13 @@ func Main(args []string, stdout io.Writer) int {
 	case strings.HasPrefix(prompt, "Password"):
 		tok, err := fetch(os.Getenv(EnvSock))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "zeroci askpass: %v\n", err)
+			fmt.Fprintf(os.Stderr, "hookci askpass: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, tok)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "zeroci askpass: unexpected prompt %q\n", prompt)
+		fmt.Fprintf(os.Stderr, "hookci askpass: unexpected prompt %q\n", prompt)
 		return 1
 	}
 }

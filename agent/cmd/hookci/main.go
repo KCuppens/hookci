@@ -1,12 +1,12 @@
-// Command zeroci is the ZeroCI deployment agent.
+// Command hookci is the HookCI deployment agent.
 package main
 
 import (
 	"os"
 	"strings"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/askpass"
-	"github.com/KCuppens/zerocideploy/agent/internal/cli"
+	"github.com/KCuppens/hookci/agent/internal/askpass"
+	"github.com/KCuppens/hookci/agent/internal/cli"
 )
 
 func main() {

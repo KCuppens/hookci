@@ -10,12 +10,12 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation/isolationtest"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/isolation/isolationtest"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // fakeNetns lists Names and drops each removed name from it.
@@ -79,7 +79,7 @@ type harness struct {
 // reports no match unless a test registers another response first.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "zeroci.db"))
+	db, err := store.Open(filepath.Join(t.TempDir(), "hookci.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestRecoverReportsRetryAccepted(t *testing.T) {
 	}
 }
 
-// A local zeroci run has no trigger and no daemon to run a retry, so it is
+// A local hookci run has no trigger and no daemon to run a retry, so it is
 // only interrupted.
 func TestRecoverLocalRunNotRequeued(t *testing.T) {
 	h := newHarness(t)
@@ -416,20 +416,20 @@ func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.seed(store.Run{ID: "r0", SHA: "sha-r0"}, store.RunSuccess, store.JobSuccess)
 	h.iso.Units = []isolation.Unit{
-		{Name: "zeroci-run-r1-build", Active: "active"},
+		{Name: "hookci-run-r1-build", Active: "active"},
 		{Name: "other-service", Active: "active"},
-		{Name: "zeroci-run-r0-test", Active: "failed"},
+		{Name: "hookci-run-r0-test", Active: "failed"},
 	}
-	h.netns.Names = []string{"zc-r1", "other-ns", "zc-r0"}
+	h.netns.Names = []string{"hci-r1", "other-ns", "hci-r0"}
 	h.docker.Runs = []string{"r1", "r0"}
 
 	rep := h.mustRecover()
 
-	wantUnits := []string{"zeroci-run-r1-build", "zeroci-run-r0-test"}
+	wantUnits := []string{"hookci-run-r1-build", "hookci-run-r0-test"}
 	if !reflect.DeepEqual(h.iso.Stops, wantUnits) || !reflect.DeepEqual(rep.UnitsStopped, wantUnits) {
 		t.Fatalf("stops = %v, report = %v, want %v", h.iso.Stops, rep.UnitsStopped, wantUnits)
 	}
-	wantNS := []string{"zc-r1", "zc-r0"}
+	wantNS := []string{"hci-r1", "hci-r0"}
 	if !reflect.DeepEqual(h.netns.Removed, wantNS) || !reflect.DeepEqual(rep.NetnsRemoved, wantNS) {
 		t.Fatalf("removed = %v, report = %v, want %v", h.netns.Removed, rep.NetnsRemoved, wantNS)
 	}
@@ -449,20 +449,20 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 	h := newHarness(t)
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.iso.Units = []isolation.Unit{
-		{Name: "zeroci-run-r1-build", Active: "active"},
-		{Name: "zeroci-run-r1-unit-tests", Active: "active"},
-		{Name: "zeroci-run-foreign-build", Active: "active"},
-		{Name: "zeroci-run-r10-build", Active: "active"},
+		{Name: "hookci-run-r1-build", Active: "active"},
+		{Name: "hookci-run-r1-unit-tests", Active: "active"},
+		{Name: "hookci-run-foreign-build", Active: "active"},
+		{Name: "hookci-run-r10-build", Active: "active"},
 	}
-	h.netns.Names = []string{"zc-r1", "zc-foreign", "zc-r10"}
+	h.netns.Names = []string{"hci-r1", "hci-foreign", "hci-r10"}
 	h.docker.Runs = []string{"foreign", "r10", "r1"}
 
 	h.mustRecover()
 
-	if want := []string{"zeroci-run-r1-build", "zeroci-run-r1-unit-tests"}; !reflect.DeepEqual(h.iso.Stops, want) {
+	if want := []string{"hookci-run-r1-build", "hookci-run-r1-unit-tests"}; !reflect.DeepEqual(h.iso.Stops, want) {
 		t.Fatalf("stops = %v, want %v", h.iso.Stops, want)
 	}
-	if want := []string{"zc-r1"}; !reflect.DeepEqual(h.netns.Removed, want) {
+	if want := []string{"hci-r1"}; !reflect.DeepEqual(h.netns.Removed, want) {
 		t.Fatalf("removed namespaces = %v, want %v", h.netns.Removed, want)
 	}
 	if want := []string{services.LabelRun + "=r1"}; !reflect.DeepEqual(h.docker.Labels, want) {
@@ -474,7 +474,7 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 			pkills = append(pkills, c.Args)
 		}
 	}
-	if want := [][]string{{"-f", "^pasta .* --netns [^ ]*/zc-r1$"}}; !reflect.DeepEqual(pkills, want) {
+	if want := [][]string{{"-f", "^pasta .* --netns [^ ]*/hci-r1$"}}; !reflect.DeepEqual(pkills, want) {
 		t.Fatalf("pkill calls = %v, want %v", pkills, want)
 	}
 }
@@ -484,7 +484,7 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 func TestRecoverCleansBeforeInterrupting(t *testing.T) {
 	h := newHarness(t)
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
-	h.netns.Names = []string{"zc-r1"}
+	h.netns.Names = []string{"hci-r1"}
 	h.docker.Runs = []string{"r1"}
 	var seen []store.RunState
 	record := func() { seen = append(seen, h.run("r1").State) }
@@ -543,7 +543,7 @@ func TestRecoverPkillNoMatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
-			h.netns.Names = []string{"zc-r1"}
+			h.netns.Names = []string{"hci-r1"}
 			h.runner.On("pkill", nil, tc.resp)
 
 			rep, err := h.recover()
@@ -562,8 +562,8 @@ func TestRecoverIdempotent(t *testing.T) {
 	h := newHarness(t)
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.seed(store.Run{ID: "r2", Kind: "deploy", Env: "prod"}, store.RunVerifying, store.JobSuccess)
-	h.iso.Units = []isolation.Unit{{Name: "zeroci-run-r1-job0", Active: "active"}}
-	h.netns.Names = []string{"zc-r1"}
+	h.iso.Units = []isolation.Unit{{Name: "hookci-run-r1-job0", Active: "active"}}
+	h.netns.Names = []string{"hci-r1"}
 
 	first := h.mustRecover()
 	if len(first.Interrupted) != 2 || len(first.UnitsStopped) != 1 || len(first.NetnsRemoved) != 1 {
@@ -630,7 +630,7 @@ func TestRecoverOutboxEvents(t *testing.T) {
 // resources from another agent's, so it sweeps nothing.
 func TestRecoverReturnsStoreErrors(t *testing.T) {
 	h := newHarness(t)
-	h.iso.Units = []isolation.Unit{{Name: "zeroci-run-r1-job0", Active: "active"}}
+	h.iso.Units = []isolation.Unit{{Name: "hookci-run-r1-job0", Active: "active"}}
 	if err := h.db.Close(); err != nil {
 		t.Fatal(err)
 	}

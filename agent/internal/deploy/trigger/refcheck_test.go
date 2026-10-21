@@ -170,7 +170,7 @@ func TestGitHubRefChecker_TokenError(t *testing.T) {
 func TestGitHubRefChecker_LoadConfig(t *testing.T) {
 	const (
 		sha  = "0123456789abcdef0123456789abcdef01234567"
-		path = "/repos/acme/web/contents/.zeroci.yml?ref=" + sha
+		path = "/repos/acme/web/contents/.hookci.yml?ref=" + sha
 	)
 	valid := `version: 1
 checks:
@@ -192,7 +192,7 @@ deployments:
 	}{
 		{name: "valid", status: 200, body: valid, wantEnv: true},
 		{name: "no config at the commit", status: 404, body: `{"message":"Not Found"}`},
-		{name: "invalid", status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n", err: ".zeroci.yml at 0123456 is invalid"},
+		{name: "invalid", status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n", err: ".hookci.yml at 0123456 is invalid"},
 		{name: "server error", status: 503, err: "github " + path + ": 503"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,7 +254,7 @@ func TestGitHubRefChecker_PermanentErrors(t *testing.T) {
 	})
 	t.Run("invalid config", func(t *testing.T) {
 		const sha = "0123456789abcdef0123456789abcdef01234567"
-		g := &github{path: "/repos/acme/web/contents/.zeroci.yml?ref=" + sha, status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n"}
+		g := &github{path: "/repos/acme/web/contents/.hookci.yml?ref=" + sha, status: 200, body: "version: 1\ndeployments:\n  production:\n    strategy: nope\n"}
 		_, err := newChecker(t, g).LoadConfig(context.Background(), "acme/web", sha)
 		if !IsPermanent(err) {
 			t.Fatalf("LoadConfig err = %v, want permanent", err)

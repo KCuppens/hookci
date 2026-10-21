@@ -80,12 +80,12 @@ describe("purgeExpired", () => {
     await env.DB.batch([
       insertRun("run-old", RUN_CUTOFF - DAY, "sha-shared"),
       insertRun("run-new", NOW - HOUR, "sha-shared"),
-      env.DB.prepare("INSERT INTO check_runs (installation_id, repo_id, head_sha, name, check_run_id) VALUES (1, 10, 'sha-shared', 'zeroci', 1)"),
+      env.DB.prepare("INSERT INTO check_runs (installation_id, repo_id, head_sha, name, check_run_id) VALUES (1, 10, 'sha-shared', 'hookci', 1)"),
     ]);
 
     expect(await purgeExpired(env.DB, NOW)).toBe(1);
     expect(await column("SELECT run_id AS v FROM runs")).toEqual(["run-new"]);
-    expect(await column("SELECT name AS v FROM check_runs")).toEqual(["zeroci"]);
+    expect(await column("SELECT name AS v FROM check_runs")).toEqual(["hookci"]);
   });
 
   it("deletes the deploy renders of expired runs and deploy triggers past retention", async () => {

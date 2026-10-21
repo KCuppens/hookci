@@ -17,7 +17,7 @@ import {
   slackCalls,
   TEAM,
   USER,
-  zeroci,
+  hookci,
 } from "./commands-helpers";
 import { seedAgent } from "./do/agent-socket";
 
@@ -38,14 +38,14 @@ function watches() {
   return listWatchesForRepo(tenantDb(env.DB, INSTALLATION), REPO.repo_id);
 }
 
-describe("/zeroci watch", () => {
+describe("/hookci watch", () => {
   it("asks for an invite and creates no watch when the bot is not in the channel", async () => {
     world.roles[LOGIN] = "write";
     world.slack.respond("POST", "/api/conversations.info", () => Response.json({ ok: true, channel: { id: CHANNEL, is_member: false } }));
 
-    const reply = await zeroci(world, "watch acme/api");
+    const reply = await hookci(world, "watch acme/api");
 
-    expect(reply.text).toContain("/invite @zeroci");
+    expect(reply.text).toContain("/invite @hookci");
     expect(await watches()).toEqual([]);
     expect(slackCalls(world, "chat.postMessage")).toEqual([]);
   });
@@ -54,14 +54,14 @@ describe("/zeroci watch", () => {
     world.roles[LOGIN] = "write";
     world.slack.respond("POST", "/api/conversations.info", () => Response.json({ ok: false, error: "channel_not_found" }));
 
-    expect((await zeroci(world, "watch acme/api")).text).toBe(S.slack.inviteFirst);
+    expect((await hookci(world, "watch acme/api")).text).toBe(S.slack.inviteFirst);
     expect(await watches()).toEqual([]);
   });
 
   it("watches quietly for a write user and posts one test badge as the bot", async () => {
     world.roles[LOGIN] = "write";
 
-    const reply = await zeroci(world, "watch acme/api quiet");
+    const reply = await hookci(world, "watch acme/api quiet");
 
     expect(reply.text).toBe(S.slack.watching("acme/api"));
     expect(await watches()).toEqual([
@@ -76,7 +76,7 @@ describe("/zeroci watch", () => {
   it("takes dm as alert mode and a maintainer counts as write", async () => {
     world.roles[LOGIN] = "maintain";
 
-    await zeroci(world, "watch ACME/API dm");
+    await hookci(world, "watch ACME/API dm");
 
     expect(await watches()).toEqual([expect.objectContaining({ notify: "normal", alert: "dm" })]);
   });
@@ -84,41 +84,41 @@ describe("/zeroci watch", () => {
   it("refuses a user who can only read the repo", async () => {
     world.roles[LOGIN] = "read";
 
-    expect((await zeroci(world, "watch acme/api")).text).toBe(S.slack.forbidden);
+    expect((await hookci(world, "watch acme/api")).text).toBe(S.slack.forbidden);
     expect(await watches()).toEqual([]);
     expect(slackCalls(world, "conversations.info")).toEqual([]);
   });
 
-  it("prompts an unlinked user to run /zeroci me", async () => {
-    const reply = await zeroci(world, "watch acme/api", "U0STRANGER");
+  it("prompts an unlinked user to run /hookci me", async () => {
+    const reply = await hookci(world, "watch acme/api", "U0STRANGER");
 
     expect(reply.text).toBe(S.slack.notLinked);
-    expect(reply.text).toContain("/zeroci me");
+    expect(reply.text).toContain("/hookci me");
     expect(permissionCalls(world)).toEqual([]);
   });
 
   it("answers a repo outside the linked installations with repo not found", async () => {
     world.roles[LOGIN] = "admin";
 
-    expect((await zeroci(world, "watch acme/elsewhere")).text).toBe(S.slack.repoNotFound);
+    expect((await hookci(world, "watch acme/elsewhere")).text).toBe(S.slack.repoNotFound);
   });
 
   it("answers an unknown option with usage", async () => {
     world.roles[LOGIN] = "write";
 
-    expect((await zeroci(world, "watch acme/api loud")).text).toBe(S.slack.usage("/zeroci watch <owner/repo> [quiet] [dm]"));
+    expect((await hookci(world, "watch acme/api loud")).text).toBe(S.slack.usage("/hookci watch <owner/repo> [quiet] [dm]"));
     expect(await watches()).toEqual([]);
   });
 });
 
-describe("/zeroci unwatch", () => {
+describe("/hookci unwatch", () => {
   it("removes this channel's watch and says so when there is none", async () => {
     world.roles[LOGIN] = "write";
-    await zeroci(world, "watch acme/api");
+    await hookci(world, "watch acme/api");
 
-    expect((await zeroci(world, "unwatch acme/api")).text).toBe(S.slack.unwatched("acme/api"));
+    expect((await hookci(world, "unwatch acme/api")).text).toBe(S.slack.unwatched("acme/api"));
     expect(await watches()).toEqual([]);
-    expect((await zeroci(world, "unwatch acme/api")).text).toBe(S.slack.notWatching("acme/api"));
+    expect((await hookci(world, "unwatch acme/api")).text).toBe(S.slack.notWatching("acme/api"));
   });
 });
 
@@ -126,26 +126,26 @@ describe("GitHub permission cache", () => {
   it("asks GitHub once per user and repo within 5 minutes and again after", async () => {
     world.roles[LOGIN] = "write";
 
-    await zeroci(world, "watch acme/api");
-    await zeroci(world, "unwatch acme/api");
+    await hookci(world, "watch acme/api");
+    await hookci(world, "unwatch acme/api");
     expect(permissionCalls(world)).toHaveLength(1);
 
     testClock.advance(301_000);
-    await zeroci(world, "watch acme/api");
+    await hookci(world, "watch acme/api");
     expect(permissionCalls(world)).toHaveLength(2);
   });
 
   it("drops a revoked role after the 5 minutes", async () => {
     world.roles[LOGIN] = "write";
-    await zeroci(world, "watch acme/api");
+    await hookci(world, "watch acme/api");
 
     world.roles[LOGIN] = "read";
     testClock.advance(301_000);
-    expect((await zeroci(world, "unwatch acme/api")).text).toBe(S.slack.forbidden);
+    expect((await hookci(world, "unwatch acme/api")).text).toBe(S.slack.forbidden);
   });
 });
 
-describe("/zeroci status", () => {
+describe("/hookci status", () => {
   it("lists the agents with their online state and the repo's last runs", async () => {
     world.roles[LOGIN] = "read";
     const agent = await seedAgent(INSTALLATION);
@@ -170,7 +170,7 @@ describe("/zeroci status", () => {
       log_key: null,
     });
 
-    const reply = await zeroci(world, "status acme/api");
+    const reply = await hookci(world, "status acme/api");
 
     expect(reply.text).toContain("builder: offline, last seen never");
     expect(reply.text).toContain(S.slack.statusRuns("acme/api"));
@@ -180,7 +180,7 @@ describe("/zeroci status", () => {
   it("shows agents without a repo to any linked user", async () => {
     await seedAgent(INSTALLATION);
 
-    const reply = await zeroci(world, "status");
+    const reply = await hookci(world, "status");
 
     expect(reply.text).toContain("builder: offline");
     expect(permissionCalls(world)).toEqual([]);
@@ -198,7 +198,7 @@ describe("/zeroci status", () => {
       }),
     } as unknown as typeof env.AGENT_DO;
     try {
-      const reply = await zeroci(world, "status");
+      const reply = await hookci(world, "status");
       expect(reply.text).toContain("builder: offline, last seen never");
       expect(reply.text).toContain("broken: offline, last seen <!date^5^");
     } finally {
@@ -207,13 +207,13 @@ describe("/zeroci status", () => {
   });
 });
 
-describe("/zeroci help", () => {
+describe("/hookci help", () => {
   it("lists every command on its own line", async () => {
-    const reply = await zeroci(world, "help");
+    const reply = await hookci(world, "help");
 
     expect(reply.text).toBe(S.slack.help);
     for (const cmd of ["watch", "unwatch", "status", "retry", "bind", "me", "export", "delete-my-data", "help"]) {
-      expect(reply.text.split("\n").some((line) => line.startsWith(`\`/zeroci ${cmd}`))).toBe(true);
+      expect(reply.text.split("\n").some((line) => line.startsWith(`\`/hookci ${cmd}`))).toBe(true);
     }
   });
 });

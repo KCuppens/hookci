@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 // TestSecondSignalKills: the first SIGINT cancels the command context; a
 // later one kills a process whose teardown hangs. The child is this test
-// binary run again with ZEROCI_TEST_SIGNAL_CHILD set.
+// binary run again with HOOKCI_TEST_SIGNAL_CHILD set.
 func TestSecondSignalKills(t *testing.T) {
-	if os.Getenv("ZEROCI_TEST_SIGNAL_CHILD") == "1" {
+	if os.Getenv("HOOKCI_TEST_SIGNAL_CHILD") == "1" {
 		ctx, stop := signalContext()
 		defer stop()
 		fmt.Println("ready")
@@ -29,7 +29,7 @@ func TestSecondSignalKills(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSecondSignalKills$")
-	cmd.Env = append(os.Environ(), "ZEROCI_TEST_SIGNAL_CHILD=1")
+	cmd.Env = append(os.Environ(), "HOOKCI_TEST_SIGNAL_CHILD=1")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,8 @@ func TestMainVersion(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("exit code = %d, want %d", code, ExitOK)
 	}
-	if !strings.Contains(stdout.String(), "zeroci dev") {
-		t.Fatalf("stdout = %q, want to contain %q", stdout.String(), "zeroci dev")
+	if !strings.Contains(stdout.String(), "hookci dev") {
+		t.Fatalf("stdout = %q, want to contain %q", stdout.String(), "hookci dev")
 	}
 }
 
@@ -95,7 +95,7 @@ func TestMainVersionFlag(t *testing.T) {
 	if code := Main([]string{"--version"}, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("exit = %d; stderr %q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "zeroci 1.2.3 (abcdef0)\n"; got != want {
+	if got, want := stdout.String(), "hookci 1.2.3 (abcdef0)\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

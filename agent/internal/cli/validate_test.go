@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 const errorsFixture = "testdata/validate_errors.yml"
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), ".zeroci.yml")
+	path := filepath.Join(t.TempDir(), ".hookci.yml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ func TestValidateReadError(t *testing.T) {
 
 func TestValidateDefaultPath(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".zeroci.yml"), []byte("version: 1\nchecks:\n  jobs:\n    test:\n      run: npm test\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".hookci.yml"), []byte("version: 1\nchecks:\n  jobs:\n    test:\n      run: npm test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	if code, stdout, stderr := validate(); code != ExitOK || stdout != "ok: .zeroci.yml (1 jobs)\n" {
+	if code, stdout, stderr := validate(); code != ExitOK || stdout != "ok: .hookci.yml (1 jobs)\n" {
 		t.Errorf("validate = %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

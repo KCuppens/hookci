@@ -255,7 +255,7 @@ describe("D1 writes and Slack calls under load", () => {
     expect(await runStates(saved.DB, [runId])).toEqual([{ run_id: runId, state: "success", finished_at: expect.any(Number) }]);
     expect(slackCalls).toContainEqual(expect.objectContaining({ team: tenant.teamId, method: "chat.postMessage" }));
     expect(gh.calls).toContainEqual(expect.objectContaining({ method: "POST", url: `https://api.github.com/repos/${tenant.fullName}/check-runs` }));
-    // The aggregate zeroci check is the first one created, so the fake gave it id 1.
+    // The aggregate hookci check is the first one created, so the fake gave it id 1.
     expect(gh.calls).toContainEqual(
       expect.objectContaining({
         method: "PATCH",
@@ -283,7 +283,7 @@ describe("D1 writes and Slack calls under load", () => {
           for (let r = 1; r <= 10; r++) {
             const res = await agent.stub.fetch("https://do/trigger", {
               method: "POST",
-              headers: { "x-zeroci-agent-id": agent.agentId },
+              headers: { "x-hookci-agent-id": agent.agentId },
               body: JSON.stringify({
                 installationId: tenant.installationId,
                 repoId: tenant.repoId,

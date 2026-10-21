@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 const testSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -159,11 +159,11 @@ func TestFetchArgv(t *testing.T) {
 	f.On("git", nil, execx.FakeResponse{})
 	g := Git{Runner: f}
 	m := NewMirrors("/state/mirrors", g)
-	refspecs := []string{testSHA, "+refs/pull/12/head:refs/zeroci/pull/12"}
+	refspecs := []string{testSHA, "+refs/pull/12/head:refs/hookci/pull/12"}
 	if err := m.Fetch(context.Background(), "o/r", refspecs, []string{"GIT_ASKPASS=/x"}); err != nil {
 		t.Fatal(err)
 	}
-	want := g.Args("-C", "/state/mirrors/o__r.git", "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/zeroci/"+testSHA, "+refs/pull/12/head:refs/zeroci/pull/12")
+	want := g.Args("-C", "/state/mirrors/o__r.git", "fetch", "--no-tags", "--no-recurse-submodules", "--prune", "origin", "+"+testSHA+":refs/hookci/"+testSHA, "+refs/pull/12/head:refs/hookci/pull/12")
 	c := f.Calls[0]
 	if !slices.Equal(c.Args, want) {
 		t.Fatalf("argv = %q\nwant %q", c.Args, want)
@@ -190,8 +190,8 @@ func TestFetchRejectsBadSHA(t *testing.T) {
 		{"HEAD"},
 		{"refs/heads/main"},
 		{"+refs/heads/main:refs/heads/main"},
-		{"refs/pull/1/head:refs/zeroci/pull/1"},
-		{"+refs/pull/1/head:refs/zeroci/../heads/main"},
+		{"refs/pull/1/head:refs/hookci/pull/1"},
+		{"+refs/pull/1/head:refs/hookci/../heads/main"},
 		{"--upload-pack=touch /tmp/pwned"},
 		{testSHA, "main"},
 	} {
@@ -296,7 +296,7 @@ func TestFetchPinsSHAUntilLastRelease(t *testing.T) {
 	g := Git{Runner: f}
 	m := NewMirrors("/state/mirrors", g)
 	ctx := context.Background()
-	deleteRef := g.Args("-C", "/state/mirrors/o__r.git", "update-ref", "-d", "refs/zeroci/"+testSHA)
+	deleteRef := g.Args("-C", "/state/mirrors/o__r.git", "update-ref", "-d", "refs/hookci/"+testSHA)
 	clone := func() func() {
 		t.Helper()
 		release, err := m.CloneShared(ctx, "o/r", testSHA, filepath.Join(t.TempDir(), "src"), nil)

@@ -96,7 +96,7 @@ describe("aggregateFor", () => {
     expect(aggregateFor(runView({ state: "interrupted" }), HUB)).toMatchObject({ status: "completed", conclusion: "cancelled" });
   });
 
-  it("a run without .zeroci.yml is skipped with the no checks title", () => {
+  it("a run without .hookci.yml is skipped with the no checks title", () => {
     expect(aggregateFor(runView({ state: "skipped", reason: "no_config" }), HUB)).toMatchObject({ conclusion: "skipped", title: S.noChecks });
   });
 });

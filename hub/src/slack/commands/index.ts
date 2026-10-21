@@ -1,4 +1,4 @@
-// Every /zeroci subcommand module, imported for its registerCommand call by
+// Every /hookci subcommand module, imported for its registerCommand call by
 // the Worker entry and by SlackWorkspaceDO, which runs the handlers.
 
 import "../sink-command";

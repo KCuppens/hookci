@@ -19,7 +19,7 @@ import (
 //
 // forks has no rule here: the schema limits it to gated or never, and never
 // is enforced by the hub, which concludes fork checks action_required (M1).
-func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
+func checkSemantics(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
 	var diags Diagnostics
 	if c := cfg.Checks; c != nil {
 		diags = append(diags, checkReservedJobNames(c.Jobs, li)...)
@@ -36,7 +36,7 @@ func checkSemantics(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnost
 }
 
 // reservedJobNames are taken by the setup phase: its log is logs/setup.log,
-// its unit zeroci-run-<run>-setup, and `zeroci logs <run> setup` shows it.
+// its unit hookci-run-<run>-setup, and `hookci logs <run> setup` shows it.
 var reservedJobNames = []string{"setup"}
 
 // checkReservedJobNames rejects jobs that would clash with the setup phase.
@@ -221,7 +221,7 @@ func checkLimits(c *Checks, li lineIndex) Diagnostics {
 
 // checkTrust refuses trust: all except on a self-hosted hub with no
 // deployments, where only the operator's own runner is at stake.
-func checkTrust(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
+func checkTrust(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
 	if cfg.Checks == nil || cfg.Checks.Trust != ChecksTrustAll {
 		return nil
 	}
@@ -252,7 +252,7 @@ func checkRedact(patterns []string, li lineIndex) Diagnostics {
 
 // checkDeployments reports every ValidateDeployments problem, and warns about
 // env_file permissions on this machine.
-func checkDeployments(cfg *ZeroCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
+func checkDeployments(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
 	var diags Diagnostics
 	for _, e := range ValidateDeployments(cfg) {
 		diags = append(diags, validationDiagnostic(e, li))

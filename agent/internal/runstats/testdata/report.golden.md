@@ -1,4 +1,4 @@
-## ZeroCI run stats
+## HookCI run stats
 
 Window: 2026-03-01T00:00:00Z to 2026-03-15T00:00:00Z (14.0 days).
 

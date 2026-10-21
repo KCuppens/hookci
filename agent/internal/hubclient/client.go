@@ -15,10 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/clock"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/clock"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 // Session timings.
@@ -61,7 +61,7 @@ var ErrNotConnected = errors.New("hubclient: not connected")
 type Config struct {
 	HubURL     string // e.g. https://ci.webuno.io
 	AgentID    string
-	Credential string // zc_agent_...
+	Credential string // hci_agent_...
 	Version    string
 	Protocol   int         // 0 = protocol.Version
 	Dialer     Dialer      // nil = real websocket dialer
@@ -285,7 +285,7 @@ func (c *Client) session(ctx context.Context) (time.Duration, error) {
 	c.connected.Store(true)
 	c.log.Info("connected to hub", "hub", c.cfg.HubURL, "agent_id", s.welcome.AgentId, "hub_version", s.welcome.HubVersion)
 	if latest := deref(s.welcome.LatestAgentVersion); latest != "" && version.Compare(c.cfg.Version, latest) < 0 {
-		c.log.Warn(fmt.Sprintf("upgrade available: %s -> %s", c.cfg.Version, latest), "hint", "run zeroci upgrade")
+		c.log.Warn(fmt.Sprintf("upgrade available: %s -> %s", c.cfg.Version, latest), "hint", "run hookci upgrade")
 	}
 
 	err = c.loop(ctx, s, ping, idle, live.frames)
@@ -483,7 +483,7 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 	}
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+c.cfg.Credential)
-	h.Set("User-Agent", "zeroci-agent/"+c.cfg.Version)
+	h.Set("User-Agent", "hookci-agent/"+c.cfg.Version)
 	wc, err := c.dialer.Dial(ctx, u, h)
 	if err != nil {
 		var se *StatusError
@@ -543,7 +543,7 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 			case protocol.Welcome:
 				if min := deref(v.MinAgentVersion); min != "" && version.Compare(c.cfg.Version, min) < 0 {
 					s.close(closeNormal, "agent too old")
-					return nil, fmt.Errorf("%w: agent %s is older than the hub minimum %s; run zeroci upgrade", ErrAgentTooOld, c.cfg.Version, min)
+					return nil, fmt.Errorf("%w: agent %s is older than the hub minimum %s; run hookci upgrade", ErrAgentTooOld, c.cfg.Version, min)
 				}
 				s.welcome = v
 				return s, nil

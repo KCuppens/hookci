@@ -1,6 +1,6 @@
 package cli
 
-// Exit codes returned by Main. The zeroci-agent@ unit does not restart an
+// Exit codes returned by Main. The hookci-agent@ unit does not restart an
 // agent that exits with ExitNotConfigured, ExitRevoked or ExitAgentTooOld:
 // a restart cannot fix any of them.
 const (
@@ -12,7 +12,7 @@ const (
 	ExitUsage = 2
 	// ExitNoChecks indicates no checks were configured to run.
 	ExitNoChecks = 3
-	// ExitNotConfigured is zeroci agent finding no usable agent.json in
+	// ExitNotConfigured is hookci agent finding no usable agent.json in
 	// its state directory; it shares its value with ExitNoChecks.
 	ExitNotConfigured = 3
 	// ExitRevoked indicates the hub revoked the agent; it shares its value
@@ -22,7 +22,7 @@ const (
 	ExitAgentTooOld = 4
 	// ExitInternal indicates an internal error unrelated to user input.
 	ExitInternal = 5
-	// ExitUpgradeAvailable is `zeroci upgrade --check` finding a newer
+	// ExitUpgradeAvailable is `hookci upgrade --check` finding a newer
 	// release.
 	ExitUpgradeAvailable = 10
 )

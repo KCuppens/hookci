@@ -18,7 +18,7 @@ import { type ButtonElement, button } from "./blocks";
 import { ephemeral } from "./commands/common";
 import { registerAction } from "./registry";
 
-export const VIEW_LOGS_ACTION = "zeroci_view_logs";
+export const VIEW_LOGS_ACTION = "hookci_view_logs";
 
 export function viewLogsButton(runId: string, job: string): ButtonElement {
 	return button(VIEW_LOGS_ACTION, S.slack.viewLogs, `${runId}:${job}`);

@@ -12,19 +12,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/cache"
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
-	"github.com/KCuppens/zerocideploy/agent/internal/egress"
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/isolation"
-	"github.com/KCuppens/zerocideploy/agent/internal/logpipe"
-	"github.com/KCuppens/zerocideploy/agent/internal/netns"
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
-	"github.com/KCuppens/zerocideploy/agent/internal/redact"
-	"github.com/KCuppens/zerocideploy/agent/internal/scheduler"
-	"github.com/KCuppens/zerocideploy/agent/internal/services"
-	"github.com/KCuppens/zerocideploy/agent/internal/source"
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/egress"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/isolation"
+	"github.com/KCuppens/hookci/agent/internal/logpipe"
+	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/redact"
+	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/services"
+	"github.com/KCuppens/hookci/agent/internal/source"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 func job(name string) store.Job { return store.Job{RunID: "01run", Name: name} }
@@ -73,7 +73,7 @@ func TestRunJobSuccess(t *testing.T) {
 	run := localRun()
 	h.create(t, run, cfg)
 	h.iso.jobs["build"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
-		writeOut(s.Stdout, "::zeroci step compile\nbuilt ok\n")
+		writeOut(s.Stdout, "::hookci step compile\nbuilt ok\n")
 		return isolation.Result{}, nil
 	}
 
@@ -111,7 +111,7 @@ func TestRunJobSuccess(t *testing.T) {
 	if want := (isolation.Limits{CPUs: 2, MemoryBytes: 1 << 30, Tasks: 256, Timeout: time.Minute}); s.Limits != want {
 		t.Errorf("Limits = %+v, want %+v", s.Limits, want)
 	}
-	for _, kv := range []string{"ZEROCI_SHA=" + h.src.sha, "HOME=" + dir.Home(), "HTTPS_PROXY=http://127.0.0.1:4321"} {
+	for _, kv := range []string{"HOOKCI_SHA=" + h.src.sha, "HOME=" + dir.Home(), "HTTPS_PROXY=http://127.0.0.1:4321"} {
 		if !hasEnv(s.Env, kv) {
 			t.Errorf("env lacks %s: %q", kv, s.Env)
 		}
@@ -129,14 +129,14 @@ func TestRunJobSuccess(t *testing.T) {
 }
 
 func TestRunJobStepsTotal(t *testing.T) {
-	script := "echo '::zeroci step deps'\nnpm ci\necho '::zeroci step compile'\nmake\n" +
-		"echo '::zeroci step test'\necho '::zeroci step lint'\necho '::zeroci step pack'\n"
+	script := "echo '::hookci step deps'\nnpm ci\necho '::hookci step compile'\nmake\n" +
+		"echo '::hookci step test'\necho '::hookci step lint'\necho '::hookci step pack'\n"
 	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "build", Run: script}}}
 	h := newHarness(t, "none", cfg, nil)
 	run := localRun()
 	h.create(t, run, cfg)
 	h.iso.jobs["build"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
-		writeOut(s.Stdout, "::zeroci step deps\n::zeroci step compile\n")
+		writeOut(s.Stdout, "::hookci step deps\n::hookci step compile\n")
 		return isolation.Result{}, nil
 	}
 
@@ -547,7 +547,7 @@ func TestTeardownOrder(t *testing.T) {
 	if _, err := h.ex.RunJob(ctx, run, job("build")); err != nil {
 		t.Fatal(err)
 	}
-	if !hasEnv(h.iso.spec(t, "build").Env, "DATABASE_URL=postgres://zeroci@localhost/zeroci") {
+	if !hasEnv(h.iso.spec(t, "build").Env, "DATABASE_URL=postgres://hookci@localhost/hookci") {
 		t.Error("job env lacks the postgres env")
 	}
 	before := len(h.rec.list())
@@ -736,9 +736,9 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 	}
 
 	h = newHarness(t, "none", cfg, nil)
-	h.cfgErr = errors.New("zeroci.yml: bad")
+	h.cfgErr = errors.New("hookci.yml: bad")
 	err = h.ex.RunSetup(context.Background(), run)
-	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "zeroci.yml: bad") {
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "hookci.yml: bad") {
 		t.Errorf("config error: err = %v, want ErrSetupFailed with the cause", err)
 	}
 	finish(t, h, run, store.RunFailed)

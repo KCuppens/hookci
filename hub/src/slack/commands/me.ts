@@ -1,5 +1,5 @@
-// /zeroci me: shows the caller's GitHub link or offers a one-use button to
-// create it. /zeroci me unlink removes the caller's link in this workspace.
+// /hookci me: shows the caller's GitHub link or offers a one-use button to
+// create it. /hookci me unlink removes the caller's link in this workspace.
 
 import { deleteUserLink } from "../../db/workspaces";
 import { systemClock } from "../../do/clock";

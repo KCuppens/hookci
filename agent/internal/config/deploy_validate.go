@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/proxy/caddy"
+	"github.com/KCuppens/hookci/agent/internal/proxy/caddy"
 	"github.com/bmatcuk/doublestar/v4"
 )
 
@@ -53,7 +53,7 @@ func isCompose(s DeploymentStrategy) bool {
 
 // fillDeploymentDefaults gives each deployment without a verify or retain
 // section one holding the schema defaults, as if the file had written {}.
-func fillDeploymentDefaults(cfg *ZeroCIConfig) {
+func fillDeploymentDefaults(cfg *HookCIConfig) {
 	for env, d := range cfg.Deployments {
 		if d.Verify == nil {
 			d.Verify = &DeploymentVerify{}
@@ -72,7 +72,7 @@ func fillDeploymentDefaults(cfg *ZeroCIConfig) {
 // the route reload command, durations, the migrate.before hook, and needs
 // between environments. cfg must have passed the schema. Every problem is
 // returned, in environment name order.
-func ValidateDeployments(cfg *ZeroCIConfig) []ValidationError {
+func ValidateDeployments(cfg *HookCIConfig) []ValidationError {
 	var errs []ValidationError
 	names := sortedKeys(cfg.Deployments)
 	for _, env := range names {
@@ -113,7 +113,7 @@ func validateDeployment(env string, d Deployment) []ValidationError {
 				Fix: "use a path that starts with /, for example " + example})
 		}
 	}
-	absolute("env_file", d.EnvFile, "/etc/zeroci/"+env+".env")
+	absolute("env_file", d.EnvFile, "/etc/hookci/"+env+".env")
 	if r := d.Route; r != nil {
 		if !path.IsAbs(r.File) || path.Clean(r.File) != r.File {
 			errs = append(errs, ValidationError{Path: base + ".route.file",
@@ -126,7 +126,7 @@ func validateDeployment(env string, d Deployment) []ValidationError {
 		}
 	}
 	if d.Compose != nil {
-		absolute("compose.marker", d.Compose.Marker, "/var/lib/zeroci/"+env+".color")
+		absolute("compose.marker", d.Compose.Marker, "/var/lib/hookci/"+env+".color")
 		if slices.Contains(strings.Split(d.Compose.File, "/"), "..") {
 			errs = append(errs, ValidationError{Path: base + ".compose.file",
 				Msg: fmt.Sprintf("compose.file %s must not contain ..", quote(d.Compose.File)),
@@ -190,7 +190,7 @@ func validateMigrate(base string, strategy DeploymentStrategy, m DeploymentMigra
 	if !path.IsAbs(dir) || path.Clean(dir) == "/" {
 		errs = append(errs, ValidationError{Path: base + ".before.output_dir",
 			Msg: fmt.Sprintf("output_dir %s must be an absolute path other than /", quote(dir)),
-			Fix: "use a backup directory such as /var/backups/zeroci/app"})
+			Fix: "use a backup directory such as /var/backups/hookci/app"})
 	}
 	return errs
 }
@@ -241,7 +241,7 @@ func validateHealthURL(raw string, compose bool, p string) []ValidationError {
 
 // validateNeeds rejects needs that name an unknown environment or the
 // environment itself.
-func validateNeeds(env string, deps ZeroCIConfigDeployments, names []string) []ValidationError {
+func validateNeeds(env string, deps HookCIConfigDeployments, names []string) []ValidationError {
 	var errs []ValidationError
 	for i, need := range deps[env].Needs {
 		p := joinIndex("deployments."+env+".needs", i)
@@ -258,7 +258,7 @@ func validateNeeds(env string, deps ZeroCIConfigDeployments, names []string) []V
 // once, on the needs of the environment whose need closes it: with
 // production needing staging and staging needing production, staging is the
 // one reported.
-func deploymentCycles(deps ZeroCIConfigDeployments) []ValidationError {
+func deploymentCycles(deps HookCIConfigDeployments) []ValidationError {
 	graph := make(map[string][]string, len(deps))
 	for env, d := range deps {
 		graph[env] = d.Needs

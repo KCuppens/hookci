@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/store"
+	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // UnitAccess lets the deploy unit, where compose runs as the deploy user,

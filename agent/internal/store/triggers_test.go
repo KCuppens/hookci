@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/protocol"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 )
 
 func TestAcceptTriggerOnce(t *testing.T) {

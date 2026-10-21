@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // plainGit runs unhardened git in dir with an isolated config, for test setup.
@@ -98,7 +98,7 @@ func TestRealGitLocalCheckout(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "untracked.txt")); !os.IsNotExist(err) {
 		t.Fatalf("untracked file present in checkout: %v", err)
 	}
-	if !co.Dirty || !strings.Contains(warn.String(), "zeroci runs the committed HEAD "+head[:7]) {
+	if !co.Dirty || !strings.Contains(warn.String(), "hookci runs the committed HEAD "+head[:7]) {
 		t.Fatalf("Dirty = %v, warning = %q", co.Dirty, warn.String())
 	}
 
@@ -127,11 +127,11 @@ func TestRealGitLocalCheckout(t *testing.T) {
 	}
 
 	// The fetched sha is pinned by a ref until the checkout is released.
-	if got, want := plainGit(t, mirror, "for-each-ref", "--format=%(refname)", "refs/zeroci/"), "refs/zeroci/"+head; got != want {
+	if got, want := plainGit(t, mirror, "for-each-ref", "--format=%(refname)", "refs/hookci/"), "refs/hookci/"+head; got != want {
 		t.Fatalf("refs before release = %q, want %q", got, want)
 	}
 	co.Release()
-	if got := plainGit(t, mirror, "for-each-ref", "refs/zeroci/"); got != "" {
+	if got := plainGit(t, mirror, "for-each-ref", "refs/hookci/"); got != "" {
 		t.Fatalf("refs after release = %q, want none", got)
 	}
 }

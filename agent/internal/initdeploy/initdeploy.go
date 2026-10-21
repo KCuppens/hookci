@@ -1,6 +1,6 @@
-// Package initdeploy implements zeroci init --deploy: it finds the
+// Package initdeploy implements hookci init --deploy: it finds the
 // repository's Docker Compose file, picks the web service and appends a
-// deployments.production block to .zeroci.yml that passes
+// deployments.production block to .hookci.yml that passes
 // config.ValidateDeployments.
 package initdeploy
 
@@ -21,7 +21,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // ComposeNames are the compose file names FindComposeFile looks for, in the
@@ -29,7 +29,7 @@ import (
 var ComposeNames = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
 
 const (
-	configName        = ".zeroci.yml"
+	configName        = ".hookci.yml"
 	environment       = "production"
 	defaultHealthPath = "/healthz"
 )
@@ -97,7 +97,7 @@ func Draft(project, file, service, healthPath, repo string) *yaml.Node {
 }
 
 // Run drafts deployments.production for the repository at opts.Dir and
-// appends it to its .zeroci.yml, creating the file when it is absent. The
+// appends it to its .hookci.yml, creating the file when it is absent. The
 // existing bytes of the file are kept as they are. Nothing is written when
 // the file already has deployments or the result fails ValidateDeployments.
 func Run(opts Options) error {
@@ -113,7 +113,7 @@ func Run(opts Options) error {
 	root := doc.Content[0]
 	for i := 0; i < len(root.Content); i += 2 {
 		if root.Content[i].Value == "deployments" {
-			return errors.New("deployments: already present in .zeroci.yml; edit it or remove it to re-run init --deploy")
+			return errors.New("deployments: already present in .hookci.yml; edit it or remove it to re-run init --deploy")
 		}
 	}
 
@@ -293,7 +293,7 @@ func validate(content []byte) error {
 	if err != nil {
 		return fmt.Errorf("init --deploy: %s: %w", configName, err)
 	}
-	var cfg config.ZeroCIConfig
+	var cfg config.HookCIConfig
 	if err := json.Unmarshal(encoded, &cfg); err != nil {
 		return fmt.Errorf("init --deploy: %s: %w", configName, err)
 	}
@@ -344,7 +344,7 @@ func printNextSteps(out io.Writer, path, repo string) {
 	fmt.Fprintln(out, "Next steps on the deploy host:")
 	fmt.Fprintf(out, "  1. Create %s with the app's environment, then run: chmod 600 %s\n", env, env)
 	fmt.Fprintf(out, "  2. Add this line inside your site block in the Caddyfile: import %s\n", routeFile(repo))
-	fmt.Fprintln(out, "  3. Run: zeroci doctor")
+	fmt.Fprintln(out, "  3. Run: hookci doctor")
 }
 
 func routeFile(repo string) string {
@@ -352,7 +352,7 @@ func routeFile(repo string) string {
 }
 
 func envFile(repo string) string {
-	return "/etc/zeroci/env/" + repo + "/" + environment + ".env"
+	return "/etc/hookci/env/" + repo + "/" + environment + ".env"
 }
 
 // projectName is repo lowercased with every character outside [a-z0-9-]

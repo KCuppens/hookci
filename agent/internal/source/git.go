@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
 // stderrLimit bounds how much of git's stderr is kept in an error.

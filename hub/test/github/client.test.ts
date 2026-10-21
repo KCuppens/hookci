@@ -158,7 +158,7 @@ describe("GitHubRequester.request", () => {
     expect(seen[1]?.get("if-none-match")).toBe('"v1"');
     expect(seen[1]?.get("accept")).toBe("application/vnd.github+json");
     expect(seen[1]?.get("x-github-api-version")).toBe("2022-11-28");
-    expect(seen[1]?.get("user-agent")).toBe("zeroci-hub");
+    expect(seen[1]?.get("user-agent")).toBe("hookci-hub");
     expect(seen[1]?.get("authorization")).toBe("Bearer ghu_token");
   });
 

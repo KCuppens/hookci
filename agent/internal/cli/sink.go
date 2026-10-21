@@ -14,22 +14,22 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/agentconf"
-	"github.com/KCuppens/zerocideploy/agent/internal/hubclient"
-	"github.com/KCuppens/zerocideploy/agent/internal/version"
+	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
-const sinkUsage = `usage: zeroci [global flags] sink <command> [--state-dir DIR | --installation ID]
+const sinkUsage = `usage: hookci [global flags] sink <command> [--state-dir DIR | --installation ID]
 
 Manage the repo's Telegram, webhook and Linear sinks on the hub, with the
 credential of the agent in the state directory.
 
   sink add telegram --repo OWNER/NAME --chat-id ID [--label TEXT]
-      The bot token comes from $ZEROCI_TELEGRAM_TOKEN, else one line on stdin.
+      The bot token comes from $HOOKCI_TELEGRAM_TOKEN, else one line on stdin.
   sink add webhook --repo OWNER/NAME --url https://... [--label TEXT] [--secret-only]
       Prints the generated signing secret once; --secret-only prints only it.
   sink add linear --repo OWNER/NAME --team KEY [--assignee EMAIL] [--label TEXT]
-      The API key comes from $ZEROCI_LINEAR_API_KEY, else one line on stdin.
+      The API key comes from $HOOKCI_LINEAR_API_KEY, else one line on stdin.
   sink ls --repo OWNER/NAME [--json]
   sink rm <id>
   sink test <id>
@@ -38,8 +38,8 @@ credential of the agent in the state directory.
 // telegramTokenEnv and linearAPIKeyEnv name the variables sink add telegram
 // and sink add linear take their secret from before they read stdin.
 const (
-	telegramTokenEnv = "ZEROCI_TELEGRAM_TOKEN"
-	linearAPIKeyEnv  = "ZEROCI_LINEAR_API_KEY"
+	telegramTokenEnv = "HOOKCI_TELEGRAM_TOKEN"
+	linearAPIKeyEnv  = "HOOKCI_LINEAR_API_KEY"
 )
 
 // cmdSink adds, lists, removes and tests the sink configs of a repo on the
@@ -62,7 +62,7 @@ func cmdSink(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		fmt.Fprint(stderr, sinkUsage)
 		return ExitOK
 	default:
-		fmt.Fprintf(stderr, "zeroci: sink: unknown command %q\n", args[0])
+		fmt.Fprintf(stderr, "hookci: sink: unknown command %q\n", args[0])
 		fmt.Fprint(stderr, sinkUsage)
 		return ExitUsage
 	}
@@ -81,7 +81,7 @@ func newSinkFlags(d Deps, usage string, stderr io.Writer) *sinkFlags {
 	fs.SetOutput(stderr)
 	f := &sinkFlags{FlagSet: fs, dirFlags: addStateDirFlags(fs, d)}
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "usage: zeroci [global flags] sink %s [--state-dir DIR | --installation ID]\n", usage)
+		fmt.Fprintf(stderr, "usage: hookci [global flags] sink %s [--state-dir DIR | --installation ID]\n", usage)
 		fs.PrintDefaults()
 	}
 	return f
@@ -123,11 +123,11 @@ func slicesHasEmpty(s []string) bool {
 func (f *sinkFlags) client(stderr io.Writer) (*hubclient.Client, bool) {
 	ac, err := agentconf.Load(f.stateDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(stderr, "zeroci: not connected to a hub; run zeroci connect")
+		fmt.Fprintln(stderr, "hookci: not connected to a hub; run hookci connect")
 		return nil, false
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return nil, false
 	}
 	return hubclient.New(hubclient.Config{HubURL: ac.HubURL, AgentID: ac.AgentID, Credential: ac.Credential, Version: version.Version}, nil, nil, nil), true
@@ -138,7 +138,7 @@ func checkRepo(cmd, repo string, stderr io.Writer) bool {
 	if repoRE.MatchString(repo) {
 		return true
 	}
-	fmt.Fprintf(stderr, "zeroci: sink %s: --repo %q must be owner/name\n", cmd, repo)
+	fmt.Fprintf(stderr, "hookci: sink %s: --repo %q must be owner/name\n", cmd, repo)
 	return false
 }
 
@@ -155,7 +155,7 @@ func sinkAdd(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	case "linear":
 		return sinkAddLinear(ctx, d, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "zeroci: sink add: unknown sink kind %q; want telegram, webhook or linear\n", args[0])
+		fmt.Fprintf(stderr, "hookci: sink add: unknown sink kind %q; want telegram, webhook or linear\n", args[0])
 		return ExitUsage
 	}
 }
@@ -172,7 +172,7 @@ func sinkAddTelegram(ctx context.Context, d Deps, args []string, stdout, stderr 
 		return ExitUsage
 	}
 	if *chatID == "" {
-		fmt.Fprintln(stderr, "zeroci: sink add telegram: --chat-id is required")
+		fmt.Fprintln(stderr, "hookci: sink add telegram: --chat-id is required")
 		return ExitUsage
 	}
 	c, ok := f.client(stderr)
@@ -181,16 +181,16 @@ func sinkAddTelegram(ctx context.Context, d Deps, args []string, stdout, stderr 
 	}
 	token, err := readSecret(telegramTokenEnv, "Telegram bot token", d.Stdin, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if token == "" {
-		fmt.Fprintf(stderr, "zeroci: sink add telegram: no bot token; set %s or pass it on stdin\n", telegramTokenEnv)
+		fmt.Fprintf(stderr, "hookci: sink add telegram: no bot token; set %s or pass it on stdin\n", telegramTokenEnv)
 		return ExitUsage
 	}
 	res, err := c.AddSink(ctx, hubclient.AddSinkRequest{Kind: "telegram", Repo: *repo, BotToken: token, ChatID: *chatID, Label: *label})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "added telegram sink %s for %s: %s\n", res.Sink.ID, res.Sink.Repo, res.Sink.Target)
@@ -238,7 +238,7 @@ func sinkAddLinear(ctx context.Context, d Deps, args []string, stdout, stderr io
 		return ExitUsage
 	}
 	if *team == "" {
-		fmt.Fprintln(stderr, "zeroci: sink add linear: --team is required")
+		fmt.Fprintln(stderr, "hookci: sink add linear: --team is required")
 		return ExitUsage
 	}
 	c, ok := f.client(stderr)
@@ -247,24 +247,24 @@ func sinkAddLinear(ctx context.Context, d Deps, args []string, stdout, stderr io
 	}
 	key, err := readSecret(linearAPIKeyEnv, "Linear API key", d.Stdin, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if key == "" {
-		fmt.Fprintf(stderr, "zeroci: sink add linear: %s not set and no key on stdin\n", linearAPIKeyEnv)
+		fmt.Fprintf(stderr, "hookci: sink add linear: %s not set and no key on stdin\n", linearAPIKeyEnv)
 		return ExitUsage
 	}
 	res, err := c.AddSink(ctx, hubclient.AddSinkRequest{Kind: "linear", Repo: *repo, LinearAPIKey: key, TeamKey: *team, AssigneeEmail: *assignee, Label: *label})
 	var apiErr *hubclient.APIError
 	switch {
 	case errors.As(err, &apiErr) && apiErr.Code == "team_not_found":
-		fmt.Fprintf(stderr, "zeroci: sink add linear: Linear team %s not found for this API key\n", *team)
+		fmt.Fprintf(stderr, "hookci: sink add linear: Linear team %s not found for this API key\n", *team)
 		return ExitRunFailed
 	case errors.As(err, &apiErr) && apiErr.Code == "assignee_not_found":
-		fmt.Fprintf(stderr, "zeroci: sink add linear: No Linear user with email %s\n", *assignee)
+		fmt.Fprintf(stderr, "hookci: sink add linear: No Linear user with email %s\n", *assignee)
 		return ExitRunFailed
 	case err != nil:
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "added linear sink %s for %s: %s\n", res.Sink.ID, res.Sink.Repo, res.Sink.Target)
@@ -284,7 +284,7 @@ func sinkAddWebhook(ctx context.Context, d Deps, args []string, stdout, stderr i
 		return ExitUsage
 	}
 	if *hookURL == "" {
-		fmt.Fprintln(stderr, "zeroci: sink add webhook: --url is required")
+		fmt.Fprintln(stderr, "hookci: sink add webhook: --url is required")
 		return ExitUsage
 	}
 	c, ok := f.client(stderr)
@@ -293,11 +293,11 @@ func sinkAddWebhook(ctx context.Context, d Deps, args []string, stdout, stderr i
 	}
 	res, err := c.AddSink(ctx, hubclient.AddSinkRequest{Kind: "webhook", Repo: *repo, URL: *hookURL, Label: *label})
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if res.GeneratedSecret == "" {
-		fmt.Fprintf(stderr, "zeroci: sink add webhook: hub added sink %s without a signing secret\n", res.Sink.ID)
+		fmt.Fprintf(stderr, "hookci: sink add webhook: hub added sink %s without a signing secret\n", res.Sink.ID)
 		return ExitRunFailed
 	}
 	if *secretOnly {
@@ -325,7 +325,7 @@ func sinkList(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	}
 	sinks, err := c.ListSinks(ctx, *repo)
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	if *asJSON {
@@ -361,7 +361,7 @@ func sinkRemove(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		return ExitRunFailed
 	}
 	if err := c.RemoveSink(ctx, pos[0]); err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "removed sink %s\n", pos[0])
@@ -381,7 +381,7 @@ func sinkTest(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	}
 	res, err := c.TestSink(ctx, pos[0])
 	if err != nil {
-		fmt.Fprintf(stderr, "zeroci: %v\n", err)
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitRunFailed
 	}
 	fmt.Fprintf(stdout, "test delivery through %s: %s\n", pos[0], res)

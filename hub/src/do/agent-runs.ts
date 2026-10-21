@@ -267,7 +267,7 @@ function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number; trig
 
 /** Records a fork run that waits for approval (or never runs) and supersedes older work; the agent hears nothing. */
 async function onGate(dob: AgentDO, req: Request): Promise<Response> {
-	const agentId = req.headers.get("x-zeroci-agent-id");
+	const agentId = req.headers.get("x-hookci-agent-id");
 	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never"; trustRefused?: TrustRefusal | null }>();
 	const trustRefused = trig.trustRefused ?? null;
 	if (
@@ -306,7 +306,7 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 }
 
 async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
-	const agentId = req.headers.get("x-zeroci-agent-id");
+	const agentId = req.headers.get("x-hookci-agent-id");
 	const trig = await req.json<TriggerRequest>();
 	if (!agentId || (trig.trust !== "trusted" && trig.trust !== "untrusted")) return Response.json({ error: "bad_request" }, { status: 400 });
 	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });

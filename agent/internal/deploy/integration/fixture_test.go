@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
 // fixtureDir is examples/compose-app, relative to this package.
 const fixtureDir = "../../../../examples/compose-app"
 
 func TestFixture_ConfigValid(t *testing.T) {
-	path := filepath.Join(fixtureDir, ".zeroci.yml")
+	path := filepath.Join(fixtureDir, ".hookci.yml")
 	cfg, diags, err := config.Load(path, config.ParseOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestFixture_ConfigValid(t *testing.T) {
 	if diags.HasErrors() {
 		t.Fatalf("fixture config has errors:\n%s", diags.Format(path))
 	}
-	if errs := config.ValidateDeployments(&cfg.ZeroCIConfig); len(errs) != 0 {
+	if errs := config.ValidateDeployments(&cfg.HookCIConfig); len(errs) != 0 {
 		t.Fatalf("ValidateDeployments: %v", errs)
 	}
 	d, ok := cfg.Deployments["staging"]

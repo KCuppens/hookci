@@ -9,7 +9,7 @@ import { QUOTAS } from "../../src/quotas";
 import { clearTables } from "../db/helpers";
 import { seedTenant, type Tenant } from "../helpers/tenants";
 
-const HOOK = "https://hooks.example.com/zeroci";
+const HOOK = "https://hooks.example.com/hookci";
 
 let a: Tenant;
 let b: Tenant;
@@ -58,7 +58,7 @@ describe("/v1/agent/sinks", () => {
     const added = await addHook(a);
     expect(added.status).toBe(201);
     const { sink, generated_secret } = await added.json<{ sink: { id: string }; generated_secret: string }>();
-    expect(generated_secret).toMatch(/^zcwh_/);
+    expect(generated_secret).toMatch(/^hciwh_/);
     expect(sink).toMatchObject({ kind: "webhook", repo: a.fullName, label: "builds", target: HOOK, disabled_at: null, last_error: null });
 
     const listed = await call("GET", `/v1/agent/sinks?repo=${a.fullName}`, a.credential);
@@ -123,7 +123,7 @@ describe("/v1/agent/sinks", () => {
   });
 
   it("answers 401 without a valid agent credential", async () => {
-    for (const credential of [null, "zc_agent_forged"]) {
+    for (const credential of [null, "hci_agent_forged"]) {
       const res = await call("GET", `/v1/agent/sinks?repo=${a.fullName}`, credential);
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "auth_failed" });

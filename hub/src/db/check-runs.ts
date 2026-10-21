@@ -8,7 +8,7 @@ export interface CheckRunRow {
 	check_run_id: number;
 }
 
-/** The GitHub check run id ZeroCI created for name on the commit, if any. */
+/** The GitHub check run id HookCI created for name on the commit, if any. */
 export async function getCheckRun(t: TenantDb, repoId: number, headSha: string, name: string): Promise<number | null> {
 	const row = await t.first<Pick<CheckRunRow, "check_run_id">>(
 		"SELECT check_run_id FROM check_runs WHERE installation_id = ?1 AND repo_id = ?2 AND head_sha = ?3 AND name = ?4",

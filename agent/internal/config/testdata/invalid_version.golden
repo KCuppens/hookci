@@ -1,2 +1,2 @@
-invalid_version.yml:1: error: version: unsupported version 2; this zeroci reads version 1
+invalid_version.yml:1: error: version: unsupported version 2; this hookci reads version 1
   fix: set version: 1

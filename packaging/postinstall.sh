@@ -1,20 +1,20 @@
 #!/bin/sh
-# Runs after the zeroci .deb or .rpm is installed or upgraded.
+# Runs after the hookci .deb or .rpm is installed or upgraded.
 set -eu
 
-if ! id zeroci-run >/dev/null 2>&1; then
-	useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-run
+if ! id hookci-run >/dev/null 2>&1; then
+	useradd --system --no-create-home --shell /usr/sbin/nologin hookci-run
 fi
-if ! id zeroci-deploy >/dev/null 2>&1; then
-	useradd --system --no-create-home --shell /usr/sbin/nologin zeroci-deploy
+if ! id hookci-deploy >/dev/null 2>&1; then
+	useradd --system --no-create-home --shell /usr/sbin/nologin hookci-deploy
 fi
-# Deploys run docker compose as zeroci-deploy (zeroci doctor check deploy.user).
+# Deploys run docker compose as hookci-deploy (hookci doctor check deploy.user).
 if getent group docker >/dev/null 2>&1; then
-	usermod -aG docker zeroci-deploy
+	usermod -aG docker hookci-deploy
 fi
-mkdir -p /var/lib/zeroci
-chmod 0700 /var/lib/zeroci
+mkdir -p /var/lib/hookci
+chmod 0700 /var/lib/hookci
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload
-	systemctl try-restart 'zeroci-agent@*.service'
+	systemctl try-restart 'hookci-agent@*.service'
 fi

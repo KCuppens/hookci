@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KCuppens/zerocideploy/agent/internal/execx"
-	"github.com/KCuppens/zerocideploy/agent/internal/testutil"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 )
 
 // integrationRunDir makes a run dir outside /tmp and /var/tmp, which
 // PrivateTmp hides from the unit, and lets the runner user write to it.
 func integrationRunDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/run", "zeroci-itest-")
+	dir, err := os.MkdirTemp("/run", "hookci-itest-")
 	if err != nil {
 		t.Fatalf("make run dir: %v", err)
 	}

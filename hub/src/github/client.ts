@@ -70,7 +70,7 @@ class Requester implements GitHubRequester {
 		const headers: Record<string, string> = {
 			Accept: "application/vnd.github+json",
 			"X-GitHub-Api-Version": "2022-11-28",
-			"User-Agent": "zeroci-hub",
+			"User-Agent": "hookci-hub",
 			Authorization: this.authorization,
 		};
 		if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -93,7 +93,7 @@ class Requester implements GitHubRequester {
 
 	async getRepoFileAtRef(repo: string, path: string, ref: string): Promise<string | null> {
 		const url = `/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`;
-		const headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "zeroci-hub", Authorization: this.authorization };
+		const headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "hookci-hub", Authorization: this.authorization };
 		const res = await withRetry(() => this.fetcher(`${API_ORIGIN}${url}`, { method: "GET", headers }), { now: this.now });
 		if (res.status === 404) return null;
 		if (!res.ok) throw new GitHubApiError(res.status, `GitHub GET ${url}: ${res.status} ${await errorMessage(res)}`);

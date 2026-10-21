@@ -67,8 +67,8 @@ export function compareSemver(a: string, b: string): number {
 
 async function deployedState(dir: string): Promise<DeployedState> {
 	const s = await loadState(dir);
-	if (!s) throw new SetupError("not_set_up", `no zeroci-hub setup state in ${dir}`);
-	if (!s.name || !s.base_url) throw new SetupError("not_set_up", `zeroci-hub setup in ${dir} has not deployed the hub yet`);
+	if (!s) throw new SetupError("not_set_up", `no hookci-hub setup state in ${dir}`);
+	if (!s.name || !s.base_url) throw new SetupError("not_set_up", `hookci-hub setup in ${dir} has not deployed the hub yet`);
 	return { ...s, name: s.name, base_url: s.base_url };
 }
 
@@ -79,7 +79,7 @@ async function deployedState(dir: string): Promise<DeployedState> {
  * scratch dir with the new wrangler.toml and migrations.
  */
 async function pendingMigrations(o: UpgradeOptions, s: DeployedState, root: string, toml: string): Promise<string[]> {
-	const scratch = await mkdtemp(join(tmpdir(), "zeroci-hub-upgrade-"));
+	const scratch = await mkdtemp(join(tmpdir(), "hookci-hub-upgrade-"));
 	try {
 		await writeFile(join(scratch, "wrangler.toml"), toml);
 		await cp(join(root, "migrations"), join(scratch, "migrations"), { recursive: true });
@@ -135,7 +135,7 @@ export async function runUpgrade(o: UpgradeOptions): Promise<UpgradePlan> {
 	const s = await deployedState(o.dir);
 	const toVersion = packageVersion();
 	if (compareSemver(toVersion, s.version) < 0) {
-		throw new SetupError("downgrade", `the hub runs ${s.version}, newer than this zeroci-hub ${toVersion}`);
+		throw new SetupError("downgrade", `the hub runs ${s.version}, newer than this hookci-hub ${toVersion}`);
 	}
 	const p = await plan(o, s);
 	log(`Upgrading ${s.name} at ${s.base_url} from ${p.fromVersion} to ${p.toVersion}`);

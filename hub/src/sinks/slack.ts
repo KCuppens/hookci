@@ -1,5 +1,5 @@
 // The Slack sink: in every channel watching the repo, or the channel the
-// repo's .zeroci.yml notify.slack names in the watch's workspace, one message
+// repo's .hookci.yml notify.slack names in the watch's workspace, one message
 // per run posted once and then updated in place, a thread reply per finished
 // job (normal notify only), one alert when the run fails, and a DM to the
 // agent's admin when it goes offline. It never reads channel history: what
@@ -200,7 +200,7 @@ export class SlackSink implements Sink {
 
 	/**
 	 * Where the run's message goes: each watch's channel, or with a
-	 * .zeroci.yml override the named channel in the watch's workspace, with
+	 * .hookci.yml override the named channel in the watch's workspace, with
 	 * the override's notify and alert over the watch's. A name the bot cannot
 	 * post to leaves the watch as it is. A watch channel that got the run's
 	 * message before the agent read the override keeps it updated
