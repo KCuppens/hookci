@@ -24,7 +24,7 @@ const (
 	untrustedApp = "untrusted:kcuppens/app"
 )
 
-var pushPolicy = Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}
+var pushPolicy = Policy{Kind: "check", Event: "push", Trusted: true}
 
 func newCache(t *testing.T, mode Mode, r execx.Runner) *Cache {
 	t.Helper()
@@ -48,7 +48,12 @@ func newWorkdir(t *testing.T, files map[string]string) string {
 
 func mustKey(t *testing.T, domain, wd string, paths ...string) Key {
 	t.Helper()
-	k, err := ComputeKey(domain, "linux-amd64", wd, []string{"package-lock.json"}, paths)
+	return mustScopedKey(t, domain, "main", wd, paths...)
+}
+
+func mustScopedKey(t *testing.T, domain, scope, wd string, paths ...string) Key {
+	t.Helper()
+	k, err := ComputeKey(domain, scope, "linux-amd64", wd, []string{"package-lock.json"}, paths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +85,10 @@ func TestMaySave(t *testing.T) {
 		want bool
 	}{
 		{"local", Policy{Kind: "check", Event: "local"}, true},
-		{"trusted protected push check", pushPolicy, true},
-		{"pull request", Policy{Kind: "check", Event: "pull_request", Protected: true, Trusted: true}, false},
-		{"unprotected push", Policy{Kind: "check", Event: "push", Trusted: true}, false},
-		{"untrusted push", Policy{Kind: "check", Event: "push", Protected: true}, false},
-		{"deploy", Policy{Kind: "deploy", Event: "push", Protected: true, Trusted: true}, false},
+		{"trusted push check to any branch", pushPolicy, true},
+		{"pull request", Policy{Kind: "check", Event: "pull_request", Trusted: true}, false},
+		{"untrusted push", Policy{Kind: "check", Event: "push"}, false},
+		{"deploy", Policy{Kind: "deploy", Event: "push", Trusted: true}, false},
 	} {
 		if got := MaySave(c.p); got != c.want {
 			t.Errorf("%s: MaySave = %v, want %v", c.name, got, c.want)
@@ -191,9 +195,9 @@ func TestSaveNotAllowed(t *testing.T) {
 	c := newCache(t, ModeCopy, nil)
 	wd := newWorkdir(t, map[string]string{"node_modules/a.js": "a"})
 	for _, p := range []Policy{
-		{Kind: "check", Event: "pull_request", Protected: true, Trusted: true},
-		{Kind: "deploy", Event: "push", Protected: true, Trusted: true},
-		{Kind: "check", Event: "push", Protected: false, Trusted: true},
+		{Kind: "check", Event: "pull_request", Trusted: true},
+		{Kind: "deploy", Event: "push", Trusted: true},
+		{Kind: "check", Event: "push", Trusted: false},
 	} {
 		if err := c.Save(context.Background(), mustKey(t, trustedApp, wd, "node_modules"), p, wd); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("%+v: Save = %v, want ErrNotAllowed", p, err)
@@ -210,6 +214,29 @@ func TestSaveNotAllowed(t *testing.T) {
 		if n.Name() != ".tmp" {
 			t.Errorf("unexpected %s in cache root", n.Name())
 		}
+	}
+}
+
+// An entry belongs to the branch that saved it: the same lockfile and paths
+// under another scope is a different key and misses.
+func TestRestoreIsPerScope(t *testing.T) {
+	c := newCache(t, ModeCopy, nil)
+	src := newWorkdir(t, map[string]string{"node_modules/a.js": "feature"})
+	if err := c.Save(context.Background(), mustScopedKey(t, trustedApp, "feature/x", src, "node_modules"), pushPolicy, src); err != nil {
+		t.Fatal(err)
+	}
+	dst := newWorkdir(t, nil)
+	hit, _, err := c.Restore(context.Background(), mustScopedKey(t, trustedApp, "main", dst, "node_modules"), dst)
+	if err != nil || hit {
+		t.Fatalf("restore under main = %v, %v; want a miss", hit, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "node_modules")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("miss left node_modules: %v", err)
+	}
+	cleanup := mustRestore(t, c, mustScopedKey(t, trustedApp, "feature/x", dst, "node_modules"), dst)
+	defer cleanup()
+	if got, err := os.ReadFile(filepath.Join(dst, "node_modules", "a.js")); err != nil || string(got) != "feature" {
+		t.Errorf("feature/x restore = %q, %v", got, err)
 	}
 }
 

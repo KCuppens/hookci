@@ -428,11 +428,11 @@ func (h *harness) saveCacheEntry(t *testing.T, root, name string, size int, at t
 			t.Fatal(err)
 		}
 	}
-	k, err := cache.ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+	k, err := cache.ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.c.Cache.Save(context.Background(), k, cache.Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}, wd); err != nil {
+	if err := h.c.Cache.Save(context.Background(), k, cache.Policy{Kind: "check", Event: "push", Trusted: true}, wd); err != nil {
 		t.Fatal(err)
 	}
 	rel := filepath.Join("trusted__kcuppens__app", k.Hash)
@@ -491,7 +491,7 @@ func TestCacheKeepsEntryInUse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wd, "package-lock.json"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	k, err := cache.ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+	k, err := cache.ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
 	if err != nil {
 		t.Fatal(err)
 	}

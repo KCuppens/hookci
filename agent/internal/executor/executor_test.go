@@ -519,10 +519,7 @@ func TestTeardownOrder(t *testing.T) {
 		Services: config.Services{Postgres: &config.PostgresService{Image: "postgres:16"}},
 		Jobs:     []config.ResolvedJob{{Name: "build", Run: "make"}},
 	}
-	h := newHarness(t, "systemd", cfg, func(o *Options) {
-		o.Mirrors = mirrors
-		o.Protected = func(store.Run) bool { return true }
-	})
+	h := newHarness(t, "systemd", cfg, func(o *Options) { o.Mirrors = mirrors })
 	run := store.Run{ID: "01run", Repo: "o/r", SHA: sha, Ref: "refs/heads/main", Event: "push", Kind: "check", TrustDomain: "trusted:o/r"}
 	unit := isolation.UnitPrefix + "01run-build"
 	h.iso.units = []isolation.Unit{{Name: unit, Active: "active"}}
@@ -589,53 +586,125 @@ func TestTeardownOrder(t *testing.T) {
 	}
 }
 
+var cacheCfg = &config.ResolvedChecks{
+	Setup: []config.SetupStep{{Run: "npm ci", Cache: &config.SetupStepCache{Key: []string{"package-lock.json"}, Paths: []string{"node_modules"}}}},
+	Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
+}
+
 func TestCacheSaveGatedByPolicy(t *testing.T) {
-	cfg := &config.ResolvedChecks{
-		Setup: []config.SetupStep{{Run: "npm ci", Cache: &config.SetupStepCache{Key: []string{"package-lock.json"}, Paths: []string{"node_modules"}}}},
-		Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
-	}
 	pr := 12
 	for _, tc := range []struct {
-		name      string
-		run       store.Run
-		protected bool
-		final     store.RunState
-		save      bool
+		name  string
+		run   store.Run
+		final store.RunState
+		tried []string
+		saved []string
 	}{
-		{"untrusted pull request", store.Run{Event: "pull_request", PR: &pr, TrustDomain: "untrusted:o/r"}, true, store.RunSuccess, false},
-		{"trusted push to protected branch", store.Run{Event: "push", TrustDomain: "trusted:o/r"}, true, store.RunSuccess, true},
-		{"trusted push to unprotected branch", store.Run{Event: "push", TrustDomain: "trusted:o/r"}, false, store.RunSuccess, false},
-		{"failed trusted push", store.Run{Event: "push", TrustDomain: "trusted:o/r"}, true, store.RunFailed, false},
+		{"untrusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "untrusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
+		{"trusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
+		{"untrusted push", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "untrusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
+		{"trusted push to the default branch", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"main"}, []string{"main"}},
+		{"trusted push to another branch", store.Run{Event: "push", Ref: "refs/heads/feature/x", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"feature/x", "main"}, []string{"feature/x"}},
+		{"failed trusted push", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "trusted:o/r"}, store.RunFailed, []string{"main"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, "none", cfg, func(o *Options) {
-				o.Protected = func(store.Run) bool { return tc.protected }
-			})
+			h := newHarness(t, "none", cacheCfg, func(o *Options) { o.CacheFallback = []string{"main"} })
 			run := tc.run
-			run.ID, run.Repo, run.SHA, run.Ref, run.Kind = "01run", "o/r", strings.Repeat("b", 40), "refs/heads/main", "check"
+			run.ID, run.Repo, run.SHA, run.Kind = "01run", "o/r", strings.Repeat("b", 40), "check"
 			setUp(t, h, run)
 			finish(t, h, run, tc.final)
 
-			if len(h.cache.restored) != 1 {
-				t.Fatalf("restores = %d, want 1", len(h.cache.restored))
+			var tried []string
+			for _, k := range h.cache.restored {
+				tried = append(tried, k.Scope)
+				if k.TrustDomain != run.TrustDomain || !slices.Equal(k.Paths, []string{"src/node_modules"}) {
+					t.Errorf("key = %+v, want the run's trust domain and src/node_modules", k)
+				}
 			}
-			k := h.cache.restored[0]
-			if k.TrustDomain != run.TrustDomain || !slices.Equal(k.Paths, []string{"src/node_modules"}) {
-				t.Errorf("key = %+v, want the run's trust domain and src/node_modules", k)
+			if !slices.Equal(tried, tc.tried) {
+				t.Errorf("restored from %q, want %q", tried, tc.tried)
 			}
 			if !slices.Contains(h.rec.list(), "cache cleanup") {
 				t.Error("restore cleanup did not run")
 			}
-			if saved := len(h.cache.saved) > 0; saved != tc.save {
-				t.Fatalf("saved = %v, want %v", saved, tc.save)
+			var saved []string
+			for _, k := range h.cache.savedKeys {
+				saved = append(saved, k.Scope)
 			}
-			if tc.save {
-				want := cache.Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}
+			if !slices.Equal(saved, tc.saved) {
+				t.Fatalf("saved under %q, want %q", saved, tc.saved)
+			}
+			if len(tc.saved) > 0 {
+				want := cache.Policy{Kind: "check", Event: "push", Trusted: true}
 				if h.cache.saved[0] != want {
 					t.Errorf("policy = %+v, want %+v", h.cache.saved[0], want)
 				}
 			}
 		})
+	}
+}
+
+// cacheRun drives a successful run on a fresh Executor over c with
+// fallback, as the daemon builds one per run. It returns the scopes Restore
+// tried in order, the one that hit ("" for none) and the scopes saved.
+func cacheRun(t *testing.T, c *fakeCache, run store.Run, fallback []string) (tried []string, hit string, saved []string) {
+	t.Helper()
+	h := newHarness(t, "none", cacheCfg, func(o *Options) {
+		o.Hooks.Cache = c
+		o.CacheFallback = fallback
+	})
+	c.rec = h.rec
+	r0, s0 := len(c.restored), len(c.savedKeys)
+	run.ID, run.Repo, run.SHA, run.Kind = "01run", "o/r", strings.Repeat("b", 40), "check"
+	setUp(t, h, run)
+	finish(t, h, run, store.RunSuccess)
+	for _, k := range c.restored[r0:] {
+		tried = append(tried, k.Scope)
+		if slices.ContainsFunc(c.savedKeys[:s0], func(s cache.Key) bool { return s.Hash == k.Hash }) {
+			hit = k.Scope
+		}
+	}
+	for _, k := range c.savedKeys[s0:] {
+		saved = append(saved, k.Scope)
+	}
+	return tried, hit, saved
+}
+
+// Caches are per branch, as on GitHub Actions: a run reads its own branch,
+// then the fallbacks it was given, and writes only its own branch.
+func TestCacheScopesAcrossBranches(t *testing.T) {
+	c := &fakeCache{}
+	push := func(branch string) store.Run {
+		return store.Run{Event: "push", Ref: "refs/heads/" + branch, TrustDomain: "trusted:o/r"}
+	}
+	pr := 7
+	pull := store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/7/head", TrustDomain: "trusted:o/r"}
+	for _, step := range []struct {
+		name     string
+		run      store.Run
+		fallback []string
+		tried    []string
+		hit      string
+		saved    []string
+	}{
+		{"first push to a branch saves under it", push("feature/a"), []string{"main"}, []string{"feature/a", "main"}, "", []string{"feature/a"}},
+		{"another branch does not see it", push("feature/b"), []string{"main"}, []string{"feature/b", "main"}, "", []string{"feature/b"}},
+		{"a fallback naming the branch reads it", push("feature/c"), []string{"feature/a", "main"}, []string{"feature/c", "feature/a"}, "feature/a", []string{"feature/c"}},
+		{"default branch saves under itself", push("main"), []string{"main"}, []string{"main"}, "", []string{"main"}},
+		{"own branch beats the default", push("feature/b"), []string{"main"}, []string{"feature/b"}, "feature/b", []string{"feature/b"}},
+		{"pull request reads its base first", pull, []string{"feature/a", "main"}, []string{"feature/a"}, "feature/a", nil},
+		{"pull request falls back to the default", pull, []string{"release", "main"}, []string{"release", "main"}, "main", nil},
+		{"untrusted push never reads trusted entries", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "untrusted:o/r"}, []string{"main"}, []string{"main"}, "", nil},
+	} {
+		tried, hit, saved := cacheRun(t, c, step.run, step.fallback)
+		if !slices.Equal(tried, step.tried) || hit != step.hit || !slices.Equal(saved, step.saved) {
+			t.Errorf("%s: tried %q, hit %q, saved %q; want %q, %q, %q", step.name, tried, hit, saved, step.tried, step.hit, step.saved)
+		}
+	}
+	for _, k := range c.restored[len(c.restored)-1:] {
+		if k.TrustDomain != "untrusted:o/r" {
+			t.Errorf("untrusted run looked up %+v", k)
+		}
 	}
 }
 
@@ -663,14 +732,14 @@ func TestLocalRunCacheApartFromGitHubLocalOwner(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(wd, "src", "node_modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	github, err := cache.ComputeKey("trusted:local/app", local.Platform, wd, []string{"src/package-lock.json"}, local.Paths)
+	github, err := cache.ComputeKey("trusted:local/app", local.Scope, local.Platform, wd, []string{"src/package-lock.json"}, local.Paths)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(github.FileHashes, local.FileHashes) || !slices.Equal(github.Paths, local.Paths) {
 		t.Fatalf("keys differ beyond the trust domain: %+v vs %+v", github, local)
 	}
-	if err := c.Save(context.Background(), github, cache.Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}, wd); err != nil {
+	if err := c.Save(context.Background(), github, cache.Policy{Kind: "check", Event: "push", Trusted: true}, wd); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

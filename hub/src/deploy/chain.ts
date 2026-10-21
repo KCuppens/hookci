@@ -1,7 +1,8 @@
 // The push-to-deploy chain: when the aggregate `hookci` check of a push
-// concludes success, every `deploy:<env>` binding of the repo gets one deploy
-// trigger through its agent's AgentDO, recorded once per
-// (repo, sha, env, attempt) in deploy_triggers together with the agent's reply.
+// concludes success, every `deploy:<env>` binding of the repo whose
+// `deployments.<env>.on.push` names the pushed branch gets one deploy trigger
+// through its agent's AgentDO, recorded once per (repo, sha, env, attempt) in
+// deploy_triggers together with the agent's reply.
 
 import { type BindingRow, deployEnv } from "../db/bindings";
 import { getRepoByFullName } from "../db/repos";
@@ -10,6 +11,7 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import type { CheckRunConclusion } from "../github/types";
+import { fetchRepoTriggers } from "../policy/repo-config";
 import { renderRejected, reopenDeployRender } from "./render";
 import type { TriggerRequest } from "../webhook/route";
 
@@ -64,10 +66,16 @@ export async function onCheckConcluded(env: Env, c: CheckConclusion): Promise<nu
 		"SELECT * FROM repo_bindings WHERE installation_id = ?1 AND repo_id = ?2 AND target LIKE 'deploy:%' ORDER BY target",
 		repo.repo_id,
 	);
+	if (bindings.length === 0) return 0;
+	// An env the hub cannot read a branch for still goes out, so the agent reports why the config is wrong.
+	const { deployBranches } = await fetchRepoTriggers(env, c.installationId, repo.full_name, c.sha);
+	const branch = c.ref.replace(/^refs\/heads\//, "");
 	let sent = 0;
 	for (const binding of bindings) {
 		const envName = deployEnv(binding.target);
 		if (envName === null) continue;
+		const wanted = deployBranches[envName];
+		if (wanted !== undefined && wanted !== branch) continue;
 		const { duplicate } = await dispatchDeployTrigger(env, {
 			installationId: c.installationId,
 			repo: repo.full_name,

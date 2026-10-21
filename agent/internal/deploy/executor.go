@@ -42,8 +42,8 @@ type ExecutorDeps struct {
 
 // NewExecutorForRun returns the executor for a deploy run: a UnitExecutor
 // running as DeployUser with the deployment's root-owned env_file. It
-// returns ErrUntrustedDeploy unless trusted is true (a push to a protected
-// ref).
+// returns ErrUntrustedDeploy unless trusted is true (a trusted push to the
+// deployment's branch).
 func NewExecutorForRun(run store.DeployRun, trusted bool, cfg config.Deployment, deps ExecutorDeps) (Executor, error) {
 	if !trusted {
 		return nil, ErrUntrustedDeploy

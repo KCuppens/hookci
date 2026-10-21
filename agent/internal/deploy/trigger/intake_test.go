@@ -20,17 +20,12 @@ const testSHA = "0123456789abcdef0123456789abcdef01234567"
 
 // fakeRefs answers RefChecker calls from fields and records the compares.
 type fakeRefs struct {
-	mu          sync.Mutex
-	unprotected bool
-	notOnRef    bool
-	files       []string
-	truncated   bool
-	err         error // returned by every call
-	compares    [][2]string
-}
-
-func (f *fakeRefs) IsProtected(context.Context, string, string) (bool, error) {
-	return !f.unprotected, f.err
+	mu        sync.Mutex
+	notOnRef  bool
+	files     []string
+	truncated bool
+	err       error // returned by every call
+	compares  [][2]string
 }
 
 func (f *fakeRefs) ContainsSHA(context.Context, string, string, string) (bool, error) {
@@ -97,7 +92,7 @@ func pushTrigger() protocol.Trigger {
 	}
 }
 
-func TestIntake_AcceptsProtectedPushOnRef(t *testing.T) {
+func TestIntake_AcceptsPushOnRef(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, deployment())
 	got, err := f.in.Handle(ctx, pushTrigger())
@@ -124,6 +119,20 @@ func TestIntake_AcceptsProtectedPushOnRef(t *testing.T) {
 	}
 }
 
+// Any branch a deployment's on.push names deploys; GitHub branch protection
+// is not consulted.
+func TestIntake_AcceptsUnprotectedBranchPush(t *testing.T) {
+	dep := deployment()
+	dep.On.Push = "feature/x"
+	f := newFixture(t, dep)
+	tr := pushTrigger()
+	tr.Ref = "refs/heads/feature/x"
+	got, err := f.in.Handle(context.Background(), tr)
+	if err != nil || !got.Accepted || got.RunID != "run-1" {
+		t.Fatalf("Handle = %+v, %v; want accepted run-1", got, err)
+	}
+}
+
 func TestIntake_RedeliveryIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, deployment())
@@ -133,7 +142,7 @@ func TestIntake_RedeliveryIsIdempotent(t *testing.T) {
 	}
 	// A redelivery, even under a new trigger id, answers with the same run
 	// and does not look at GitHub again.
-	f.refs.unprotected = true
+	f.refs.notOnRef = true
 	again := pushTrigger()
 	again.TriggerId = "trg-2"
 	second, err := f.in.Handle(ctx, again)
@@ -152,8 +161,8 @@ func TestIntake_RedeliveryIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attempt 2 Handle: %v", err)
 	}
-	if !strings.Contains(third.Reason, "not protected") {
-		t.Errorf("attempt 2 = %+v, want a fresh check (rejected as unprotected)", third)
+	if !strings.Contains(third.Reason, "is not on main") {
+		t.Errorf("attempt 2 = %+v, want a fresh check (rejected as not on main)", third)
 	}
 }
 
@@ -185,12 +194,6 @@ func TestIntake_Rejections(t *testing.T) {
 			dep:    deployment(),
 			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.Ref = "refs/heads/feature/x" },
 			want:   "deployments.prod.on.push: branch feature/x is not listed",
-		},
-		{
-			name:   "branch not protected",
-			dep:    deployment(),
-			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.unprotected = true },
-			want:   "deployments.prod: branch main is not protected on GitHub; protect it or remove the env",
 		},
 		{
 			name:   "sha not on branch",
@@ -288,7 +291,7 @@ func TestIntake_PathsMatchDeploys(t *testing.T) {
 
 func TestIntake_GitHubErrorIsAnError(t *testing.T) {
 	f := newFixture(t, deployment())
-	boom := errors.New("github /repos/acme/web/branches/main: 502")
+	boom := errors.New("github /repos/acme/web/compare/main..." + testSHA + ": 502")
 	f.refs.err = boom
 	got, err := f.in.Handle(context.Background(), pushTrigger())
 	if !errors.Is(err, boom) || got != (Decision{}) || IsPermanent(err) {
@@ -345,10 +348,6 @@ func TestIntake_RetryAttemptRules(t *testing.T) {
 			want: want{accepted: true, retry: true, state: store.DeployQueued, attempt: 2, retryOf: store.DeployFailed}},
 		{name: "trigger behind the run", state: store.DeployFailed, attempt: 0,
 			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 0)")},
-		{name: "branch no longer protected", state: store.DeployFailed, attempt: 2,
-			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.unprotected = true },
-			want: unchanged(store.DeployFailed,
-				"deployments.prod: branch main is not protected on GitHub; protect it or remove the env")},
 		{name: "sha no longer on branch", state: store.DeployFailed, attempt: 2,
 			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.notOnRef = true },
 			want:   unchanged(store.DeployFailed, "deployments.prod: 0123456 is not on main")},

@@ -12,7 +12,7 @@ export interface HubTrigger {
 	sha: string;
 	ref: string;
 	event: "pull_request" | "push";
-	pr?: { number: number; headRef: string; headRepoFullName: string; fork: boolean; authorLogin: string };
+	pr?: { number: number; headRef: string; baseRef: string; headRepoFullName: string; fork: boolean; authorLogin: string };
 	baseSha?: string;
 	authorLogin: string;
 	authorEmail?: string;
@@ -49,8 +49,8 @@ function int(v: unknown, path: string): number {
 /**
  * The trigger a webhook asks for, or null when the event starts no run:
  * pull_request actions other than opened, synchronize, reopened and
- * ready_for_review; branch deletions, tag pushes, pushes without commits and
- * pushes to branches other than the default branch.
+ * ready_for_review; branch deletions, tag pushes and pushes without commits.
+ * Which branches run is the repo's `.hookci.yml` call (policy/repo-config).
  */
 export function normalize(event: string, payload: unknown): HubTrigger | null {
 	if (event === "pull_request") return normalizePullRequest(record(payload, "payload"));
@@ -79,6 +79,7 @@ function normalizePullRequest(p: Json): HubTrigger | null {
 		pr: {
 			number,
 			headRef: text(head.ref, "pull_request.head.ref"),
+			baseRef: text(base.ref, "pull_request.base.ref"),
 			headRepoFullName,
 			fork: headRepoFullName !== baseRepoFullName,
 			authorLogin,
@@ -98,7 +99,6 @@ function normalizePush(p: Json): HubTrigger | null {
 	if (!Array.isArray(p.commits) || p.commits.length === 0) return null;
 	const repo = record(p.repository, "repository");
 	const defaultBranch = text(repo.default_branch, "repository.default_branch");
-	if (ref !== BRANCH_PREFIX + defaultBranch) return null;
 	const head = record(p.head_commit, "head_commit");
 	const author = record(head.author, "head_commit.author");
 	const before = text(p.before, "before");

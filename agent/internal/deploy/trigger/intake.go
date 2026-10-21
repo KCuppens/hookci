@@ -1,8 +1,8 @@
 // Package trigger decides whether a deploy trigger from the hub may deploy:
-// the env must exist at the commit, the push branch must be listed and
-// protected on GitHub, the commit must be on it, the trigger trusted, and a
-// paths filter must match the files changed since the last success. A
-// retry trigger re-queues the commit's Failed or Interrupted run.
+// the env must exist at the commit, the push branch must be listed, the
+// commit must be on it, the trigger trusted, and a paths filter must match
+// the files changed since the last success. A retry trigger re-queues the
+// commit's Failed or Interrupted run.
 package trigger
 
 import (
@@ -100,13 +100,6 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 	if dep.On.Push != branch {
 		return rejected("deployments.%s.on.push: branch %s is not listed", env, branch), nil
 	}
-	protected, err := in.Refs.IsProtected(ctx, t.Repo, branch)
-	if err != nil {
-		return Decision{}, fmt.Errorf("trigger: %w", err)
-	}
-	if !protected {
-		return rejected("deployments.%s: branch %s is not protected on GitHub; protect it or remove the env", env, branch), nil
-	}
 	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
 	if err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)
@@ -142,10 +135,10 @@ func (in *Intake) Handle(ctx context.Context, t protocol.Trigger) (Decision, err
 // A trigger at that run's attempt is a redelivery and gets the run while it
 // is not Failed or Interrupted. A trigger at the run's attempt or later
 // re-queues a Failed or Interrupted run as a retry under the same run id,
-// once the run's branch is still protected, holds the commit and the
-// trigger is trusted: the hub counts only its own triggers, so a host-side
-// `hookci retry` leaves the agent's attempt ahead of it. The daemon drops a
-// trigger id it already answered. The paths filter does not apply to a retry.
+// once the run's branch still holds the commit and the trigger is trusted:
+// the hub counts only its own triggers, so a host-side `hookci retry` leaves
+// the agent's attempt ahead of it. The daemon drops a trigger id it already
+// answered. The paths filter does not apply to a retry.
 func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env string) (Decision, error) {
 	run, err := in.Store.LatestDeployRunFor(ctx, t.Repo, env, t.Sha)
 	if errors.Is(err, store.ErrNotFound) {
@@ -163,13 +156,6 @@ func (in *Intake) handleRetry(ctx context.Context, t protocol.Trigger, env strin
 		return stale, nil
 	}
 	branch := strings.TrimPrefix(run.Ref, "refs/heads/")
-	protected, err := in.Refs.IsProtected(ctx, t.Repo, branch)
-	if err != nil {
-		return Decision{}, fmt.Errorf("trigger: %w", err)
-	}
-	if !protected {
-		return rejected("deployments.%s: branch %s is not protected on GitHub; protect it or remove the env", env, branch), nil
-	}
 	onRef, err := in.Refs.ContainsSHA(ctx, t.Repo, branch, t.Sha)
 	if err != nil {
 		return Decision{}, fmt.Errorf("trigger: %w", err)

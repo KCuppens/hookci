@@ -196,28 +196,11 @@ type ChecksOn struct {
 
 // Run checks on pushes.
 type ChecksOnPush struct {
-	// Branches whose pushes start a check run.
+	// Branches whose pushes start a check run, as names or GitHub Actions style globs
+	// (* matches within one path segment, ** across segments). Unset: the
+	// repository's default branch. A branch a deployment's on.push names always runs
+	// checks.
 	Branches []string `json:"branches,omitempty,omitzero" yaml:"branches,omitempty"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ChecksOnPush) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	type Plain ChecksOnPush
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["branches"]; !ok || v == nil {
-		plain.Branches = []string{
-			"main",
-		}
-	}
-	*j = ChecksOnPush(plain)
-	return nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.

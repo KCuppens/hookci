@@ -12,6 +12,23 @@ Status: pre-alpha, M0 (agent core).
 
 M0 delivers the agent core only. The hub connection, GitHub reporting and Slack integration are planned for later milestones.
 
+## Which pushes and pull requests run
+
+Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message.
+
+```yaml
+checks:
+  on:
+    pull_request: true          # default: every pull request runs
+    push:
+      branches: [main, "release/**"]   # default: the default branch only
+deployments:
+  staging:
+    on: { push: develop }       # a deploy branch always runs checks
+```
+
+`*` matches within one path segment, `**` across segments. A deployment ships only when its checks pass on a push to its `on.push` branch. Each branch pushed keeps its own build cache and falls back to the default branch's. A pull request reads its base branch's cache, then the default branch's, and never writes one.
+
 ## Quick start (local)
 
 Local mode needs no hub. Build the agent, then run it inside a repository:

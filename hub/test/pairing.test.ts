@@ -13,6 +13,8 @@ import { type TriggerRequest, routeTrigger } from "../src/webhook/route";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { type Agent, AgentSocket, connect, connectRequest, seedAgent } from "./do/agent-socket";
+import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "./fakes/github";
+import { generateAppKey } from "./github/helpers";
 
 const INSTALLATION = 42;
 const ADMIN = 7;
@@ -249,6 +251,12 @@ describe("pairing", () => {
     const reconnect = await connectRequest(paired.credential);
     expect(reconnect.status).toBe(401);
 
+    const gh = createFakeGitHub();
+    serveInstallationTokens(gh, Date.now());
+    serveRepoFiles(gh, {});
+    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+    env.__TEST_FETCHER = gh.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
     const ctx = createExecutionContext();
     const outcome = await routeTrigger(
       env,
@@ -265,7 +273,7 @@ describe("pairing", () => {
         target: "checks",
       },
       ctx,
-    );
+    ).finally(() => Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key }));
     await waitOnExecutionContext(ctx);
     expect(outcome).toEqual({ kind: "no_agent" });
   });

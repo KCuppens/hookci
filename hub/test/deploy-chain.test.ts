@@ -12,7 +12,7 @@ import type { RunView } from "../src/sinks/types";
 import type { TriggerRequest } from "../src/webhook/route";
 import { clearTables } from "./db/helpers";
 import { type Agent, type AgentSocket, connect, seedAgent } from "./do/agent-socket";
-import { createFakeGitHub } from "./fakes/github";
+import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "./fakes/github";
 import { generateAppKey } from "./github/helpers";
 
 const INSTALLATION = 42;
@@ -44,11 +44,24 @@ async function deployRows(): Promise<Row[]> {
 }
 
 describe("deploy chain", () => {
+  let files: Record<string, string>;
+  let restoreGitHub: () => void;
+
   beforeEach(async () => {
     await clearTables();
     await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
     await upsertRepos(tenantDb(env.DB, INSTALLATION), [{ repo_id: REPO, full_name: "acme/widgets", default_branch: "main" }]);
+    const gh = createFakeGitHub();
+    serveInstallationTokens(gh, Date.now());
+    files = {};
+    serveRepoFiles(gh, files);
+    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+    env.__TEST_FETCHER = gh.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+    restoreGitHub = () => Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
   });
+
+  afterEach(() => restoreGitHub());
 
   it("dispatches one trigger per env binding on push success", async () => {
     const t = tenantDb(env.DB, INSTALLATION);
@@ -73,6 +86,16 @@ describe("deploy chain", () => {
       expect(frames[0]).toMatchObject({ v: 1, type: "trigger", trigger_id: row?.trigger_id, repo: "acme/widgets", sha: SHA, ref: "refs/heads/main", event: "push", env: envName, attempt: 1, trust: "trusted" });
     }
     expect(await latestDeployTrigger(env, "acme/widgets", SHA, "staging")).toMatchObject({ env: "staging", attempt: 1 });
+  });
+
+  it("deploys only the envs whose on.push names the pushed branch, and envs the hub cannot read a branch for", async () => {
+    const t = tenantDb(env.DB, INSTALLATION);
+    const agent = await seedAgent(INSTALLATION);
+    for (const name of ["staging", "production", "preview"]) await bind(t, REPO, `deploy:${name}`, agent.agentId);
+    files[`acme/widgets@${SHA}:.hookci.yml`] = "deployments:\n  staging:\n    on:\n      push: main\n  production:\n    on:\n      push: release\n";
+
+    expect(await onCheckConcluded(env, PUSH_SUCCESS)).toBe(2);
+    expect((await deployRows()).map((r) => r.env)).toEqual(["preview", "staging"]);
   });
 
   it("does not dispatch on failure, action_required or pull_request", async () => {

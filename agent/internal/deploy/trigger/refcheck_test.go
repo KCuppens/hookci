@@ -44,29 +44,10 @@ func newChecker(t *testing.T, g *github) *GitHubRefChecker {
 	}
 }
 
-func TestGitHubRefChecker_IsProtected(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		branch string
-		path   string
-		status int
-		body   string
-		want   bool
-		err    string
-	}{
-		{name: "protected", branch: "main", path: "/repos/acme/web/branches/main", status: 200, body: `{"name":"main","protected":true}`, want: true},
-		{name: "unprotected", branch: "main", path: "/repos/acme/web/branches/main", status: 200, body: `{"name":"main","protected":false}`},
-		{name: "unknown branch", branch: "main", path: "/repos/acme/web/branches/main", status: 404, body: `{"message":"Branch not found"}`},
-		{name: "slashed branch keeps its slash", branch: "release/v1+x", path: "/repos/acme/web/branches/release/v1+x", status: 200, body: `{"protected":true}`, want: true},
-		{name: "server error", branch: "main", path: "/repos/acme/web/branches/main", status: 502, err: "github /repos/acme/web/branches/main: 502"},
-		{name: "forbidden", branch: "main", path: "/repos/acme/web/branches/main", status: 403, err: "github /repos/acme/web/branches/main: 403"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			g := &github{path: tc.path, status: tc.status, body: tc.body}
-			got, err := newChecker(t, g).IsProtected(context.Background(), "acme/web", tc.branch)
-			checkResult(t, got, tc.want, err, tc.err)
-		})
-	}
+func TestGitHubRefChecker_ContainsSHAKeepsSlashes(t *testing.T) {
+	g := &github{path: "/repos/acme/web/compare/release/v1+x...abc123", status: 200, body: `{"status":"identical"}`}
+	got, err := newChecker(t, g).ContainsSHA(context.Background(), "acme/web", "release/v1+x", "abc123")
+	checkResult(t, got, true, err, "")
 }
 
 func TestGitHubRefChecker_ContainsSHA(t *testing.T) {
@@ -142,11 +123,11 @@ func TestGitHubRefChecker_SendsGitHubHeaders(t *testing.T) {
 	var accept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accept = r.Header.Get("Accept")
-		fmt.Fprint(w, `{"protected":true}`)
+		fmt.Fprint(w, `{"status":"identical"}`)
 	}))
 	t.Cleanup(srv.Close)
 	g := &GitHubRefChecker{BaseURL: srv.URL + "/", HTTP: srv.Client(), Token: func(context.Context, string) (string, error) { return "t", nil }}
-	if _, err := g.IsProtected(context.Background(), "acme/web", "main"); err != nil {
+	if _, err := g.ContainsSHA(context.Background(), "acme/web", "main", "abc123"); err != nil {
 		t.Fatal(err)
 	}
 	if accept != "application/vnd.github+json" {
@@ -156,11 +137,11 @@ func TestGitHubRefChecker_SendsGitHubHeaders(t *testing.T) {
 
 func TestGitHubRefChecker_TokenError(t *testing.T) {
 	boom := errors.New("hub revoked")
-	g := &github{path: "/repos/acme/web/branches/main", status: 200}
+	g := &github{path: "/repos/acme/web/compare/main...abc123", status: 200}
 	c := newChecker(t, g)
 	c.Token = func(context.Context, string) (string, error) { return "", boom }
-	if _, err := c.IsProtected(context.Background(), "acme/web", "main"); !errors.Is(err, boom) {
-		t.Fatalf("IsProtected err = %v, want %v", err, boom)
+	if _, err := c.ContainsSHA(context.Background(), "acme/web", "main", "abc123"); !errors.Is(err, boom) {
+		t.Fatalf("ContainsSHA err = %v, want %v", err, boom)
 	}
 	if g.hits != 0 {
 		t.Errorf("GitHub was called %d times without a token", g.hits)
@@ -234,15 +215,15 @@ deployments:
 // are permanent, through the intake's wrapping; outages, rate limits and
 // token failures are not.
 func TestGitHubRefChecker_PermanentErrors(t *testing.T) {
-	const branches = "/repos/acme/web/branches/main"
+	const compare = "/repos/acme/web/compare/main...abc123"
 	for status, want := range map[int]bool{
 		400: true, 410: true, 422: true,
 		401: false, 403: false, 408: false, 429: false, 500: false, 502: false, 503: false,
 	} {
-		t.Run(fmt.Sprintf("branch status %d", status), func(t *testing.T) {
-			_, err := newChecker(t, &github{path: branches, status: status}).IsProtected(context.Background(), "acme/web", "main")
+		t.Run(fmt.Sprintf("compare status %d", status), func(t *testing.T) {
+			_, err := newChecker(t, &github{path: compare, status: status}).ContainsSHA(context.Background(), "acme/web", "main", "abc123")
 			if err == nil || IsPermanent(fmt.Errorf("trigger: %w", err)) != want {
-				t.Fatalf("IsProtected err = %v, want permanent %v", err, want)
+				t.Fatalf("ContainsSHA err = %v, want permanent %v", err, want)
 			}
 		})
 	}
@@ -261,14 +242,14 @@ func TestGitHubRefChecker_PermanentErrors(t *testing.T) {
 		}
 	})
 	t.Run("token failure", func(t *testing.T) {
-		c := newChecker(t, &github{path: branches, status: 200})
+		c := newChecker(t, &github{path: compare, status: 200})
 		c.Token = func(context.Context, string) (string, error) { return "", errors.New("no token within 30s") }
-		if _, err := c.IsProtected(context.Background(), "acme/web", "main"); err == nil || IsPermanent(err) {
-			t.Fatalf("IsProtected err = %v, want a transient error", err)
+		if _, err := c.ContainsSHA(context.Background(), "acme/web", "main", "abc123"); err == nil || IsPermanent(err) {
+			t.Fatalf("ContainsSHA err = %v, want a transient error", err)
 		}
 		c.Token = func(context.Context, string) (string, error) { return "", Permanent(errors.New("refused")) }
-		if _, err := c.IsProtected(context.Background(), "acme/web", "main"); !IsPermanent(err) {
-			t.Fatalf("IsProtected err = %v, want the token's permanent error", err)
+		if _, err := c.ContainsSHA(context.Background(), "acme/web", "main", "abc123"); !IsPermanent(err) {
+			t.Fatalf("ContainsSHA err = %v, want the token's permanent error", err)
 		}
 	})
 }

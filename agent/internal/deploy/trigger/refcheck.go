@@ -14,8 +14,6 @@ import (
 
 // RefChecker answers the GitHub questions a deploy trigger must pass.
 type RefChecker interface {
-	// IsProtected reports whether branch has GitHub branch protection.
-	IsProtected(ctx context.Context, repo, branch string) (bool, error)
 	// ContainsSHA reports whether sha is reachable from ref.
 	ContainsSHA(ctx context.Context, repo, ref, sha string) (bool, error)
 	// ChangedFiles lists the files changed between base and head;
@@ -43,19 +41,6 @@ type GitHubRefChecker struct {
 }
 
 var _ RefChecker = (*GitHubRefChecker)(nil)
-
-// IsProtected implements RefChecker. A branch GitHub does not know is not
-// protected.
-func (g *GitHubRefChecker) IsProtected(ctx context.Context, repo, branch string) (bool, error) {
-	var body struct {
-		Protected bool `json:"protected"`
-	}
-	found, err := g.getJSON(ctx, repo, "/repos/"+repo+"/branches/"+escapeRef(branch), &body)
-	if err != nil || !found {
-		return false, err
-	}
-	return body.Protected, nil
-}
 
 // ContainsSHA implements RefChecker: sha is on ref when comparing ref to sha
 // is identical or behind. A ref or sha GitHub does not know is not

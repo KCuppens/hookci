@@ -54,10 +54,10 @@ const (
 const flushInterval = 100 * time.Millisecond
 
 // ExecutorFunc builds the runner of one checked-out run whose checks are
-// already resolved, held to policy. protected is whether the run is a
-// trusted push to a branch with GitHub branch protection, whose caches may
-// be saved.
-type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, protected bool) (scheduler.JobRunner, error)
+// already resolved, held to policy. cacheFallback is the branches, in
+// order, whose caches the run restores after its own (for a pull request,
+// instead of it): the pull request's base, then the repo's default branch.
+type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, cacheFallback []string) (scheduler.JobRunner, error)
 
 // Options configures a Daemon.
 type Options struct {
@@ -86,10 +86,6 @@ type Options struct {
 	// HubInfo reads the hub's /v1/info when the daemon starts; nil fetches
 	// it from the paired hub.
 	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
-	// BranchProtected reports whether branch of repo has GitHub branch
-	// protection, asked for the check run runID; nil asks GitHub with a
-	// token the hub issues for the run.
-	BranchProtected func(ctx context.Context, runID, repo, branch string) (bool, error)
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -180,14 +176,6 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
 	}
 	github := &http.Client{Timeout: githubTimeout}
-	if d.o.BranchProtected == nil {
-		d.o.BranchProtected = func(ctx context.Context, runID, repo, branch string) (bool, error) {
-			refs := &trigger.GitHubRefChecker{HTTP: github, Token: func(ctx context.Context, _ string) (string, error) {
-				return d.tokens.Request(ctx, runID)
-			}}
-			return refs.IsProtected(ctx, repo, branch)
-		}
-	}
 	if d.deploys == nil {
 		d.deploys = &hubIntake{
 			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
@@ -447,9 +435,9 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 	discard := func() { _ = os.RemoveAll(dir.Root) }
 
 	p, err := resolvePlan(co, config.ParseOptions{SelfHosted: d.selfHosted.Load()})
-	if err == nil && p.policy != nil && t.Pr == nil {
-		// The hub only triggers pushes of the default branch, so this is the
-		// configuration fork pull requests are judged by.
+	if err == nil && p.policy != nil && defaultBranchPush(t) {
+		// The hub forwards pushes of every branch; only the default
+		// branch's configuration is the one fork pull requests are judged by.
 		if err := d.st.SaveRepoConfig(bg, t.Repo, co.SHA, string(p.policy.Trust), p.policy.HasDeployments); err != nil {
 			d.log.Error("record repo config failed", "repo", t.Repo, "err", err)
 		}
@@ -469,7 +457,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		return
 	}
 	policy := optionsForTrust(t.Trust)
-	inner, err := d.exec(co, p.checks, policy, d.protectedPush(w.ctx, w))
+	inner, err := d.exec(co, p.checks, policy, cacheFallback(t))
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
@@ -566,21 +554,24 @@ func (d *Daemon) startRun(ctx context.Context, w *work, sha string, p plan) (sto
 	return run, d.st.CreateRun(ctx, run, storeJobs(p.checks))
 }
 
-// protectedPush reports whether w is a trusted push to a protected branch.
-// A failed lookup is logged and counts as unprotected, so the run saves no
-// caches.
-func (d *Daemon) protectedPush(ctx context.Context, w *work) bool {
-	t := w.trig
-	branch, ok := strings.CutPrefix(t.Ref, "refs/heads/")
-	if t.Pr != nil || t.Trust != protocol.TriggerTrustTrusted || !ok {
-		return false
+// defaultBranchPush reports whether t is a push to the repo's default
+// branch. Retries carry no default branch, so they are never one.
+func defaultBranchPush(t protocol.Trigger) bool {
+	return t.Pr == nil && t.DefaultBranch != nil && t.Ref == "refs/heads/"+*t.DefaultBranch
+}
+
+// cacheFallback is the branches whose caches a run of t restores when its
+// own branch has none, in order: a pull request's base, then the default
+// branch. Retries carry neither, so they restore from their own branch only.
+func cacheFallback(t protocol.Trigger) []string {
+	var branches []string
+	if t.Pr != nil && t.Pr.BaseRef != nil {
+		branches = append(branches, *t.Pr.BaseRef)
 	}
-	protected, err := d.o.BranchProtected(ctx, w.runID, t.Repo, branch)
-	if err != nil {
-		d.log.Warn("branch protection lookup failed; caches will not be saved", "repo", t.Repo, "branch", branch, "err", err)
-		return false
+	if t.DefaultBranch != nil {
+		branches = append(branches, *t.DefaultBranch)
 	}
-	return protected
+	return branches
 }
 
 // cancelUnstarted reports w cancelled with reason before its run started.

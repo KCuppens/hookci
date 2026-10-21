@@ -101,8 +101,6 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/branches/main":
-			_, _ = w.Write([]byte(`{"protected":true}`))
 		case "/repos/acme/app/compare/main..." + headSHA:
 			_, _ = w.Write([]byte(`{"status":"identical"}`))
 		default:

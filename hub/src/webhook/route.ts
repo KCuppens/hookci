@@ -9,12 +9,14 @@ import { HubError } from "../errors";
 import { gateForkRun } from "../forks/gate";
 import { isForkPr } from "../forks/policy";
 import type { HubTrigger } from "../github/normalize";
+import { fetchRepoTriggers, triggerConfigRef, triggerWanted } from "../policy/repo-config";
 import type { WaitUntil } from "../sinks";
 import { notifyOutcome } from "./outcome";
 
 export type RouteOutcome =
 	| { kind: "dispatched"; agentId: string }
 	| { kind: "gated"; agentId: string; reason: "fork_gated" | "fork_never" }
+	| { kind: "not_wanted" }
 	| { kind: "no_agent" }
 	| { kind: "suspended" }
 	| { kind: "deleted" }
@@ -48,6 +50,9 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
+	// Like an Actions workflow's `on:`, the repo's own config picks the branches; no check, no message otherwise.
+	const cfg = await fetchRepoTriggers(env, trig.installationId, trig.repo, triggerConfigRef(trig));
+	if (!triggerWanted(cfg, trig)) return { kind: "not_wanted" };
 
 	const binding = await getBinding(tenantDb(env.DB, trig.installationId), trig.repoId, trig.target);
 	if (!binding) {

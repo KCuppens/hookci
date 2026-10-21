@@ -101,12 +101,12 @@
               "additionalProperties": false,
               "properties": {
                 "branches": {
-                  "description": "Branches whose pushes start a check run.",
+                  "description": "Branches whose pushes start a check run, as names or GitHub Actions style globs (* matches within one path segment, ** across segments). Unset: the repository's default branch. A branch a deployment's on.push names always runs checks.",
                   "type": "array",
                   "items": {
-                    "type": "string"
-                  },
-                  "default": ["main"]
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             }
@@ -710,8 +710,18 @@
                 "fork": {
                   "description": "The head repository is a fork.",
                   "type": "boolean"
+                },
+                "base_ref": {
+                  "description": "Base branch name.",
+                  "type": "string",
+                  "minLength": 1
                 }
               }
+            },
+            "default_branch": {
+              "description": "The repository's default branch name.",
+              "type": "string",
+              "minLength": 1
             },
             "base_sha": {
               "description": "Base commit of the pull request.",

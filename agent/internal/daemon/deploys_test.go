@@ -60,7 +60,7 @@ func TestDaemonDeployTriggers(t *testing.T) {
 			"trg_last": {Accepted: true, RunID: "run_last"},
 		},
 		errs: map[string]error{
-			"trg_err":  errors.New("trigger: github /repos/acme/app/branches/main: 502"),
+			"trg_err":  errors.New("trigger: github /repos/acme/app/compare/main...abc: 502"),
 			"trg_perm": trigger.Permanent(errors.New("trigger: github /repos/acme/app/compare/main...abc: 422")),
 		},
 	}
@@ -105,7 +105,7 @@ func TestDaemonDeployTriggers(t *testing.T) {
 	}
 	want := map[string]any{
 		"trg_no":   untrusted,
-		"trg_err":  "deployments.prod: github check failed: trigger: github /repos/acme/app/branches/main: 502",
+		"trg_err":  "deployments.prod: github check failed: trigger: github /repos/acme/app/compare/main...abc: 502",
 		"trg_perm": "deployments.prod: github check failed: trigger: github /repos/acme/app/compare/main...abc: 422",
 	}
 	if !maps.Equal(rejected, want) {
@@ -145,7 +145,7 @@ func TestDaemonDeployRetryKeepsWorkerFree(t *testing.T) {
 			"trg_staging": {Accepted: true, RunID: "run_staging"},
 			"trg_dev":     {Accepted: true, RunID: "run_dev"},
 		},
-		errs: map[string]error{"trg_prod": errors.New("trigger: github /repos/acme/app/branches/main: 502")},
+		errs: map[string]error{"trg_prod": errors.New("trigger: github /repos/acme/app/compare/main...abc: 502")},
 	}
 	h := newHarnessWith(t, &fakeSource{}, &fakeRunner{}, "https://hub.invalid", deploys)
 
@@ -166,10 +166,10 @@ func TestDaemonDeployRetryKeepsWorkerFree(t *testing.T) {
 }
 
 // gitHubHarness is a harness whose deploy triggers go through the default
-// intake against a fake GitHub for a push of headSHA to the protected main
-// of acme/app. The branch lookup answers 502 to its first fails calls, or
-// to every call when fails is negative; branchCalls counts the lookups.
-func gitHubHarness(t *testing.T, fails int) (h *harness, branchCalls func() int) {
+// intake against a fake GitHub for a push of headSHA to main of acme/app.
+// The compare lookup answers 502 to its first fails calls, or to every call
+// when fails is negative; compareCalls counts the lookups.
+func gitHubHarness(t *testing.T, fails int) (h *harness, compareCalls func() int) {
 	t.Helper()
 	const cfg = "version: 1\ndeployments:\n  prod:\n    on: { push: main }\n    strategy: script\n    run: ./deploy.sh\n"
 	var mu sync.Mutex
@@ -178,7 +178,7 @@ func gitHubHarness(t *testing.T, fails int) (h *harness, branchCalls func() int)
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/branches/main":
+		case "/repos/acme/app/compare/main..." + headSHA:
 			mu.Lock()
 			calls++
 			fail := fails < 0 || calls <= fails
@@ -187,8 +187,6 @@ func gitHubHarness(t *testing.T, fails int) (h *harness, branchCalls func() int)
 				w.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			_, _ = w.Write([]byte(`{"protected":true}`))
-		case "/repos/acme/app/compare/main..." + headSHA:
 			_, _ = w.Write([]byte(`{"status":"identical"}`))
 		default:
 			http.NotFound(w, r)
@@ -210,11 +208,11 @@ func gitHubHarness(t *testing.T, fails int) (h *harness, branchCalls func() int)
 // answering gets the trigger accepted on the third attempt.
 func TestDaemonDeployCheckRetriesGitHubOutage(t *testing.T) {
 	setDeployRetryBase(t, time.Millisecond)
-	h, branchCalls := gitHubHarness(t, 2)
+	h, compareCalls := gitHubHarness(t, 2)
 	h.send(h.deployTrigger("trg_dep", "prod"))
 	h.waitTrigger("trg_dep", store.TriggerDone)
-	if n := branchCalls(); n != 3 {
-		t.Errorf("branch lookups = %d, want 3", n)
+	if n := compareCalls(); n != 3 {
+		t.Errorf("compare lookups = %d, want 3", n)
 	}
 	if accepted := h.frames("accepted"); len(accepted) != 1 || accepted[0]["trigger_id"] != "trg_dep" || accepted[0]["run_id"] == nil {
 		t.Errorf("accepted frames = %v, want trg_dep once with its run", accepted)
@@ -228,13 +226,13 @@ func TestDaemonDeployCheckRetriesGitHubOutage(t *testing.T) {
 // rejects the trigger after the last one, with its error.
 func TestDaemonDeployCheckGivesUpOnGitHubOutage(t *testing.T) {
 	setDeployRetryBase(t, time.Millisecond)
-	h, branchCalls := gitHubHarness(t, -1)
+	h, compareCalls := gitHubHarness(t, -1)
 	h.send(h.deployTrigger("trg_dep", "prod"))
 	h.waitTrigger("trg_dep", store.TriggerRejected)
-	if n := branchCalls(); n != deployAttempts {
-		t.Errorf("branch lookups = %d, want %d", n, deployAttempts)
+	if n := compareCalls(); n != deployAttempts {
+		t.Errorf("compare lookups = %d, want %d", n, deployAttempts)
 	}
-	const want = "deployments.prod: github check failed: trigger: github /repos/acme/app/branches/main: 502"
+	const want = "deployments.prod: github check failed: trigger: github /repos/acme/app/compare/main..." + headSHA + ": 502"
 	if rejected := h.frames("rejected"); len(rejected) != 1 || rejected[0]["reason"] != want {
 		t.Errorf("rejected frames = %v, want one with %q", rejected, want)
 	}
@@ -255,8 +253,6 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/branches/main":
-			_, _ = w.Write([]byte(`{"protected":true}`))
 		case "/repos/acme/app/compare/main..." + headSHA:
 			_, _ = w.Write([]byte(`{"status":"identical"}`))
 		default:
@@ -291,8 +287,8 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 	if !slices.Equal(asked, []string{"trg_1"}) {
 		t.Errorf("token requests = %v, want one for trg_1", asked)
 	}
-	if len(paths) != 3 {
-		t.Errorf("GitHub calls = %v, want config, branch and compare", paths)
+	if len(paths) != 2 {
+		t.Errorf("GitHub calls = %v, want config and compare", paths)
 	}
 	for _, a := range auths {
 		if a != "Bearer ghs_fetch" {

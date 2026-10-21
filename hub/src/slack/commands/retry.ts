@@ -46,7 +46,7 @@ async function rebuildTrigger(gh: GitHubClient, repo: ResolvedRepo, run: RunRow,
 	const fork = headRepoFullName.toLowerCase() !== repo.fullName.toLowerCase();
 	return {
 		...base,
-		pr: { number: pull.number, headRef: pull.head.ref, headRepoFullName, fork, authorLogin: pull.user.login },
+		pr: { number: pull.number, headRef: pull.head.ref, baseRef: pull.base.ref, headRepoFullName, fork, authorLogin: pull.user.login },
 		baseSha: pull.base.sha,
 		trust: fork ? "untrusted" : "trusted",
 	};

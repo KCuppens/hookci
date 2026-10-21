@@ -63,7 +63,7 @@ describe("fork pull request gating by HUB_MODE and the base ref's trust", () => 
 
     await deliver("pull_request", forkPr(c.author));
 
-    expect(world.refs).toEqual([BASE_SHA]);
+    expect(new Set(world.refs)).toEqual(new Set([BASE_SHA]));
     const triggers = (await outbox(world.agent)).filter((f) => f.type === "trigger");
     const [row] = await runs();
     if (c.mode === "self_hosted" && c.trust === "all" && !c.deploy && c.forks === "gated") {

@@ -130,18 +130,17 @@ func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (
 func (r *fakeRunner) FinishRun(context.Context, store.Run, store.RunState) error { return nil }
 
 type harness struct {
-	t        *testing.T
-	ctx      context.Context
-	st       *store.Store
-	d        *Daemon
-	runner   *fakeRunner
-	src      *fakeSource
-	mu       sync.Mutex
-	execs    [][]string           // job names of every ExecutorFunc call
-	policies []executor.RunPolicy // policy of every ExecutorFunc call
-	protects []bool               // protected of every ExecutorFunc call
-	lookups  []string             // repo:branch of every BranchProtected call
-	seq      int
+	t         *testing.T
+	ctx       context.Context
+	st        *store.Store
+	d         *Daemon
+	runner    *fakeRunner
+	src       *fakeSource
+	mu        sync.Mutex
+	execs     [][]string           // job names of every ExecutorFunc call
+	policies  []executor.RunPolicy // policy of every ExecutorFunc call
+	fallbacks [][]string           // cacheFallback of every ExecutorFunc call
+	seq       int
 }
 
 func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
@@ -177,7 +176,7 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 	src.started = make(chan struct{})
 	runner.running = make(chan string, 16)
 	h := &harness{t: t, st: st, src: src, runner: runner}
-	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, protected bool) (scheduler.JobRunner, error) {
+	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, cacheFallback []string) (scheduler.JobRunner, error) {
 		var names []string
 		for _, j := range checks.Jobs {
 			names = append(names, j.Name)
@@ -185,7 +184,7 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 		h.mu.Lock()
 		h.execs = append(h.execs, names)
 		h.policies = append(h.policies, policy)
-		h.protects = append(h.protects, protected)
+		h.fallbacks = append(h.fallbacks, cacheFallback)
 		h.mu.Unlock()
 		return runner, nil
 	}
@@ -194,14 +193,7 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 	noHub := func(context.Context) (hubclient.HubInfo, error) {
 		return hubclient.HubInfo{}, errors.New("hub unreachable")
 	}
-	// main is the one protected branch.
-	protectedBranch := func(_ context.Context, _, repo, branch string) (bool, error) {
-		h.mu.Lock()
-		h.lookups = append(h.lookups, repo+":"+branch)
-		h.mu.Unlock()
-		return branch == "main", nil
-	}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub, BranchProtected: protectedBranch})
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx
@@ -227,16 +219,18 @@ func (h *harness) send(f protocol.Frame) {
 func (h *harness) trigger(id string, pr bool) protocol.Trigger {
 	h.seq++
 	seq := h.seq
+	defaultBranch := "main"
 	t := protocol.Trigger{
 		Attempt: 1, Event: protocol.TriggerEventPush, Ref: "refs/heads/main", Repo: "acme/app",
 		Sha: headSHA, TriggerId: id, Trust: protocol.TriggerTrustTrusted, Seq: &seq, HubSeq: seq,
+		DefaultBranch: &defaultBranch,
 	}
 	if pr {
-		base := baseSHA
+		base, baseRef := baseSHA, "develop"
 		t.Event = protocol.TriggerEventPullRequest
 		t.Ref = "refs/pull/7/head"
 		t.BaseSha = &base
-		t.Pr = &protocol.TriggerPr{HeadRef: "feature", HeadRepoFullName: "acme/app", Number: 7}
+		t.Pr = &protocol.TriggerPr{HeadRef: "feature", HeadRepoFullName: "acme/app", Number: 7, BaseRef: &baseRef}
 	}
 	return t
 }
@@ -365,23 +359,31 @@ func TestDaemonBaseConfigBootstrap(t *testing.T) {
 	}
 }
 
-// A default-branch run records the fork policy its .hookci.yml declares,
-// even when the agent refuses that configuration; pull requests record
+// A push to the default branch records the fork policy its .hookci.yml
+// declares, even when the agent refuses that configuration; pushes to other
+// branches, pushes without a known default branch and pull requests record
 // nothing.
 func TestDaemonRecordsDefaultBranchPolicy(t *testing.T) {
 	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
 	tests := []struct {
 		name string
 		pr   bool
+		mut  func(*protocol.Trigger)
 		want []store.RepoConfig
 	}{
-		{"push", false, []store.RepoConfig{{Repo: "acme/app", SHA: headSHA, Trust: "all"}}},
-		{"pull request", true, nil},
+		{"push", false, nil, []store.RepoConfig{{Repo: "acme/app", SHA: headSHA, Trust: "all"}}},
+		{"push to another branch", false, func(t *protocol.Trigger) { t.Ref = "refs/heads/feature" }, nil},
+		{"push without default branch", false, func(t *protocol.Trigger) { t.DefaultBranch = nil }, nil},
+		{"pull request", true, nil, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{})
-			h.send(h.trigger("trg_1", tc.pr))
+			trig := h.trigger("trg_1", tc.pr)
+			if tc.mut != nil {
+				tc.mut(&trig)
+			}
+			h.send(trig)
 			h.waitTrigger("trg_1", store.TriggerRejected)
 			got, err := store.ReadRepoConfigs(h.ctx, filepath.Join(h.d.o.StateDir, "agent.db"))
 			if err != nil {
@@ -813,26 +815,32 @@ func TestDaemonJobLogs(t *testing.T) {
 	}
 }
 
-// A trusted push to a protected branch may save caches; a pull request is
-// never asked about and never may.
-func TestDaemonProtectedBranch(t *testing.T) {
+// The executor restores caches from the run's own branch, then the branches
+// the trigger names: a pull request's base, then the default branch.
+func TestDaemonCacheFallback(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		pr      bool
-		want    bool
-		lookups []string
+		name string
+		pr   bool
+		mut  func(*protocol.Trigger)
+		want []string
 	}{
-		{"push to protected main", false, true, []string{"acme/app:main"}},
-		{"pull request", true, false, nil},
+		{"push", false, nil, []string{"main"}},
+		{"push to another branch", false, func(t *protocol.Trigger) { t.Ref = "refs/heads/feature/x" }, []string{"main"}},
+		{"pull request", true, nil, []string{"develop", "main"}},
+		{"no branches named", false, func(t *protocol.Trigger) { t.DefaultBranch = nil }, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}, Base: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{})
-			h.send(h.trigger("trg_1", tc.pr))
+			trig := h.trigger("trg_1", tc.pr)
+			if tc.mut != nil {
+				tc.mut(&trig)
+			}
+			h.send(trig)
 			h.waitTrigger("trg_1", store.TriggerDone)
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			if !slices.Equal(h.protects, []bool{tc.want}) || !slices.Equal(h.lookups, tc.lookups) {
-				t.Fatalf("protected = %v, lookups = %v; want [%v], %v", h.protects, h.lookups, tc.want, tc.lookups)
+			if len(h.fallbacks) != 1 || !slices.Equal(h.fallbacks[0], tc.want) {
+				t.Fatalf("cache fallbacks = %q, want [%q]", h.fallbacks, tc.want)
 			}
 		})
 	}

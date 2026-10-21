@@ -38,17 +38,16 @@ const scratchDir = ".hookci-cache"
 
 // Policy decides whether a run may write cache entries.
 type Policy struct {
-	Kind      string // "check" | "deploy"
-	Event     string // "push" | "pull_request" | "local"
-	Protected bool   // ref is a branch with GitHub branch protection
-	Trusted   bool   // run.TrustDomain has the "trusted:" prefix
+	Kind    string // "check" | "deploy"
+	Event   string // "push" | "pull_request" | "local"
+	Trusted bool   // run.TrustDomain has the "trusted:" prefix
 }
 
 // MaySave reports whether a run under p may write a cache entry: local runs,
-// and check runs of trusted pushes to protected branches. PRs, deploys and
-// untrusted runs only read.
+// and check runs of trusted pushes to any branch. PRs, deploys and untrusted
+// runs only read.
 func MaySave(p Policy) bool {
-	return p.Event == "local" || (p.Kind == "check" && p.Event == "push" && p.Protected && p.Trusted)
+	return p.Event == "local" || (p.Kind == "check" && p.Event == "push" && p.Trusted)
 }
 
 // Options configures New.

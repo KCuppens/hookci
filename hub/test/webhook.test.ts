@@ -79,13 +79,26 @@ function reportedErrors(spy: { mock: { calls: unknown[][] } }): Record<string, u
   return spy.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>);
 }
 
+let files: Record<string, string>;
+let configRefs: string[];
+let restoreGitHub: () => void;
+
 beforeEach(async () => {
   await clearTables();
   agents = fakeAgentDOs();
   await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: NOW });
+  const gh = createFakeGitHub();
+  serveInstallationTokens(gh, Date.now());
+  files = {};
+  configRefs = serveRepoFiles(gh, files);
+  const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+  env.__TEST_FETCHER = gh.fetcher;
+  env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+  restoreGitHub = () => Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
 });
 
 afterEach(() => {
+  restoreGitHub();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -122,7 +135,7 @@ describe("POST /github/webhook signature", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(202);
-    expect((await deliveryRow("rotated"))?.status).toBe("processed");
+    expect((await deliveryRow("rotated"))?.status).toBe("dropped");
   });
 });
 
@@ -198,7 +211,7 @@ describe("POST /github/webhook deliveries", () => {
     for (let i = 1; i <= 600; i++) expect((await deliver("push", pushBranch, { id: `r-${i}` })).status).toBe(202);
     const res = await deliver("push", pushMain, { id: "r-601" });
     expect(res.status).toBe(202);
-    expect(await deliveryRow("r-600")).toMatchObject({ status: "processed", note: null });
+    expect(await deliveryRow("r-600")).toMatchObject({ status: "dropped", note: "not_wanted" });
     expect(await deliveryRow("r-601")).toMatchObject({ status: "dropped", note: "rate_limited" });
     expect(agents.calls).toEqual([]);
   }, 60_000);
@@ -250,19 +263,9 @@ describe("POST /github/webhook routing", () => {
   });
 
   it("gates a fork pull request instead of triggering it, reading the policy at the base SHA", async () => {
-    const gh = createFakeGitHub();
-    serveInstallationTokens(gh, Date.now());
-    const refs = serveRepoFiles(gh, {});
-    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
-    env.__TEST_FETCHER = gh.fetcher;
-    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
-    try {
-      await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
-      await deliver("pull_request", prFork);
-    } finally {
-      Object.assign(env, { __TEST_FETCHER: saved.fetcher, GITHUB_APP_PRIVATE_KEY: saved.key });
-    }
-    expect(refs).toEqual([prFork.pull_request.base.sha]);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    await deliver("pull_request", prFork);
+    expect(new Set(configRefs)).toEqual(new Set([prFork.pull_request.base.sha]));
     expect(agents.calls).toHaveLength(1);
     expect(agents.calls[0]!.url).toBe("https://do/gate");
     expect(agents.calls[0]!.body).toMatchObject({ reason: "fork_gated", pr: { number: 9, fork: true } });
@@ -327,10 +330,36 @@ describe("POST /github/webhook routing", () => {
     expect(await deliveryRow("d-unknown")).toMatchObject({ status: "dropped", note: "unknown_installation" });
   });
 
-  it("starts nothing for events normalize ignores", async () => {
+  it("drops a push to a branch the repo's config does not name, before any run or check", async () => {
     await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
     await deliver("push", pushBranch, { id: "d-branch" });
+    expect(configRefs).toEqual([pushBranch.after]);
     expect(agents.calls).toEqual([]);
-    expect(await deliveryRow("d-branch")).toMatchObject({ status: "processed", note: null });
+    expect(await deliveryRow("d-branch")).toMatchObject({ status: "dropped", note: "not_wanted" });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM runs").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("runs a push to a branch matched by checks.on.push.branches at that commit", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    files[`acme/widgets@${pushBranch.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [main, 'feature/*']\n";
+    await deliver("push", pushBranch, { id: "d-glob" });
+    expect(agents.calls).toEqual([expect.objectContaining({ url: "https://do/trigger", body: expect.objectContaining({ ref: "refs/heads/feature/sizing" }) })]);
+    expect(await deliveryRow("d-glob")).toMatchObject({ status: "processed" });
+  });
+
+  it("drops a push to the default branch once checks.on.push.branches leaves it out", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    files[`acme/widgets@${pushMain.after}:.hookci.yml`] = "checks:\n  on:\n    push:\n      branches: [release]\n";
+    await deliver("push", pushMain, { id: "d-main" });
+    expect(agents.calls).toEqual([]);
+    expect(await deliveryRow("d-main")).toMatchObject({ status: "dropped", note: "not_wanted" });
+  });
+
+  it("drops a pull request when checks.on.pull_request is false", async () => {
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", AGENT);
+    files[`acme/widgets@${prOpened.pull_request.head.sha}:.hookci.yml`] = "checks:\n  on:\n    pull_request: false\n";
+    await deliver("pull_request", prOpened, { id: "d-pr" });
+    expect(agents.calls).toEqual([]);
+    expect(await deliveryRow("d-pr")).toMatchObject({ status: "dropped", note: "not_wanted" });
   });
 });

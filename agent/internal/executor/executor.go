@@ -108,9 +108,11 @@ type Options struct {
 	Mirrors *source.Mirrors // shared clones of mirrored repos; nil: Source checks out everything
 	// Config loads the run's checks from its checked-out tree.
 	Config func(run store.Run, workdir string) (*config.ResolvedChecks, error)
-	// Protected reports whether the run's ref is a protected branch, which
-	// lets a trusted push run save caches. nil: no ref is protected.
-	Protected func(run store.Run) bool
+	// CacheFallback is the branches, in order, whose caches a run restores
+	// when its own branch has none; pull requests restore from these only.
+	// The daemon builds one Executor per run with that run's pull request
+	// base and the repo's default branch.
+	CacheFallback []string
 	// Policy is what the runs of this Executor may do; the daemon builds
 	// one Executor per run with the policy of that run's trust.
 	Policy        RunPolicy
@@ -437,14 +439,21 @@ func cachePaths(ps []string) ([]string, error) {
 
 // restoreCaches computes each setup step's cache key before setup runs, so
 // Save stores what this lockfile produced even if setup rewrites it, and
-// restores it. Cache errors are logged and never fail the run.
+// restores the first entry found along cacheScopes. Cache errors are logged
+// and never fail the run.
 func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 	if e.o.Hooks.Cache == nil {
 		return
 	}
 	platform := runtime.GOOS + "-" + runtime.GOARCH
+	scopes := cacheScopes(rs.run, e.o.CacheFallback)
+	ownScope := rs.run.Event != "pull_request"
 	for i, step := range rs.cfg.Setup {
 		if step.Cache == nil {
+			continue
+		}
+		if len(scopes) == 0 {
+			rs.logf("cache setup[%d]: no branch to restore from", i)
 			continue
 		}
 		keyFiles := make([]string, len(step.Cache.Key))
@@ -456,25 +465,50 @@ func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 			rs.logf("cache setup[%d]: %v", i, err)
 			continue
 		}
-		k, err := cache.ComputeKey(cacheDomain(rs.run), platform, rs.dir.Root, keyFiles, paths)
+		k, err := cache.ComputeKey(cacheDomain(rs.run), scopes[0], platform, rs.dir.Root, keyFiles, paths)
 		if err != nil {
 			rs.logf("cache setup[%d]: key: %v", i, err)
 			continue
 		}
-		rs.cacheKeys = append(rs.cacheKeys, k)
-		hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, k, rs.dir.Root)
-		if cleanup != nil {
-			rs.cleanups = append(rs.cleanups, cleanup)
+		if ownScope {
+			rs.cacheKeys = append(rs.cacheKeys, k)
 		}
-		switch {
-		case err != nil:
-			rs.logf("cache setup[%d]: restore %s: %v", i, k.Hash, err)
-		case hit:
-			rs.logf("cache setup[%d]: hit %s", i, k.Hash)
-		default:
-			rs.logf("cache setup[%d]: miss %s", i, k.Hash)
+		for j, scope := range scopes {
+			if j > 0 {
+				k = k.InScope(scope)
+			}
+			hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, k, rs.dir.Root)
+			if cleanup != nil {
+				rs.cleanups = append(rs.cleanups, cleanup)
+			}
+			if err != nil {
+				rs.logf("cache setup[%d]: restore %s from %q: %v", i, k.Hash, scope, err)
+				break
+			}
+			if hit {
+				rs.logf("cache setup[%d]: hit %s from %q", i, k.Hash, scope)
+				break
+			}
+			rs.logf("cache setup[%d]: miss %s in %q", i, k.Hash, scope)
 		}
 	}
+}
+
+// cacheScopes lists the branches whose caches run restores from, in order:
+// its own branch (Ref without refs/heads/) unless it is a pull request, then
+// fallback, skipping empty and repeated names. A run saves only under its
+// own branch, so pull requests, which have none, never save.
+func cacheScopes(run store.Run, fallback []string) []string {
+	var scopes []string
+	if run.Event != "pull_request" {
+		scopes = append(scopes, strings.TrimPrefix(run.Ref, "refs/heads/"))
+	}
+	for _, s := range fallback {
+		if s != "" && !slices.Contains(scopes, s) {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes
 }
 
 // startServices starts postgres when configured. Its socket dir is PG().
@@ -658,9 +692,6 @@ func (e *Executor) FinishRun(ctx context.Context, run store.Run, final store.Run
 
 	if final == store.RunSuccess && e.o.Hooks.Cache != nil && len(rs.cacheKeys) > 0 {
 		policy := cache.Policy{Kind: run.Kind, Event: run.Event, Trusted: rs.trusted}
-		if e.o.Protected != nil {
-			policy.Protected = e.o.Protected(run)
-		}
 		if cache.MaySave(policy) {
 			for _, k := range rs.cacheKeys {
 				err := e.o.Hooks.Cache.Save(ctx, k, policy, rs.dir.Root)

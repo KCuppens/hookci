@@ -28,7 +28,7 @@ async function onTriggerEvent(env: Env, event: "pull_request" | "push", payload:
 	const trig = normalize(event, payload);
 	if (!trig) return { status: "processed" };
 	const outcome = await routeTrigger(env, trig, ctx);
-	if (outcome.kind === "deleted" || outcome.kind === "unknown_installation") return { status: "dropped", note: outcome.kind };
+	if (outcome.kind === "deleted" || outcome.kind === "unknown_installation" || outcome.kind === "not_wanted") return { status: "dropped", note: outcome.kind };
 	return { status: "processed" };
 }
 

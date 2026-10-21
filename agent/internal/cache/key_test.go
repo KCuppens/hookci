@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -26,12 +27,12 @@ func writeFile(t *testing.T, path, content string, perm os.FileMode) {
 func TestComputeKeyStable(t *testing.T) {
 	wd := t.TempDir()
 	writeFile(t, filepath.Join(wd, "package-lock.json"), "lock v1", 0o644)
-	a, err := ComputeKey("trusted:kcuppens/app", "linux-amd64", wd,
+	a, err := ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd,
 		[]string{"package-lock.json", "yarn.lock"}, []string{"node_modules", "web/.turbo"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ComputeKey("trusted:kcuppens/app", "linux-amd64", wd,
+	b, err := ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd,
 		[]string{"./yarn.lock", "package-lock.json"}, []string{"web/.turbo/", "./node_modules"})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func TestComputeKeyChangesOnLockfile(t *testing.T) {
 	lock := filepath.Join(wd, "package-lock.json")
 	writeFile(t, lock, "lock v1", 0o644)
 	compute := func() Key {
-		k, err := ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+		k, err := ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,35 +75,48 @@ func TestComputeKeyChangesOnLockfile(t *testing.T) {
 	}
 }
 
-func TestComputeKeyTrustDomainAndPlatform(t *testing.T) {
+func TestComputeKeyTrustDomainScopeAndPlatform(t *testing.T) {
 	wd := t.TempDir()
 	writeFile(t, filepath.Join(wd, "go.sum"), "sum", 0o644)
 	seen := map[string]string{}
-	for _, c := range []struct{ domain, platform string }{
-		{"trusted:kcuppens/app", "linux-amd64"},
-		{"untrusted:kcuppens/app", "linux-amd64"},
-		{"trusted:kcuppens/other", "linux-amd64"},
-		{"trusted:kcuppens/app", "linux-arm64"},
+	for _, c := range []struct{ domain, scope, platform string }{
+		{"trusted:kcuppens/app", "main", "linux-amd64"},
+		{"untrusted:kcuppens/app", "main", "linux-amd64"},
+		{"trusted:kcuppens/other", "main", "linux-amd64"},
+		{"trusted:kcuppens/app", "main", "linux-arm64"},
+		{"trusted:kcuppens/app", "feature/x", "linux-amd64"},
+		{"trusted:kcuppens/app", "", "linux-amd64"},
 	} {
-		k, err := ComputeKey(c.domain, c.platform, wd, []string{"go.sum"}, []string{"vendor"})
+		k, err := ComputeKey(c.domain, c.scope, c.platform, wd, []string{"go.sum"}, []string{"vendor"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if k.TrustDomain != c.domain || k.Platform != c.platform {
-			t.Errorf("key fields = %q %q", k.TrustDomain, k.Platform)
+		if k.TrustDomain != c.domain || k.Scope != c.scope || k.Platform != c.platform {
+			t.Errorf("key fields = %q %q %q", k.TrustDomain, k.Scope, k.Platform)
 		}
 		if prev, dup := seen[k.Hash]; dup {
 			t.Errorf("%v has the same hash as %s", c, prev)
 		}
-		seen[k.Hash] = c.domain + " " + c.platform
+		seen[k.Hash] = c.domain + " " + c.scope + " " + c.platform
 	}
 	for _, bad := range []string{"", "local", "trusted", "trusted:", "other:kcuppens/app", "trusted:../app", "trusted:kcuppens/app/x"} {
-		if _, err := ComputeKey(bad, "linux-amd64", wd, nil, []string{"vendor"}); err == nil {
+		if _, err := ComputeKey(bad, "main", "linux-amd64", wd, nil, []string{"vendor"}); err == nil {
 			t.Errorf("trust domain %q accepted", bad)
 		}
 	}
-	if _, err := ComputeKey("trusted:kcuppens/app", "", wd, nil, []string{"vendor"}); err == nil {
+	if _, err := ComputeKey("trusted:kcuppens/app", "main", "", wd, nil, []string{"vendor"}); err == nil {
 		t.Error("empty platform accepted")
+	}
+	onMain, err := ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, []string{"go.sum"}, []string{"vendor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature, err := ComputeKey("trusted:kcuppens/app", "feature/x", "linux-amd64", wd, []string{"go.sum"}, []string{"vendor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := onMain.InScope("feature/x"); !reflect.DeepEqual(got, feature) {
+		t.Errorf("InScope = %+v, want %+v", got, feature)
 	}
 }
 
@@ -118,7 +132,7 @@ func TestComputeKeyRejectsTraversal(t *testing.T) {
 		{"workdir itself", nil, []string{"."}},
 		{"absolute key file", []string{"/etc/passwd"}, []string{"node_modules"}},
 	} {
-		if _, err := ComputeKey("trusted:kcuppens/app", "linux-amd64", wd, c.keyFiles, c.paths); !errors.Is(err, ErrBadPath) {
+		if _, err := ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, c.keyFiles, c.paths); !errors.Is(err, ErrBadPath) {
 			t.Errorf("%s: err = %v, want ErrBadPath", c.name, err)
 		}
 	}
@@ -131,13 +145,13 @@ func TestComputeKeyKeyFileSymlinkStaysInWorkdir(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(wd, "package-lock.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ComputeKey("untrusted:kcuppens/app", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"}); err == nil {
+	if _, err := ComputeKey("untrusted:kcuppens/app", "main", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"}); err == nil {
 		t.Fatal("key file symlinked out of the workdir was hashed")
 	}
 }
 
 func TestEntryDirSanitizesTrustDomain(t *testing.T) {
-	k, err := ComputeKey("trusted:KCuppens/App", "linux-amd64", t.TempDir(), nil, []string{"node_modules"})
+	k, err := ComputeKey("trusted:KCuppens/App", "main", "linux-amd64", t.TempDir(), nil, []string{"node_modules"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +161,11 @@ func TestEntryDirSanitizesTrustDomain(t *testing.T) {
 	}
 	if want := filepath.Join("trusted__kcuppens__app", k.Hash); rel != want {
 		t.Errorf("entry = %q, want %q", rel, want)
+	}
+	rescoped := k
+	rescoped.Scope = "feature/x"
+	if _, err := rescoped.entryRel(); err == nil {
+		t.Error("key whose scope does not match its hash accepted")
 	}
 	k.Paths = append(k.Paths, "extra")
 	if _, err := k.entryRel(); err == nil {
@@ -168,6 +187,7 @@ func TestKeySumFramesFields(t *testing.T) {
 		{with([]string{"x"}, nil), with(nil, []string{"x"})},
 		{with([]string{"a"}, []string{"b"}), with([]string{"a", "b"}, nil)},
 		{{TrustDomain: "trusted:o/r\nlinux", Platform: "amd64"}, {TrustDomain: "trusted:o/r", Platform: "linux\namd64"}},
+		{{TrustDomain: "trusted:o/r", Scope: "main\nlinux", Platform: "amd64"}, {TrustDomain: "trusted:o/r", Scope: "main", Platform: "linux\namd64"}},
 	} {
 		if pair[0].sum() == pair[1].sum() {
 			t.Errorf("%+v and %+v share a hash", pair[0], pair[1])

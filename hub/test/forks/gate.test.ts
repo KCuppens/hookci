@@ -70,7 +70,7 @@ describe("fork pull request gate", () => {
       sha: HEAD_SHA,
       ref: "refs/heads/feature",
       event: "pull_request",
-      pr: { number: PR, headRef: "feature", headRepoFullName: "mallory/api", fork: true, authorLogin: "mallory" },
+      pr: { number: PR, headRef: "feature", baseRef: "main", headRepoFullName: "mallory/api", fork: true, authorLogin: "mallory" },
       baseSha: BASE_SHA,
       authorLogin: "mallory",
       commitTitle: "Fork change",

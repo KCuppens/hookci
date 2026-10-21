@@ -291,7 +291,7 @@ describe("D1 writes and Slack calls under load", () => {
                 sha: `${tenant.installationId}${String(r).padStart(2, "0")}`.padEnd(40, "c"),
                 ref: `refs/heads/feature-${r}`,
                 event: "pull_request",
-                pr: { number: 100 + r, headRef: `feature-${r}`, headRepoFullName: tenant.fullName, fork: false, authorLogin: tenant.githubLogin },
+                pr: { number: 100 + r, headRef: `feature-${r}`, baseRef: "main", headRepoFullName: tenant.fullName, fork: false, authorLogin: tenant.githubLogin },
                 baseSha: "a".repeat(40),
                 authorLogin: tenant.githubLogin,
                 commitTitle: `Change ${r}`,

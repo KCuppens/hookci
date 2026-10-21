@@ -181,7 +181,15 @@ export interface Trigger {
      * The head repository is a fork.
      */
     fork: boolean;
+    /**
+     * Base branch name.
+     */
+    base_ref?: string;
   };
+  /**
+   * The repository's default branch name.
+   */
+  default_branch?: string;
   /**
    * Base commit of the pull request.
    */

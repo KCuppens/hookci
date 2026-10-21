@@ -90,7 +90,7 @@ export async function approveForkRun(
 			sha: run.sha,
 			ref: run.ref,
 			event: "pull_request",
-			pr: { number: pull.number, headRef: pull.head.ref, headRepoFullName: pull.head.repo?.full_name ?? "", fork: true, authorLogin: pull.user.login },
+			pr: { number: pull.number, headRef: pull.head.ref, baseRef: pull.base.ref, headRepoFullName: pull.head.repo?.full_name ?? "", fork: true, authorLogin: pull.user.login },
 			baseSha: pull.base.sha,
 			authorLogin: run.author_login ?? "",
 			commitTitle: run.commit_title ?? "",
