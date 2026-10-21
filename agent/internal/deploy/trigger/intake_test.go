@@ -26,9 +26,15 @@ type fakeRefs struct {
 	truncated bool
 	err       error // returned by every call
 	compares  [][2]string
+	// tag, when set, names a tag that holds the sha while no branch does.
+	// GitHub resolves a bare name to a tag before a branch.
+	tag string
 }
 
-func (f *fakeRefs) ContainsSHA(context.Context, string, string, string) (bool, error) {
+func (f *fakeRefs) ContainsSHA(_ context.Context, _, ref, _ string) (bool, error) {
+	if f.tag != "" {
+		return ref == f.tag, f.err
+	}
 	return !f.notOnRef, f.err
 }
 
@@ -259,6 +265,12 @@ func TestIntake_Rejections(t *testing.T) {
 			want:   "deployments.prod: 0123456 is not on main",
 		},
 		{
+			name:   "a tag named like the branch holds the sha",
+			dep:    deployment(),
+			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.tag = "main" },
+			want:   "deployments.prod: 0123456 is not on main",
+		},
+		{
 			name:   "default branch unknown",
 			dep:    deployment(),
 			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.DefaultBranch = nil },
@@ -413,6 +425,9 @@ func TestIntake_RetryAttemptRules(t *testing.T) {
 			want: unchanged(store.DeployFailed, "nothing to retry for prod at 0123456 (attempt 0)")},
 		{name: "sha no longer on branch", state: store.DeployFailed, attempt: 2,
 			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.notOnRef = true },
+			want:   unchanged(store.DeployFailed, "deployments.prod: 0123456 is not on main")},
+		{name: "a tag named like the branch holds the sha", state: store.DeployFailed, attempt: 2,
+			mutate: func(_ *protocol.Trigger, r *fakeRefs) { r.tag = "main" },
 			want:   unchanged(store.DeployFailed, "deployments.prod: 0123456 is not on main")},
 		{name: "untrusted retry", state: store.DeployInterrupted, attempt: 2,
 			mutate: func(tr *protocol.Trigger, _ *fakeRefs) { tr.Trust = protocol.TriggerTrustUntrusted },

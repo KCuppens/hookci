@@ -161,6 +161,18 @@ describe("GET /github/oauth/callback", () => {
     expect(res.headers.getSetCookie()).toContain("__Host-hookci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
   });
 
+  it("leaves out the install command while no agent release exists, linking to building the agent", async () => {
+    const saved = env.LATEST_AGENT_VERSION;
+    env.LATEST_AGENT_VERSION = "";
+    restore.push(() => {
+      env.LATEST_AGENT_VERSION = saved;
+    });
+    const html = await (await install()).text();
+    expect(html).not.toContain("/install | sh");
+    expect(html).toContain('href="https://github.com/KCuppens/hookci#quick-start-local"');
+    expect(html).toContain(`sudo hookci connect --hub ${env.HUB_ORIGIN} hci_pair_`);
+  });
+
   it("refuses an installation_id the user cannot access and stores nothing", async () => {
     const res = await install({ installation_id: "999" });
     expect(res.status).toBe(403);

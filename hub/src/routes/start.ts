@@ -58,6 +58,7 @@ export async function finishInstall(env: Env, gh: GitHubClient, f: FinishInstall
 		accountLogin,
 		pairToken: token,
 		hubOrigin: env.HUB_ORIGIN,
+		latestAgentVersion: env.LATEST_AGENT_VERSION,
 		expiresInMinutes: PAIR_TOKEN_TTL_MS / 60_000,
 		cookies,
 	});

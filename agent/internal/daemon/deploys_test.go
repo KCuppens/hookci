@@ -178,7 +178,7 @@ func gitHubHarness(t *testing.T, fails int) (h *harness, compareCalls func() int
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/compare/main..." + headSHA:
+		case "/repos/acme/app/compare/refs/heads/main..." + headSHA:
 			mu.Lock()
 			calls++
 			fail := fails < 0 || calls <= fails
@@ -232,7 +232,7 @@ func TestDaemonDeployCheckGivesUpOnGitHubOutage(t *testing.T) {
 	if n := compareCalls(); n != deployAttempts {
 		t.Errorf("compare lookups = %d, want %d", n, deployAttempts)
 	}
-	const want = "deployments.prod: github check failed: trigger: github /repos/acme/app/compare/main..." + headSHA + ": 502"
+	const want = "deployments.prod: github check failed: trigger: github /repos/acme/app/compare/refs/heads/main..." + headSHA + ": 502"
 	if rejected := h.frames("rejected"); len(rejected) != 1 || rejected[0]["reason"] != want {
 		t.Errorf("rejected frames = %v, want one with %q", rejected, want)
 	}
@@ -253,7 +253,7 @@ func TestHubIntakeChecksGitHubWithTriggerToken(t *testing.T) {
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/compare/main..." + headSHA:
+		case "/repos/acme/app/compare/refs/heads/main..." + headSHA:
 			_, _ = w.Write([]byte(`{"status":"identical"}`))
 		default:
 			http.NotFound(w, r)

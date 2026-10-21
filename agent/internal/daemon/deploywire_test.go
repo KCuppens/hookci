@@ -101,7 +101,7 @@ func newWire(t *testing.T, src *deploySource, seed func(*store.Store)) *wire {
 		switch r.URL.Path {
 		case "/repos/acme/app/contents/.hookci.yml":
 			_, _ = w.Write([]byte(cfg))
-		case "/repos/acme/app/compare/main..." + headSHA:
+		case "/repos/acme/app/compare/refs/heads/main..." + headSHA:
 			_, _ = w.Write([]byte(`{"status":"identical"}`))
 		default:
 			http.NotFound(w, r)
