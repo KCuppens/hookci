@@ -4,7 +4,7 @@ import type { TenantDb } from "./tenant";
 import type { WatchRow } from "./watches";
 
 /** `state NOT IN (...)` for runs that may still change. */
-const OPEN = `state NOT IN (${[...TERMINAL].map((s) => `'${s}'`).join(", ")})`;
+export const OPEN = `state NOT IN (${[...TERMINAL].map((s) => `'${s}'`).join(", ")})`;
 
 export interface RunRow {
 	run_id: string;
@@ -30,6 +30,10 @@ export interface RunRow {
 	slack_channel: string | null;
 	slack_notify: WatchRow["notify"] | null;
 	slack_alert: WatchRow["alert"] | null;
+	/** When the hub recorded the run, in epoch ms; 0 only for a run whose trigger_id is not a ULID. */
+	created_at: number;
+	/** The run's 1-based position among its installation's runs in the order they were recorded; shown as Run #N. */
+	run_number: number;
 }
 
 export interface JobRow {
@@ -42,7 +46,7 @@ export interface JobRow {
 	duration_ms: number | null;
 }
 
-export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert">;
+export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert" | "created_at" | "run_number">;
 
 const SLACK_NOTIFY: Record<string, WatchRow["notify"]> = { quiet: "quiet", normal: "normal", verbose: "normal" };
 const SLACK_ALERT: Record<string, WatchRow["alert"]> = { channel: "channel", dm: "dm" };
@@ -52,30 +56,52 @@ export type RunPatch = Partial<Pick<RunRow, "reason" | "agent_id" | "started_at"
 
 const PATCH_COLUMNS = ["reason", "agent_id", "started_at", "finished_at", "duration_ms", "log_key"] as const satisfies readonly (keyof RunPatch)[];
 
-export async function insertRun(t: TenantDb, row: NewRun): Promise<void> {
-	await t.run(
-		`INSERT INTO runs (installation_id, run_id, repo_id, sha, ref, event, pr_number, env, attempt, trigger_id, agent_id, state, reason,
-			author_login, commit_title, started_at, finished_at, duration_ms, log_key)
-		VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`,
-		row.run_id,
-		row.repo_id,
-		row.sha,
-		row.ref,
-		row.event,
-		row.pr_number,
-		row.env,
-		row.attempt,
-		row.trigger_id,
-		row.agent_id,
-		row.state,
-		row.reason,
-		row.author_login,
-		row.commit_title,
-		row.started_at,
-		row.finished_at,
-		row.duration_ms,
-		row.log_key,
-	);
+/** How many times insertRun tries to give a run its number before it lets the collision through. */
+const NUMBER_ATTEMPTS = 3;
+
+const RUN_NUMBER_COLLISION = /UNIQUE constraint failed: runs\.installation_id, runs\.run_number/;
+
+/**
+ * Records a run created at `at` (epoch ms) as the installation's next one: its
+ * run_number is one more than the highest the installation has, read and
+ * written by one INSERT so runs created at once get different numbers. The
+ * unique index on (installation_id, run_number) makes a collision that still
+ * happens fail instead of repeating a number, and then the insert is tried
+ * again; any other error, and a collision on the last attempt, is thrown.
+ */
+export async function insertRun(t: TenantDb, row: NewRun, at: number = Date.now()): Promise<void> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			await t.run(
+				`INSERT INTO runs (installation_id, run_id, repo_id, sha, ref, event, pr_number, env, attempt, trigger_id, agent_id, state, reason,
+					author_login, commit_title, started_at, finished_at, duration_ms, log_key, created_at, run_number)
+				SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, COALESCE(MAX(run_number), 0) + 1
+				FROM runs WHERE installation_id = ?1`,
+				row.run_id,
+				row.repo_id,
+				row.sha,
+				row.ref,
+				row.event,
+				row.pr_number,
+				row.env,
+				row.attempt,
+				row.trigger_id,
+				row.agent_id,
+				row.state,
+				row.reason,
+				row.author_login,
+				row.commit_title,
+				row.started_at,
+				row.finished_at,
+				row.duration_ms,
+				row.log_key,
+				at,
+			);
+			return;
+		} catch (err) {
+			if (attempt >= NUMBER_ATTEMPTS || !RUN_NUMBER_COLLISION.test(String(err))) throw err;
+		}
+	}
 }
 
 /**
@@ -197,7 +223,7 @@ export interface RunListRow extends RunRow {
 	agent_name: string | null;
 }
 
-const RUN_LIST_SELECT = `SELECT r.*, r.rowid AS run_rowid, p.full_name AS repo_name, a.name AS agent_name FROM runs r
+export const RUN_LIST_SELECT = `SELECT r.*, r.rowid AS run_rowid, p.full_name AS repo_name, a.name AS agent_name FROM runs r
 	LEFT JOIN repos p ON p.installation_id = r.installation_id AND p.repo_id = r.repo_id
 	LEFT JOIN agents a ON a.installation_id = r.installation_id AND a.agent_id = r.agent_id`;
 
@@ -219,6 +245,8 @@ export interface JobLogRow extends JobRow {
 	log_key: string | null;
 	log_bytes: number | null;
 	log_truncated: number;
+	/** 1 when the repo keeps its logs on the agent (`logs: local`): nothing is uploaded. */
+	logs_local: number;
 }
 
 /** The run's jobs in the order they were planned; empty when the run is not this installation's. */
@@ -280,6 +308,16 @@ export async function setJobLog(t: TenantDb, runId: string, job: string, log: { 
 		log.key,
 		log.bytes,
 		log.truncated ? 1 : 0,
+	);
+	return res.meta.changes > 0;
+}
+
+/** Records that the agent keeps a job's log on its own host; false when the job is not one of this installation's. */
+export async function markJobLogsLocal(t: TenantDb, runId: string, job: string): Promise<boolean> {
+	const res = await t.run(
+		"UPDATE jobs SET logs_local = 1 WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1 AND run_id = ?2) AND name = ?3",
+		runId,
+		job,
 	);
 	return res.meta.changes > 0;
 }

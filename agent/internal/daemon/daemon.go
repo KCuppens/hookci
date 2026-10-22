@@ -52,9 +52,11 @@ type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy
 type Options struct {
 	StateDir string
 	Version  string
-	Dialer   hubclient.Dialer // nil: real websocket dialer
-	Clock    clock.Clock      // nil: real clock
-	Logger   *slog.Logger     // nil: discard
+	// OSRelease is the host operating system sent in hello; "" omits it.
+	OSRelease string
+	Dialer    hubclient.Dialer // nil: real websocket dialer
+	Clock     clock.Clock      // nil: real clock
+	Logger    *slog.Logger     // nil: discard
 	// Source checks runs out; nil fetches from GitHub with hub-issued tokens.
 	Source  source.Source
 	JobUser executor.JobUser
@@ -110,6 +112,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		AgentID:    conf.AgentID,
 		Credential: conf.Credential,
 		Version:    o.Version,
+		OSRelease:  o.OSRelease,
 		Dialer:     o.Dialer,
 		Clock:      o.Clock,
 	}, st, d, o.Logger)

@@ -428,6 +428,11 @@
               "description": "Highest hub seq the agent has processed. The hub replays outbox frames above it. Absent means 0.",
               "type": "integer",
               "minimum": 0
+            },
+            "os_release": {
+              "description": "Operating system the agent runs on as a short printable name such as Ubuntu 22.04, macOS 14.5 or Windows 11, at most 64 characters. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.",
+              "type": "string",
+              "maxLength": 64
             }
           }
         },
@@ -1051,7 +1056,7 @@
             "reason": {
               "description": "Why the run or trigger is stopped.",
               "type": "string",
-              "enum": ["superseded", "revoked", "uninstalled", "repair"]
+              "enum": ["superseded", "revoked", "uninstalled", "repair", "cancelled"]
             }
           }
         },

@@ -21,5 +21,15 @@ export const QUOTAS = {
 	slackChannelPostPerSec: 1,
 	slackQueueMax: 500,
 	slackMaxAttempts: 5,
+	/** Annotations sent to one GitHub check run. */
 	annotationsPerJob: 500,
+	/** Annotations the hub stores for the run page: per job, and per run across its jobs. */
+	storedAnnotationsPerJob: 50,
+	storedAnnotationsPerRun: 200,
+	/** Longest stored annotation path, title and message, in characters; longer text is cut. */
+	storedAnnotationPathChars: 512,
+	storedAnnotationTitleChars: 255,
+	storedAnnotationMessageChars: 2000,
+	/** Longest os_release the hub keeps, in characters. */
+	osReleaseChars: 64,
 } as const;

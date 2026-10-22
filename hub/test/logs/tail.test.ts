@@ -34,6 +34,11 @@ describe("getLogTail", () => {
     expect(await getLogTail(env, RUN, "test", 40)).toEqual(lines(19_961, 20_000));
   });
 
+  it("drops the agent's timestamp prefix and leaves unstamped lines alone", async () => {
+    await env.LOGS.put(KEY, await gzip("old\n2026-05-05T14:32:01.123Z line 2\n2026-05-05T14:32:01.124Z \n2026-05-05T14:32:01.125Z line 4"));
+    expect(await getLogTail(env, RUN, "test", 40)).toEqual(["old", "line 2", "", "line 4"]);
+  });
+
   it("returns null when the job has no stored log", async () => {
     expect(await getLogTail(env, RUN, "test", 40)).toBeNull();
   });

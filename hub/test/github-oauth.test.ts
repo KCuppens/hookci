@@ -129,7 +129,7 @@ async function rows<T>(sql: string, ...params: unknown[]): Promise<T[]> {
 describe("GET /start", () => {
   it("links the Install button to the app with a fresh state and sets the __Host- state cookie", async () => {
     const res = await exports.default.fetch("https://hub.test/start");
-    expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_oauth=[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
     expect(await res.text()).toContain(`https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=`);
     expect(await rows("SELECT kind FROM oauth_states")).toEqual([{ kind: "github_install" }]);
@@ -163,7 +163,7 @@ describe("GET /github/oauth/callback", () => {
   it("refuses an installation_id the user cannot access and stores nothing", async () => {
     const res = await install({ installation_id: "999" });
     expect(res.status).toBe(403);
-    expect(await res.text()).toContain("Start again");
+    expect(await res.text()).toContain("No repository access");
     expect(await rows("SELECT id FROM installations")).toEqual([]);
     expect(await rows("SELECT token_hash FROM pair_tokens")).toEqual([]);
   });

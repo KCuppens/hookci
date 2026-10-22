@@ -5,6 +5,8 @@ import type {
 	CheckRun,
 	CollaboratorPermission,
 	Commit,
+	CommitChanges,
+	CommitFile,
 	CommitSummary,
 	CreateCheckRunBody,
 	HookDelivery,
@@ -105,6 +107,17 @@ export async function getCommit(
 		authorEmail: data.commit.author?.email ?? null,
 		authorLogin: data.author?.login ?? null,
 		title: data.commit.message.split("\n", 1)[0] ?? "",
+	};
+}
+
+/** What the commit changes, as GitHub lists it (at most 300 files, each with its added and removed line counts), and when it was authored. */
+export async function getCommitChanges(inst: GitHubRequester, owner: string, repo: string, sha: string): Promise<CommitChanges> {
+	const { data } = await inst.request<Commit & { files?: CommitFile[] }>("GET", `${repoPath(owner, repo)}/commits/${encodeURIComponent(sha)}`);
+	const date = data.commit.author?.date;
+	const at = date === undefined ? Number.NaN : Date.parse(date);
+	return {
+		committedAt: Number.isNaN(at) ? null : at,
+		files: (data.files ?? []).map(({ filename, additions, deletions }) => ({ filename, additions, deletions })),
 	};
 }
 

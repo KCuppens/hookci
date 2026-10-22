@@ -78,7 +78,7 @@ describe.each([
     expect(html).not.toContain("/account/");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<script");
-    expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
   it("keeps GET /app/login on GitHub", async () => {

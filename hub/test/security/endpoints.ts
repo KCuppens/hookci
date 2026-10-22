@@ -19,6 +19,8 @@ export type EndpointAuth =
   | "email_token"
   /** A signed, browser-bound form token (double-submit cookie) and a same-origin Origin header. */
   | "csrf_form"
+  /** A signed session cookie covering the installation, a csrf form token and a same-origin Origin header. */
+  | "session_csrf"
   | "public";
 
 export interface Endpoint {
@@ -49,13 +51,32 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/privacy", auth: "public" },
   { method: "GET", path: "/terms", auth: "public" },
   { method: "GET", path: "/support", auth: "public" },
+  { method: "GET", path: "/status", auth: "public" },
+  { method: "GET", path: "/assets/inter.woff2", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
   { method: "GET", path: "/logs/:runId/:job", auth: "log_sig" },
   { method: "GET", path: "/app", auth: "session" },
   { method: "GET", path: "/app/login", auth: "public" },
   { method: "GET", path: "/app/:installationId", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs/newer", auth: "session" },
   { method: "GET", path: "/app/:installationId/runs/:runId", auth: "session" },
   { method: "GET", path: "/app/:installationId/runs/:runId/logs/:job", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs/:runId/logs/:job/view", auth: "session" },
+  { method: "GET", path: "/app/:installationId/runs/:runId/logs/:job/download", auth: "session" },
+  { method: "GET", path: "/app/:installationId/agents", auth: "session" },
+  { method: "GET", path: "/app/:installationId/agents/pair/status", auth: "session" },
+  { method: "POST", path: "/app/:installationId/agents/pair", auth: "session_csrf" },
+  { method: "GET", path: "/app/:installationId/agents/:agentId", auth: "session" },
+  { method: "POST", path: "/app/:installationId/agents/:agentId/revoke", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/agents/:agentId/bindings/unbind", auth: "session_csrf" },
+  { method: "GET", path: "/app/:installationId/repositories", auth: "session" },
+  { method: "GET", path: "/app/:installationId/repositories/bind", auth: "session" },
+  { method: "POST", path: "/app/:installationId/repositories/bind", auth: "session_csrf" },
+  { method: "GET", path: "/app/:installationId/settings", auth: "session" },
+  { method: "POST", path: "/app/:installationId/runs/:runId/approve", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/runs/:runId/cancel", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/runs/:runId/retry", auth: "session_csrf" },
   { method: "GET", path: "/account/login", auth: "public" },
   { method: "GET", path: "/account/register", auth: "public" },
   { method: "GET", path: "/account/forgot-password", auth: "public" },

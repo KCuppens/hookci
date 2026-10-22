@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { upsertInstallation } from "../src/db/installations";
 import { getWorkspace, setWorkspaceStatus } from "../src/db/workspaces";
 import { issueSession } from "../src/oauth/state";
-import { escapeHtml } from "../src/pages/layout";
 import { S } from "../src/strings";
 import { getBotToken } from "../src/slack/tokens";
 import { testClock } from "./clock";
@@ -176,7 +175,7 @@ describe("GET /slack/install", () => {
     expect(res.status).toBe(403);
     expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await res.text()).toContain(escapeHtml(S.pages.errors.installation_admin_required));
+    expect(await res.text()).toContain(S.errorPage.codes.installation_admin_required.title);
     expect(await rows("SELECT kind FROM oauth_states")).toEqual([]);
   });
 });
@@ -263,7 +262,7 @@ describe("GET /slack/oauth/callback", () => {
     grant = oauthAccess({ scope });
     const res = await install();
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain(S.pages.errors.slack_scope_mismatch);
+    expect(await res.text()).toContain(S.errorPage.codes.slack_scope_mismatch.title);
     await storedNothing();
   });
 
@@ -288,7 +287,7 @@ describe("GET /slack/oauth/callback", () => {
     expect((await callback({ code: "slack-code", state }, cookie)).status).toBe(200);
     for (const res of [await callback({ code: "slack-code", state }, cookie), await callback({ code: "slack-code" }, cookie)]) {
       expect(res.status).toBe(400);
-      expect(await res.text()).toContain(S.pages.errors.oauth_state_invalid);
+      expect(await res.text()).toContain(S.errorPage.codes.oauth_state_invalid.title);
     }
   });
 
@@ -296,12 +295,12 @@ describe("GET /slack/oauth/callback", () => {
     const cancelled = await beginSlackInstall();
     const res = await callback({ error: "access_denied", state: cancelled.state }, cancelled.cookie);
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain(S.pages.errors.slack_oauth_failed);
+    expect(await res.text()).toContain(S.errorPage.codes.slack_oauth_failed.title);
 
     grant = { ok: false, error: "invalid_code" };
     const rejected = await install();
     expect(rejected.status).toBe(502);
-    expect(await rejected.text()).toContain(S.pages.errors.slack_oauth_failed);
+    expect(await rejected.text()).toContain(S.errorPage.codes.slack_oauth_failed.title);
     await storedNothing();
   });
 

@@ -421,6 +421,24 @@ describe("AgentDO run lifecycle", () => {
     expect(await sock.next()).toEqual({ v: 1, type: "interrupt", seq: 1, run_id: "run_a", reason: "cancelled" });
   });
 
+  it("cancel route interrupts an accepted run and leaves the end to the agent's event", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+
+    const res = await agent.stub.fetch("https://do/cancel", { method: "POST", body: JSON.stringify({ run_id: "run_a" }) });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ cancelled: false });
+    expect((await sock.next()).type).toBe("interrupt");
+    expect((await run("run_a"))?.state).not.toBe("cancelled");
+  });
+
+  it("cancel route answers 404 for a run it does not hold", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const res = await agent.stub.fetch("https://do/cancel", { method: "POST", body: JSON.stringify({ run_id: "run_zzz" }) });
+    expect(res.status).toBe(404);
+  });
+
   it("sink failure does not break lifecycle", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const fail = (): never => {

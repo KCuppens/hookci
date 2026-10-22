@@ -55,7 +55,7 @@ export async function gateForkRun(
  */
 export async function approveForkRun(
 	env: Env,
-	a: { installationId: number; runId: string; headSha: string; approverGithubId: number; approverLogin: string; via: "slack" | "check_run" },
+	a: { installationId: number; runId: string; headSha: string; approverGithubId: number; approverLogin: string; via: "slack" | "check_run" | "dashboard" },
 ): Promise<ApproveOutcome> {
 	const t = tenantDb(env.DB, a.installationId);
 	const run = (await getRun(t, a.runId)) ?? (await findRunByTrigger(t, a.runId));

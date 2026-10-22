@@ -1,6 +1,7 @@
 import { deployEnv } from "../db/bindings";
 import { insertRun } from "../db/runs";
 import { tenantDb } from "../db/tenant";
+import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import type { HubTrigger } from "../github/normalize";
 import { logEvent } from "../observability";
@@ -29,26 +30,31 @@ export async function notifyOutcome(
 		outcome: outcome.kind,
 	});
 	const triggerId = ulid();
-	await insertRun(tenantDb(env.DB, trig.installationId), {
-		run_id: triggerId,
-		repo_id: trig.repoId,
-		sha: trig.sha,
-		ref: trig.ref,
-		event: trig.event,
-		pr_number: trig.pr?.number ?? null,
-		env: deployEnv(trig.target),
-		attempt: 1,
-		trigger_id: triggerId,
-		agent_id: null,
-		state: "pending",
-		reason: outcome.kind,
-		author_login: trig.authorLogin,
-		commit_title: trig.commitTitle,
-		started_at: null,
-		finished_at: null,
-		duration_ms: null,
-		log_key: null,
-	});
+	const now = (env.__TEST_CLOCK ?? systemClock).now();
+	await insertRun(
+		tenantDb(env.DB, trig.installationId),
+		{
+			run_id: triggerId,
+			repo_id: trig.repoId,
+			sha: trig.sha,
+			ref: trig.ref,
+			event: trig.event,
+			pr_number: trig.pr?.number ?? null,
+			env: deployEnv(trig.target),
+			attempt: 1,
+			trigger_id: triggerId,
+			agent_id: null,
+			state: "pending",
+			reason: outcome.kind,
+			author_login: trig.authorLogin,
+			commit_title: trig.commitTitle,
+			started_at: null,
+			finished_at: null,
+			duration_ms: null,
+			log_key: null,
+		},
+		now,
+	);
 	const [view, sinks] = await Promise.all([
 		loadRunView(env.DB, trig.installationId, { runId: triggerId }),
 		sinksFor(env, trig.installationId),

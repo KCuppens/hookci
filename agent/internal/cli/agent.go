@@ -96,16 +96,18 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			Clock:  d.Clock,
 		})
 	}
+	osRelease := d.osRelease()
 
 	for {
 		// A fresh daemon each time: the next one settles the triggers the
 		// last one accepted but did not start.
 		dm := daemon.New(conf, h.db, exec, daemon.Options{
-			StateDir: *stateDir,
-			Version:  version.Version,
-			Logger:   log,
-			JobUser:  h.jobUser,
-			Slots:    d.Globals.Slots,
+			StateDir:  *stateDir,
+			Version:   version.Version,
+			OSRelease: osRelease,
+			Logger:    log,
+			JobUser:   h.jobUser,
+			Slots:     d.Globals.Slots,
 		})
 		err := dm.Run(ctx)
 		switch {

@@ -5,7 +5,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { createCheckStateTable } from "../checks/coalesce";
-import { markAgentOffline, touchAgent } from "../db/agents";
+import { markAgentOffline, sanitizeOsRelease, touchAgent } from "../db/agents";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -84,6 +84,7 @@ type MetaKey =
 	| "installation_id"
 	| "protocol"
 	| "agent_version"
+	| "os_release"
 	| "connected_at"
 	| "last_seen_at"
 	| "last_d1_seen_write";
@@ -397,10 +398,15 @@ export class AgentDO extends DurableObject<Env> {
 			return;
 		}
 
+		const osRelease = sanitizeOsRelease(frame.os_release);
 		const changed =
-			this.meta("protocol") !== String(negotiated.protocol) || this.meta("agent_version") !== frame.agent_version;
+			this.meta("protocol") !== String(negotiated.protocol) ||
+			this.meta("agent_version") !== frame.agent_version ||
+			(osRelease !== null && this.meta("os_release") !== osRelease);
 		this.setMeta("protocol", String(negotiated.protocol));
 		this.setMeta("agent_version", frame.agent_version);
+		// A hello without os_release (an older agent) leaves what the agent last reported.
+		if (osRelease !== null) this.setMeta("os_release", osRelease);
 		this.setMeta("last_seen_at", String(now));
 		clearOfflineDm(this.ctx.storage);
 		state.hello = true;
@@ -432,7 +438,7 @@ export class AgentDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Writes online, last_seen_at, protocol and agent_version to D1 when force
+	 * Writes online, last_seen_at, protocol, agent_version and os_release to D1 when force
 	 * is set, when D1 still has the agent offline, or SEEN_WRITE_INTERVAL_MS
 	 * after the last write. meta.last_d1_seen_write is present exactly while
 	 * D1 has the agent online.
@@ -446,6 +452,7 @@ export class AgentDO extends DurableObject<Env> {
 				protocolVersion: Number(this.meta("protocol")),
 				agentVersion: this.meta("agent_version") ?? "",
 				lastSeenAt: now,
+				osRelease: this.meta("os_release"),
 			});
 		} catch (err) {
 			this.sql.exec("DELETE FROM meta WHERE key = 'last_d1_seen_write'");

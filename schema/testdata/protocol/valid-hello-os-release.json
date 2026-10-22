@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "hello",
+  "protocol_version": 1,
+  "agent_version": "0.3.0",
+  "agent_id": "agt_01j9zq8m4k2v7c3x5b6n0p1r2s",
+  "os_release": "Ubuntu 22.04"
+}

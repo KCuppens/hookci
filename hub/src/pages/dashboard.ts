@@ -1,60 +1,226 @@
-// Server-rendered HTML for the read-only dashboard. Like layout.ts every
-// dynamic value goes through escapeHtml, but these pages are styled: their one
-// inline stylesheet is allowed by its hash in the CSP and no script runs.
+// The dashboard chrome and what its pages share, built on the shared shell
+// (shell.ts). Every dynamic value goes through escapeHtml. The one inline
+// stylesheet and the one page script (PAGE_SCRIPT) are pinned by hash in the CSP.
 
 import type { AgentRow } from "../db/agents";
 import type { InstallationRow } from "../db/installations";
-import type { JobLogRow, RunListRow } from "../db/runs";
-import { QUOTAS } from "../quotas";
-import { formatDuration } from "../slack/badge";
+import type { OverviewData } from "../db/overview";
+import type { RunListRow } from "../db/runs";
 import { S } from "../strings";
+import { AVATAR_GLYPH, brandLink } from "./brand";
 import { escapeHtml, type PageInit } from "./layout";
+import { stateLook } from "./pills";
+import { icon, shellResponse } from "./shell";
 
 const D = S.dashboard;
+const O = D.overview;
+const e = escapeHtml;
 
-const STYLE = `
-:root{color-scheme:light dark;--fg:#1f2328;--bg:#ffffff;--muted:#59636e;--line:#d1d9e0;--ok:#1a7f37;--bad:#cf222e;--busy:#9a6700;--link:#0969da}
-@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--bg:#0d1117;--muted:#9198a1;--line:#3d444d;--ok:#3fb950;--bad:#f85149;--busy:#d29922;--link:#4493f8}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-a{color:var(--link)}
-.top{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--line)}
-.brand{font-weight:700;color:var(--fg);text-decoration:none}
-.who{color:var(--muted);font-size:.9rem}
-main{max-width:72rem;margin:0 auto;padding:1rem}
-h1{font-size:1.5rem;margin:.5rem 0 1rem;overflow-wrap:anywhere}
-h2{font-size:1.15rem;margin:2rem 0 .5rem}
-.accounts{list-style:none;display:flex;flex-wrap:wrap;gap:.5rem 1rem;margin:0 0 1rem;padding:0}
-.wrap{overflow-x:auto}
-table{border-collapse:collapse;width:100%}
-th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:.85rem;color:var(--muted);font-weight:600;white-space:nowrap}
-td.wrap-any,dd{overflow-wrap:anywhere}
-.badge{display:inline-block;padding:0 .5rem;border:1px solid currentColor;border-radius:1rem;font-size:.85rem;white-space:nowrap}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.busy{color:var(--busy)}.idle{color:var(--muted)}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;margin:0}
-dt{color:var(--muted)}dd{margin:0}
-.notice{border:1px solid var(--busy);border-radius:.375rem;padding:.25rem .5rem;color:var(--busy);font-size:.9rem}
-.button{display:inline-block;padding:.5rem 1rem;border-radius:.375rem;background:var(--link);color:var(--bg);text-decoration:none;font-weight:600}
+/** Icons beyond the shared set, on the 24 grid like the rest. */
+const EXTRA_ICONS: Record<string, string> = {
+	x: '<circle cx="12" cy="12" r="9"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6"/>',
+	dots: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/>',
+	play: '<circle cx="12" cy="12" r="9"/><path d="M10.2 8.6l5 3.4-5 3.4z"/>',
+	clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
+	layers: '<path d="M12 4l8 4.5-8 4.5-8-4.5z"/><path d="M4 12.5l8 4.5 8-4.5M4 16.5l8 4.5 8-4.5"/>',
+	ban: '<circle cx="12" cy="12" r="9"/><path d="M5.8 18.2L18.2 5.8"/>',
+	skip: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+	user: AVATAR_GLYPH,
+	chev: '<path d="M9.5 6l6 6-6 6"/>',
+	search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+	branch: '<circle cx="7" cy="6" r="2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 8v8M17 10c0 4-6 3-10 6"/>',
+	slack: '<path d="M9.5 4v16M14.5 4v16M4 9.5h16M4 14.5h16"/>',
+	out: '<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
+	"g-tick": '<path d="m6.8 12.6 3.4 3.4 7-7.6"/>',
+	"g-x": '<path d="M8 8l8 8M16 8l-8 8"/>',
+	"g-dots": '<path d="M7.5 12h.01M12 12h.01M16.5 12h.01" stroke-width="3"/>',
+	"g-play": '<path d="M9.5 7.5v9l7-4.5z"/>',
+	"g-pause": '<path d="M9.5 8v8M14.5 8v8"/>',
+	"g-stack": '<path d="M12 6l6 3.2-6 3.2-6-3.2z"/><path d="M6 12.6l6 3.2 6-3.2"/>',
+	"g-minus": '<path d="M8 12h8"/>',
+	"g-bang": '<path d="M12 7.5v5.5M12 16.6v.1" stroke-width="2.6"/>',
+	"g-ban": '<circle cx="12" cy="12" r="5.5"/><path d="M8.2 15.8l7.6-7.6"/>',
+	"g-eye": '<circle cx="11" cy="11" r="4.2"/><path d="M14.2 14.2 17 17"/>',
+	ellipsis: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/>',
+	chevd: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
+};
+
+const CSS = `
+body{background:#f8f8fa}
+.app{position:relative;z-index:3;background:#fff;border-bottom:1px solid var(--line);--ls:.085}
+.app .in{display:flex;align-items:center;gap:44px;max-width:1536px;height:64px;margin:0 auto;padding:0 32px}
+.tabs{display:flex;align-self:stretch;gap:30px}
+.tabs a{display:flex;align-items:center;margin-bottom:-1px;border-bottom:2px solid transparent;color:#4b5563;font-size:14px;text-decoration:none}
+.tabs a:hover{color:var(--ink)}
+.tabs a.on{border-color:var(--orange);color:var(--ink);font-weight:600}
+.rt{display:flex;align-items:center;gap:18px;margin-left:auto;font-size:14px}
+.rt a,.rt button{color:#4b5563;text-decoration:none}
+.rt form{display:flex}
+.rt button{padding:0;border:0;background:none;font:inherit;cursor:pointer}
+.rt a:hover,.rt button:hover{color:var(--ink)}
+.usr{display:grid;place-items:center;width:34px;height:34px;border:1px solid #dfe2e6;border-radius:50%;background:#fff;color:#4b5563}
+.usr .ic{width:19px;height:19px}
+.main{position:relative;z-index:2;max-width:1536px;margin:0 auto;padding:32px 32px 72px}
+.accts{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 0 14px;padding:0;list-style:none;font-size:14px;color:var(--muted)}
+.accts strong{color:var(--ink)}
+.ph{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px}
+h1{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
+.sub{margin-top:8px;color:var(--muted);font-size:15px}
+.card{overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(15,20,29,.03)}
+.ch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px;border-bottom:1px solid var(--line-2)}
+.ch h2{font-size:17px;font-weight:600}
+.ch a,.lnk{display:inline-flex;align-items:center;gap:6px;color:#2563eb;font-size:14px;font-weight:500;text-decoration:none}
+.ch a .ic,.lnk .ic{width:15px;height:15px}
+.stack-gap>*+*{margin-top:20px}
+.ob{display:inline-flex;align-items:center;gap:8px;flex:none;height:38px;padding:0 14px;border:1px solid #e3e6ea;border-radius:9px;background:#fff;color:var(--ink);font-size:14px;font-weight:500;text-decoration:none;white-space:nowrap}
+.ob:hover{background:#fcfcfd}
+.ob .ic{width:15px;height:15px}
+.ob.dk{border-color:#161a23;background:#161a23;color:#fff}
+.ob.dk:hover{background:#2a303c}
+[hidden]{display:none!important}
+.mnu{position:relative;display:inline-block}
+.mnu summary{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:#6b7280;list-style:none;cursor:pointer}
+.mnu summary::-webkit-details-marker{display:none}
+.mnu summary:hover,.mnu[open] summary{background:#f1f2f4;color:var(--ink)}
+.mnu .ic{width:20px;height:20px}
+.menu{position:absolute;z-index:5;right:0;top:32px;min-width:170px;padding:6px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(15,20,29,.12);text-align:left}
+.menu a,.menu button{display:block;width:100%;padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);font:inherit;font-size:13.5px;font-weight:500;text-align:left;text-decoration:none;cursor:pointer}
+.menu a:hover,.menu button:hover{background:#f4f5f7}
+.menu button[data-done]::after{content:" \\2713"}
+.sc{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;background:#b3bac9;color:#fff}
+.sc .ic{width:14px;height:14px;stroke-width:2.6}
+.sc.ok{background:#14af6f}
+.sc.bad{background:#f03338}
+.sc.busy{background:#3b82f6}
+.sc.wait{background:#f59e0b}
+.sc.pur{background:#8b5cf6}
+.card.vis{overflow:visible}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{padding:11px 16px;background:#f8f8fa;color:#6b7280;font-size:12px;font-weight:600;text-align:left;white-space:nowrap}
+td{padding:13px 16px;border-top:1px solid var(--line-2);font-size:14px;vertical-align:middle}
+td.w{overflow-wrap:anywhere}
+tbody tr:hover{background:#fcfcfd}
+td a{color:#2563eb;text-decoration:none}
+td a:hover{text-decoration:underline}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
 .muted{color:var(--muted)}
-.acct{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center}
-.acct form{margin:0}
-.linkbtn{padding:0;border:0;background:none;color:var(--link);font:inherit;text-decoration:underline;cursor:pointer}
-@media (max-width:40rem){main{padding:.75rem}th,td{padding:.35rem .4rem}dl{grid-template-columns:1fr}dt{margin-top:.5rem}}
-`;
-
-let styleSource: Promise<string> | undefined;
-
-/** The CSP source for STYLE: its SHA-256 in base64, computed once. */
-function styleHash(): Promise<string> {
-	styleSource ??= crypto.subtle.digest("SHA-256", new TextEncoder().encode(STYLE)).then((digest) => {
-		let binary = "";
-		for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
-		return `'sha256-${btoa(binary)}'`;
-	});
-	return styleSource;
+.dim{display:block;margin-top:3px;color:var(--muted);font-size:12px}
+.st{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px 0 8px;border-radius:13px;background:#f1f2f4;color:#4b5563;font-size:12.5px;font-weight:600;white-space:nowrap}
+.st .ic{width:15px;height:15px}
+.st.ok{background:#e8f7ee;color:#15803d}
+.st.bad{background:#fdecec;color:#dc2626}
+.st.busy{background:#e8f0fe;color:#2563eb}
+.st.wait{background:#fff4e0;color:#b45309}
+.st.pur{background:#f1ebfe;color:#7c3aed}
+.sd{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#f1f2f4;color:#4b5563}
+.sd .ic{width:17px;height:17px}
+.sd.ok{background:#e8f7ee;color:#15803d}
+.sd.bad{background:#fdecec;color:#dc2626}
+.sd.busy{background:#e8f0fe;color:#2563eb}
+.sd.wait{background:#fff4e0;color:#b45309}
+.sd.pur{background:#f1ebfe;color:#7c3aed}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#9ca3af}
+.dot.on{background:#22c55e}
+.chip{display:inline-block;padding:2px 9px;border-radius:6px;background:#f1f2f4;color:#4b5563;font-size:12px;font-weight:500}
+.chip.prod{background:#fdecec;color:#dc2626}
+.chip.stg{background:#fff4e0;color:#b45309}
+.chip.prev{background:#e8f0fe;color:#2563eb}
+.pg{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 22px;border-top:1px solid var(--line-2);color:var(--muted);font-size:14px}
+.pg .lk{display:flex;gap:16px}
+.pg a{color:#2563eb;text-decoration:none}
+.empty{padding:28px 22px;color:var(--muted);font-size:14px}
+.jr{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:16px 22px;border-top:1px solid var(--line-2)}
+.ch+.jr{border-top:0}
+.jr .tx{flex:1;min-width:160px}
+.jr b{display:block;font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.jr span.d{display:block;margin-top:2px;color:var(--muted);font-size:13px}
+.jr .du{width:70px;color:var(--ink-2);font-size:14px}
+.cnt2{color:var(--muted);font-size:14px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:12px 24px;padding:20px 22px;font-size:14px}
+.kv dt{color:var(--muted)}
+.kv dd{overflow-wrap:anywhere}
+.page{text-align:center}
+.signin{max-width:480px;margin:72px auto;padding:36px 32px;text-align:left}
+.signin h1{font-size:26px}
+.signin p{margin:12px 0 22px;color:var(--ink-2)}
+.signin .ob{height:44px}
+@media (max-width:900px){
+.app .in{gap:18px;padding:0 16px}
+.main{padding:24px 16px 56px}
+h1{font-size:28px}
+.rt .dc{display:none}
 }
+@media (max-width:640px){
+.tabs{gap:18px}
+.app .in{height:56px}
+}
+.am{display:none}
+.bars,.bars::before,.bars::after{display:block;width:20px;height:2px;border-radius:1px;background:currentColor}
+.bars{position:relative}
+.bars::before,.bars::after{content:"";position:absolute;left:0}
+.bars::before{top:-6px}
+.bars::after{top:6px}
+.am[open] .bars{background:transparent}
+.am[open] .bars::before{top:0;transform:rotate(45deg)}
+.am[open] .bars::after{top:0;transform:rotate(-45deg)}
+@media (min-width:901px) and (max-width:1023px){
+.app .in{gap:24px!important}
+.app .tabs{gap:20px!important;margin-left:0!important}
+.app .rt{gap:14px!important}
+}
+@media (min-width:1024px) and (max-width:1100px){
+body:not(.overview) .app .in{gap:24px!important}
+body:not(.overview) .app .tabs{gap:20px!important;margin-left:0!important}
+body:not(.overview) .app .rt{gap:14px!important}
+}
+@media (max-width:900px){
+.am:not([open]) .amp{display:none}
+.app .in{display:flex;flex-wrap:nowrap!important;width:100%!important;max-width:none!important;height:64px!important;min-height:0!important;margin:0!important;gap:18px!important;padding:0 max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left))!important}
+.app .brand{align-items:center;min-height:44px}
+.in:has(.am)>.tabs,.in:has(.am)>.rt{display:none}
+.app .in:not(:has(.am)) .rt .dc{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}
+.am{display:block;margin-left:auto}
+.am summary{display:grid;place-items:center;width:44px;height:44px;margin-right:-10px;border-radius:10px;color:var(--ink);list-style:none;cursor:pointer}
+.am summary::-webkit-details-marker{display:none}
+.am summary:hover,.am[open] summary{background:#f1f2f4}
+.amp{position:absolute;z-index:6;left:0;right:0;top:100%;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 56px);max-height:calc(100dvh - 56px);overflow-y:auto;padding:8px max(16px,env(safe-area-inset-right)) 16px max(16px,env(safe-area-inset-left));border-bottom:1px solid var(--line);background:#fff;box-shadow:0 14px 28px rgba(15,20,29,.14)}
+.amt,.amu{display:flex;flex-direction:column;gap:8px}
+.amu{padding-top:12px;border-top:1px solid var(--line-2)}
+.amu:first-child{padding-top:0;border-top:0}
+.amp a,.amp button{display:flex;align-items:center;width:100%;min-height:44px;padding:0 12px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;font-size:16px;text-align:left;text-decoration:none;cursor:pointer}
+.amp a:hover,.amp button:hover{background:#f4f5f7}
+.amp a.on{background:var(--orange-soft);font-weight:600}
+.amw{padding:0 12px;color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.accts{gap:8px 16px}
+.accts a,.accts strong{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;overflow-wrap:anywhere}
+}
+@media (max-width:640px){
+.app .in{height:56px!important}
+}
+@media (max-width:900px),(pointer:coarse){
+.mnu summary{width:44px;height:44px}
+.mnu:not([open]) .menu{display:none}
+.menu{top:48px;display:flex;flex-direction:column;gap:8px;min-width:200px;max-width:calc(100vw - 32px)}
+.menu a,.menu button{display:flex;align-items:center;min-height:44px;padding:0 12px;font-size:16px}
+.ob,.ch a,.lnk{min-height:44px}
+.pg a{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}
+}
+@media (max-width:640px){
+.ph{flex-direction:column;align-items:stretch}
+.ph>*{min-width:0}
+.ph .ob,.ph form,.ph select,.ph input{width:100%}
+.ch{flex-wrap:wrap;padding:12px 16px}
+.pg{flex-wrap:wrap;padding:12px 16px}
+.pg .lk{gap:8px}
+.empty{padding:20px 16px}
+.st{height:auto;min-height:26px;padding-top:3px;padding-bottom:3px;white-space:normal}
+.kv{grid-template-columns:minmax(0,1fr);gap:4px 0;padding:16px}
+.kv dd+dt{margin-top:12px}
+.signin{margin:32px auto;padding:24px 20px}
+.signin .ob{width:100%;justify-content:center}
+}
+`;
 
 /** The signed-in header controls when accounts are on: a sign out form and, for an email account, a link to its settings. */
 export interface DashboardChrome {
@@ -62,258 +228,273 @@ export interface DashboardChrome {
 	settings: boolean;
 }
 
-/** A complete dashboard page response; title is escaped here, bodyHtml must already be safe HTML. */
-export async function dashboardPage(title: string, bodyHtml: string, init: PageInit & { who?: string; chrome?: DashboardChrome } = {}): Promise<Response> {
-	const formAction = init.chrome === undefined ? "'none'" : "'self'";
-	const headers = new Headers({
-		"Content-Type": "text/html; charset=utf-8",
-		"Content-Security-Policy": `default-src 'self'; style-src ${await styleHash()}; base-uri 'none'; form-action ${formAction}; frame-ancestors 'none'`,
-		"X-Content-Type-Options": "nosniff",
-		"Referrer-Policy": "no-referrer",
-		"Cache-Control": "no-store",
-	});
-	for (const cookie of init.cookies ?? []) headers.append("Set-Cookie", cookie);
-	const who = init.who === undefined ? "" : `<span class="who">${escapeHtml(D.signedInAs(init.who))}</span>`;
-	let controls = who;
-	if (init.chrome !== undefined) {
-		const settings = init.chrome.settings ? `<a href="/account/settings">${escapeHtml(D.settings)}</a>` : "";
-		const signOut = `<form method="post" action="/account/logout"><input type="hidden" name="csrf" value="${escapeHtml(init.chrome.csrf)}"><button class="linkbtn" type="submit">${escapeHtml(D.signOut)}</button></form>`;
-		controls = `<div class="acct">${who}${settings}${signOut}</div>`;
-	}
-	const html = `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body>
-<header class="top"><a class="brand" href="/app">HookCI</a>${controls}</header>
-<main>
-${bodyHtml}
-</main>
-</body>
-</html>`;
-	return new Response(html, { status: init.status ?? 200, headers });
+export type AppTab = "overview" | "runs" | "agents" | "repositories" | "settings";
+
+/** Who is looking and where: what the app header needs. tab is null on pages that are not a tab (sign in, errors). */
+export interface Viewer {
+	who?: string;
+	chrome?: DashboardChrome;
+	base?: string;
+	tab?: AppTab | null;
+}
+
+const TAB_LABELS: [AppTab, string, string][] = [
+	["overview", D.navOverview, ""],
+	["runs", D.navRuns, "/runs"],
+	["agents", D.navAgents, "/agents"],
+	["repositories", D.navRepositories, "/repositories"],
+	["settings", D.navSettings, "/settings"],
+];
+
+function tabLink(href: string, label: string, on: boolean): string {
+	return `<a href="${e(href)}"${on ? ' class="on" aria-current="page"' : ""}>${e(label)}</a>`;
+}
+
+function userControls(v: Viewer, signOut: string): string {
+	const who = v.who === undefined ? "" : e(D.signedInAs(v.who));
+	const avatar = `<span class="usr" title="${who}">${icon("user")}<span class="sr">${who}</span></span>`;
+	const settings = v.chrome?.settings ? `<a href="/account/settings" class="usr" title="${e(D.settings)}">${icon("user")}<span class="sr">${e(D.settings)}</span></a>` : avatar;
+	if (v.chrome === undefined) return v.who === undefined ? "" : avatar;
+	return `${settings}${signOut}`;
+}
+
+/** The menu below 900px: the tabs, Docs and the account controls in a no-script details panel (hidden on desktop). A header with only Docs has no menu. */
+function appMenu(v: Viewer, tabLinks: string, signOut: string): string {
+	if (tabLinks === "" && v.who === undefined && v.chrome === undefined) return "";
+	const tabs = tabLinks === "" ? "" : `<nav class="amt" aria-label="${e(D.navLabel)}">${tabLinks}</nav>`;
+	const who = v.who === undefined ? "" : `<p class="amw">${e(D.signedInAs(v.who))}</p>`;
+	const account = v.chrome?.settings ? `<a href="/account/settings">${e(D.accountMenu)}</a>` : "";
+	return (
+		`<details class="am"><summary aria-label="${e(D.navMenu)}"><span class="bars"></span></summary><div class="amp">${tabs}` +
+		`<div class="amu"><a href="${e(S.site.docsUrl)}" rel="noopener noreferrer">${e(D.docs)}</a>${who}${account}${signOut}</div></div></details>`
+	);
+}
+
+function appHeader(v: Viewer): string {
+	const base = v.base;
+	const tabLinks = base === undefined ? "" : TAB_LABELS.map(([tab, label, path]) => tabLink(`${base}${path}`, label, v.tab === tab)).join("");
+	const tabs = tabLinks === "" ? "" : `<nav class="tabs" aria-label="${e(D.navLabel)}">${tabLinks}</nav>`;
+	const signOut =
+		v.chrome === undefined
+			? ""
+			: `<form method="post" action="/account/logout"><input type="hidden" name="csrf" value="${e(v.chrome.csrf)}"><button type="submit">${e(D.signOut)}</button></form>`;
+	return (
+		`<header class="app"><div class="in">${brandLink("/app", false)}${tabs}` +
+		`<div class="rt"><a class="dc" href="${e(S.site.docsUrl)}" rel="noopener noreferrer">${e(D.docs)}</a>${userControls(v, signOut)}</div>${appMenu(v, tabLinks, signOut)}</div></header>`
+	);
+}
+
+/** A page of the dashboard chrome: the app header with the five tabs around main, the shared CSS plus the page's own. */
+export interface AppPageOptions {
+	title: string;
+	bodyClass: string;
+	main: string;
+	viewer: Viewer;
+	init?: PageInit;
+	/** Extra CSS appended after the shared dashboard CSS. */
+	css?: string;
+	/** Icons beyond the shared set and EXTRA_ICONS. */
+	icons?: Readonly<Record<string, string>>;
+	/** One inline script, pinned by hash. */
+	script?: string;
+	connect?: boolean;
+	/** The page shows GitHub avatars: img-src is opened to GitHub's avatar hosts. */
+	avatars?: boolean;
+	/** Whether forms may post back to the hub; default yes. */
+	forms?: boolean;
+}
+
+/** GitHub serves profile pictures from github.com (redirecting) and avatars.githubusercontent.com. */
+const AVATAR_HOSTS = ["https://github.com", "https://avatars.githubusercontent.com"] as const;
+
+export function appPage(o: AppPageOptions): Promise<Response> {
+	return shellResponse(
+		{
+			title: o.title,
+			bodyClass: o.bodyClass,
+			css: CSS + (o.css ?? ""),
+			body: `${appHeader(o.viewer)}<main class="main ${o.bodyClass}">${o.main}</main>`,
+			icons: { ...EXTRA_ICONS, ...o.icons },
+			script: o.script,
+			...(o.connect ? { connect: true } : {}),
+			...(o.avatars ? { imgSrc: AVATAR_HOSTS } : {}),
+			...(o.forms === undefined ? {} : { forms: o.forms }),
+		},
+		o.init ?? {},
+	);
+}
+
+/** A page of the dashboard chrome around bodyHtml, used by the sign-in and error pages. */
+export function dashboardPage(title: string, bodyHtml: string, init: PageInit & { who?: string; chrome?: DashboardChrome } = {}): Promise<Response> {
+	const { who, chrome, ...rest } = init;
+	const v: Viewer = { ...(who === undefined ? {} : { who }), ...(chrome === undefined ? {} : { chrome }) };
+	return appPage({ title, bodyClass: "plain", main: bodyHtml, viewer: v, init: rest, forms: chrome !== undefined });
 }
 
 export function signInPage(): Promise<Response> {
 	return dashboardPage(
 		D.signInTitle,
-		`<h1>${escapeHtml(D.signInTitle)}</h1>
-<p>${escapeHtml(D.signInIntro)}</p>
-<p><a class="button" href="/app/login">${escapeHtml(D.signInButton)}</a></p>`,
+		`<section class="card signin"><h1>${e(D.signInTitle)}</h1><p>${e(D.signInIntro)}</p><a class="ob dk" href="/app/login">${icon("github", "gh")}${e(D.signInButton)}</a></section>`,
 	);
 }
 
-/** The page for a user who can access no hub installation; cookies clear the sign-in state cookie. */
 export function noInstallationPage(cookies: string[] = [], chrome?: DashboardChrome): Promise<Response> {
 	return dashboardPage(
 		D.noInstallationTitle,
-		`<h1>${escapeHtml(D.noInstallationTitle)}</h1>
-<p>${escapeHtml(D.noInstallationBody)}</p>
-<p><a class="button" href="/start">${escapeHtml(D.noInstallationButton)}</a></p>`,
+		`<section class="card signin"><h1>${e(D.noInstallationTitle)}</h1><p>${e(D.noInstallationBody)}</p><a class="ob dk" href="/start">${e(D.noInstallationButton)}</a></section>`,
 		{ cookies, ...(chrome ? { chrome } : {}) },
 	);
 }
 
-/** One 404 for everything the session cannot see, so an uncovered installation looks like a missing one. */
 export function notFoundPage(): Promise<Response> {
 	return dashboardPage(
 		D.notFoundTitle,
-		`<h1>${escapeHtml(D.notFoundTitle)}</h1>
-<p>${escapeHtml(D.notFoundBody)}</p>
-<p><a class="button" href="/app">${escapeHtml(D.signInAgain)}</a></p>`,
+		`<section class="card signin"><h1>${e(D.notFoundTitle)}</h1><p>${e(D.notFoundBody)}</p><a class="ob" href="/app">${e(D.signInAgain)}</a></section>`,
 		{ status: 404 },
 	);
 }
 
-/** UTC, to the minute, in a time element carrying the exact instant. */
-function timeHtml(ms: number | null): string {
-	if (ms === null) return escapeHtml(D.none);
+interface Units {
+	minutes: (n: number) => string;
+	hours: (n: number) => string;
+	days: (n: number) => string;
+}
+
+/** The whole minutes, hours or days between since and now (never negative) in the given words; zero is what reads for under a minute. */
+function elapsedText(since: number, now: number, zero: string, units: Units): string {
+	const minutes = Math.max(0, Math.floor((now - since) / 60_000));
+	if (minutes >= 1440) return units.days(Math.floor(minutes / 1440));
+	if (minutes >= 60) return units.hours(Math.floor(minutes / 60));
+	return minutes >= 1 ? units.minutes(minutes) : zero;
+}
+
+/** "10 min ago" style text with the exact UTC time in the title. */
+export function agoHtml(ms: number | null, now: number, minutesText: (n: number) => string = D.ago.minutes): string {
+	if (ms === null) return e(D.none);
 	const iso = new Date(ms).toISOString();
-	return `<time datetime="${iso}">${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC</time>`;
+	const text = elapsedText(ms, now, D.ago.justNow, { ...D.ago, minutes: minutesText });
+	return `<time datetime="${iso}" title="${iso.slice(0, 16).replace("T", " ")} UTC">${e(text)}</time>`;
 }
 
-function durationText(ms: number | null): string {
-	return ms === null ? D.none : formatDuration(ms);
+/** "Aug 12, 2026" in UTC. */
+export function dateOf(ms: number): string {
+	return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-const BADGE_CLASS: Readonly<Record<string, string>> = {
-	success: "ok",
-	failed: "bad",
-	interrupted: "bad",
-	received: "busy",
-	queued: "busy",
-	running: "busy",
-	verifying: "busy",
-	rolling_back: "busy",
-};
-
-/** The state in words with a colour; an unknown state shows as it is stored. */
-function badge(state: string): string {
-	return `<span class="badge ${BADGE_CLASS[state] ?? "idle"}">${escapeHtml(D.state[state] ?? state)}</span>`;
+/** "41s", "2m 08s", "1h 02m": the way the dashboard writes a duration. */
+export function durationText(ms: number | null): string {
+	if (ms === null) return D.none;
+	const s = Math.round(ms / 1000);
+	if (s < 60) return `${s}s`;
+	const pad = (n: number) => String(n).padStart(2, "0");
+	if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
+	return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
 }
 
-/** refs/heads/main shows as main; other refs show whole. */
-function branchLabel(ref: string): string {
+export function badge(state: string): string {
+	const look = stateLook(state);
+	return `<span class="st ${look.tone}">${icon(look.icon)}${e(D.state[state] ?? state)}</span>`;
+}
+
+/** A filled round state mark: green tick, red cross, grey dots and so on; the state's name is the title and screen reader text. */
+export function statusCircle(state: string): string {
+	const look = stateLook(state);
+	const label = D.state[state] ?? state;
+	return `<span class="sc ${look.tone}" title="${e(label)}">${icon(look.glyph)}<span class="sr">${e(label)}</span></span>`;
+}
+
+/** The repository's own name without its owner, for narrow columns. */
+export function shortRepo(fullName: string | null): string {
+	if (fullName === null) return D.unknownRepo;
+	return fullName.slice(fullName.indexOf("/") + 1);
+}
+
+/** How long a time span is, in words ("2 hours"), for sentences like "offline for 2 hours". */
+export function spanText(since: number, now: number): string {
+	return elapsedText(since, now, D.span.lessThanMinute, D.span);
+}
+
+/**
+ * The three-dots menu of a table row: a native details element with links only to places that exist.
+ * copyPath adds a "copy link" button that needs the page script and stays hidden without it.
+ */
+export function rowMenu(items: readonly (readonly [string, string])[], copyPath: string | null): string {
+	const links = items.map(([href, label]) => `<a href="${e(href)}" rel="noopener noreferrer">${e(label)}</a>`).join("");
+	const copy = copyPath === null ? "" : `<button type="button" data-copy="${e(copyPath)}" hidden>${e(D.menu.copyLink)}</button>`;
+	return `<details class="mnu"><summary aria-label="${e(D.menu.label)}">${icon("ellipsis")}</summary><div class="menu">${links}${copy}</div></details>`;
+}
+
+/**
+ * The one script of the dashboard pages, pinned by hash. Forms marked data-auto submit when a select changes (they carry a noscript
+ * button), data-copy buttons copy their text (an absolute path is made absolute) and the runs banner (data-newer) asks the hub every
+ * 30 seconds how many runs matching the filter form are newer than data-after. The first answer also reveals the data-live pill and
+ * the banner shows once there is something new; closing it waits for runs newer still.
+ */
+export const PAGE_SCRIPT = `
+for (const form of document.querySelectorAll("form[data-auto]")) form.addEventListener("change", () => form.requestSubmit());
+for (const b of document.querySelectorAll("[data-copy]")) {
+  b.hidden = false;
+  b.addEventListener("click", () => {
+    const v = b.dataset.copy;
+    navigator.clipboard.writeText(v.startsWith("/") ? location.origin + v : v).then(() => { b.dataset.done = "1"; });
+  });
+}
+for (const n of document.querySelectorAll("[data-newer]")) {
+  const form = document.getElementById("runs-filter");
+  const poll = () => {
+    if (document.hidden) return;
+    const q = new URLSearchParams(new FormData(form));
+    q.set("after", n.dataset.after);
+    fetch(n.dataset.newer + "?" + q, { credentials: "same-origin", headers: { accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        for (const l of document.querySelectorAll("[data-live]")) l.hidden = false;
+        n.dataset.latest = d.newest;
+        if (d.count > 0) {
+          n.querySelector("[data-count]").textContent = (d.count === 1 ? n.dataset.one : n.dataset.many).replace("{n}", d.count);
+          n.hidden = false;
+        }
+      })
+      .catch(() => {});
+  };
+  for (const x of n.querySelectorAll("[data-dismiss]")) x.addEventListener("click", () => { n.hidden = true; n.dataset.after = n.dataset.latest; });
+  poll();
+  setInterval(poll, 30000);
+}
+`;
+
+export function branchLabel(ref: string): string {
 	return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
 }
 
-function refText(run: Pick<RunListRow, "ref" | "pr_number">): string {
-	const branch = branchLabel(run.ref);
-	return run.pr_number === null ? branch : `${D.pullRequest(run.pr_number)} (${branch})`;
-}
-
-function repoText(run: Pick<RunListRow, "repo_name">): string {
+export function repoText(run: RunListRow): string {
 	return run.repo_name ?? D.unknownRepo;
 }
 
-function accountNav(accounts: readonly InstallationRow[], currentId: number): string {
+export function runHref(base: string, run: RunListRow): string {
+	return `${base}/runs/${encodeURIComponent(run.run_id)}`;
+}
+
+export function accountNav(accounts: readonly InstallationRow[], currentId: number): string {
 	if (accounts.length < 2) return "";
-	const items = accounts
-		.map((a) =>
-			a.id === currentId
-				? `<li><strong>${escapeHtml(a.account_login)}</strong></li>`
-				: `<li><a href="/app/${a.id}">${escapeHtml(a.account_login)}</a></li>`,
-		)
-		.join("\n");
-	return `<ul class="accounts" aria-label="${escapeHtml(D.accounts)}">\n${items}\n</ul>\n`;
+	const items = accounts.map((a) => `<li>${a.id === currentId ? `<strong>${e(a.account_login)}</strong>` : `<a href="/app/${a.id}">${e(a.account_login)}</a>`}</li>`);
+	return `<ul class="accts" aria-label="${e(D.accounts)}">${items.join("")}</ul>`;
 }
 
-function agentRows(agents: readonly AgentRow[]): string {
-	if (agents.length === 0) return `<p class="muted">${escapeHtml(D.noAgents)}</p>`;
-	const rows = agents
-		.map((agent) => {
-			const status =
-				agent.status === "online"
-					? escapeHtml(D.agentConnected)
-					: agent.last_seen_at === null
-						? escapeHtml(D.agentNeverSeen)
-						: `${escapeHtml(D.agentLastSeen(""))}${timeHtml(agent.last_seen_at)}`;
-			return `<tr><td class="wrap-any">${escapeHtml(agent.name)}</td><td>${status}</td><td>${escapeHtml(agent.agent_version ?? D.none)}</td></tr>`;
-		})
-		.join("\n");
-	return `<div class="wrap"><table>
-<thead><tr><th>${escapeHtml(D.cols.name)}</th><th>${escapeHtml(D.cols.status)}</th><th>${escapeHtml(D.cols.version)}</th></tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table></div>`;
+/** The viewer of an installation's page: who is signed in, the installation's URL base and the active tab. */
+export function viewerOf(v: { login: string; chrome?: DashboardChrome; account: InstallationRow }, tab: AppTab | null): Viewer {
+	return { who: v.login, base: `/app/${v.account.id}`, tab, ...(v.chrome ? { chrome: v.chrome } : {}) };
 }
 
-/** The header and cookie settings shared by the signed-in pages. */
-function viewerInit(v: { login: string; chrome?: DashboardChrome; cookies?: string[] }): PageInit & { who: string; chrome?: DashboardChrome } {
-	return { who: v.login, ...(v.chrome ? { chrome: v.chrome } : {}), ...(v.cookies ? { cookies: v.cookies } : {}) };
+export function initOf(v: { cookies?: string[] }): PageInit {
+	return v.cookies ? { cookies: v.cookies } : {};
 }
 
-export interface RunsView {
-	account: InstallationRow;
-	accounts: readonly InstallationRow[];
-	login: string;
-	chrome?: DashboardChrome;
-	cookies?: string[];
-	runs: readonly RunListRow[];
-	/** The rowid to pass as before for the next page; null on the last page. */
-	olderCursor: number | null;
-	agents: readonly AgentRow[];
+/** The page title block: h1, subtitle and optional controls on the right (already escaped HTML). */
+export function pageHead(title: string, subtitle: string, controls = ""): string {
+	return `<div class="ph"><div><h1>${e(title)}</h1><p class="sub">${e(subtitle)}</p></div>${controls}</div>`;
 }
 
-export function runsPage(v: RunsView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
-	const rows = v.runs
-		.map(
-			(run) =>
-				`<tr>
-<td class="wrap-any"><a href="${base}/runs/${encodeURIComponent(run.run_id)}">${escapeHtml(repoText(run))}</a></td>
-<td class="wrap-any">${escapeHtml(refText(run))}</td>
-<td class="mono">${escapeHtml(run.sha.slice(0, 7))}</td>
-<td>${escapeHtml(run.event)}</td>
-<td>${badge(run.state)}</td>
-<td>${escapeHtml(durationText(run.duration_ms))}</td>
-<td>${timeHtml(run.started_at)}</td>
-<td class="wrap-any">${escapeHtml(run.agent_name ?? D.none)}</td>
-</tr>`,
-		)
-		.join("\n");
-	const cols = [D.cols.repo, D.cols.branch, D.cols.commit, D.cols.event, D.cols.state, D.cols.duration, D.cols.started, D.cols.agent];
-	const table =
-		v.runs.length === 0
-			? `<p class="muted">${escapeHtml(D.noRuns)}</p>`
-			: `<div class="wrap"><table>
-<thead><tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table></div>`;
-	const older = v.olderCursor === null ? "" : `\n<p><a href="${base}?before=${v.olderCursor}">${escapeHtml(D.older)}</a></p>`;
-	return dashboardPage(
-		v.account.account_login,
-		`${accountNav(v.accounts, v.account.id)}<h1>${escapeHtml(v.account.account_login)}</h1>
-<h2>${escapeHtml(D.runs)}</h2>
-${table}${older}
-<h2>${escapeHtml(D.agents)}</h2>
-${agentRows(v.agents)}`,
-		viewerInit(v),
-	);
-}
-
-export interface RunView {
-	account: InstallationRow;
-	login: string;
-	chrome?: DashboardChrome;
-	cookies?: string[];
-	run: RunListRow;
-	jobs: readonly JobLogRow[];
-}
-
-export function runPage(v: RunView): Promise<Response> {
-	const { run } = v;
-	const base = `/app/${v.account.id}`;
-	const entries: [string, string][] = [
-		[D.summary.state, badge(run.state)],
-		[D.summary.repo, escapeHtml(repoText(run))],
-		[D.summary.branch, escapeHtml(refText(run))],
-		[D.summary.commit, `<span class="mono">${escapeHtml(run.sha.slice(0, 7))}</span>`],
-		[D.summary.event, escapeHtml(run.event)],
-		[D.summary.attempt, String(run.attempt)],
-		[D.summary.agent, escapeHtml(run.agent_name ?? D.none)],
-		[D.summary.started, timeHtml(run.started_at)],
-		[D.summary.finished, timeHtml(run.finished_at)],
-		[D.summary.duration, escapeHtml(durationText(run.duration_ms))],
-	];
-	if (run.reason !== null) entries.splice(1, 0, [D.summary.reason, escapeHtml(run.reason)]);
-	if (run.commit_title !== null) entries.push([D.summary.message, escapeHtml(run.commit_title)]);
-	if (run.author_login !== null) entries.push([D.summary.author, escapeHtml(run.author_login)]);
-	const summary = `<dl>\n${entries.map(([k, val]) => `<dt>${escapeHtml(k)}</dt><dd>${val}</dd>`).join("\n")}\n</dl>`;
-
-	const jobRows = v.jobs
-		.map((job) => {
-			let log = escapeHtml(D.noLogYet);
-			if (job.log_key !== null) {
-				const href = `${base}/runs/${encodeURIComponent(run.run_id)}/logs/${encodeURIComponent(job.name)}`;
-				log = `<a href="${href}">${escapeHtml(D.viewLog)}</a>`;
-				if (job.log_truncated === 1) {
-					log += `<br><span class="notice">${escapeHtml(D.logTruncated(QUOTAS.logBytes / 1_048_576))}</span>`;
-				}
-			}
-			return `<tr><td class="wrap-any">${escapeHtml(job.name)}</td><td>${badge(job.state)}</td><td>${escapeHtml(durationText(job.duration_ms))}</td><td>${log}</td></tr>`;
-		})
-		.join("\n");
-	const jobs =
-		v.jobs.length === 0
-			? `<p class="muted">${escapeHtml(D.noJobs)}</p>`
-			: `<div class="wrap"><table>
-<thead><tr><th>${escapeHtml(D.cols.job)}</th><th>${escapeHtml(D.cols.state)}</th><th>${escapeHtml(D.cols.duration)}</th><th>${escapeHtml(D.cols.log)}</th></tr></thead>
-<tbody>
-${jobRows}
-</tbody>
-</table></div>`;
-
-	const title = D.runTitle(repoText(run));
-	return dashboardPage(
-		title,
-		`<p><a href="${base}">${escapeHtml(D.allRuns)}</a></p>
-<h1>${escapeHtml(title)}</h1>
-${summary}
-<h2>${escapeHtml(D.jobs)}</h2>
-${jobs}`,
-		viewerInit(v),
-	);
+export function agoPlain(ms: number, now: number): string {
+	return elapsedText(ms, now, D.ago.justNow, D.ago);
 }

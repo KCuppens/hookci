@@ -17,6 +17,18 @@ export function ulidTimePrefix(ms: number): string {
 	return time;
 }
 
+/** The millisecond a ULID was minted in, or null when id is not one of this module's ULIDs. */
+export function ulidTime(id: string): number | null {
+	if (id.length !== TIME_CHARS + 16) return null;
+	let ms = 0;
+	for (const ch of id.slice(0, TIME_CHARS)) {
+		const digit = ALPHABET.indexOf(ch);
+		if (digit < 0) return null;
+		ms = ms * 32 + digit;
+	}
+	return Number.isSafeInteger(ms) && ms <= MAX_TIME ? ms : null;
+}
+
 /** A new ULID for the millisecond now; ids of a later millisecond sort after those of an earlier one. */
 export function ulid(now: number = Date.now()): string {
 	const time = ulidTimePrefix(now);

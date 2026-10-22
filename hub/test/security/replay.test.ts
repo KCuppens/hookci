@@ -147,7 +147,7 @@ describe("OAuth state replay", () => {
     const replay = await oauthCallback("/github/oauth/callback", query, cookiePair(cookie));
 
     expect(replay.status).toBe(400);
-    expect(await replay.text()).toContain(S.pages.errors.oauth_state_invalid);
+    expect(await replay.text()).toContain(S.errorPage.codes.oauth_state_invalid.title);
     expect(world.gh.calls.filter((c) => c.url.endsWith("/login/oauth/access_token"))).toHaveLength(1);
     expect(await count("pair_tokens")).toBe(1);
   });
@@ -175,7 +175,7 @@ describe("OAuth state replay", () => {
     const replay = await oauthCallback("/slack/oauth/callback", query, cookiePair(cookie));
 
     expect(replay.status).toBe(400);
-    expect(await replay.text()).toContain(S.pages.errors.oauth_state_invalid);
+    expect(await replay.text()).toContain(S.errorPage.codes.oauth_state_invalid.title);
     expect(world.slack.calls.filter((c) => c.url === "https://slack.com/api/oauth.v2.access")).toHaveLength(1);
     expect(await count("workspace_links WHERE team_id = 'T0REPLAY'")).toBe(1);
   });

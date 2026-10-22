@@ -22,8 +22,9 @@ async function count(table: string): Promise<number> {
 
 function insertRun(runId: string, triggeredAt: number, sha: string): D1PreparedStatement {
   return env.DB.prepare(
-    "INSERT INTO runs (run_id, installation_id, repo_id, sha, ref, event, attempt, trigger_id, state) VALUES (?1, 1, 10, ?2, 'refs/heads/main', 'push', 1, ?3, 'success')",
-  ).bind(runId, sha, ulid(triggeredAt));
+    `INSERT INTO runs (run_id, installation_id, repo_id, sha, ref, event, attempt, trigger_id, state, created_at, run_number)
+      SELECT ?1, 1, 10, ?2, 'refs/heads/main', 'push', 1, ?3, 'success', ?4, COALESCE(MAX(run_number), 0) + 1 FROM runs WHERE installation_id = 1`,
+  ).bind(runId, sha, ulid(triggeredAt), triggeredAt);
 }
 
 beforeEach(clearTables);
@@ -117,5 +118,20 @@ describe("purgeExpired", () => {
     expect(await purgeExpired(env.DB, NOW)).toBe(201);
     expect(await count("jobs")).toBe(0);
     expect(await count("runs")).toBe(0);
+  });
+
+  it("deletes the annotations of an expired run and keeps those of a run inside the window", async () => {
+    await env.DB.batch([
+      insertRun("run-in", RUN_CUTOFF, "sha-in"),
+      insertRun("run-out", RUN_CUTOFF - 1, "sha-out"),
+      env.DB.prepare(
+        `INSERT INTO annotations (installation_id, run_id, job, level, path, start_line, end_line, message, created_at)
+        VALUES (1, 'run-in', 'build', 'failure', 'a.go', 1, 1, 'in', 1), (1, 'run-out', 'build', 'failure', 'a.go', 1, 1, 'out', 1)`,
+      ),
+    ]);
+
+    expect(await purgeExpired(env.DB, NOW)).toBe(2);
+    expect(await column("SELECT message AS v FROM annotations")).toEqual(["in"]);
+    expect(await column("SELECT run_id AS v FROM runs")).toEqual(["run-in"]);
   });
 });

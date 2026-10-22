@@ -10,22 +10,25 @@ export interface WatchRow {
 	status: "active" | "broken";
 	broken_reason: string | null;
 	created_by: string;
+	/** The channel's name when it was watched; null before it was recorded and for a direct message. */
+	channel_name: string | null;
 }
 
-export type NewWatch = Pick<WatchRow, "repo_id" | "team_id" | "channel_id" | "notify" | "alert" | "created_by">;
+export type NewWatch = Pick<WatchRow, "repo_id" | "team_id" | "channel_id" | "notify" | "alert" | "created_by"> & { channel_name?: string | null };
 
 /** Watches a repo from a channel; watching again updates the modes and reactivates a broken watch. */
 export async function addWatch(t: TenantDb, row: NewWatch): Promise<void> {
 	await t.run(
-		`INSERT INTO watches (installation_id, repo_id, team_id, channel_id, notify, alert, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+		`INSERT INTO watches (installation_id, repo_id, team_id, channel_id, notify, alert, created_by, channel_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 		ON CONFLICT (installation_id, repo_id, team_id, channel_id) DO UPDATE SET notify = excluded.notify, alert = excluded.alert,
-			status = 'active', broken_reason = NULL`,
+			status = 'active', broken_reason = NULL, channel_name = COALESCE(excluded.channel_name, channel_name)`,
 		row.repo_id,
 		row.team_id,
 		row.channel_id,
 		row.notify,
 		row.alert,
 		row.created_by,
+		row.channel_name ?? null,
 	);
 }
 

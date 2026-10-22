@@ -49,6 +49,7 @@ async function purgeRuns(db: D1Database, cutoffPrefix: string): Promise<number> 
 		await deleteBatched(db, "jobs", `SELECT rowid FROM jobs WHERE run_id IN (${expired})`, cutoffPrefix),
 		await deleteBatched(db, "slack_messages", `SELECT rowid FROM slack_messages WHERE run_id IN (${expired})`, cutoffPrefix),
 		await deleteBatched(db, "slack_job_replies", `SELECT rowid FROM slack_job_replies WHERE run_id IN (${expired})`, cutoffPrefix),
+		await deleteBatched(db, "annotations", `SELECT rowid FROM annotations WHERE run_id IN (${expired})`, cutoffPrefix),
 		// check_runs are keyed by commit; a newer run of the same commit keeps them.
 		await deleteBatched(
 			db,

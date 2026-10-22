@@ -30,7 +30,7 @@ export type Interrupt = {
   /**
    * Why the run or trigger is stopped.
    */
-  reason: "superseded" | "revoked" | "uninstalled" | "repair";
+  reason: "superseded" | "revoked" | "uninstalled" | "repair" | "cancelled";
 } & Interrupt1;
 export type Interrupt1 = {
   [k: string]: unknown;
@@ -112,6 +112,10 @@ export interface Hello {
    * Highest hub seq the agent has processed. The hub replays outbox frames above it. Absent means 0.
    */
   inbound_hwm?: number;
+  /**
+   * Operating system the agent runs on as a short printable name such as Ubuntu 22.04, macOS 14.5 or Windows 11, at most 64 characters. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.
+   */
+  os_release?: string;
 }
 /**
  * Hub to agent: start a run for a commit.

@@ -119,6 +119,27 @@ func TestDecodeSeqFields(t *testing.T) {
 	}
 }
 
+func TestDecodeHelloOSRelease(t *testing.T) {
+	got := decode[protocol.Hello](t, fixture(t, "valid-hello-os-release.json"))
+	if got.OsRelease == nil || *got.OsRelease != "Ubuntu 22.04" {
+		t.Errorf("hello os_release = %v; want Ubuntu 22.04", got.OsRelease)
+	}
+	old := decode[protocol.Hello](t, fixture(t, "valid-hello-inbound-hwm.json"))
+	if old.OsRelease != nil {
+		t.Errorf("hello without os_release decoded as %q; want nil", *old.OsRelease)
+	}
+}
+
+func TestDecodeAnnotationsTitle(t *testing.T) {
+	got := decode[protocol.Annotations](t, fixture(t, "valid-annotations-title.json"))
+	if len(got.Items) != 2 || got.Items[0].Title == nil || *got.Items[0].Title != "no-explicit-any" || got.Items[1].Title != nil {
+		t.Errorf("annotation titles = %+v", got.Items)
+	}
+	if got.Items[0].Column == nil || *got.Items[0].Column != 5 {
+		t.Errorf("annotation column = %v; want 5", got.Items[0].Column)
+	}
+}
+
 func TestDecodeFrameRejectsUnknownTypeAndVersion(t *testing.T) {
 	for _, frame := range []string{
 		`{"v":1,"type":"nope"}`,

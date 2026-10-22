@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/clock"
@@ -17,6 +18,7 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/isolation"
 	"github.com/KCuppens/hookci/agent/internal/netns"
+	"github.com/KCuppens/hookci/agent/internal/osrelease"
 	"github.com/KCuppens/hookci/agent/internal/scheduler"
 	"github.com/KCuppens/hookci/agent/internal/systemd"
 )
@@ -98,6 +100,9 @@ type Deps struct {
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
 	// Releases is where upgrade fetches signed releases.
 	Releases Releases
+	// OSRelease names the host operating system for the hello frame; nil
+	// reports none.
+	OSRelease osrelease.Source
 }
 
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
@@ -109,15 +114,24 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 			env.Warn = func(msg string) { fmt.Fprintf(stderr, "hookci: warning: %s\n", msg) }
 			return isolation.Select(name, env)
 		},
-		Clock:    time.Now,
-		Getwd:    os.Getwd,
-		Host:     execx.OS{},
-		Netns:    &netns.Manager{},
-		After:    time.After,
-		Services: systemd.Systemctl{Runner: execx.OS{}},
-		Doctor:   hostDoctorEnv,
-		Releases: defaultReleases(),
+		Clock:     time.Now,
+		Getwd:     os.Getwd,
+		Host:      execx.OS{},
+		Netns:     &netns.Manager{},
+		After:     time.After,
+		Services:  systemd.Systemctl{Runner: execx.OS{}},
+		Doctor:    hostDoctorEnv,
+		Releases:  defaultReleases(),
+		OSRelease: osrelease.System{OS: runtime.GOOS},
 	}
+}
+
+// osRelease is the host operating system as the hello frame reports it.
+func (d Deps) osRelease() string {
+	if d.OSRelease == nil {
+		return ""
+	}
+	return osrelease.Detect(d.OSRelease)
 }
 
 // hostDoctorEnv is the real host as doctor sees it.

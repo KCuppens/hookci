@@ -203,6 +203,11 @@ type Hello struct {
 	// it. Absent means 0.
 	InboundHwm *int `json:"inbound_hwm,omitempty,omitzero"`
 
+	// Operating system the agent runs on as a short printable name such as Ubuntu
+	// 22.04, macOS 14.5 or Windows 11, at most 64 characters. Optional: an agent that
+	// cannot tell omits it, and a hub that predates the field ignores it.
+	OsRelease *string `json:"os_release,omitempty,omitzero"`
+
 	// Protocol version the agent speaks.
 	ProtocolVersion int `json:"protocol_version"`
 
@@ -237,6 +242,7 @@ type Interrupt struct {
 
 type InterruptReason string
 
+const InterruptReasonCancelled InterruptReason = "cancelled"
 const InterruptReasonRepair InterruptReason = "repair"
 const InterruptReasonRevoked InterruptReason = "revoked"
 const InterruptReasonSuperseded InterruptReason = "superseded"

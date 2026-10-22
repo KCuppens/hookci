@@ -122,6 +122,17 @@ describe("installation_repositories added", () => {
     expect(await rows("SELECT repo_id FROM repos ORDER BY repo_id")).toEqual([{ repo_id: 2001 }, { repo_id: 2002 }]);
     expect(await rows("SELECT * FROM repo_bindings")).toEqual([]);
   });
+
+  it("stores repository_selection all from the payload", async () => {
+    await deliver({ ...addedBy(1), repository_selection: "all" });
+    expect(await rows("SELECT repository_selection FROM installations WHERE id = 42")).toEqual([{ repository_selection: "all" }]);
+  });
+
+  it("drops a payload with an unknown repository_selection and changes nothing", async () => {
+    await deliver({ ...addedBy(1), repository_selection: "bogus" });
+    expect(await rows("SELECT repository_selection FROM installations WHERE id = 42")).toEqual([{ repository_selection: null }]);
+    expect(await rows("SELECT repo_id FROM repos")).toEqual([]);
+  });
 });
 
 describe("installation_repositories removed", () => {

@@ -50,7 +50,7 @@ type CaseKind = "missing" | "wrong" | "previous" | "stale" | "wrong_bearer";
 type Expected =
   /** A JSON `{error}` body. */
   | { status: number; json: string }
-  /** An HTML errorPage, which shows the message S.pages.errors holds for the code. */
+  /** An HTML errorPage, which shows the title S.errorPage holds for the code. */
   | { status: number; page: "oauth_state_invalid" | "github_no_access" }
   /** /slack/install's start-from-GitHub page, which carries no error code and issues no state. */
   | { status: 403; slackStartPage: true }
@@ -221,8 +221,18 @@ const SESSION_REFUSALS: Record<string, Expected> = {
   "/slack/install": { status: 403, slackStartPage: true },
   "/app": { status: 200, dashboard: "signInTitle" },
   "/app/:installationId": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs/newer": { status: 404, dashboard: "notFoundTitle" },
   "/app/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
   "/app/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs/:runId/logs/:job/view": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/runs/:runId/logs/:job/download": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/agents": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/agents/pair/status": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/agents/:agentId": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/repositories": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/repositories/bind": { status: 404, dashboard: "notFoundTitle" },
+  "/app/:installationId/settings": { status: 404, dashboard: "notFoundTitle" },
   "/account/connect-github": { status: 303, redirect: "/account/login" },
   "/account/settings": { status: 303, redirect: "/account/login" },
   "/account/delete": { status: 303, redirect: "/account/login" },
@@ -524,6 +534,20 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       },
     ];
   },
+
+  session_csrf: ({ path }) => {
+    const expected: Expected = { status: 404, dashboard: "notFoundTitle" };
+    const post = (t: Tenant, cookie: string | null): Request => {
+      const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", origin: env.HUB_ORIGIN };
+      if (cookie !== null) headers.cookie = cookie;
+      const target = path.replace(":installationId", String(t.installationId)).replace(":runId", t.runId);
+      return new Request(`${ORIGIN}${target}`, { method: "POST", headers, body: "csrf=forged" });
+    };
+    return [
+      { kind: "missing", name: "no session cookie", request: async (t) => post(t, null), expected },
+      { kind: "wrong", name: "a session cookie signed with a key the hub never had", request: async (t) => post(t, await forgedSession(t)), expected },
+    ];
+  },
 };
 
 function casesFor(endpoint: Endpoint): Case[] {
@@ -570,7 +594,7 @@ describe.each(ATTACKED)("$method $path ($auth)", (endpoint) => {
       expect(await res.json()).toEqual({ error: expected.json });
     } else if ("page" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
-      expect(await res.text()).toContain(escapeHtml(S.pages.errors[expected.page]));
+      expect(await res.text()).toContain(escapeHtml(S.errorPage.codes[expected.page].title));
     } else if ("accountPage" in expected) {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(res.headers.get("cache-control")).toBe("no-store");

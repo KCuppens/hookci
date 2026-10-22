@@ -17,14 +17,16 @@ import { commandArgs, ephemeral } from "./common";
 
 const USAGE = "/hookci watch <owner/repo> [quiet] [dm]";
 
-/** Whether the bot can post in channelId: a member of the channel, or the channel is a DM. */
-async function botInChannel(env: Env, teamId: string, channelId: string): Promise<boolean> {
+/** The channel bot can post in: its name (null for a direct message), or null when the bot cannot post there. */
+async function botChannel(env: Env, teamId: string, channelId: string): Promise<{ name: string | null } | null> {
 	try {
 		const { channel } = await slackApi(env, teamId, "conversations.info", { channel: channelId });
-		if (typeof channel !== "object" || channel === null) return false;
-		return ("is_member" in channel && channel.is_member === true) || ("is_im" in channel && channel.is_im === true);
+		if (typeof channel !== "object" || channel === null) return null;
+		const name = "name" in channel && typeof channel.name === "string" && channel.name !== "" ? channel.name : null;
+		if (("is_member" in channel && channel.is_member === true) || ("is_im" in channel && channel.is_im === true)) return { name };
+		return null;
 	} catch (err) {
-		if (err instanceof HubError && err.code === "slack_api" && err.message === "channel_not_found") return false;
+		if (err instanceof HubError && err.code === "slack_api" && err.message === "channel_not_found") return null;
 		throw err;
 	}
 }
@@ -54,11 +56,13 @@ registerCommand("watch", async ({ env, teamId, userId, channelId, text }) => {
 	const modes = flags.map((flag) => flag.toLowerCase());
 	if (!fullName || modes.some((mode) => mode !== "quiet" && mode !== "dm")) return ephemeral(S.slack.usage(USAGE));
 	const { repo } = await requireRepoAccess(env, teamId, user, fullName, "write");
-	if (!(await botInChannel(env, teamId, channelId))) return ephemeral(S.slack.inviteFirst);
+	const joined = await botChannel(env, teamId, channelId);
+	if (joined === null) return ephemeral(S.slack.inviteFirst);
 	await addWatch(tenantDb(env.DB, repo.installationId), {
 		repo_id: repo.repoId,
 		team_id: teamId,
 		channel_id: channelId,
+		channel_name: joined.name,
 		notify: modes.includes("quiet") ? "quiet" : "normal",
 		alert: modes.includes("dm") ? "dm" : "channel",
 		created_by: userId,

@@ -287,6 +287,34 @@ func TestHelloWelcome(t *testing.T) {
 	}
 }
 
+func TestHelloOSRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, osRelease string
+		want            any
+	}{
+		{"sent when known", "Ubuntu 22.04", "Ubuntu 22.04"},
+		{"omitted when unknown", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newHarness(t)
+			x.client = New(Config{
+				HubURL:     x.hub.srv.URL,
+				AgentID:    "agt_1",
+				Credential: testCredential,
+				Version:    "1.2.3",
+				OSRelease:  tc.osRelease,
+				Clock:      x.clk,
+			}, x.st, x.h, nil)
+			x.start(t)
+			hello := x.hub.next(t).readFrame(t)
+			got, present := hello["os_release"]
+			if got != tc.want && !(tc.want == nil && !present) {
+				t.Errorf("hello os_release = %v (present %v), want %v", got, present, tc.want)
+			}
+		})
+	}
+}
+
 func TestReplayAfterReconnect(t *testing.T) {
 	x := newHarness(t)
 	x.hub.refuse.Store(http.StatusServiceUnavailable)

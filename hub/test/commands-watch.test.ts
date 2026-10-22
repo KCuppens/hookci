@@ -81,6 +81,26 @@ describe("/hookci watch", () => {
     expect(await watches()).toEqual([expect.objectContaining({ notify: "normal", alert: "dm" })]);
   });
 
+  it("saves the channel name Slack reports", async () => {
+    world.roles[LOGIN] = "write";
+    world.slack.respond("POST", "/api/conversations.info", () =>
+      Response.json({ ok: true, channel: { id: CHANNEL, name: "deployments", is_member: true } }),
+    );
+
+    await hookci(world, "watch acme/api");
+
+    expect(await watches()).toEqual([expect.objectContaining({ channel_id: CHANNEL, channel_name: "deployments" })]);
+  });
+
+  it("saves no channel name for a direct message", async () => {
+    world.roles[LOGIN] = "write";
+    world.slack.respond("POST", "/api/conversations.info", () => Response.json({ ok: true, channel: { id: CHANNEL, is_im: true } }));
+
+    await hookci(world, "watch acme/api");
+
+    expect(await watches()).toEqual([expect.objectContaining({ channel_id: CHANNEL, channel_name: null })]);
+  });
+
   it("refuses a user who can only read the repo", async () => {
     world.roles[LOGIN] = "read";
 

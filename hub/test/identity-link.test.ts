@@ -185,7 +185,9 @@ describe("/github/link/start", () => {
     const shown = await get(url);
     expect(shown.status).toBe(200);
     const html = await shown.text();
-    expect(html).toContain(S.pages.linkConfirm("Acme", USER));
+    expect(html).toContain(S.flow.link.title);
+    expect(html).toContain("Acme");
+    expect(html).toContain(USER);
     expect(html).toContain(`<form method="post" action="/github/link/start"><input type="hidden" name="t" value="${t}">`);
     const mark = stateCookie(shown);
     expect(mark).not.toBe(`__Host-hookci_oauth=${t.split(".")[0]}`);
@@ -247,7 +249,7 @@ describe("GET /github/link/callback", () => {
   it("links the Slack user to the GitHub user and revokes the user token once", async () => {
     const res = await link();
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain(S.pages.linkedAs("octocat"));
+    expect(await res.text()).toContain(S.flow.link.doneTitle("octocat"));
     expect(res.headers.getSetCookie()).toContain("__Host-hookci_oauth=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
     expect(await userLinks()).toEqual([{ team_id: TEAM, slack_user_id: USER, github_user_id: 7001, github_login: "octocat" }]);
     expect(revokeCalls()).toEqual([{ access_token: USER_TOKEN }]);

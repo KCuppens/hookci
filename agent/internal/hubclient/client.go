@@ -59,6 +59,7 @@ type Config struct {
 	AgentID    string
 	Credential string // zc_agent_...
 	Version    string
+	OSRelease  string      // sent in hello as os_release; "" omits it
 	Protocol   int         // 0 = protocol.Version
 	Dialer     Dialer      // nil = real websocket dialer
 	Clock      clock.Clock // nil = real clock
@@ -416,6 +417,9 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 	hello := protocol.Hello{AgentVersion: c.cfg.Version, ProtocolVersion: c.cfg.Protocol, InboundHwm: &in}
 	if c.cfg.AgentID != "" {
 		hello.AgentId = &c.cfg.AgentID
+	}
+	if c.cfg.OSRelease != "" {
+		hello.OsRelease = &c.cfg.OSRelease
 	}
 	b, err := protocol.Marshal("hello", hello)
 	if err != nil {

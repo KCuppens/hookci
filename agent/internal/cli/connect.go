@@ -159,6 +159,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		AgentID:    cfg.AgentID,
 		Credential: cfg.Credential,
 		Version:    version.Version,
+		OSRelease:  d.osRelease(),
 	}, nil, nil, log)
 	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()

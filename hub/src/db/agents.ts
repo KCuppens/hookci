@@ -1,4 +1,5 @@
 import { sha256Hex } from "../crypto";
+import { QUOTAS } from "../quotas";
 import type { TenantDb } from "./tenant";
 
 export interface AgentRow {
@@ -11,6 +12,8 @@ export interface AgentRow {
 	credential_hash: string;
 	protocol_version: number | null;
 	agent_version: string | null;
+	/** The operating system the agent reported in hello, like "Ubuntu 22.04" or "macOS 14.5"; null until it does. */
+	os_release: string | null;
 	last_seen_at: number | null;
 	revoked_at: number | null;
 	paired_by_github_id: number;
@@ -94,19 +97,36 @@ export async function revokeAgent(t: TenantDb, agentId: string, at: number): Pro
 	return res.meta.changes > 0;
 }
 
-/** Records a hello or keepalive from a non-revoked agent and marks it online. */
+/**
+ * The agent's operating system as a short printable string, or null when value is not a string or
+ * nothing printable is left. Control, format and separator characters go, runs of white space
+ * collapse, and the result is cut to QUOTAS.osReleaseChars characters.
+ */
+export function sanitizeOsRelease(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const printable = value.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, "").replace(/\s+/g, " ").trim();
+	const cut = Array.from(printable).slice(0, QUOTAS.osReleaseChars).join("").trim();
+	return cut === "" ? null : cut;
+}
+
+/**
+ * Records a hello or keepalive from a non-revoked agent and marks it online. osRelease, when the
+ * agent has reported one (already sanitized), replaces the stored value; without it the stored
+ * value stays, so an agent that predates the field keeps whatever it had.
+ */
 export async function touchAgent(
 	t: TenantDb,
 	agentId: string,
-	seen: { protocolVersion: number; agentVersion: string; lastSeenAt: number },
+	seen: { protocolVersion: number; agentVersion: string; lastSeenAt: number; osRelease?: string | null },
 ): Promise<void> {
 	await t.run(
-		`UPDATE agents SET protocol_version = ?3, agent_version = ?4, last_seen_at = ?5, status = 'online'
+		`UPDATE agents SET protocol_version = ?3, agent_version = ?4, last_seen_at = ?5, os_release = COALESCE(?6, os_release), status = 'online'
 		WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL`,
 		agentId,
 		seen.protocolVersion,
 		seen.agentVersion,
 		seen.lastSeenAt,
+		seen.osRelease ?? null,
 	);
 }
 

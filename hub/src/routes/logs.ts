@@ -11,6 +11,7 @@ import { HubError } from "../errors";
 import { logKey } from "../logs/keys";
 import { logSigStatus } from "../logs/sign";
 import { logEvent } from "../observability";
+import { errorPage } from "../pages/error";
 import { QUOTAS } from "../quotas";
 import { wireHeader } from "../wire-headers";
 
@@ -71,7 +72,20 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	return c.body(null, 204);
 }
 
+/**
+ * A signed log link opened from Slack. A browser (Accept: text/html) that hits a refused link gets the HTML error
+ * page; every other client keeps the JSON `{error}` answer.
+ */
 export async function viewLog(c: LogContext<"/logs/:runId/:job">): Promise<Response> {
+	try {
+		return await serveLog(c);
+	} catch (err) {
+		if (err instanceof HubError && c.req.header("accept")?.includes("text/html")) return await errorPage(err.code, err.status);
+		throw err;
+	}
+}
+
+async function serveLog(c: LogContext<"/logs/:runId/:job">): Promise<Response> {
 	const env = c.env;
 	const runId = c.req.param("runId");
 	const job = c.req.param("job");

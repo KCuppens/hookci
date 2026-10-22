@@ -3,6 +3,7 @@
 // page polls until an agent connects.
 
 import type { Context } from "hono";
+import { installProgress } from "../db/install-progress";
 import { getInstallation, type InstallationRow } from "../db/installations";
 import { tenantDb } from "../db/tenant";
 import { type Clock, systemClock } from "../do/clock";
@@ -56,9 +57,11 @@ export async function finishInstall(env: Env, gh: GitHubClient, f: FinishInstall
 	return installedPage({
 		installationId,
 		accountLogin,
+		accountType: f.installation.account_type,
 		pairToken: token,
 		hubOrigin: env.HUB_ORIGIN,
 		expiresInMinutes: PAIR_TOKEN_TTL_MS / 60_000,
+		progress: await installProgress(tenantDb(env.DB, installationId)),
 		cookies,
 	});
 }

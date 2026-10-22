@@ -188,6 +188,8 @@ describe("account settings", () => {
     expect(html).toContain(ALICE);
     expect(html).toContain(S.account.settings.githubNone);
     expect(html).toContain('action="/account/connect-github"');
+    expect(html).toContain('href="#i-octocat"');
+    expect(html).toContain('<symbol id="i-octocat"');
     expect(html).toContain('action="/account/logout"');
     expect(html).toContain('href="/account/delete"');
   });

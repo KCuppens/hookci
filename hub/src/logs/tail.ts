@@ -1,9 +1,10 @@
 import { getRunOwner } from "../db/runs";
 import type { Env } from "../env";
 import { logKey } from "./keys";
+import { splitStamp } from "./stamp";
 
 /**
- * The last n lines of a job's stored log, decoded while streaming so only n
+ * The last n lines of a job's stored log without their agent timestamp prefix, decoded while streaming so only n
  * lines are held; null when the run or the log object does not exist.
  */
 export async function getLogTail(env: Env, runId: string, job: string, n: number): Promise<string[] | null> {
@@ -14,8 +15,9 @@ export async function getLogTail(env: Env, runId: string, job: string, n: number
 
 	const ring: string[] = [];
 	let next = 0;
-	const keep = (line: string): void => {
+	const keep = (raw: string): void => {
 		if (n <= 0) return;
+		const line = splitStamp(raw).rest;
 		if (ring.length < n) ring.push(line);
 		else ring[next] = line;
 		next = (next + 1) % n;

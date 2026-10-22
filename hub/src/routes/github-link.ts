@@ -21,7 +21,8 @@ import { defaultFetcher } from "../http";
 import { CLEAR_STATE_COOKIE, confirmState, consumeState, previewState } from "../oauth/state";
 import { logEvent, reportError } from "../observability";
 import { errorPage } from "../pages/error";
-import { linkConfirmPage, linkedPage } from "../pages/linked";
+import { linkConfirmPage } from "../pages/link-confirm";
+import { linkedPage } from "../pages/linked";
 import { QUOTAS } from "../quotas";
 
 type AppContext = Context<{ Bindings: Env }>;
@@ -47,7 +48,7 @@ export async function githubLinkStart(c: AppContext): Promise<Response> {
 			throw new HubError("oauth_state_invalid", 400, "github_link state lacks the Slack team or user");
 		}
 		const workspace = (await getWorkspace(env.DB, teamId))?.team_name ?? teamId;
-		return linkConfirmPage(state, workspace, slackUserId, cookie);
+		return await linkConfirmPage(state, workspace, slackUserId, cookie);
 	} catch (err) {
 		if (err instanceof HubError) return errorPage(err.code, err.status);
 		throw err;
@@ -104,7 +105,7 @@ async function completeLink(env: Env, clock: Clock, code: string | undefined, st
 	} finally {
 		await discardUserToken(env, github, userToken, teamId);
 	}
-	return linkedPage(login, [CLEAR_STATE_COOKIE]);
+	return linkedPage(login, slackUserId, [CLEAR_STATE_COOKIE]);
 }
 
 export async function githubLinkCallback(c: AppContext): Promise<Response> {

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../../src/db/agents";
+import { insertAnnotations } from "../../src/db/annotations";
 import { bindAllRepos } from "../../src/db/bindings";
 import { recordDelivery } from "../../src/db/deliveries";
 import { purgeInstallation, upsertInstallation } from "../../src/db/installations";
@@ -13,7 +14,7 @@ import { clearTables, columnsOf, schemaTables } from "./helpers";
 
 // Tables that hold no installation data. Adding a table to the schema that is
 // neither listed here nor keyed by installation_id or run_id fails the test.
-const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states", "cron_state", "users", "email_tokens", "login_attempts"];
+const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states", "cron_state", "users", "email_tokens", "login_attempts", "status_checks"];
 
 beforeEach(clearTables);
 
@@ -60,6 +61,7 @@ async function seed(id: number): Promise<void> {
     log_key: null,
   });
   await upsertJob(t, { run_id: runId, name: "test", state: "running", step: "go test", step_index: 1, steps_total: 2, duration_ms: null });
+  await insertAnnotations(t, runId, "test", [{ path: "main.go", line: 3, level: "warning", message: "unused" }], 1);
   await recordDelivery(env.DB, {
     delivery_id: `delivery-${id}`,
     received_at: 1,

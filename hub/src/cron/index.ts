@@ -8,6 +8,7 @@ import { purgeDeletedInstallations } from "./purge-installations";
 import { reconcileDefaultBranches } from "./reconcile";
 import { redeliverFailed } from "./redeliver";
 import { reencryptTokens } from "./reencrypt";
+import { runStatusChecks } from "./status-check";
 
 type CronTask = { name: string; run(env: Env, now: number): Promise<unknown> };
 
@@ -26,6 +27,7 @@ const SCHEDULES: Record<string, readonly CronTask[]> = {
 		{ name: "purge", run: (env, now) => purgeExpired(env.DB, now) },
 		{ name: "purge_installations", run: (env, now) => purgeDeletedInstallations(env, now) },
 		{ name: "reencrypt", run: (env, now) => reencryptTokens(env, now) },
+		{ name: "status_check", run: (env, now) => runStatusChecks(env, now) },
 	],
 };
 

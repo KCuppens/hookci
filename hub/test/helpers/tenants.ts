@@ -4,6 +4,7 @@
 
 import { encryptToken, parseEncKeys } from "../../src/crypto";
 import { agentCredentialHash, insertAgent } from "../../src/db/agents";
+import { insertAnnotations } from "../../src/db/annotations";
 import { bind } from "../../src/db/bindings";
 import { putCheckRun } from "../../src/db/check-runs";
 import { recordDelivery } from "../../src/db/deliveries";
@@ -49,6 +50,7 @@ export interface Tenant {
 /** Every table holding installation rows; jobs and the slack_* tables hang off runs. */
 export const TENANT_TABLES = [
   "runs",
+  "annotations",
   "jobs",
   "slack_messages",
   "slack_job_replies",
@@ -153,6 +155,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     log_key: null,
   });
   await upsertJob(t, { run_id: tenant.runId, name: tenant.job, state: "failed", step: null, step_index: null, steps_total: null, duration_ms: 1 });
+  await insertAnnotations(t, tenant.runId, tenant.job, [{ path: `src/tenant${n}.go`, line: 7, level: "failure", message: `tenant ${n} secret annotation` }], 1);
   const log = await gzip(`tenant ${n} secret log\n`);
   await env.LOGS.put(tenant.logKey, log);
   await setJobLog(t, tenant.runId, tenant.job, { key: tenant.logKey, bytes: log.byteLength, truncated: false });

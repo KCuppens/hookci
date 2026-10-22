@@ -29,6 +29,7 @@ beforeEach(async () => {
     get: () =>
       ({
         fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (new Request(input, init).method === "GET") return new Response(null, { status: 200 });
           triggeredRepos.push((await new Request(input, init).json<{ repoId: number }>()).repoId);
           return new Response(null, { status: 202 });
         },
@@ -70,6 +71,12 @@ describe("runCron", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM deliveries").first()).toEqual({ n: 0 });
     expect(errors.mock.calls.map((args) => JSON.parse(String(args[0])))).toEqual([
       expect.objectContaining({ task: "redeliver", cron: "*/5 * * * *", error: expect.objectContaining({ code: "github_error" }) }),
+    ]);
+    const checked = await env.DB.prepare("SELECT component, checks_ok, checks_total FROM status_checks ORDER BY component").all();
+    expect(checked.results).toEqual([
+      { component: "agents", checks_ok: 1, checks_total: 1 },
+      { component: "api", checks_ok: 1, checks_total: 1 },
+      { component: "logs", checks_ok: 1, checks_total: 1 },
     ]);
   });
 });

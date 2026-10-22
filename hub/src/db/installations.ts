@@ -11,6 +11,8 @@ export interface InstallationRow {
 	permissions: string;
 	suspended_at: number | null;
 	deleted_at: number | null;
+	/** GitHub's repository_selection: all repositories or only the selected ones; null until GitHub has reported it. */
+	repository_selection: "all" | "selected" | null;
 	purge_after: number | null;
 	created_at: number;
 }
@@ -36,6 +38,11 @@ export async function getInstallation(db: D1Database, id: number): Promise<Insta
 /** Stores the app permissions the installation currently grants. */
 export async function setInstallationPermissions(db: D1Database, id: number, permissions: Record<string, string>): Promise<void> {
 	await db.prepare("UPDATE installations SET permissions = ?2 WHERE id = ?1").bind(id, JSON.stringify(permissions)).run();
+}
+
+/** Stores whether the installation covers all repositories or a selection. */
+export async function setRepositorySelection(db: D1Database, id: number, selection: "all" | "selected"): Promise<void> {
+	await db.prepare("UPDATE installations SET repository_selection = ?2 WHERE id = ?1").bind(id, selection).run();
 }
 
 /** Sets suspended_at to at, or clears it with null (unsuspend). */
@@ -72,6 +79,7 @@ const PURGE_STATEMENTS = [
 	"DELETE FROM jobs WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_messages WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_job_replies WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
+	"DELETE FROM annotations WHERE installation_id = ?1",
 	"DELETE FROM runs WHERE installation_id = ?1",
 	"DELETE FROM repos WHERE installation_id = ?1",
 	"DELETE FROM workspace_links WHERE installation_id = ?1",

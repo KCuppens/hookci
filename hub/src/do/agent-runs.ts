@@ -7,8 +7,9 @@
 // the run; the triggers table remembers which run_id each trigger became.
 
 import { getAgent } from "../db/agents";
+import { insertAnnotations, validAnnotations } from "../db/annotations";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
-import { acceptRun, insertRun, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
+import { acceptRun, insertRun, markJobLogsLocal, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
@@ -251,7 +252,7 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 	const triggerId = own.trigger_id;
 	const t = dob.tenant();
 	try {
-		await insertRun(t, newRun(dob, trig, triggerId, "gated", trig.reason));
+		await insertRun(t, newRun(dob, trig, triggerId, "gated", trig.reason), now);
 	} catch (err) {
 		dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
 		throw err;
@@ -304,7 +305,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 		capped = (counter?.runs ?? 0) > QUOTAS.runsPerDay;
 		const state = capped ? "pending" : "received";
 		const reason = capped ? "daily_cap" : null;
-		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason));
+		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason), now);
 		else await updateRunState(t, triggerId, state, { reason });
 	} catch (err) {
 		// Free the idempotency key (or the approval) so the webhook or approver can try again, and give back its count.
@@ -407,6 +408,30 @@ async function onInterrupt(dob: AgentDO, req: Request): Promise<Response> {
 }
 
 /**
+ * A user's cancel of a run, by run id or trigger id. A gated run, or one the
+ * offline agent never got, is cancelled here at once; anything the agent holds
+ * is interrupted and the agent's own cancelled event ends the run.
+ */
+async function onCancel(dob: AgentDO, req: Request): Promise<Response> {
+	const { run_id: runId } = await req.json<{ run_id?: string }>();
+	if (typeof runId !== "string" || runId === "") return Response.json({ error: "bad_request" }, { status: 400 });
+	const row = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ?1 OR trigger_id = ?1", runId).toArray()[0];
+	if (!row) return Response.json({ error: "unknown_run" }, { status: 404 });
+	if (row.state !== "gated" && row.state !== "sent" && row.state !== "accepted") return Response.json({ error: "not_open" }, { status: 409 });
+	const unseen = row.state === "gated" || (row.state === "sent" && !dob.isOnline());
+	if (row.state !== "gated") {
+		const target = row.run_id === null ? { trigger_id: row.trigger_id } : { run_id: row.run_id };
+		await dob.send({ v: 1, type: "interrupt", ...target, reason: "cancelled" });
+	}
+	if (!unseen) return Response.json({ cancelled: false }, { status: 202 });
+	dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
+	const id = row.run_id ?? row.trigger_id;
+	await updateRunState(dob.tenant(), id, "cancelled", { reason: "cancelled", finished_at: dob.clock.now() });
+	await fanOutRun(dob, id, runUpdate);
+	return Response.json({ cancelled: true }, { status: 202 });
+}
+
+/**
  * Runs when the agent goes offline: triggers it never accepted for
  * OFFLINE_PENDING_MS leave their runs pending with agent_offline. Keeps the
  * alarm while younger sent triggers wait.
@@ -447,6 +472,7 @@ export function registerRunLifecycle(): () => void {
 		registerDoRoute("trigger", onTrigger),
 		registerDoRoute("gate", onGate),
 		registerDoRoute("interrupt", onInterrupt),
+		registerDoRoute("cancel", onCancel),
 		registerDoRoute("repair", onRepair),
 		registerDoRoute("revoke", onRevoke),
 
@@ -497,6 +523,7 @@ export function registerRunLifecycle(): () => void {
 					steps_total: frame.steps_total ?? null,
 					duration_ms: frame.duration_ms ?? null,
 				});
+				if (frame.logs === "local") await markJobLogsLocal(t, frame.run_id, name);
 				await fanOutRun(dob, frame.run_id, async (sink, run) => {
 					const job = run.jobs.find((j) => j.name === name);
 					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
@@ -517,7 +544,10 @@ export function registerRunLifecycle(): () => void {
 
 		registerFrameHandler("annotations", async (dob, frame) => {
 			ownedRun(dob, frame.run_id);
-			const annotations: Annotation[] = frame.items.map((item) => ({
+			const valid = validAnnotations(frame.items);
+			// Stored before the sinks hear of them: a failing insert replays the frame, a failing sink does not.
+			if (typeof frame.job === "string") await insertAnnotations(dob.tenant(), frame.run_id, frame.job, valid, dob.clock.now());
+			const annotations: Annotation[] = valid.map((item) => ({
 				path: item.path,
 				start_line: item.line,
 				end_line: item.line,

@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "annotations",
+  "seq": 4,
+  "agent_seq": 4,
+  "run_id": "01j9zq8m4k2v7c3x5b6n0p1r2s",
+  "job": "lint",
+  "items": [
+    { "path": "src/app.ts", "line": 12, "column": 5, "level": "failure", "message": "Unexpected any.", "title": "no-explicit-any" },
+    { "path": "src/util.ts", "line": 3, "level": "warning", "message": "Unused variable." }
+  ],
+  "total": 2
+}

@@ -77,6 +77,19 @@ export interface Commit {
 	author: { id: number; login: string } | null;
 }
 
+/** One entry of the `files` array GET /repos/{owner}/{repo}/commits/{ref} returns (GitHub lists at most 300). */
+export interface CommitFile {
+	filename: string;
+	additions: number;
+	deletions: number;
+}
+
+export interface CommitChanges {
+	/** Epoch milliseconds, null when GitHub sent no usable date. */
+	committedAt: number | null;
+	files: CommitFile[];
+}
+
 export interface CommitSummary {
 	sha: string;
 	authorEmail: string | null;

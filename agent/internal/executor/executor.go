@@ -247,7 +247,7 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 	}
 	rs.dir = dir
 	// Until the config names the secrets, only the builtin patterns apply.
-	if err := rs.openSetupLog(nil, e.o.Mirror); err != nil {
+	if err := rs.openSetupLog(nil, e.o.Mirror, e.o.Clock); err != nil {
 		return err
 	}
 	if rs.run.Kind == kindDeploy && !e.o.Policy.allowsDeploy() {
@@ -281,7 +281,7 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 	}
 	r, warnings := redact.New(literals, cfg.Redact)
 	rs.redactor = r
-	if err := rs.openSetupLog(r, e.o.Mirror); err != nil {
+	if err := rs.openSetupLog(r, e.o.Mirror, e.o.Clock); err != nil {
 		return err
 	}
 	for _, w := range warnings {
@@ -515,6 +515,7 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 		Redactor: rs.redactor,
 		Workdir:  rs.dir.Src(),
 		Mirror:   e.o.Mirror,
+		Now:      e.o.Clock,
 	})
 	if err != nil {
 		return err
@@ -556,6 +557,7 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 			}
 		},
 		Mirror: e.o.Mirror,
+		Now:    e.o.Clock,
 	})
 	if err != nil {
 		return scheduler.JobOutcome{}, err
@@ -704,15 +706,15 @@ func (e *Executor) FinishRun(ctx context.Context, run store.Run, final store.Run
 }
 
 // openSetupLog (re)opens logs/setup.log with r. The file is appended to,
-// so lines written before the redactor existed stay.
-func (rs *runState) openSetupLog(r *redact.Redactor, mirror io.Writer) error {
+// so lines written before the redactor existed stay. now stamps its lines.
+func (rs *runState) openSetupLog(r *redact.Redactor, mirror io.Writer, now func() time.Time) error {
 	if rs.setupLog != nil {
 		if err := rs.setupLog.Close(); err != nil {
 			return err
 		}
 		rs.setupLog = nil
 	}
-	p, err := logpipe.New(logpipe.Options{RunDir: rs.dir.Root, Job: setupJob, Redactor: r, Mirror: mirror})
+	p, err := logpipe.New(logpipe.Options{RunDir: rs.dir.Root, Job: setupJob, Redactor: r, Mirror: mirror, Now: now})
 	if err != nil {
 		return err
 	}

@@ -278,6 +278,6 @@ describe("GET /app with accounts on", () => {
     expect(html).toContain('href="/app/login"');
     expect(html).not.toContain("/account/");
     expect(html).not.toContain("<script");
-    expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 });

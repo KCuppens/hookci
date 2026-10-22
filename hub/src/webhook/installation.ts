@@ -7,7 +7,7 @@
 
 import { listAgents, pickAgentForNewRepos } from "../db/agents";
 import { bind } from "../db/bindings";
-import { getInstallation, markDeleted, markSuspended, setInstallationPermissions, upsertInstallation } from "../db/installations";
+import { getInstallation, markDeleted, markSuspended, setInstallationPermissions, setRepositorySelection, upsertInstallation } from "../db/installations";
 import { listRepos, removeRepos, upsertRepos } from "../db/repos";
 import { cancelOpenRuns } from "../db/runs";
 import { tenantDb } from "../db/tenant";
@@ -37,6 +37,8 @@ export interface SyncableInstallation {
 	id: number;
 	account: InstallationAccount;
 	permissions: Record<string, string>;
+	/** Present in installation webhooks and GET /user/installations. */
+	repository_selection?: "all" | "selected";
 }
 
 export interface InstallationPayload {
@@ -58,7 +60,8 @@ export function isSyncableInstallation(value: unknown): value is SyncableInstall
 		typeof value.account.login === "string" &&
 		(value.account.type === "User" || value.account.type === "Organization") &&
 		isObject(value.permissions) &&
-		Object.values(value.permissions).every((p) => typeof p === "string")
+		Object.values(value.permissions).every((p) => typeof p === "string") &&
+		(value.repository_selection === undefined || value.repository_selection === "all" || value.repository_selection === "selected")
 	);
 }
 
@@ -75,6 +78,7 @@ export interface InstallationRepositoriesPayload {
 	action: string;
 	installation: { id: number };
 	sender: { id: number };
+	repository_selection?: "all" | "selected";
 	repositories_added: WebhookRepo[];
 	repositories_removed: WebhookRepo[];
 }
@@ -91,6 +95,7 @@ function isInstallationRepositoriesPayload(value: unknown): value is Installatio
 		Number.isSafeInteger(value.installation.id) &&
 		isObject(value.sender) &&
 		Number.isSafeInteger(value.sender.id) &&
+		(value.repository_selection === undefined || value.repository_selection === "all" || value.repository_selection === "selected") &&
 		isWebhookRepoList(value.repositories_added) &&
 		isWebhookRepoList(value.repositories_removed)
 	);
@@ -115,6 +120,7 @@ export async function syncInstallation(env: Env, github: GitHubClient, inst: Syn
 		created_at: now,
 	});
 	await setInstallationPermissions(env.DB, inst.id, inst.permissions);
+	if (inst.repository_selection) await setRepositorySelection(env.DB, inst.id, inst.repository_selection);
 	const listed = await listInstallationRepos(await github.installation(inst.id));
 	const t = tenantDb(env.DB, inst.id);
 	await upsertRepos(
@@ -217,6 +223,7 @@ async function onReposRemoved(env: Env, payload: InstallationRepositoriesPayload
 }
 
 export async function onInstallationRepositories(env: Env, payload: InstallationRepositoriesPayload): Promise<void> {
+	if (payload.repository_selection) await setRepositorySelection(env.DB, payload.installation.id, payload.repository_selection);
 	await onReposAdded(env, payload);
 	await onReposRemoved(env, payload);
 }
