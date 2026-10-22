@@ -6,6 +6,9 @@ name = "hookci-hub"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat"]
+# The hub is served from its own domain; keep the default workers.dev URLs off.
+workers_dev = false
+preview_urls = false
 
 [vars]
 HUB_ORIGIN = "https://ci.webuno.io"
