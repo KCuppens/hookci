@@ -6,7 +6,7 @@
 // A run's D1 run_id is its trigger_id until the agent accepts it and names
 // the run; the triggers table remembers which run_id each trigger became.
 
-import { aggregateFor } from "../checks/map";
+import { aggregateFor, SETUP_JOB } from "../checks/map";
 import { getAgent } from "../db/agents";
 import { insertAnnotations, validAnnotations } from "../db/annotations";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
@@ -574,6 +574,8 @@ export function registerRunLifecycle(): () => void {
 			const t = dob.tenant();
 			const names = new Set(await listJobNames(t, frame.run_id));
 			for (const job of frame.jobs) names.add(job.name);
+			// The agent adds the setup job to the config's jobs, so it does not count against the limit.
+			names.delete(SETUP_JOB);
 			if (names.size > QUOTAS.jobsPerRun) {
 				throw new HubError("job_limit", 422, `run ${frame.run_id} would have ${names.size} jobs, over the ${QUOTAS.jobsPerRun} limit`);
 			}
@@ -590,7 +592,7 @@ export function registerRunLifecycle(): () => void {
 			const { job: name } = frame;
 			if (name !== undefined) {
 				const names = await listJobNames(t, frame.run_id);
-				if (!names.includes(name) && names.length >= QUOTAS.jobsPerRun) {
+				if (name !== SETUP_JOB && !names.includes(name) && names.filter((n) => n !== SETUP_JOB).length >= QUOTAS.jobsPerRun) {
 					logEvent("job_limit", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, job: name });
 					return;
 				}

@@ -519,7 +519,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.reject(bg, w, ReasonAgentError, err)
 		return
 	}
-	runner := &logRunner{JobRunner: inner, up: d.logs, runDir: dir.Root, local: p.checks.LogsLocal, log: d.log}
+	runner := &logRunner{JobRunner: inner, st: d.st, up: d.logs, runDir: dir.Root, local: p.checks.LogsLocal, log: d.log}
 
 	d.mu.Lock()
 	if w.ctx.Err() == nil {

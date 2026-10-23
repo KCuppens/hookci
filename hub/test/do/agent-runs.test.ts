@@ -931,4 +931,29 @@ describe("AgentDO run lifecycle", () => {
     expect(await count()).toBe(QUOTAS.jobsPerRun);
     expect(await env.DB.prepare("SELECT 1 FROM jobs WHERE run_id = 'run_a' AND name = 'over'").first()).toBeNull();
   });
+
+  it("does not count the setup job against QUOTAS.jobsPerRun", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    const jobs = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `j${i}`, needs: ["setup"] }));
+    const count = async () => (await env.DB.prepare("SELECT count(*) AS n FROM jobs WHERE run_id = 'run_a'").first<number>("n")) ?? 0;
+    const setup = { name: "setup", needs: [] };
+
+    // One job over the limit is refused even with the setup job in the frame.
+    expect(await sock.request({ type: "job_planned", run_id: "run_a", jobs: [setup, ...jobs(QUOTAS.jobsPerRun + 1)] })).toEqual([]);
+    expect(await count()).toBe(0);
+
+    // A config at the limit plus the agent's setup job is planned in full.
+    await sock.request({ type: "job_planned", run_id: "run_a", jobs: [setup, ...jobs(QUOTAS.jobsPerRun)] });
+    expect(await count()).toBe(QUOTAS.jobsPerRun + 1);
+    // The setup job's own events still land.
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", job: "setup", state: "running" });
+    expect(await env.DB.prepare("SELECT state FROM jobs WHERE run_id = 'run_a' AND name = 'setup'").first()).toEqual({ state: "running" });
+    // A job beyond the config limit is still dropped.
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", job: "over", state: "running" });
+    expect(await env.DB.prepare("SELECT 1 FROM jobs WHERE run_id = 'run_a' AND name = 'over'").first()).toBeNull();
+  });
 });
