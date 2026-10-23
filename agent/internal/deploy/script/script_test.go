@@ -70,13 +70,13 @@ func (l *eventLog) DeployEvent(ev protocol.Event) {
 	l.events = append(l.events, ev)
 }
 
-// progress returns the sub-step events: a step without steps_total.
+// progress returns the sub-step events: those that name something other than the planned step run.
 func (l *eventLog) progress() []protocol.Event {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var out []protocol.Event
 	for _, ev := range l.events {
-		if ev.Step != nil && ev.StepsTotal == nil {
+		if ev.Step != nil && *ev.Step != "run" {
 			out = append(out, ev)
 		}
 	}
@@ -204,8 +204,8 @@ func TestScript_ProgressEvents(t *testing.T) {
 	if want := []string{"build", "migrate", "restart"}; !slices.Equal(names, want) {
 		t.Errorf("progress steps = %v, want %v", names, want)
 	}
-	if want := []int{1, 2, 3}; !slices.Equal(indexes, want) {
-		t.Errorf("progress step_index = %v, want %v", indexes, want)
+	if want := []int{0, 0, 0}; !slices.Equal(indexes, want) {
+		t.Errorf("progress step_index = %v, want %v, the index of the planned step that runs the script", indexes, want)
 	}
 	if len(r.exec.calls) != 1 {
 		t.Fatalf("calls = %+v, want only run", r.exec.calls)

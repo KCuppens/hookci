@@ -753,6 +753,7 @@ export const S = {
 			jobs: "Jobs",
 			jobsCount: (done: number, total: number) => `${done} of ${total} complete`,
 			step: (index: number, total: number) => `Step ${index} of ${total}`,
+			stepFor: (elapsed: string) => `for ${elapsed}`,
 			setupStage: (name: string, index: number, total: number | null) => `Setting up${total === null ? "" : `: step ${index + 1} of ${total}`}. ${name}`,
 			notStarted: "Not started",
 			viewLog: "View log",

@@ -594,15 +594,19 @@ export function registerRunLifecycle(): () => void {
 					logEvent("job_limit", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, job: name });
 					return;
 				}
-				await upsertJob(t, {
-					run_id: frame.run_id,
-					name,
-					state: frame.state,
-					step: frame.step ?? null,
-					step_index: frame.step_index ?? null,
-					steps_total: frame.steps_total ?? null,
-					duration_ms: frame.duration_ms ?? null,
-				});
+				await upsertJob(
+					t,
+					{
+						run_id: frame.run_id,
+						name,
+						state: frame.state,
+						step: frame.step ?? null,
+						step_index: frame.step_index ?? null,
+						steps_total: frame.steps_total ?? null,
+						duration_ms: frame.duration_ms ?? null,
+					},
+					dob.clock.now(),
+				);
 				if (frame.logs === "local") await markJobLogsLocal(t, frame.run_id, name);
 				await fanOutRun(dob, frame.run_id, async (sink, run) => {
 					const job = run.jobs.find((j) => j.name === name);

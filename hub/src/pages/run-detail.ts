@@ -404,10 +404,17 @@ function logHref(base: string, runId: string, job: string): string {
 	return `${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job)}/view`;
 }
 
-function jobRow(job: JobLogRow, base: string, runId: string): string {
-	const stepLine = job.steps_total === null ? null : T.step(job.step_index ?? 0, job.steps_total);
+function jobRow(job: JobLogRow, base: string, runId: string, now: number): string {
+	// step_index counts from 0; an index past the total came from an older agent that numbered sub-steps, so it says nothing about position.
+	const position = job.step_index === null ? 1 : job.step_index + 1;
+	const stepLine = job.steps_total === null || position > job.steps_total ? null : T.step(position, job.steps_total);
 	const stepName = job.step !== null && job.step !== "" ? job.step : NOT_STARTED[job.state] === true ? T.notStarted : null;
-	const detail = [stepLine, stepName].filter((x): x is string => x !== null);
+	const running = NOT_STARTED[job.state] !== true && DONE[job.state] !== true;
+	const stepFor =
+		running && job.step !== null && job.step !== "" && job.step_started_at != null && job.step_started_at <= now
+			? T.stepFor(durationText(now - job.step_started_at))
+			: null;
+	const detail = [stepLine, stepName, stepFor].filter((x): x is string => x !== null);
 	const href = logHref(base, runId, job.name);
 	const log =
 		job.log_key === null
@@ -441,7 +448,7 @@ function jobsCard(v: RunDetailView): string {
 	const base = `/app/${v.account.id}`;
 	const jobs = workJobs(v);
 	const done = jobs.filter((j) => DONE[j.state] === true).length;
-	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id)).join("")}</div>`;
+	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id, v.now)).join("")}</div>`;
 	return `<section class="card"><div class="ch"><h2>${e(T.jobs)}</h2><span class="cnt2">${e(T.jobsCount(done, jobs.length))}</span></div>${setupBanner(v, jobs)}${list}</section>`;
 }
 

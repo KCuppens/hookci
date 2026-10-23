@@ -4,7 +4,7 @@ import { countActiveAgents, getAgentByCredentialHash, insertAgent, listAgents, t
 import { bind, bindAllRepos, getBinding, listBindingsForAgent } from "../../src/db/bindings";
 import { getInstallation, listPurgeDue, markDeleted, markSuspended, upsertInstallation } from "../../src/db/installations";
 import { getRepoByFullName, listRepos, removeRepos, upsertRepos } from "../../src/db/repos";
-import { findRunByTrigger, getRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
+import { findRunByTrigger, getJobOfRun, getRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, markWatchBroken, removeWatch } from "../../src/db/watches";
 import {
@@ -176,8 +176,19 @@ describe("runs", () => {
     await upsertJob(one, { run_id: "r1", name: "test", state: "running", step: "go test", step_index: 2, steps_total: 3, duration_ms: null });
     await upsertJob(one, { run_id: "r1", name: "test", state: "success", step: null, step_index: null, steps_total: null, duration_ms: 70 });
     expect(await one.all("SELECT * FROM jobs WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)")).toEqual([
-      { run_id: "r1", name: "test", state: "success", step: "go test", step_index: 2, steps_total: 3, duration_ms: 70, log_key: null, log_bytes: null, log_truncated: 0, logs_local: 0 },
+      { run_id: "r1", name: "test", state: "success", step: "go test", step_index: 2, steps_total: 3, duration_ms: 70, step_started_at: expect.any(Number), log_key: null, log_bytes: null, log_truncated: 0, logs_local: 0 },
     ]);
+  });
+
+  it("upsertJob restarts the step clock only when the step changes", async () => {
+    await insertRun(one, run("r1", "t1"));
+    const job = { run_id: "r1", name: "test", state: "running", step_index: 0, steps_total: 2, duration_ms: null };
+    await upsertJob(one, { ...job, step: "build" }, 1000);
+    await upsertJob(one, { ...job, step: "build" }, 2000);
+    await upsertJob(one, { ...job, step: null, step_index: null }, 3000);
+    expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ step: "build", step_started_at: 1000 });
+    await upsertJob(one, { ...job, step: "push" }, 4000);
+    expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ step: "push", step_started_at: 4000 });
   });
 
   it("findRunByTrigger returns the latest run of the trigger in this installation", async () => {

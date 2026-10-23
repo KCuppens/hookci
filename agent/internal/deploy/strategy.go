@@ -44,8 +44,8 @@ type StepContext struct {
 	Clock   clock.Clock
 	// Progress reports a sub-step inside the running step, such as a
 	// `::hookci step <name>` marker of a script deploy. It emits a progress
-	// event with step=name and the next 1-based step_index of this engine
-	// pass, without steps_total. It may be nil.
+	// event with step=name, the index of the running planned step and
+	// steps_total. It may be nil.
 	Progress func(name string)
 }
 

@@ -183,7 +183,7 @@ type execution struct {
 	log     *runLog
 
 	progressMu sync.Mutex
-	subSteps   int // sub-steps reported through StepContext.Progress
+	current    int // index of the planned step that is running, which sub-step events report
 }
 
 func (e *Engine) newExecution(run store.DeployRun) *execution {
@@ -334,6 +334,9 @@ func (x *execution) runFrom(ctx context.Context, strat DeployStrategy, sc *StepC
 			return fmt.Errorf("deploy: run %s: %w", run.RunID, err)
 		}
 		step := x.steps[i]
+		x.progressMu.Lock()
+		x.current = i
+		x.progressMu.Unlock()
 		if err := e.Store.BeginStep(ctx, run.RunID, i, step.Name, maps.Clone(sc.Outputs), e.Clock.Now()); err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
@@ -468,16 +471,16 @@ func (x *execution) event(step int) protocol.Event {
 	return ev
 }
 
-// progress emits the event of sub-step name in the current state, with the
-// next 1-based sub-step index and no steps_total. It may run on a command's
-// output goroutine while the step waits for the command.
+// progress emits the event of sub-step name in the current state, on the
+// planned step that is running and with steps_total, so the hub shows the
+// step's position and the sub-step's name. It may run on a command's output
+// goroutine while the step waits for the command.
 func (x *execution) progress(name string) {
 	x.progressMu.Lock()
 	defer x.progressMu.Unlock()
-	x.subSteps++
-	job, index := JobName, x.subSteps
+	job, index, total := JobName, x.current, len(x.steps)
 	x.e.Events.DeployEvent(protocol.Event{
-		RunId: x.run.RunID, Job: &job, State: eventStates[x.state], Step: &name, StepIndex: &index,
+		RunId: x.run.RunID, Job: &job, State: eventStates[x.state], Step: &name, StepIndex: &index, StepsTotal: &total,
 	})
 }
 
