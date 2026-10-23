@@ -103,13 +103,13 @@ const (
 )
 
 type result struct {
-	rs   *runState
-	kind workKind
-	job  string
-	dem  capacity.Demand // held in the pool until the result is applied
-	dur  int64
-	out  JobOutcome
-	err  error
+	rs    *runState
+	kind  workKind
+	job   string
+	grant *capacity.Grant // held in the pool until the result is applied; nil without a pool
+	dur   int64
+	out   JobOutcome
+	err   error
 }
 
 // Scheduler dispatches setups and jobs of submitted runs to a JobRunner.
@@ -445,17 +445,22 @@ func (s *Scheduler) dispatch() {
 			}
 			rs = s.queue[0]
 		}
-		var dem capacity.Demand
-		if s.demand != nil {
-			dem = s.demand(job)
-		}
-		if s.pool != nil && !s.pool.TryAcquire(dem) {
-			return
+		var grant *capacity.Grant
+		if s.pool != nil {
+			var dem capacity.Demand
+			if s.demand != nil {
+				dem = s.demand(job)
+			}
+			dem.Run, dem.Job, dem.Lane = rs.run.ID, job, SupersedeKey(rs.run)
+			var ok bool
+			if grant, ok = s.pool.TryAcquire(dem); !ok {
+				return
+			}
 		}
 		if job == "" {
-			s.startSetup(rs, dem)
+			s.startSetup(rs, grant)
 		} else {
-			s.startJob(rs, job, dem)
+			s.startJob(rs, job, grant)
 		}
 	}
 }
@@ -472,17 +477,17 @@ func (s *Scheduler) nextJob() (*runState, string) {
 	return nil, ""
 }
 
-// release returns dem to the pool.
-func (s *Scheduler) release(dem capacity.Demand) {
-	if s.pool != nil {
-		s.pool.Release(dem)
+// release returns grant to the pool; grant is nil without a pool.
+func (s *Scheduler) release(grant *capacity.Grant) {
+	if grant != nil {
+		grant.Release()
 	}
 }
 
-func (s *Scheduler) startSetup(rs *runState, dem capacity.Demand) {
+func (s *Scheduler) startSetup(rs *runState, grant *capacity.Grant) {
 	id := rs.run.ID
 	if err := s.st.Transition(context.Background(), id, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
-		s.release(dem)
+		s.release(grant)
 		err = fmt.Errorf("scheduler: start run %s: %w", id, err)
 		s.log.Error("scheduler: store write failed", "run", id, "err", err)
 		s.forget(rs, "", err)
@@ -498,14 +503,14 @@ func (s *Scheduler) startSetup(rs *runState, dem capacity.Demand) {
 	run := rs.run
 	go func() {
 		err := s.runner.RunSetup(rs.ctx, run)
-		s.results <- result{rs: rs, kind: workSetup, dem: dem, err: err}
+		s.results <- result{rs: rs, kind: workSetup, grant: grant, err: err}
 	}()
 }
 
-func (s *Scheduler) startJob(rs *runState, name string, dem capacity.Demand) {
+func (s *Scheduler) startJob(rs *runState, name string, grant *capacity.Grant) {
 	id := rs.run.ID
 	if err := s.st.TransitionJob(context.Background(), id, name, []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{}); err != nil {
-		s.release(dem)
+		s.release(grant)
 		s.writeFailed(rs, name, err)
 		s.stop(rs, store.RunFailed, "scheduler: "+err.Error(), store.JobSkipped)
 		return
@@ -519,9 +524,9 @@ func (s *Scheduler) startJob(rs *runState, name string, dem capacity.Demand) {
 	job.State = store.JobRunning
 	start := s.clock.Now()
 	go func() {
-		out, err := s.runner.RunJob(rs.ctx, run, job)
+		out, err := s.runner.RunJob(capacity.WithGrant(rs.ctx, grant), run, job)
 		dur := s.clock.Now().Sub(start).Milliseconds()
-		s.results <- result{rs: rs, kind: workJob, job: name, dem: dem, dur: dur, out: out, err: err}
+		s.results <- result{rs: rs, kind: workJob, job: name, grant: grant, dur: dur, out: out, err: err}
 	}()
 }
 
@@ -538,7 +543,7 @@ func (s *Scheduler) apply(r result) {
 		return
 	case workSetup:
 		s.free++
-		s.release(r.dem)
+		s.release(r.grant)
 		rs.running--
 		switch {
 		case r.err != nil && rs.stopState == "":
@@ -548,7 +553,7 @@ func (s *Scheduler) apply(r result) {
 		}
 	case workJob:
 		s.free++
-		s.release(r.dem)
+		s.release(r.grant)
 		rs.running--
 		s.settleJob(rs, r)
 	}

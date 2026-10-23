@@ -127,6 +127,10 @@ export interface Limits {
    */
   cpus?: number;
   /**
+   * Most cores the job may use when the host has idle budget. cpus is the guaranteed minimum; idle CPU is lent up to this cap. Defaults to the whole CPU budget of the agent.
+   */
+  max_cpus?: number;
+  /**
    * Memory limit with a K, M or G suffix, for example 4G.
    */
   memory?: string;
@@ -195,6 +199,10 @@ export interface Limits1 {
    * CPU quota in cores.
    */
   cpus?: number;
+  /**
+   * Most cores the job may use when the host has idle budget. cpus is the guaranteed minimum; idle CPU is lent up to this cap. Defaults to the whole CPU budget of the agent.
+   */
+  max_cpus?: number;
   /**
    * Memory limit with a K, M or G suffix, for example 4G.
    */

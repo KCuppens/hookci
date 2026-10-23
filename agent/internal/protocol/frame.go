@@ -85,6 +85,8 @@ var frameTypes = map[string]frameType{
 	"ack":             {decodeAs[Ack], []string{"upto"}},
 	"welcome":         {decodeAs[Welcome], []string{"hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"}},
 	"interrupt":       {decodeAs[Interrupt], []string{"reason"}},
+	"capacity":        {decodeAs[Capacity], []string{"host_cpus", "host_memory_bytes", "budget_cpus", "budget_memory_bytes", "granted_cpus", "reserved_memory_bytes", "mem_available_bytes", "cpu_pressure", "mem_pressure", "backing_off", "jobs"}},
+	"budget":          {decodeAs[Budget], []string{"cpus", "memory_bytes"}},
 	"error":           {decodeAs[Error], []string{"code", "message"}},
 }
 
@@ -92,7 +94,7 @@ var frameTypes = map[string]frameType{
 // returns it decoded, by value, into the generated message for its type:
 // Hello, Trigger, Accepted, Rejected, JobPlanned, Event, Annotations,
 // TokenRequest, Token, LogSubscribe, LogUnsubscribe, Log, Ack, Welcome,
-// Interrupt or Error.
+// Interrupt, Capacity, Budget or Error.
 // An interrupt must carry exactly one of run_id or trigger_id. Unknown
 // fields are ignored so a newer peer can add optional fields.
 func DecodeFrame(frame []byte) (any, error) {

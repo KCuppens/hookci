@@ -20,6 +20,7 @@ const UnitPrefix = "hookci-run-"
 // the corresponding systemd property is omitted.
 type Limits struct {
 	CPUs        float64       // 2 -> CPUQuota=200%
+	MaxCPUs     float64       // ceiling for lent CPU; read by the executor, ignored by backends
 	MemoryBytes int64         // MemoryMax=<bytes> MemorySwapMax=0
 	Tasks       int           // TasksMax=<n>
 	Timeout     time.Duration // RuntimeMaxSec=<seconds, rounded up>
@@ -65,6 +66,15 @@ type Isolation interface {
 	Run(ctx context.Context, spec Spec) (Result, error)
 	Stop(ctx context.Context, unit string) error
 	ListUnits(ctx context.Context, prefix string) ([]Unit, error)
+}
+
+// CPUResizer is implemented by backends that can change the CPU limit of a
+// job that is already running. The executor uses it to lend idle CPU.
+type CPUResizer interface {
+	// SetCPUs changes the CPU quota of the unit for (runID, job) to cpus
+	// cores until the job ends. It is not retried here and never restarts
+	// the job.
+	SetCPUs(ctx context.Context, runID, job string, cpus float64) error
 }
 
 var (

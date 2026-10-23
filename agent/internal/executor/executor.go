@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/egress"
 	"github.com/KCuppens/hookci/agent/internal/isolation"
@@ -599,7 +601,7 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 	for i, step := range rs.cfg.Setup {
 		rs.logf("setup[%d]: %s", i, step.Run)
 		err := e.stage(ctx, rs, stepStageName(rs, i, step.Run), func() error {
-			if out := e.execute(ctx, rs, setupJob, step.Run, lim, pipe); out.State != store.JobSuccess {
+			if out := e.execute(ctx, rs, setupJob, step.Run, lim, nil, pipe); out.State != store.JobSuccess {
 				return fmt.Errorf("setup[%d] %s", i, out.Reason)
 			}
 			return nil
@@ -609,6 +611,57 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 		}
 	}
 	return nil
+}
+
+// setCPUsRetry is how long lendCPUs waits before trying a failed change
+// again: a unit systemd has not started yet cannot be resized.
+const setCPUsRetry = time.Second
+
+// lendCPUs applies each change of grant to the running unit until the
+// returned func is called. applied is the quota the unit was started with.
+// It does nothing for a backend that cannot resize or a job with no grant.
+func (e *Executor) lendCPUs(ctx context.Context, rs *runState, job string, grant *capacity.Grant, applied float64) (stop func()) {
+	resizer, ok := e.o.Isolation.(isolation.CPUResizer)
+	if grant == nil || !ok {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var retry <-chan time.Time
+		failing := false
+		apply := func(cpus float64) {
+			retry = nil
+			if math.Abs(cpus-applied) < 1e-9 {
+				return
+			}
+			if err := resizer.SetCPUs(ctx, rs.run.ID, job, cpus); err != nil {
+				if !failing {
+					rs.log.Warn("executor: lend CPUs", "job", job, "cpus", cpus, "err", err)
+				}
+				failing = true
+				retry = time.After(setCPUsRetry)
+				return
+			}
+			failing = false
+			applied = cpus
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cpus := <-grant.Changed():
+				apply(cpus)
+			case <-retry:
+				apply(grant.CPUs())
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // RunJob runs one job of a set-up run and maps the result to its outcome.
@@ -641,7 +694,7 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 	if err != nil {
 		return scheduler.JobOutcome{}, err
 	}
-	out := e.execute(ctx, rs, job.Name, cj.Run, EffectiveLimits(rs.run, rs.cfg.Limits, cj), pipe)
+	out := e.execute(ctx, rs, job.Name, cj.Run, EffectiveLimits(rs.run, rs.cfg.Limits, cj), capacity.GrantFrom(ctx), pipe)
 	if err := pipe.Close(); err != nil {
 		rs.log.Warn("executor: close job log", "job", job.Name, "err", err)
 	}
@@ -658,13 +711,17 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 
 // execute runs script under isolation with a backstop deadline of the
 // timeout plus BackstopGrace, for a backend whose own timeout never fires.
-func (e *Executor) execute(ctx context.Context, rs *runState, job, script string, lim isolation.Limits, pipe *logpipe.Pipe) scheduler.JobOutcome {
+func (e *Executor) execute(ctx context.Context, rs *runState, job, script string, lim isolation.Limits, grant *capacity.Grant, pipe *logpipe.Pipe) scheduler.JobOutcome {
 	runCtx := ctx
 	if lim.Timeout > 0 {
 		var cancel context.CancelFunc
 		runCtx, cancel = context.WithTimeout(ctx, lim.Timeout+e.o.BackstopGrace)
 		defer cancel()
 	}
+	if grant != nil {
+		lim.CPUs = grant.CPUs()
+	}
+	defer e.lendCPUs(runCtx, rs, job, grant, lim.CPUs)()
 	var nsPath string
 	if rs.network != nil {
 		nsPath = rs.network.NSPath
@@ -681,6 +738,7 @@ func (e *Executor) execute(ctx context.Context, rs *runState, job, script string
 			ProxyEnv:    rs.proxyEnv,
 			ServiceEnv:  rs.serviceEnv,
 			InheritPATH: e.o.Isolation.Name() == "none",
+			CPUs:        lim.CPUs,
 		}),
 		Limits:         lim,
 		NetNSPath:      nsPath,

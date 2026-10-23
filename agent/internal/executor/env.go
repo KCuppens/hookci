@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"math"
 	"os"
 	"slices"
+	"strconv"
 
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
@@ -15,6 +17,7 @@ type EnvInput struct {
 	ProxyEnv    []string // netns.ProxyEnv or Network.Env(); nil without a proxy
 	ServiceEnv  []string // Postgres.Env(); nil without services
 	InheritPATH bool     // isolation "none": keep the agent's PATH so local toolchains resolve
+	CPUs        float64  // cores granted at start; HOOKCI_CPUS is set when positive
 }
 
 // BuildJobEnv returns the whole environment of a job, sorted. Backends add
@@ -42,6 +45,9 @@ func BuildJobEnv(in EnvInput) []string {
 	}
 	if in.Run.PR != nil {
 		env = append(env, "HOOKCI_BASE_SHA="+in.Run.BaseSHA)
+	}
+	if in.CPUs > 0 {
+		env = append(env, "HOOKCI_CPUS="+strconv.Itoa(int(math.Ceil(in.CPUs-1e-9))))
 	}
 	env = append(env, in.ProxyEnv...)
 	env = append(env, in.ServiceEnv...)

@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/protocol"
 	"github.com/KCuppens/hookci/agent/internal/store"
@@ -63,10 +64,11 @@ type Config struct {
 	AgentID    string
 	Credential string // hci_agent_...
 	Version    string
-	OSRelease  string      // sent in hello as os_release; "" omits it
-	Protocol   int         // 0 = protocol.Version
-	Dialer     Dialer      // nil = real websocket dialer
-	Clock      clock.Clock // nil = real clock
+	OSRelease  string         // sent in hello as os_release; "" omits it
+	Protocol   int            // 0 = protocol.Version
+	Dialer     Dialer         // nil = real websocket dialer
+	Clock      clock.Clock    // nil = real clock
+	Capacity   CapacitySource // nil = no capacity reports
 }
 
 // Handler receives the hub frames that carry a seq: trigger, token and
@@ -100,16 +102,17 @@ type TokenRefusals interface {
 
 // Client is a reconnecting hub session.
 type Client struct {
-	cfg       Config
-	st        *store.Store
-	h         Handler
-	log       *slog.Logger
-	dialer    Dialer
-	clk       clock.Clock
-	backoff   Backoff
-	connected atomic.Bool
-	flush     chan struct{}
-	live      atomic.Pointer[liveSession] // nil without an open session
+	cfg        Config
+	st         *store.Store
+	h          Handler
+	log        *slog.Logger
+	dialer     Dialer
+	clk        clock.Clock
+	backoff    Backoff
+	connected  atomic.Bool
+	flush      chan struct{}
+	capChanged chan struct{}               // a capacity change the session has not reported yet
+	live       atomic.Pointer[liveSession] // nil without an open session
 }
 
 // liveSession carries SendLog frames to the session goroutine, the only
@@ -131,7 +134,7 @@ func New(cfg Config, st *store.Store, h Handler, log *slog.Logger) *Client {
 	if cfg.Protocol == 0 {
 		cfg.Protocol = protocol.Version
 	}
-	c := &Client{cfg: cfg, st: st, h: h, log: log, dialer: cfg.Dialer, clk: cfg.Clock, flush: make(chan struct{}, 1)}
+	c := &Client{cfg: cfg, st: st, h: h, log: log, dialer: cfg.Dialer, clk: cfg.Clock, flush: make(chan struct{}, 1), capChanged: make(chan struct{}, 1)}
 	if c.log == nil {
 		c.log = slog.New(slog.DiscardHandler)
 	}
@@ -236,6 +239,14 @@ func (c *Client) Run(ctx context.Context) error {
 	if c.h == nil || c.st == nil {
 		return errors.New("hubclient: run: nil handler or store")
 	}
+	if c.cfg.Capacity != nil {
+		defer c.cfg.Capacity.Watch(func(capacity.Snapshot) {
+			select {
+			case c.capChanged <- struct{}{}:
+			default:
+			}
+		})()
+	}
 	for {
 		connectedFor, err := c.session(ctx)
 		if ctx.Err() != nil {
@@ -309,6 +320,13 @@ func (c *Client) loop(ctx context.Context, s *conn, ping clock.Ticker, idle <-ch
 	if err := c.flushOutbox(ctx, s, &sent); err != nil {
 		return err
 	}
+	var pace capacityPacer
+	if c.cfg.Capacity != nil {
+		if err := c.writeCapacity(ctx, s); err != nil {
+			return err
+		}
+		pace.sent(c)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -335,6 +353,24 @@ func (c *Client) loop(ctx context.Context, s *conn, ping clock.Ticker, idle <-ch
 			if err := s.write(ctx, []byte("ping")); err != nil {
 				return err
 			}
+			if c.cfg.Capacity != nil {
+				if err := c.writeCapacity(ctx, s); err != nil {
+					return err
+				}
+				pace.sent(c)
+			}
+		case <-c.capChanged:
+			if pace.changed(c) {
+				if err := c.writeCapacity(ctx, s); err != nil {
+					return err
+				}
+				pace.sent(c)
+			}
+		case <-pace.timer:
+			if err := c.writeCapacity(ctx, s); err != nil {
+				return err
+			}
+			pace.sent(c)
 		case <-idle:
 			return fmt.Errorf("hubclient: no traffic from hub for %s", pingTimeout)
 		}
@@ -391,6 +427,16 @@ func (c *Client) handle(ctx context.Context, s *conn, b []byte) error {
 		}
 		return nil
 	case protocol.Welcome:
+		return nil
+	case protocol.Budget:
+		if bh, ok := c.h.(BudgetHandler); ok {
+			var mem *int64
+			if v.MemoryBytes != nil {
+				m := int64(*v.MemoryBytes)
+				mem = &m
+			}
+			bh.HandleBudget(v.Cpus, mem)
+		}
 		return nil
 	case protocol.LogSubscribe, protocol.LogUnsubscribe:
 		if lh, ok := c.h.(LiveHandler); ok {
@@ -505,6 +551,14 @@ func (c *Client) open(ctx context.Context) (*conn, error) {
 		in = int(hwm)
 	}
 	hello := protocol.Hello{AgentVersion: c.cfg.Version, ProtocolVersion: c.cfg.Protocol, InboundHwm: &in}
+	if c.cfg.Capacity != nil {
+		snap := c.cfg.Capacity.Snapshot()
+		hello.HostCpus = &snap.HostCPUs
+		if snap.HostMemoryBytes > 0 {
+			hostMem := int(snap.HostMemoryBytes)
+			hello.HostMemoryBytes = &hostMem
+		}
+	}
 	if c.cfg.AgentID != "" {
 		hello.AgentId = &c.cfg.AgentID
 	}

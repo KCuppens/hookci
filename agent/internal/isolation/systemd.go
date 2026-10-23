@@ -255,6 +255,20 @@ func (s *Systemd) Stop(ctx context.Context, unit string) error {
 	return nil
 }
 
+// SetCPUs changes the running unit's CPUQuota for the rest of its life only
+// (--runtime): nothing is written to disk and the process is not restarted.
+func (s *Systemd) SetCPUs(ctx context.Context, runID, job string, cpus float64) error {
+	unit := UnitName(runID, job)
+	err := s.runner().Run(ctx, execx.Cmd{
+		Name: s.systemctl(),
+		Args: []string{"set-property", "--runtime", unit + ".service", "CPUQuota=" + formatCPUQuota(cpus)},
+	})
+	if err != nil {
+		return fmt.Errorf("isolation systemd: set CPUQuota of %s: %w", unit, err)
+	}
+	return nil
+}
+
 // ListUnits returns every loaded unit whose name starts with prefix.
 func (s *Systemd) ListUnits(ctx context.Context, prefix string) ([]Unit, error) {
 	var out bytes.Buffer

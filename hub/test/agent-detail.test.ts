@@ -8,6 +8,10 @@ import { S } from "../src/strings";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { seedTenant, type Tenant } from "./helpers/tenants";
+import { sanitizeCapacity } from "../src/capacity";
+import { PROTOCOL_MAX } from "../src/do/agent-protocol";
+import { AGENT_VERSION, connect } from "./do/agent-socket";
+import { capacityFrame } from "./helpers/capacity";
 
 const ORIGIN = "https://hub.test";
 const ACME = 42;
@@ -245,5 +249,107 @@ describe("bind", () => {
   it("records when the binding was made", async () => {
     const row = await env.DB.prepare("SELECT bound_at FROM repo_bindings WHERE installation_id = ?1").bind(ACME).first<{ bound_at: number | null }>();
     expect(row?.bound_at).not.toBeNull();
+  });
+});
+
+interface BudgetRow {
+  budget_cpus: number | null;
+  budget_memory_bytes: number | null;
+}
+
+async function budgetRow(agentId: string): Promise<BudgetRow | null> {
+  return env.DB.prepare("SELECT budget_cpus, budget_memory_bytes FROM agents WHERE installation_id = ?1 AND agent_id = ?2").bind(ACME, agentId).first<BudgetRow>();
+}
+
+describe("the Capacity card", () => {
+  it("says the capacity is unavailable for an agent that never reported it, with no budget form", async () => {
+    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    expect(html).toContain(S.agents.capacity.unavailable);
+    expect(html).not.toContain(`/agents/${acme.agentId}/budget"`);
+  });
+
+  it("shows host, budget, usage, jobs and the form for a reported capacity, and the chip on the list", async () => {
+    await env.DB.prepare("UPDATE agents SET last_capacity = ?2, last_capacity_at = ?3 WHERE installation_id = ?1")
+      .bind(ACME, JSON.stringify(sanitizeCapacity(capacityFrame({ backing_off: true }))), 1_000)
+      .run();
+    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    expect(html).toContain(S.agents.capacity.hostValue("16", "32 GiB"));
+    expect(html).toContain(S.agents.capacity.cpuUse("5", "8"));
+    expect(html).toContain(S.agents.capacity.memoryUse("4 GiB", "16 GiB"));
+    expect(html).toContain(">unit</td><td>main</td>");
+    expect(html).toContain(`action="/app/${ACME}/agents/${acme.agentId}/budget"`);
+    const list = await (await get(`/app/${ACME}/agents`)).text();
+    expect(list).toContain(S.agents.capacity.chip("5", "8", "4", "16 GiB"));
+  });
+
+  it("shows that there is no memory budget instead of a zero budget", async () => {
+    await env.DB.prepare("UPDATE agents SET last_capacity = ?2, last_capacity_at = ?3 WHERE installation_id = ?1")
+      .bind(ACME, JSON.stringify(sanitizeCapacity(capacityFrame({ budget_memory_bytes: 0 }))), 1_000)
+      .run();
+    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    expect(html).toContain(S.agents.capacity.hostValue("8", S.agents.capacity.noMemoryBudget));
+    expect(html).toContain(S.agents.capacity.memoryUse("4 GiB", null));
+    const list = await (await get(`/app/${ACME}/agents`)).text();
+    expect(list).toContain(S.agents.capacity.chip("5", "8", "4", null));
+  });
+});
+
+describe("POST /app/:installationId/agents/:agentId/budget", () => {
+  it("stores the override, logs it and returns to the agent page", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const res = await post(`/agents/${acme.agentId}/budget`, { fields: { cpus: "6", memory_gib: "12" } });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=budgetSaved`);
+    expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: 6, budget_memory_bytes: 12 * 1024 ** 3 });
+    expect(lines(log)).toContain("agent_budget");
+  });
+
+  it("clears it on reset and on blank fields", async () => {
+    await post(`/agents/${acme.agentId}/budget`, { fields: { cpus: "6", memory_gib: "12" } });
+    const res = await post(`/agents/${acme.agentId}/budget`, { fields: { action: "reset", cpus: "6" } });
+    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=budgetReset`);
+    expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: null, budget_memory_bytes: null });
+  });
+
+  it.each([
+    ["cpus", { cpus: "0" }, P.budgetCpus],
+    ["cpus", { cpus: "2000" }, P.budgetCpus],
+    ["memory", { memory_gib: "0.1" }, P.budgetMemory],
+    ["memory", { memory_gib: "abc" }, P.budgetMemory],
+  ])("refuses a bad %s value with 400", async (_name, fields, message) => {
+    const res = await post(`/agents/${acme.agentId}/budget`, { fields });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain(message);
+    expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: null, budget_memory_bytes: null });
+  });
+
+  it("refuses a non-admin, a bad csrf token, another installation's agent and a revoked agent", async () => {
+    const body = { fields: { cpus: "6" } };
+    const notAdmin = await post(`/agents/${acme.agentId}/budget`, { ...body, session: await sessionFor([ACME], OWNER + 1) });
+    expect(notAdmin.status).toBe(403);
+    expect(await notAdmin.text()).toContain(P.notAdmin);
+    const csrf = await post(`/agents/${acme.agentId}/budget`, { ...body, csrf: "wrong" });
+    expect(csrf.status).toBe(403);
+    expect((await post(`/agents/${umbrella.agentId}/budget`, body)).status).toBe(404);
+    await post(`/agents/${acme.agentId}/revoke`);
+    expect((await post(`/agents/${acme.agentId}/budget`, body)).status).toBe(404);
+    expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: null, budget_memory_bytes: null });
+  });
+
+  it("pushes the override to a connected agent that sent its host size, and the stored one on its next hello", async () => {
+    const agent = { agentId: acme.agentId, credential: acme.credential, stub: env.AGENT_DO.get(env.AGENT_DO.idFromName(acme.agentId)) };
+    const hello = { v: 1, type: "hello", protocol_version: PROTOCOL_MAX, agent_version: AGENT_VERSION, host_cpus: 16, host_memory_bytes: 32 * 1024 ** 3 };
+    const first = await connect(agent);
+    first.send(hello);
+    expect(await first.next()).toMatchObject({ type: "welcome" });
+    expect(await first.next()).toEqual({ v: 1, type: "budget", cpus: null, memory_bytes: null });
+    await post(`/agents/${acme.agentId}/budget`, { fields: { cpus: "6", memory_gib: "12" } });
+    expect(await first.next()).toEqual({ v: 1, type: "budget", cpus: 6, memory_bytes: 12 * 1024 ** 3 });
+    first.ws.close(1000, "done");
+    const second = await connect(agent);
+    second.send(hello);
+    expect(await second.next()).toMatchObject({ type: "welcome" });
+    expect(await second.next()).toEqual({ v: 1, type: "budget", cpus: 6, memory_bytes: 12 * 1024 ** 3 });
+    second.ws.close(1000, "done");
   });
 });

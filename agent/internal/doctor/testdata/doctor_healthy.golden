@@ -6,6 +6,7 @@ pass    agent credential   agt_1 (installation 42)
 pass    job user           hookci-run exists
 pass    git                git version 2.39.2
 pass    disk space         10.0 GiB free on /var/lib/hookci
+pass    job budget         host 8 CPUs, 32.0 GiB, budget 4 CPUs, 16.0 GiB; lends idle CPU, backs off on pressure (PSI)
 pass    hub reachable      https://hub.test/healthz answered 200
 pass    hub                https://hub.test (self_hosted, version 1.4.0)
 pass    hub TLS            certificate valid until 2084-01-29

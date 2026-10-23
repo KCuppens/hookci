@@ -219,6 +219,31 @@ func checkLimits(c *Checks, li lineIndex) Diagnostics {
 	return diags
 }
 
+// checkMaxCPUs requires max_cpus to be at least the cpus it caps, judged on
+// the resolved limits so a job that sets only one of the two is compared
+// with the value it inherits. The error points at the key the job sets.
+func checkMaxCPUs(rc *ResolvedChecks, raw any, li lineIndex) Diagnostics {
+	var diags Diagnostics
+	check := func(base string, l ResolvedLimits, set map[string]any) {
+		if l.MaxCPUs == 0 || l.MaxCPUs >= l.CPUs {
+			return
+		}
+		key := "max_cpus"
+		if _, ok := set[key]; !ok {
+			key = "cpus"
+		}
+		diags = append(diags, li.errorf(base+"."+key, "raise max_cpus or lower cpus; cpus is the guaranteed minimum and max_cpus the cap",
+			"max_cpus %v is below cpus %v", l.MaxCPUs, l.CPUs))
+	}
+	rawChecks := mapAt(raw, "checks")
+	check("checks.limits", rc.Limits, mapAt(rawChecks, "limits"))
+	rawJobs := mapAt(rawChecks, "jobs")
+	for _, j := range rc.Jobs {
+		check("checks.jobs."+j.Name+".limits", j.Limits, mapAt(mapAt(rawJobs, j.Name), "limits"))
+	}
+	return diags
+}
+
 // checkTrust refuses trust: all except on a self-hosted hub with no
 // deployments, where only the operator's own runner is at stake.
 func checkTrust(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics {

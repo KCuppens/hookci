@@ -5,7 +5,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { createCheckStateTable } from "../checks/coalesce";
-import { markAgentOffline, sanitizeOsRelease, touchAgent } from "../db/agents";
+import { type BudgetOverride, type StoredCapacity, parseStoredCapacity, sanitizeCapacity } from "../capacity";
+import { getAgent, markAgentOffline, recordCapacity, sanitizeOsRelease, touchAgent } from "../db/agents";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -30,6 +31,7 @@ import {
 	MAX_BAD_FRAMES_PER_MINUTE,
 	MAX_FRAME_BYTES,
 	MAX_FRAMES_PER_SECOND,
+	CAPACITY_WRITE_INTERVAL_MS,
 	OFFLINE_AFTER_MS,
 	PING,
 	PONG,
@@ -39,7 +41,7 @@ import {
 	negotiate,
 } from "./agent-protocol";
 import { allowGatedTriggers, createTriggersTable, registerRunLifecycle } from "./agent-runs";
-import { doRoute } from "./agent-routes";
+import { doRoute, registerDoRoute } from "./agent-routes";
 import { type Clock, systemClock } from "./clock";
 import { agentVersions } from "../version";
 
@@ -75,6 +77,10 @@ const MIGRATIONS: ((sql: SqlStorage) => void)[] = [
 ];
 
 registerRunLifecycle();
+registerDoRoute("budget", async (dob, req) => {
+	const body = await req.json<BudgetOverride>();
+	return Response.json({ ok: true, delivered: dob.pushBudget({ cpus: body.cpus, memory_bytes: body.memory_bytes }) });
+});
 
 type MetaKey =
 	| typeof SCHEMA_VERSION
@@ -85,7 +91,11 @@ type MetaKey =
 	| "os_release"
 	| "connected_at"
 	| "last_seen_at"
-	| "last_d1_seen_write";
+	| "last_d1_seen_write"
+	| "capacity"
+	| "capacity_at"
+	| "capacity_dirty"
+	| "capacity_written_at";
 
 interface RateWindow {
 	start: number;
@@ -96,6 +106,8 @@ interface RateWindow {
 interface SocketState {
 	hello: boolean;
 	lastMessageAt: number;
+	/** The agent reported its host size in hello, so it knows the budget frame. */
+	budget?: boolean;
 	frames: RateWindow;
 	badFrames: RateWindow;
 }
@@ -382,6 +394,14 @@ export class AgentDO extends DurableObject<Env> {
 			if (!this.tails.deliver(chunk) && !chunk.eof) {
 				ws.send(encodeFrame({ v: 1, type: "log_unsubscribe", run_id: chunk.runId, job: chunk.job }));
 			}
+		} else if (frame.type === "capacity") {
+			// Unsequenced like log chunks: only the latest report matters, so nothing is acked or replayed.
+			const capacity = sanitizeCapacity(frame);
+			if (!capacity) {
+				this.badFrame(ws, state, S.agentCapacityInvalid, now);
+				return;
+			}
+			await this.onCapacity(capacity, now);
 		} else if (!isAgentFrame(frame)) {
 			this.badFrame(ws, state, S.agentFrameNotFromAgent(frame.type), now);
 			return;
@@ -444,6 +464,8 @@ export class AgentDO extends DurableObject<Env> {
 		if (osRelease !== null) this.setMeta("os_release", osRelease);
 		this.setMeta("last_seen_at", String(now));
 		clearOfflineDm(this.ctx.storage);
+		// Only an agent that reports its host size knows the budget frame; an older one would drop it as unknown.
+		state.budget = frame.host_cpus !== undefined;
 		state.hello = true;
 		ws.serializeAttachment(state);
 
@@ -459,11 +481,57 @@ export class AgentDO extends DurableObject<Env> {
 				...agentVersions(this.env),
 			}),
 		);
+		if (state.budget) await this.sendStoredBudget(ws);
 		this.sql.exec("DELETE FROM outbox WHERE seq <= ?", inbound);
 		this.setHwm("out", inbound);
 		for (const row of this.sql.exec<{ frame: string }>("SELECT frame FROM outbox ORDER BY seq")) ws.send(row.frame);
 
 		await this.writeSeen(now, changed);
+	}
+
+	/** Sends the dashboard's budget override (or null for none) to a just-welcomed agent; a D1 failure sends nothing, so the agent keeps what it has. */
+	private async sendStoredBudget(ws: WebSocket): Promise<void> {
+		try {
+			const row = await getAgent(this.tenant(), this.agentId);
+			if (row && ws.readyState === WebSocket.OPEN) ws.send(encodeFrame({ v: 1, type: "budget", cpus: row.budget_cpus, memory_bytes: row.budget_memory_bytes }));
+		} catch (err) {
+			reportError(err, { agent_id: this.agentId, installation_id: this.installationId, op: "send_budget" });
+		}
+	}
+
+	/** Pushes a budget override to the connected agent; false when it is offline or too old to know the frame. */
+	pushBudget(budget: BudgetOverride): boolean {
+		const ws = this.liveSocket();
+		if (!ws || !socketState(ws).budget) return false;
+		ws.send(encodeFrame({ v: 1, type: "budget", cpus: budget.cpus, memory_bytes: budget.memory_bytes }));
+		return true;
+	}
+
+	/**
+	 * Keeps the latest capacity in the DO and writes it to D1 at most every CAPACITY_WRITE_INTERVAL_MS,
+	 * or at once when backing_off flips. Whatever the interval held back is written by the next alarm or when the agent goes offline.
+	 */
+	private async onCapacity(capacity: StoredCapacity, now: number): Promise<void> {
+		const previous = parseStoredCapacity(this.meta("capacity"));
+		this.setMeta("capacity", JSON.stringify(capacity));
+		this.setMeta("capacity_at", String(now));
+		this.setMeta("capacity_dirty", "1");
+		const written = Number(this.meta("capacity_written_at") ?? 0);
+		if (previous?.backing_off !== capacity.backing_off || now - written >= CAPACITY_WRITE_INTERVAL_MS) await this.flushCapacity(now);
+	}
+
+	private async flushCapacity(now: number): Promise<void> {
+		const json = this.meta("capacity");
+		const capacity = parseStoredCapacity(json);
+		if (this.meta("capacity_dirty") === null || !capacity) return;
+		this.sql.exec("DELETE FROM meta WHERE key = 'capacity_dirty'");
+		this.setMeta("capacity_written_at", String(now));
+		try {
+			await recordCapacity(this.tenant(), this.agentId, capacity, Number(this.meta("capacity_at") ?? now));
+		} catch (err) {
+			this.setMeta("capacity_dirty", "1");
+			reportError(err, { agent_id: this.agentId, installation_id: this.installationId, op: "record_capacity" });
+		}
 	}
 
 	private badFrame(ws: WebSocket, state: SocketState, message: string, now: number): void {
@@ -507,6 +575,7 @@ export class AgentDO extends DurableObject<Env> {
 	 */
 	private async markOffline(lastSeenAt: number): Promise<void> {
 		if (this.meta("last_d1_seen_write") === null) return;
+		await this.flushCapacity(lastSeenAt);
 		this.sql.exec("DELETE FROM meta WHERE key = 'last_d1_seen_write'");
 		this.setMeta("last_seen_at", String(lastSeenAt));
 		try {
@@ -546,6 +615,7 @@ export class AgentDO extends DurableObject<Env> {
 			ws.close(CLOSE.pingTimeout, "ping_timeout");
 			await this.socketGone(ws);
 		}
+		await this.flushCapacity(now);
 		let pending = false;
 		for (const task of registeredAlarmTasks()) {
 			try {

@@ -55,6 +55,29 @@ func TestNeedsCycle(t *testing.T) {
 	}
 }
 
+func TestMaxCPUsBelowCPUs(t *testing.T) {
+	tests := []struct {
+		name, src, path string
+	}{
+		{"same level", "version: 1\nchecks:\n  limits:\n    cpus: 4\n    max_cpus: 2\n  jobs:\n    test:\n      run: make\n", "checks.limits.max_cpus"},
+		{"below the default cpus", "version: 1\nchecks:\n  limits:\n    max_cpus: 1\n  jobs:\n    test:\n      run: make\n", "checks.limits.max_cpus"},
+		{"job raises cpus above inherited max", "version: 1\nchecks:\n  limits:\n    max_cpus: 4\n  jobs:\n    test:\n      run: make\n      limits:\n        cpus: 6\n", "checks.jobs.test.limits.cpus"},
+		{"job lowers max below inherited cpus", "version: 1\nchecks:\n  limits:\n    cpus: 4\n  jobs:\n    test:\n      run: make\n      limits:\n        max_cpus: 3\n", "checks.jobs.test.limits.max_cpus"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, diags := parseString(t, tc.src, ParseOptions{})
+			if cfg != nil {
+				t.Fatal("Parse accepted max_cpus below cpus")
+			}
+			d := findDiag(t, diags, tc.path)
+			if d.Severity != SeverityError || !strings.Contains(d.Message, "is below cpus") || d.Line == 0 {
+				t.Errorf("diagnostic = %+v", d)
+			}
+		})
+	}
+}
+
 const trustAll = "version: 1\nchecks:\n  trust: all\n  jobs:\n    test:\n      run: go test ./...\n"
 
 // scriptDeploy is a minimal valid deployments section.

@@ -127,6 +127,11 @@ func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
 		return nil, diags
 	}
 	cfg.checks = resolveChecks(&cfg.HookCIConfig, raw)
+	diags = append(diags, checkMaxCPUs(cfg.checks, raw, lines)...)
+	diags.sort()
+	if diags.HasErrors() {
+		return nil, diags
+	}
 	return &cfg, diags
 }
 

@@ -21,12 +21,14 @@ var UntrustedCap = isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, T
 func EffectiveLimits(run store.Run, checks config.ResolvedLimits, job config.ResolvedJob) isolation.Limits {
 	l := isolation.Limits{
 		CPUs:        pick(job.Limits.CPUs, checks.CPUs),
+		MaxCPUs:     pick(job.Limits.MaxCPUs, checks.MaxCPUs),
 		MemoryBytes: pick(job.Limits.MemoryBytes, checks.MemoryBytes),
 		Tasks:       pick(job.Limits.Tasks, checks.Tasks),
 		Timeout:     pick(job.Limits.Timeout, checks.Timeout),
 	}
 	if strings.HasPrefix(run.TrustDomain, "untrusted:") {
 		l.CPUs = clamp(l.CPUs, UntrustedCap.CPUs)
+		l.MaxCPUs = clamp(l.MaxCPUs, UntrustedCap.CPUs)
 		l.MemoryBytes = clamp(l.MemoryBytes, UntrustedCap.MemoryBytes)
 		l.Tasks = clamp(l.Tasks, UntrustedCap.Tasks)
 		l.Timeout = clamp(l.Timeout, UntrustedCap.Timeout)

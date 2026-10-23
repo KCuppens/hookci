@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { encodeFrame, parseFrame, ProtocolError, type Event, type Frame, type Trigger } from "../src/protocol";
+import { capacityFrame } from "./helpers/capacity";
 
 describe("generated protocol types", () => {
   it("accepts a pull request trigger", () => {
@@ -79,6 +80,13 @@ describe("parseFrame", () => {
   it("parses an interrupt with either id", () => {
     expect(parseFrame('{"v":1,"type":"interrupt","run_id":"r1","reason":"superseded"}')).toMatchObject({ run_id: "r1" });
     expect(parseFrame('{"v":1,"type":"interrupt","trigger_id":"t1","reason":"revoked"}')).toMatchObject({ trigger_id: "t1" });
+  });
+
+  it("parses capacity and budget frames", () => {
+    const capacity = capacityFrame();
+    expect(parseFrame(encodeFrame(capacity))).toEqual(capacity);
+    expect(parseFrame('{"v":1,"type":"budget","cpus":null,"memory_bytes":null}')).toMatchObject({ type: "budget", cpus: null });
+    expect(parseError('{"v":1,"type":"budget","cpus":2}').message).toContain("memory_bytes");
   });
 
   it.each([

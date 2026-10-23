@@ -232,8 +232,8 @@ func TestDecodeFrameRequiresSchemaFields(t *testing.T) {
 			}
 		}
 	}
-	if messages != 16 {
-		t.Errorf("schema has %d protocol messages; want 16", messages)
+	if messages != 18 {
+		t.Errorf("schema has %d protocol messages; want 18", messages)
 	}
 }
 

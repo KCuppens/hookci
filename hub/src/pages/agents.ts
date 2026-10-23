@@ -4,6 +4,7 @@ import type { InstallationRow } from "../db/installations";
 import type { AgentListRow } from "../db/tabs";
 import { upgradeHint } from "../slack/home";
 import { S } from "../strings";
+import { CAPACITY_CSS, capacityChip } from "./agent-capacity";
 import { AGENT_ICONS, AGENT_UI_CSS, copyBox, platformLines, statusChip } from "./agent-ui";
 import { AGENTS_ICONS } from "./agents-icons";
 import { accountNav, agoHtml, appPage, type DashboardChrome, dateOf, initOf, PAGE_SCRIPT, rowMenu, viewerOf } from "./dashboard";
@@ -54,6 +55,7 @@ body.agents{--ink:#060913;--muted:#4f5b79;--line:#e6e9ef;--line-2:#f0f2f5;backgr
 body.agents .card{border-radius:12px;background:#fefdfe;border-color:#e6e9ef}
 ${TABLE_UI_CSS}
 ${AGENT_UI_CSS}
+${CAPACITY_CSS}
 .ac{display:flex;align-items:center;gap:24.1px;align-self:flex-start;margin:18px 1px 0 0}
 .ct{display:flex;align-items:center;gap:9.5px;font-size:15.75px;letter-spacing:.055em;color:#5a6481}
 .ct b{font-weight:700;color:#070a18}
@@ -230,7 +232,7 @@ function agentRow(a: AgentListRow, v: AgentsView, base: string): string {
 		: `<a class="go" href="${e(href)}">${e(A.open)}${icon("out")}</a>`;
 	const menu = rowMenu([[href, A.viewAgent]], href);
 	const cells: [string, string, string][] = [
-		["nm", "", `<b>${e(a.name)}</b>`],
+		["nm", "", `<b>${e(a.name)}</b>${capacityChip(a)}`],
 		["hn", A.cols.hostname, a.hostname === null ? nil() : e(a.hostname)],
 		["", A.cols.status, statusChip(a.status)],
 		["vs", A.cols.version, a.agent_version === null ? nil() : e(a.agent_version)],

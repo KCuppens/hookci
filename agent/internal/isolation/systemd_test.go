@@ -355,3 +355,38 @@ func TestSystemdStopResetsFailed(t *testing.T) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}
 }
+
+var (
+	_ CPUResizer = (*Systemd)(nil)
+	_ CPUResizer = (*None)(nil)
+)
+
+func TestSystemdSetCPUs(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("systemctl", nil, execx.FakeResponse{})
+	if err := (&Systemd{Runner: fake}).SetCPUs(context.Background(), "01HXRUN", "lint", 3.5); err != nil {
+		t.Fatalf("SetCPUs: %v", err)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatalf("calls = %+v, want one systemctl", fake.Calls)
+	}
+	got := fake.Calls[0]
+	want := []string{"set-property", "--runtime", "hookci-run-01HXRUN-lint.service", "CPUQuota=350%"}
+	if got.Name != "systemctl" || !slices.Equal(got.Args, want) {
+		t.Errorf("call = %s %q, want systemctl %q", got.Name, got.Args, want)
+	}
+}
+
+func TestSystemdSetCPUsReportsFailure(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("systemctl", nil, execx.FakeResponse{Code: 1})
+	if err := (&Systemd{Runner: fake}).SetCPUs(context.Background(), "01HXRUN", "lint", 2); err == nil {
+		t.Error("SetCPUs hid a systemctl failure")
+	}
+}
+
+func TestNoneSetCPUsIsNoop(t *testing.T) {
+	if err := (&None{}).SetCPUs(context.Background(), "01HXRUN", "lint", 2); err != nil {
+		t.Errorf("SetCPUs: %v", err)
+	}
+}

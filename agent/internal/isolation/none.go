@@ -151,6 +151,9 @@ func (n *None) Stop(_ context.Context, unit string) error {
 	return nil
 }
 
+// SetCPUs does nothing: None applies no resource limits.
+func (*None) SetCPUs(context.Context, string, string, float64) error { return nil }
+
 // ListUnits returns the live groups whose unit name starts with prefix,
 // sorted by name, each with Active "active".
 func (n *None) ListUnits(_ context.Context, prefix string) ([]Unit, error) {

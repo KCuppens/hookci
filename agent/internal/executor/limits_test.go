@@ -13,19 +13,19 @@ func TestEffectiveLimitsUntrustedCap(t *testing.T) {
 	big := config.ResolvedLimits{CPUs: 8, MemoryBytes: 16 << 30, Tasks: 4096, Timeout: time.Hour}
 
 	got := EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, big, config.ResolvedJob{})
-	want := isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}
+	want := isolation.Limits{CPUs: 2, MaxCPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}
 	if got != want {
 		t.Errorf("untrusted = %+v, want %+v", got, want)
 	}
 
 	got = EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, config.ResolvedLimits{}, config.ResolvedJob{})
-	if want := (isolation.Limits{CPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}); got != want {
+	if want := (isolation.Limits{CPUs: 2, MaxCPUs: 2, MemoryBytes: 2 << 30, Tasks: 512, Timeout: 10 * time.Minute}); got != want {
 		t.Errorf("untrusted unset = %+v, want the cap %+v", got, want)
 	}
 
 	small := config.ResolvedLimits{CPUs: 1, MemoryBytes: 1 << 30, Tasks: 64, Timeout: time.Minute}
 	got = EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, small, config.ResolvedJob{})
-	if want := (isolation.Limits{CPUs: 1, MemoryBytes: 1 << 30, Tasks: 64, Timeout: time.Minute}); got != want {
+	if want := (isolation.Limits{CPUs: 1, MaxCPUs: 2, MemoryBytes: 1 << 30, Tasks: 64, Timeout: time.Minute}); got != want {
 		t.Errorf("untrusted under cap = %+v, want %+v", got, want)
 	}
 
@@ -42,5 +42,19 @@ func TestEffectiveLimitsJobOverride(t *testing.T) {
 	want := isolation.Limits{CPUs: 4, MemoryBytes: 4 << 30, Tasks: 512, Timeout: 30 * time.Minute}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestEffectiveLimitsMaxCPUs(t *testing.T) {
+	checks := config.ResolvedLimits{CPUs: 2, MaxCPUs: 6, MemoryBytes: 4 << 30}
+	if got := EffectiveLimits(store.Run{TrustDomain: "trusted:o/r"}, checks, config.ResolvedJob{}); got.MaxCPUs != 6 {
+		t.Errorf("inherited MaxCPUs = %v, want 6", got.MaxCPUs)
+	}
+	job := config.ResolvedJob{Limits: config.ResolvedLimits{MaxCPUs: 4}}
+	if got := EffectiveLimits(store.Run{TrustDomain: "trusted:o/r"}, checks, job); got.MaxCPUs != 4 {
+		t.Errorf("job MaxCPUs = %v, want 4", got.MaxCPUs)
+	}
+	if got := EffectiveLimits(store.Run{TrustDomain: "untrusted:o/r"}, checks, config.ResolvedJob{}); got.MaxCPUs != UntrustedCap.CPUs {
+		t.Errorf("untrusted MaxCPUs = %v, want the cap %v", got.MaxCPUs, UntrustedCap.CPUs)
 	}
 }

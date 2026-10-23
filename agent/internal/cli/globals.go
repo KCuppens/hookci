@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/doctor"
 	"github.com/KCuppens/hookci/agent/internal/executor"
@@ -145,16 +146,22 @@ func (d Deps) osRelease() string {
 
 // hostDoctorEnv is the real host as doctor sees it.
 func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
+	b, err := parseBudget(os.Getenv(envCPUBudget), os.Getenv(envMemBudget))
 	return doctor.Env{
-		StateRoot: stateRoot,
-		HubOrigin: hubOrigin,
-		HTTP:      &http.Client{},
-		Clock:     clock.Real{},
-		Exec:      execx.OS{},
-		FS:        os.DirFS("/"),
-		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
-		DiskFree:  doctor.HostDiskFree,
-		Writable:  doctor.HostWritable,
+		StateRoot:    stateRoot,
+		HubOrigin:    hubOrigin,
+		HTTP:         &http.Client{},
+		Clock:        clock.Real{},
+		Exec:         execx.OS{},
+		FS:           os.DirFS("/"),
+		Systemd:      systemd.Systemctl{Runner: execx.OS{}},
+		DiskFree:     doctor.HostDiskFree,
+		Host:         capacity.ProcHost{},
+		HostCPUs:     runtime.NumCPU(),
+		BudgetCPUs:   b.CPUs,
+		BudgetMemory: b.MemoryBytes,
+		BudgetErr:    err,
+		Writable:     doctor.HostWritable,
 		RepoConfigs: func(ctx context.Context, stateDir string) ([]store.RepoConfig, error) {
 			return store.ReadRepoConfigs(ctx, filepath.Join(stateDir, "agent.db"))
 		},

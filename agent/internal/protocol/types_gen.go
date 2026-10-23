@@ -86,6 +86,100 @@ const AnnotationsItemsElemLevelFailure AnnotationsItemsElemLevel = "failure"
 const AnnotationsItemsElemLevelNotice AnnotationsItemsElemLevel = "notice"
 const AnnotationsItemsElemLevelWarning AnnotationsItemsElemLevel = "warning"
 
+// Hub sets the agent's compute budget override. null clears that part of the
+// override, so the agent falls back to its own flags or environment. Sent after
+// welcome and whenever the dashboard changes it; never sequenced, the latest frame
+// wins. A hub that predates the frame never sends it.
+type Budget struct {
+	// CPU cores the agent may use for CI, or null for the default.
+	Cpus BudgetCpus `json:"cpus"`
+
+	// Memory in bytes the agent may reserve for CI, or null for the default.
+	MemoryBytes BudgetMemoryBytes `json:"memory_bytes"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+// CPU cores the agent may use for CI, or null for the default.
+type BudgetCpus *float64
+
+// Memory in bytes the agent may reserve for CI, or null for the default.
+type BudgetMemoryBytes *int
+
+// Agent reports the compute budget it may use and how much of it is in use. Never
+// sequenced: only the latest report matters, so it is not replayed after a
+// reconnect; the agent sends a fresh one after hello and again on change.
+type Capacity struct {
+	// The host is under pressure: the agent admits no new work beyond the one setup
+	// or job it always runs, and has shrunk lent CPU back to each job's minimum.
+	BackingOff bool `json:"backing_off"`
+
+	// CPU cores the agent may admit for CI: the sum of its jobs' guaranteed minimums
+	// stays within it, and idle CPU is lent only inside it.
+	BudgetCpus float64 `json:"budget_cpus"`
+
+	// Memory in bytes the agent may reserve for CI; 0 when it has no memory budget.
+	BudgetMemoryBytes int `json:"budget_memory_bytes"`
+
+	// CPU pressure stall percentage (some avg10); -1 when the host does not report
+	// it.
+	CpuPressure float64 `json:"cpu_pressure"`
+
+	// CPU cores currently granted to running jobs, including CPU lent beyond their
+	// minimum.
+	GrantedCpus float64 `json:"granted_cpus"`
+
+	// CPU cores of the host.
+	HostCpus float64 `json:"host_cpus"`
+
+	// Memory of the host in bytes.
+	HostMemoryBytes int `json:"host_memory_bytes"`
+
+	// Setups and jobs the agent has admitted and their grants.
+	Jobs []CapacityJobsElem `json:"jobs"`
+
+	// MemAvailable of the host in bytes; 0 when unknown.
+	MemAvailableBytes int `json:"mem_available_bytes"`
+
+	// Memory pressure stall percentage (some avg10); -1 when the host does not report
+	// it.
+	MemPressure float64 `json:"mem_pressure"`
+
+	// Memory in bytes reserved by running jobs.
+	ReservedMemoryBytes int `json:"reserved_memory_bytes"`
+
+	// Message type.
+	Type string `json:"type"`
+
+	// Protocol version.
+	V int `json:"v"`
+}
+
+type CapacityJobsElem struct {
+	// CPU cores the job may use now.
+	GrantedCpus float64 `json:"granted_cpus"`
+
+	// Job name; empty for the run's setup.
+	Job string `json:"job"`
+
+	// The lane the run belongs to: the pushes of one branch, one pull request or the
+	// deploys to one environment.
+	Lane string `json:"lane"`
+
+	// Memory in bytes reserved for the job.
+	MemoryBytes int `json:"memory_bytes"`
+
+	// CPU cores the job is guaranteed.
+	MinCpus float64 `json:"min_cpus"`
+
+	// Agent run identifier.
+	RunId string `json:"run_id"`
+}
+
 // Fields shared by every frame.
 type Envelope struct {
 	// Message type.
@@ -202,6 +296,13 @@ type Hello struct {
 
 	// Agent build version.
 	AgentVersion string `json:"agent_version"`
+
+	// CPU cores of the host. Optional: an agent that cannot tell omits it, and a hub
+	// that predates the field ignores it.
+	HostCpus *float64 `json:"host_cpus,omitempty,omitzero"`
+
+	// Memory of the host in bytes. Optional, like host_cpus.
+	HostMemoryBytes *int `json:"host_memory_bytes,omitempty,omitzero"`
 
 	// Highest hub seq the agent has processed. The hub replays outbox frames above
 	// it. Absent means 0.

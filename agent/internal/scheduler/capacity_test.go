@@ -91,7 +91,9 @@ func TestPoolHoldsJobsPastBudgetInOrder(t *testing.T) {
 	h.idle()
 
 	// Every share went back: the whole budget fits again next to a holder.
-	if !pool.TryAcquire(capacity.Demand{CPUs: 1}) || !pool.TryAcquire(capacity.Demand{CPUs: 3}) {
+	_, first := pool.TryAcquire(capacity.Demand{CPUs: 1})
+	_, second := pool.TryAcquire(capacity.Demand{CPUs: 3})
+	if !first || !second {
 		t.Fatal("pool still holds shares after the run")
 	}
 }
@@ -109,7 +111,9 @@ func TestPoolReleasesShareOfCancelledJob(t *testing.T) {
 		t.Fatalf("run = %s, want cancelled", st)
 	}
 	h.idle()
-	if !pool.TryAcquire(capacity.Demand{CPUs: 1}) || !pool.TryAcquire(capacity.Demand{CPUs: 3}) {
+	_, first := pool.TryAcquire(capacity.Demand{CPUs: 1})
+	_, second := pool.TryAcquire(capacity.Demand{CPUs: 3})
+	if !first || !second {
 		t.Fatal("cancelled job kept its share")
 	}
 }

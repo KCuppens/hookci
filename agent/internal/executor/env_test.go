@@ -108,3 +108,19 @@ func TestBuildJobEnvInheritPATH(t *testing.T) {
 		t.Errorf("PATH with InheritPATH = %q, want the agent's PATH", got)
 	}
 }
+
+func TestBuildJobEnvCPUs(t *testing.T) {
+	for _, tc := range []struct {
+		cpus float64
+		want string
+	}{{2, "2"}, {2.5, "3"}, {0.5, "1"}, {6.0000000001, "6"}} {
+		in := pushInput()
+		in.CPUs = tc.cpus
+		if got, ok := envValue(BuildJobEnv(in), "HOOKCI_CPUS"); !ok || got != tc.want {
+			t.Errorf("CPUs %v: HOOKCI_CPUS = %q (set %v), want %q", tc.cpus, got, ok, tc.want)
+		}
+	}
+	if _, ok := envValue(BuildJobEnv(pushInput()), "HOOKCI_CPUS"); ok {
+		t.Error("HOOKCI_CPUS set without a CPU count")
+	}
+}

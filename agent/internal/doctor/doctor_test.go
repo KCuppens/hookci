@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/testutil"
@@ -95,6 +96,8 @@ func healthyEnv(srv *httptest.Server) Env {
 		FS:        healthyFS(),
 		Systemd:   fakeSystemd{state: "active"},
 		DiskFree:  func(string) (uint64, error) { return 10 << 30, nil },
+		Host:      fakeHost{capacity.Sample{MemTotal: 32 << 30, MemAvailable: 24 << 30, PSI: true}},
+		HostCPUs:  8, BudgetCPUs: 4, BudgetMemory: 16 << 30,
 	}
 }
 
@@ -110,7 +113,7 @@ func runOne(t *testing.T, c Check, env Env) Result {
 func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	srv := fakeHub(t, 0, http.StatusOK, true)
 	rs := Run(context.Background(), healthyEnv(srv), Default())
-	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "hookci_run_user", "git_present", "disk_space", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
+	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "hookci_run_user", "git_present", "disk_space", "job_budget", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
 	if len(rs) != len(want) {
 		t.Fatalf("got %d results, want %d", len(rs), len(want))
 	}

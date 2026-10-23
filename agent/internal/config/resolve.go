@@ -48,7 +48,10 @@ type ResolvedJob struct {
 
 // ResolvedLimits are the effective resource limits of a job.
 type ResolvedLimits struct {
-	CPUs        float64
+	CPUs float64
+	// MaxCPUs caps how much idle CPU may be lent to the job; 0 means the
+	// whole CPU budget of the agent.
+	MaxCPUs     float64
 	MemoryBytes int64
 	Tasks       int
 	Timeout     time.Duration
@@ -126,6 +129,9 @@ func mergeLimits(base ResolvedLimits, l *Limits, set map[string]any) ResolvedLim
 	}
 	if _, ok := set["cpus"]; ok {
 		base.CPUs = l.Cpus
+	}
+	if _, ok := set["max_cpus"]; ok {
+		base.MaxCPUs = *l.MaxCpus
 	}
 	if _, ok := set["memory"]; ok {
 		base.MemoryBytes, _ = ParseMemory(l.Memory)

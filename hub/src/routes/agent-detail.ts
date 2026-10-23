@@ -7,16 +7,17 @@ import type { Context } from "hono";
 import { csrfForForm, readCheckedForm } from "../accounts/csrf";
 import { bindTargetOf } from "../dashboard/repositories";
 import { linkedLoginOf, listAgentBindingRows } from "../db/agent-detail";
-import { getAgent } from "../db/agents";
+import { parseBudgetForm } from "../capacity";
+import { getAgent, setAgentBudget } from "../db/agents";
 import { unbind } from "../db/bindings";
 import { listRunsFiltered } from "../db/overview";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
-import { logEvent } from "../observability";
+import { logEvent, reportError } from "../observability";
 import { agentDetailPage } from "../pages/agent-detail";
 import { pairRefusal } from "../pages/agent-pair";
 import { type DashboardChrome, notFoundPage } from "../pages/dashboard";
-import { revokeAgent } from "../pairing/agents";
+import { callAgentDo, revokeAgent } from "../pairing/agents";
 import { commandGitHub, isInstallationAdmin } from "../slack/resolve";
 import { S } from "../strings";
 import { dashboardChrome } from "./account";
@@ -56,7 +57,7 @@ export async function dashboardAgent(c: AppContext): Promise<Response> {
 		bindings: await listAgentBindingRows(scope.t, agent.agent_id),
 		runs: await listRunsFiltered(scope.t, RECENT_RUNS, { agentId: agent.agent_id }),
 		pairedBy: await linkedLoginOf(scope.t, agent.paired_by_github_id),
-		notice: notice === "revoked" || notice === "unbound" ? S.agents.notices[notice] : null,
+		notice: notice === "revoked" || notice === "unbound" || notice === "budgetSaved" || notice === "budgetReset" ? S.agents.notices[notice] : null,
 	});
 }
 
@@ -109,4 +110,27 @@ export async function unbindAgentForm(c: AppContext): Promise<Response> {
 	}
 	logEvent("repo_unbind", { installation_id: scope.account.id, actor: scope.session.githubUserId, agent_id: agent.agent_id, repo_id: repoId, target, via: "dashboard" });
 	return back(scope.account.id, agent.agent_id, "unbound");
+}
+
+/** Sets the agent's budget override from the form, or clears it when the form's action is reset, and pushes it to the agent if connected. */
+export async function setAgentBudgetForm(c: AppContext): Promise<Response> {
+	const checked = await adminForm(c, "agent_budget_not_admin");
+	if (checked instanceof Response) return checked;
+	const { scope, form } = checked;
+	const agent = await getAgent(scope.t, c.req.param("agentId") ?? "");
+	if (!agent || agent.revoked_at !== null) {
+		logEvent("tenant_denied", { installation_id: scope.account.id, github_user_id: scope.session.githubUserId, reason: "agent_not_found" });
+		return pairRefusal(scope.account.id, P.revokeFailTitle, P.notFound, 404);
+	}
+	const reset = form.action === "reset";
+	const parsed = reset ? { cpus: null, memory_bytes: null } : parseBudgetForm(form.cpus ?? "", form.memory_gib ?? "");
+	if (typeof parsed === "string") return pairRefusal(scope.account.id, P.revokeFailTitle, parsed === "cpus" ? P.budgetCpus : P.budgetMemory, 400);
+	if (!(await setAgentBudget(scope.t, agent.agent_id, parsed))) return pairRefusal(scope.account.id, P.revokeFailTitle, P.notFound, 404);
+	logEvent("agent_budget", { installation_id: scope.account.id, actor: scope.session.githubUserId, agent_id: agent.agent_id, cpus: parsed.cpus ?? "auto", memory_bytes: parsed.memory_bytes ?? "auto" });
+	try {
+		await callAgentDo(c.env, agent.agent_id, "budget", parsed);
+	} catch (err) {
+		reportError(err, { agent_id: agent.agent_id, installation_id: scope.account.id, op: "push_budget" });
+	}
+	return back(scope.account.id, agent.agent_id, reset ? "budgetReset" : "budgetSaved");
 }

@@ -36,6 +36,8 @@ export const ALARM_INTERVAL_MS = 30_000;
 export const OFFLINE_AFTER_MS = 60_000;
 /** Minimum gap between two last_seen_at writes to D1 for the same agent. */
 export const SEEN_WRITE_INTERVAL_MS = 5 * 60_000;
+/** Minimum gap between two capacity writes to D1 for the same agent, unless backing_off flips. */
+export const CAPACITY_WRITE_INTERVAL_MS = 10_000;
 
 /** Ping text the agent sends; the runtime answers PONG without waking the DO. */
 export const PING = "ping";

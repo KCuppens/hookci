@@ -194,6 +194,12 @@
           "maximum": 64,
           "default": 2
         },
+        "max_cpus": {
+          "description": "Most cores the job may use when the host has idle budget. cpus is the guaranteed minimum; idle CPU is lent up to this cap. Defaults to the whole CPU budget of the agent.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1024
+        },
         "memory": {
           "description": "Memory limit with a K, M or G suffix, for example 4G.",
           "type": "string",
@@ -583,7 +589,7 @@
       }
     },
     "protocol": {
-      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them.",
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them, nor the capacity and budget frames, where only the latest one matters.",
       "$defs": {
         "Envelope": {
           "description": "Fields shared by every frame.",
@@ -639,6 +645,16 @@
               "description": "Operating system the agent runs on as a short printable name such as Ubuntu 22.04, macOS 14.5 or Windows 11, at most 64 characters. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.",
               "type": "string",
               "maxLength": 64
+            },
+            "host_cpus": {
+              "description": "CPU cores of the host. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.",
+              "type": "number",
+              "minimum": 0
+            },
+            "host_memory_bytes": {
+              "description": "Memory of the host in bytes. Optional, like host_cpus.",
+              "type": "integer",
+              "minimum": 0
             }
           }
         },
@@ -1265,6 +1281,153 @@
             }
           }
         },
+        "Capacity": {
+          "description": "Agent reports the compute budget it may use and how much of it is in use. Never sequenced: only the latest report matters, so it is not replayed after a reconnect; the agent sends a fresh one after hello and again on change.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "v",
+            "type",
+            "host_cpus",
+            "host_memory_bytes",
+            "budget_cpus",
+            "budget_memory_bytes",
+            "granted_cpus",
+            "reserved_memory_bytes",
+            "mem_available_bytes",
+            "cpu_pressure",
+            "mem_pressure",
+            "backing_off",
+            "jobs"
+          ],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "capacity"
+            },
+            "host_cpus": {
+              "description": "CPU cores of the host.",
+              "type": "number",
+              "minimum": 0
+            },
+            "host_memory_bytes": {
+              "description": "Memory of the host in bytes.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "budget_cpus": {
+              "description": "CPU cores the agent may admit for CI: the sum of its jobs' guaranteed minimums stays within it, and idle CPU is lent only inside it.",
+              "type": "number",
+              "minimum": 0
+            },
+            "budget_memory_bytes": {
+              "description": "Memory in bytes the agent may reserve for CI; 0 when it has no memory budget.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "granted_cpus": {
+              "description": "CPU cores currently granted to running jobs, including CPU lent beyond their minimum.",
+              "type": "number",
+              "minimum": 0
+            },
+            "reserved_memory_bytes": {
+              "description": "Memory in bytes reserved by running jobs.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "mem_available_bytes": {
+              "description": "MemAvailable of the host in bytes; 0 when unknown.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "cpu_pressure": {
+              "description": "CPU pressure stall percentage (some avg10); -1 when the host does not report it.",
+              "type": "number",
+              "minimum": -1
+            },
+            "mem_pressure": {
+              "description": "Memory pressure stall percentage (some avg10); -1 when the host does not report it.",
+              "type": "number",
+              "minimum": -1
+            },
+            "backing_off": {
+              "description": "The host is under pressure: the agent admits no new work beyond the one setup or job it always runs, and has shrunk lent CPU back to each job's minimum.",
+              "type": "boolean"
+            },
+            "jobs": {
+              "description": "Setups and jobs the agent has admitted and their grants.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["run_id", "job", "lane", "min_cpus", "granted_cpus", "memory_bytes"],
+                "properties": {
+                  "run_id": {
+                    "description": "Agent run identifier.",
+                    "type": "string"
+                  },
+                  "lane": {
+                    "description": "The lane the run belongs to: the pushes of one branch, one pull request or the deploys to one environment.",
+                    "type": "string"
+                  },
+                  "job": {
+                    "description": "Job name; empty for the run's setup.",
+                    "type": "string"
+                  },
+                  "min_cpus": {
+                    "description": "CPU cores the job is guaranteed.",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "granted_cpus": {
+                    "description": "CPU cores the job may use now.",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "memory_bytes": {
+                    "description": "Memory in bytes reserved for the job.",
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Budget": {
+          "description": "Hub sets the agent's compute budget override. null clears that part of the override, so the agent falls back to its own flags or environment. Sent after welcome and whenever the dashboard changes it; never sequenced, the latest frame wins. A hub that predates the frame never sends it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "cpus", "memory_bytes"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "budget"
+            },
+            "cpus": {
+              "description": "CPU cores the agent may use for CI, or null for the default.",
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0
+            },
+            "memory_bytes": {
+              "description": "Memory in bytes the agent may reserve for CI, or null for the default.",
+              "type": ["integer", "null"],
+              "exclusiveMinimum": 0
+            }
+          }
+        },
         "Interrupt": {
           "description": "Hub tells the agent to stop a run, or a trigger that has no run yet. Carries exactly one of run_id or trigger_id.",
           "type": "object",
@@ -1441,6 +1604,8 @@
             { "$ref": "#/$defs/protocol/$defs/Ack" },
             { "$ref": "#/$defs/protocol/$defs/Welcome" },
             { "$ref": "#/$defs/protocol/$defs/Interrupt" },
+            { "$ref": "#/$defs/protocol/$defs/Capacity" },
+            { "$ref": "#/$defs/protocol/$defs/Budget" },
             { "$ref": "#/$defs/protocol/$defs/Error" }
           ]
         }

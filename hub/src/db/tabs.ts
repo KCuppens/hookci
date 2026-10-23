@@ -16,6 +16,8 @@ export interface AgentListRow {
 	os_release: string | null;
 	protocol_version: number | null;
 	agent_version: string | null;
+	/** The agent's latest capacity frame as JSON (see parseStoredCapacity); null until it reports one. */
+	last_capacity: string | null;
 	last_seen_at: number | null;
 	revoked_at: number | null;
 	paired_at: number;
@@ -31,7 +33,7 @@ const OPEN = `r.state NOT IN (${[...TERMINAL].map((s) => `'${s}'`).join(", ")})`
 /** The installation's agents, revoked ones included, with how many runs each has handled and how many are still open. */
 export async function listAgentsWithRuns(t: TenantDb): Promise<AgentListRow[]> {
 	return t.all<AgentListRow>(
-		`SELECT a.agent_id, a.name, a.hostname, a.os, a.arch, a.os_release, a.protocol_version, a.agent_version, a.last_seen_at, a.revoked_at, a.paired_at, a.status,
+		`SELECT a.agent_id, a.name, a.hostname, a.os, a.arch, a.os_release, a.protocol_version, a.agent_version, a.last_seen_at, a.revoked_at, a.paired_at, a.status, a.last_capacity,
 			COUNT(r.run_id) AS runs_total,
 			COALESCE(SUM(CASE WHEN ${OPEN} THEN 1 ELSE 0 END), 0) AS runs_open,
 			(SELECT COUNT(DISTINCT b.repo_id) FROM repo_bindings b WHERE b.installation_id = a.installation_id AND b.agent_id = a.agent_id) AS repos

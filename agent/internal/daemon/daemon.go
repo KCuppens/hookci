@@ -76,6 +76,9 @@ type Options struct {
 	// Pool admits the setup and jobs of every run, across lanes; nil
 	// admits everything.
 	Pool *capacity.Pool
+	// BudgetDefault is the budget from flags and environment: what Pool
+	// holds when the hub has set no override.
+	BudgetDefault Budget
 	// Cache is the setup step cache the executor uses; GC evicts its
 	// entries. nil: GC leaves <state>/cache alone.
 	Cache *cache.Cache
@@ -169,6 +172,16 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	d.selfHosted.Store(conf.HubMode == hubModeSelfHosted)
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
+	var capSource hubclient.CapacitySource
+	if o.Pool != nil {
+		capSource = o.Pool
+		saved, err := loadBudgetOverride(o.StateDir)
+		if err != nil {
+			o.Logger.Warn("ignoring the saved budget override", "err", err)
+		}
+		b := saved.budget(o.BudgetDefault)
+		o.Pool.SetBudget(b.CPUs, b.MemoryBytes)
+	}
 	d.client = hubclient.New(hubclient.Config{
 		HubURL:     conf.HubURL,
 		AgentID:    conf.AgentID,
@@ -177,6 +190,7 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		OSRelease:  o.OSRelease,
 		Dialer:     o.Dialer,
 		Clock:      o.Clock,
+		Capacity:   capSource,
 	}, st, d, o.Logger)
 	d.tokens = hubtokens.New(d.client, o.Clock)
 	d.tail = logtail.NewTailer(filepath.Join(o.StateDir, "runs"), logupload.Redact, d.client.SendLog)
@@ -569,8 +583,10 @@ func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner sched
 }
 
 // jobDemand is what each unit of run asks of the capacity pool: a job its
-// effective limits, the setup (job "") the check-level ones. nil checks ask
-// for nothing.
+// effective limits, the setup (job "") the check-level ones. A job's CPUs are
+// its guaranteed minimum and its MaxCPUs what idle budget CPU may lend it,
+// the whole budget when the config sets no max_cpus; the setup is never
+// lent CPU. nil checks ask for nothing.
 func jobDemand(run store.Run, checks *config.ResolvedChecks) func(job string) capacity.Demand {
 	if checks == nil {
 		return nil
@@ -581,7 +597,14 @@ func jobDemand(run store.Run, checks *config.ResolvedChecks) func(job string) ca
 			job = checks.Jobs[i]
 		}
 		l := executor.EffectiveLimits(run, checks.Limits, job)
-		return capacity.Demand{CPUs: l.CPUs, MemoryBytes: l.MemoryBytes}
+		d := capacity.Demand{CPUs: l.CPUs, MemoryBytes: l.MemoryBytes}
+		if name != "" {
+			d.MaxCPUs = l.MaxCPUs
+			if d.MaxCPUs <= 0 {
+				d.MaxCPUs = capacity.WholeBudget
+			}
+		}
+		return d
 	}
 }
 

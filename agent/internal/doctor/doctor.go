@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"text/tabwriter"
 
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 	"github.com/KCuppens/hookci/agent/internal/store"
@@ -84,6 +85,15 @@ type Env struct {
 	// DiskFree is the bytes available to unprivileged users on the file
 	// system holding path.
 	DiskFree func(path string) (uint64, error)
+	// Host reads the machine for the budget check, which a nil Host skips;
+	// HostCPUs is its core count. BudgetCPUs and BudgetMemory are the
+	// budget the agent resolves from its flags and environment (memory 0 is
+	// none), BudgetErr why it could not.
+	Host         capacity.Host
+	HostCPUs     int
+	BudgetCPUs   float64
+	BudgetMemory int64
+	BudgetErr    error
 	// Writable is nil when the doctor's user may create files in dir.
 	Writable func(dir string) error
 	// RepoConfigs is what the default-branch runs of the installation in
@@ -112,6 +122,7 @@ func Default() []Check {
 		runUserCheck{},
 		gitCheck{},
 		diskSpaceCheck{},
+		budgetCheck{},
 		hubReachableCheck{},
 		hubInfoCheck{},
 		hubTLSCheck{},

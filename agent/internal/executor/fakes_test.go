@@ -43,10 +43,12 @@ func (r *recorder) list() []string {
 // fakeIso records every Spec and runs the job's script func, keyed by job
 // name. A job without a func exits 0 with no output.
 type fakeIso struct {
-	name  string
-	rec   *recorder
-	jobs  map[string]func(ctx context.Context, s isolation.Spec) (isolation.Result, error)
-	units []isolation.Unit
+	name string
+	rec  *recorder
+	jobs map[string]func(ctx context.Context, s isolation.Spec) (isolation.Result, error)
+	// resized receives every SetCPUs value; nil drops them.
+	resized chan float64
+	units   []isolation.Unit
 
 	mu       sync.Mutex
 	specs    []isolation.Spec
@@ -68,6 +70,13 @@ func (f *fakeIso) Run(ctx context.Context, s isolation.Spec) (isolation.Result, 
 
 func (f *fakeIso) Stop(_ context.Context, unit string) error {
 	f.rec.add("stop " + unit)
+	return nil
+}
+
+func (f *fakeIso) SetCPUs(_ context.Context, _, _ string, cpus float64) error {
+	if f.resized != nil {
+		f.resized <- cpus
+	}
 	return nil
 }
 

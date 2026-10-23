@@ -133,6 +133,12 @@ ExecStart=
 ExecStart=/usr/local/bin/hookci agent --installation %i --cpu-budget 6 --mem-budget 32G
 ```
 
+A job's `limits.cpus` is its guaranteed minimum, the amount the budget admits it against. While the host has idle budget CPU and no pressure, the agent lends it to running jobs by raising their systemd CPU quota, up to the job's `limits.max_cpus` (default: the whole budget). The quota falls back to `limits.cpus` as soon as another setup or job needs the room, or the host comes under pressure. Memory is reserved at the limit and never lent. A job sees the cores it holds now in `HOOKCI_CPUS`, rounded up; it is the value at start, and the quota can change later, so a tool that sizes its workers once should treat it as a floor. Lending needs a systemd isolation backend and a kernel that reports pressure stall information (`/proc/pressure`); without it every job keeps its `limits.cpus`.
+
+The agent backs off when the host is under pressure: CPU stall (`some avg10` in `/proc/pressure/cpu`) above 40% (it resumes at 20% or below), memory stall above 10% (resumes at 3% or below), or `MemAvailable` under 10% of the host's memory (resumes at 15%). While it backs off it admits no new setup or job, except the one that always runs when nothing else does, and takes lent CPU back. It never kills a running job. Without `/proc/pressure` it backs off on `MemAvailable` alone and, as before, waits while the load average is at the CPU count.
+
+`hookci doctor` prints the host's size, the resolved budget and whether pressure information is available. `HOOKCI_CPU_BUDGET` and `HOOKCI_MEM_BUDGET` set the flag defaults. An installation admin can also set a budget for one agent on its dashboard page, which the hub sends to the agent and the agent keeps in `budget.json` in its state directory across restarts; clearing it returns to the flags.
+
 A run with untrusted code, such as a pull request from a fork, never runs next to a trusted one: check jobs share one job user, so the agent finishes the runs of one kind before it starts the other. Jobs of trusted runs share the host network, also across lanes, so a test suite must not bind fixed ports on the host.
 
 The agent can run the hub CLI for you on a machine with Node.js 20+ and npx: `hookci hub setup` and `hookci hub upgrade` run `npx --yes hookci-hub@<agent version> setup` or `upgrade` (`hookci-hub@latest` for a dev build), and pass every later argument to `hookci-hub`.

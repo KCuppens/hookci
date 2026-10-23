@@ -1,3 +1,4 @@
+import type { BudgetOverride, StoredCapacity } from "../capacity";
 import { sha256Hex } from "../crypto";
 import { QUOTAS } from "../quotas";
 import type { TenantDb } from "./tenant";
@@ -16,6 +17,16 @@ export interface AgentRow {
 	agent_version: string | null;
 	/** The operating system the agent reported in hello, like "Ubuntu 22.04" or "macOS 14.5"; null until it does. */
 	os_release: string | null;
+	/** The CPU budget an administrator set for the agent; null lets the agent decide. */
+	budget_cpus: number | null;
+	/** The memory budget in bytes an administrator set for the agent; null lets the agent decide. */
+	budget_memory_bytes: number | null;
+	/** CPU cores of the agent's host as its hello or capacity frame reported; null until it does. */
+	host_cpus: number | null;
+	host_memory_bytes: number | null;
+	/** The agent's latest capacity frame as JSON (see parseStoredCapacity); null until it reports one. */
+	last_capacity: string | null;
+	last_capacity_at: number | null;
 	last_seen_at: number | null;
 	revoked_at: number | null;
 	paired_by_github_id: number;
@@ -107,6 +118,30 @@ export async function revokeAgent(t: TenantDb, agentId: string, at: number): Pro
 		at,
 	);
 	return res.meta.changes > 0;
+}
+
+/** Stores the budget override and returns false when the agent is not a non-revoked agent of this installation. */
+export async function setAgentBudget(t: TenantDb, agentId: string, budget: BudgetOverride): Promise<boolean> {
+	const res = await t.run(
+		"UPDATE agents SET budget_cpus = ?3, budget_memory_bytes = ?4 WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL",
+		agentId,
+		budget.cpus,
+		budget.memory_bytes,
+	);
+	return res.meta.changes > 0;
+}
+
+/** Stores the agent's latest capacity report and the host size in it. */
+export async function recordCapacity(t: TenantDb, agentId: string, capacity: StoredCapacity, at: number): Promise<void> {
+	await t.run(
+		`UPDATE agents SET host_cpus = ?3, host_memory_bytes = ?4, last_capacity = ?5, last_capacity_at = ?6
+		WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL`,
+		agentId,
+		capacity.host_cpus,
+		capacity.host_memory_bytes,
+		JSON.stringify(capacity),
+		at,
+	);
 }
 
 /**

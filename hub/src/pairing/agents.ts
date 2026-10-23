@@ -15,7 +15,7 @@ import { HubError } from "../errors";
 import { systemClock } from "../do/clock";
 
 /** Calls `POST https://do/<path>` on the agent's AgentDO. */
-export async function callAgentDo(env: Env, agentId: string, path: "repair" | "revoke", body: unknown = {}): Promise<void> {
+export async function callAgentDo(env: Env, agentId: string, path: "repair" | "revoke" | "budget", body: unknown = {}): Promise<void> {
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(agentId));
 	const res = await stub.fetch(`https://do/${path}`, { method: "POST", body: JSON.stringify(body) });
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `AgentDO /${path} answered ${res.status}`);

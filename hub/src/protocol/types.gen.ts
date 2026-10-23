@@ -57,10 +57,12 @@ export type Frame =
   | Ack
   | Welcome
   | Interrupt
+  | Capacity
+  | Budget
   | ProtocolErrorFrame;
 
 /**
- * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them.
+ * Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them, nor the capacity and budget frames, where only the latest one matters.
  */
 export interface Protocol {
   [k: string]: unknown;
@@ -117,6 +119,14 @@ export interface Hello {
    * Operating system the agent runs on as a short printable name such as Ubuntu 22.04, macOS 14.5 or Windows 11, at most 64 characters. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.
    */
   os_release?: string;
+  /**
+   * CPU cores of the host. Optional: an agent that cannot tell omits it, and a hub that predates the field ignores it.
+   */
+  host_cpus?: number;
+  /**
+   * Memory of the host in bytes. Optional, like host_cpus.
+   */
+  host_memory_bytes?: number;
 }
 /**
  * Hub to agent: start a run for a commit.
@@ -679,6 +689,115 @@ export interface Welcome {
    * Oldest agent version the hub serves; an older agent stops with agent_too_old.
    */
   min_agent_version?: string;
+}
+/**
+ * Agent reports the compute budget it may use and how much of it is in use. Never sequenced: only the latest report matters, so it is not replayed after a reconnect; the agent sends a fresh one after hello and again on change.
+ *
+ * This interface was referenced by `Protocol`'s JSON-Schema
+ * via the `definition` "Capacity".
+ */
+export interface Capacity {
+  /**
+   * Protocol version.
+   */
+  v: 1;
+  /**
+   * Message type.
+   */
+  type: "capacity";
+  /**
+   * CPU cores of the host.
+   */
+  host_cpus: number;
+  /**
+   * Memory of the host in bytes.
+   */
+  host_memory_bytes: number;
+  /**
+   * CPU cores the agent may admit for CI: the sum of its jobs' guaranteed minimums stays within it, and idle CPU is lent only inside it.
+   */
+  budget_cpus: number;
+  /**
+   * Memory in bytes the agent may reserve for CI; 0 when it has no memory budget.
+   */
+  budget_memory_bytes: number;
+  /**
+   * CPU cores currently granted to running jobs, including CPU lent beyond their minimum.
+   */
+  granted_cpus: number;
+  /**
+   * Memory in bytes reserved by running jobs.
+   */
+  reserved_memory_bytes: number;
+  /**
+   * MemAvailable of the host in bytes; 0 when unknown.
+   */
+  mem_available_bytes: number;
+  /**
+   * CPU pressure stall percentage (some avg10); -1 when the host does not report it.
+   */
+  cpu_pressure: number;
+  /**
+   * Memory pressure stall percentage (some avg10); -1 when the host does not report it.
+   */
+  mem_pressure: number;
+  /**
+   * The host is under pressure: the agent admits no new work beyond the one setup or job it always runs, and has shrunk lent CPU back to each job's minimum.
+   */
+  backing_off: boolean;
+  /**
+   * Setups and jobs the agent has admitted and their grants.
+   */
+  jobs: {
+    /**
+     * Agent run identifier.
+     */
+    run_id: string;
+    /**
+     * The lane the run belongs to: the pushes of one branch, one pull request or the deploys to one environment.
+     */
+    lane: string;
+    /**
+     * Job name; empty for the run's setup.
+     */
+    job: string;
+    /**
+     * CPU cores the job is guaranteed.
+     */
+    min_cpus: number;
+    /**
+     * CPU cores the job may use now.
+     */
+    granted_cpus: number;
+    /**
+     * Memory in bytes reserved for the job.
+     */
+    memory_bytes: number;
+  }[];
+}
+/**
+ * Hub sets the agent's compute budget override. null clears that part of the override, so the agent falls back to its own flags or environment. Sent after welcome and whenever the dashboard changes it; never sequenced, the latest frame wins. A hub that predates the frame never sends it.
+ *
+ * This interface was referenced by `Protocol`'s JSON-Schema
+ * via the `definition` "Budget".
+ */
+export interface Budget {
+  /**
+   * Protocol version.
+   */
+  v: 1;
+  /**
+   * Message type.
+   */
+  type: "budget";
+  /**
+   * CPU cores the agent may use for CI, or null for the default.
+   */
+  cpus: number | null;
+  /**
+   * Memory in bytes the agent may reserve for CI, or null for the default.
+   */
+  memory_bytes: number | null;
 }
 /**
  * Hub reports a protocol or connection error.

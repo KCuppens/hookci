@@ -22,6 +22,8 @@ Installation admins can pair a new agent from the Agents page with "Pair agent".
 
 Each row of the Agents page links to `/app/<installation id>/agents/<agent id>`: the agent's status, version, platform, who paired it, the repositories it serves (with when each was bound), its recent runs, and the commands to upgrade or restart it. An agent of another installation answers the same not-found page as a missing one. Installation admins can revoke the agent (`POST .../revoke`) or unbind one repository from it (`POST .../bindings/unbind`). Both need your session, a CSRF token and a same-origin request, and both are logged. Revoking also drops the agent's bindings.
 
+The agent page also shows the agent's capacity: the host's cores and memory, the budget the CI may use, what is in use now, whether the agent is backing off because the host is under pressure, and each running job's guaranteed and granted cores. The agent reports it about every two seconds while connected. An agent that predates the feature shows the card as unavailable. Installation admins can set a CPU and memory budget for the agent (`POST .../budget`, with the same session, CSRF and same-origin checks) or clear it to return to the agent's own default; the hub pushes it to a connected agent, which keeps it across restarts.
+
 ## Signing in
 
 - **GitHub.** The default. The sign-in button sends you to GitHub; GitHub tells the hub which installations of the HookCI App you can access, and the dashboard shows exactly those.

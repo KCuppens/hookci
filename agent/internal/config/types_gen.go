@@ -1111,6 +1111,11 @@ type Limits struct {
 	// CPU quota in cores.
 	Cpus float64 `json:"cpus,omitempty,omitzero" yaml:"cpus,omitempty"`
 
+	// Most cores the job may use when the host has idle budget. cpus is the
+	// guaranteed minimum; idle CPU is lent up to this cap. Defaults to the whole CPU
+	// budget of the agent.
+	MaxCpus *float64 `json:"max_cpus,omitempty,omitzero" yaml:"max_cpus,omitempty"`
+
 	// Memory limit with a K, M or G suffix, for example 4G.
 	Memory string `json:"memory,omitempty,omitzero" yaml:"memory,omitempty"`
 
@@ -1140,6 +1145,12 @@ func (j *Limits) UnmarshalJSON(value []byte) error {
 	}
 	if 0 >= plain.Cpus {
 		return fmt.Errorf("field %s: must be > %v", "cpus", 0)
+	}
+	if plain.MaxCpus != nil && 1024 < *plain.MaxCpus {
+		return fmt.Errorf("field %s: must be <= %v", "max_cpus", 1024)
+	}
+	if plain.MaxCpus != nil && 0 >= *plain.MaxCpus {
+		return fmt.Errorf("field %s: must be > %v", "max_cpus", 0)
 	}
 	if v, ok := raw["memory"]; !ok || v == nil {
 		plain.Memory = "4G"

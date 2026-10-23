@@ -15,13 +15,15 @@ type ProcHost struct {
 	Root string
 }
 
-// Sample implements Host.
+// Sample implements Host. A kernel without pressure stall information (no
+// pressure/ files, or ones that cannot be read) yields a Sample with PSI
+// false, not an error.
 func (h ProcHost) Sample() (Sample, error) {
 	root := h.Root
 	if root == "" {
 		root = "/proc"
 	}
-	mem, err := memAvailable(filepath.Join(root, "meminfo"))
+	total, avail, err := meminfo(filepath.Join(root, "meminfo"))
 	if err != nil {
 		return Sample{}, err
 	}
@@ -29,19 +31,27 @@ func (h ProcHost) Sample() (Sample, error) {
 	if err != nil {
 		return Sample{}, err
 	}
-	return Sample{MemAvailable: mem, Load1: load}, nil
+	s := Sample{MemTotal: total, MemAvailable: avail, Load1: load}
+	cpu, cpuErr := pressure(filepath.Join(root, "pressure", "cpu"))
+	mem, memErr := pressure(filepath.Join(root, "pressure", "memory"))
+	if cpuErr == nil && memErr == nil {
+		s.PSI, s.CPUPressure, s.MemPressure = true, cpu, mem
+	}
+	return s, nil
 }
 
-// memAvailable is the MemAvailable line of meminfo at path, in bytes.
-func memAvailable(path string) (int64, error) {
+// meminfo is the MemTotal (0 when absent) and MemAvailable lines of meminfo
+// at path, in bytes.
+func meminfo(path string) (total, available int64, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0, fmt.Errorf("capacity: %w", err)
+		return 0, 0, fmt.Errorf("capacity: %w", err)
 	}
+	found := false
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
-		rest, ok := strings.CutPrefix(sc.Text(), "MemAvailable:")
-		if !ok {
+		key, rest, ok := strings.Cut(sc.Text(), ":")
+		if !ok || (key != "MemTotal" && key != "MemAvailable") {
 			continue
 		}
 		f := strings.Fields(rest)
@@ -52,9 +62,16 @@ func memAvailable(path string) (int64, error) {
 		if err != nil {
 			break
 		}
-		return kb << 10, nil
+		if key == "MemTotal" {
+			total = kb << 10
+			continue
+		}
+		available, found = kb<<10, true
 	}
-	return 0, fmt.Errorf("capacity: no MemAvailable in %s", path)
+	if !found {
+		return 0, 0, fmt.Errorf("capacity: no MemAvailable in %s", path)
+	}
+	return total, available, nil
 }
 
 // load1 is the one-minute load average of loadavg at path.
@@ -72,4 +89,31 @@ func load1(path string) (float64, error) {
 		return 0, fmt.Errorf("capacity: %s: %w", path, err)
 	}
 	return v, nil
+}
+
+// pressure is avg10 of the "some" line of the PSI file at path, in percent.
+// The error wraps fs.ErrNotExist when the kernel has no such file.
+func pressure(path string) (float64, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("capacity: %w", err)
+	}
+	for line := range strings.Lines(string(b)) {
+		f := strings.Fields(line)
+		if len(f) == 0 || f[0] != "some" {
+			continue
+		}
+		for _, kv := range f[1:] {
+			v, ok := strings.CutPrefix(kv, "avg10=")
+			if !ok {
+				continue
+			}
+			n, err := strconv.ParseFloat(v, 64)
+			if err != nil || n < 0 {
+				return 0, fmt.Errorf("capacity: %s: bad avg10 %q", path, v)
+			}
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("capacity: no some avg10 in %s", path)
 }

@@ -45,6 +45,20 @@ const REQUIRED = {
 	ack: ["upto"],
 	welcome: ["hub_version", "protocol_min", "protocol_max", "agent_id", "installation_id"],
 	interrupt: ["reason"],
+	capacity: [
+		"host_cpus",
+		"host_memory_bytes",
+		"budget_cpus",
+		"budget_memory_bytes",
+		"granted_cpus",
+		"reserved_memory_bytes",
+		"mem_available_bytes",
+		"cpu_pressure",
+		"mem_pressure",
+		"backing_off",
+		"jobs",
+	],
+	budget: ["cpus", "memory_bytes"],
 	error: ["code", "message"],
 } as const satisfies { readonly [T in FrameType]: readonly RequiredKey<FrameOf<T>>[] };
 

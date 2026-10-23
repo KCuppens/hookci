@@ -121,3 +121,39 @@ checks:
 		}
 	}
 }
+
+func TestMaxCPUsInheritedAndOverridden(t *testing.T) {
+	src := `version: 1
+checks:
+  limits:
+    cpus: 2
+    max_cpus: 8
+  jobs:
+    inherit:
+      run: make
+    narrow:
+      run: make test
+      limits:
+        cpus: 1
+        max_cpus: 3
+    unset:
+      run: make e2e
+`
+	cfg, diags := parseString(t, src, ParseOptions{})
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diagnostics:\n%s", diags.Format("test.yml"))
+	}
+	if got := cfg.Checks().Limits.MaxCPUs; got != 8 {
+		t.Errorf("check max_cpus = %v, want 8", got)
+	}
+	want := map[string]float64{"inherit": 8, "narrow": 3, "unset": 8}
+	for _, j := range cfg.Checks().Jobs {
+		if j.Limits.MaxCPUs != want[j.Name] {
+			t.Errorf("%s max_cpus = %v, want %v", j.Name, j.Limits.MaxCPUs, want[j.Name])
+		}
+	}
+	cfg, _ = parseString(t, oneJob, ParseOptions{})
+	if got := cfg.Checks().Limits.MaxCPUs; got != 0 {
+		t.Errorf("default max_cpus = %v, want 0 (whole budget)", got)
+	}
+}

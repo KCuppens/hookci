@@ -8,6 +8,7 @@ import type { RunListRow } from "../db/runs";
 import { bindPath } from "../dashboard/repositories";
 import { upgradeHint } from "../slack/home";
 import { S } from "../strings";
+import { CAPACITY_CSS, capacityCard } from "./agent-capacity";
 import { TRACED_ICONS } from "./agent-detail-icons";
 import { AGENT_ICONS, AGENT_UI_CSS, copyBox, platformLines, statusChip } from "./agent-ui";
 import { agoHtml, appPage, type DashboardChrome, dateOf, initOf, PAGE_SCRIPT, rowMenu, runHref, shortRepo, viewerOf } from "./dashboard";
@@ -292,6 +293,7 @@ body.agent{--ink:#060913;--muted:#4f5b79;--line:#ebeef3;--line-2:#f0f2f5;backgro
 }
 ${PILL_CSS}
 ${AGENT_UI_CSS}
+${CAPACITY_CSS}
 `;
 
 /** "Aug 12, 2026, 10:24 AM" in UTC. */
@@ -428,7 +430,7 @@ function maintenanceCard(v: AgentDetailView): string {
 
 function sections(): string {
 	const T = D.tabs;
-	const links: [string, string][] = [["#", T.overview], ["#bindings", T.bindings], ["#runs", T.runs], ["#maintenance", T.maintenance]];
+	const links: [string, string][] = [["#", T.overview], ["#bindings", T.bindings], ["#runs", T.runs], ["#capacity", A.capacity.title], ["#maintenance", T.maintenance]];
 	return `<nav class="sec" aria-label="${e(D.tabsLabel)}">${links.map(([href, label], i) => `<a href="${href}"${i === 0 ? ' class="on" aria-current="true"' : ""}>${e(label)}</a>`).join("")}</nav>`;
 }
 
@@ -436,7 +438,7 @@ export function agentDetailPage(v: AgentDetailView): Promise<Response> {
 	const base = `/app/${v.account.id}`;
 	const crumb = `<div class="bc"><a href="${e(`${base}/agents`)}">${icon("back")}${e(D.breadcrumb)}</a>${icon("chev")}<b>${e(v.agent.name)}</b></div>`;
 	const notice = v.notice === null ? "" : `<p class="nt" role="status">${e(v.notice)}</p>`;
-	const main = `${crumb}${notice}${summary(v, base)}${sections()}${bindingsCard(v, base)}${runsCard(v, base)}${maintenanceCard(v)}`;
+	const main = `${crumb}${notice}${summary(v, base)}${sections()}${bindingsCard(v, base)}${runsCard(v, base)}${capacityCard(v.agent, v.now, v.csrf, base)}${maintenanceCard(v)}`;
 	return appPage({
 		title: v.agent.name,
 		bodyClass: "agent",

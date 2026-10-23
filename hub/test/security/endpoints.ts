@@ -83,6 +83,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "POST", path: "/app/:installationId/agents/pair", auth: "session_csrf" },
   { method: "GET", path: "/app/:installationId/agents/:agentId", auth: "session" },
   { method: "POST", path: "/app/:installationId/agents/:agentId/revoke", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/agents/:agentId/budget", auth: "session_csrf" },
   { method: "POST", path: "/app/:installationId/agents/:agentId/bindings/unbind", auth: "session_csrf" },
   { method: "GET", path: "/app/:installationId/repositories", auth: "session" },
   { method: "GET", path: "/app/:installationId/repositories/bind", auth: "session" },
