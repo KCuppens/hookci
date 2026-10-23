@@ -48,7 +48,7 @@ const EXTRA_ICONS: Record<string, string> = {
 const CSS = `
 body{background:#f8f8fa}
 .app{position:relative;z-index:3;background:#fff;border-bottom:1px solid var(--line);--ls:.085}
-.app .in{display:flex;align-items:center;gap:44px;max-width:1536px;height:64px;margin:0 auto;padding:0 32px}
+.app .in{display:flex;align-items:center;gap:44px;width:calc(100% - 2 * var(--gutter));max-width:var(--app-w);height:64px;margin:0 auto;padding:0}
 .tabs{display:flex;align-self:stretch;gap:30px}
 .tabs a{display:flex;align-items:center;margin-bottom:-1px;border-bottom:2px solid transparent;color:#4b5563;font-size:14px;text-decoration:none}
 .tabs a:hover{color:var(--ink)}
@@ -60,7 +60,7 @@ body{background:#f8f8fa}
 .rt a:hover,.rt button:hover{color:var(--ink)}
 .usr{display:grid;place-items:center;width:34px;height:34px;border:1px solid #dfe2e6;border-radius:50%;background:#fff;color:#4b5563}
 .usr .ic{width:19px;height:19px}
-.main{position:relative;z-index:2;max-width:1536px;margin:0 auto;padding:32px 32px 72px}
+.main{position:relative;z-index:2;width:calc(100% - 2 * var(--gutter));max-width:var(--app-w);margin:0 auto;padding:32px 0 72px}
 .accts{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 0 14px;padding:0;list-style:none;font-size:14px;color:var(--muted)}
 .accts strong{color:var(--ink)}
 .ph{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px}
@@ -146,8 +146,7 @@ td a:hover{text-decoration:underline}
 .signin p{margin:12px 0 22px;color:var(--ink-2)}
 .signin .ob{height:44px}
 @media (max-width:900px){
-.app .in{gap:18px;padding:0 16px}
-.main{padding:24px 16px 56px}
+.main{padding:24px 0 56px}
 h1{font-size:28px}
 .rt .dc{display:none}
 }
@@ -176,7 +175,7 @@ body:not(.overview) .app .rt{gap:14px!important}
 }
 @media (max-width:900px){
 .am:not([open]) .amp{display:none}
-.app .in{display:flex;flex-wrap:nowrap!important;width:100%!important;max-width:none!important;height:64px!important;min-height:0!important;margin:0!important;gap:18px!important;padding:0 max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left))!important}
+.app .in{display:flex;flex-wrap:nowrap!important;width:100%!important;max-width:none!important;height:64px!important;min-height:0!important;margin:0!important;gap:18px!important;padding:0 var(--gutter)!important}
 .app .brand{align-items:center;min-height:44px}
 .in:has(.am)>.tabs,.in:has(.am)>.rt{display:none}
 .app .in:not(:has(.am)) .rt .dc{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}

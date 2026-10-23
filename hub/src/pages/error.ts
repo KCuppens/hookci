@@ -55,7 +55,7 @@ const ICONS: Record<string, string> = {
 };
 
 const CSS = `
-.p-error{--nh:63px;--nl:25px;--nr:23px;--ls:.0866;--bmw:34;--bww:77.5;--bgap:8.2;--bwy:7.4;--ry:1px;--nfs:11px;display:flex;flex-direction:column;background:#fcfcfc;will-change:opacity}
+.p-error{--nh:63px;--ls:.0866;--bmw:34;--bww:77.5;--bgap:8.2;--bwy:7.4;--ry:1px;--nfs:11px;display:flex;flex-direction:column;background:#fcfcfc;will-change:opacity}
 .p-error .nav{border-bottom:1px solid #f0f1f4}
 .p-error .links{display:flex;gap:29px;margin-right:0}
 .p-error .links a{color:#5b6784}

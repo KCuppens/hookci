@@ -27,7 +27,7 @@ export interface InstalledView {
 }
 
 const CSS = `
-.p-flow{background:#fbfbfb;font-weight:450;will-change:opacity;--nh:90px;--nl:104px;--nr:100px;--ls:.14;--ly:0px;--nfs:16px;--bww:129.8;--bgap:13.7;--bwy:11.4}
+.p-flow{background:#fbfbfb;font-weight:450;will-change:opacity;--nh:90px;--ls:.14;--ly:0px;--nfs:16px;--bww:129.8;--bgap:13.7;--bwy:11.4}
 .p-flow .bg{background:none}
 .p-flow .nav{background:#fff;border-bottom:1px solid #eceef2}
 .p-flow .links{gap:47px;margin-right:66px;position:relative;top:4px;letter-spacing:-.03em}
@@ -36,8 +36,8 @@ const CSS = `
 .p-flow .links a:nth-child(3){font-size:16.5px;letter-spacing:0;color:#5c6780}
 .acct{display:grid;place-items:center;width:54px;height:54px;border:1px solid #e3e6ee;border-radius:50%;background:#fff;color:#6b7388}
 .acct .ic{width:30.7px;height:30.7px;stroke-width:1.7;position:relative;left:-1px;top:1.2px}
-.card{position:relative;left:1px;z-index:2;width:min(1330px,100% - 32px);margin:28px auto 0;padding:32px 29px 0 31px;border:1px solid #e5e7eb;border-radius:16px;background:#fefefe;box-shadow:0 1px 2px rgba(15,20,29,.02),0 12px 36px rgba(15,20,29,.035)}
-.card.narrow{width:min(704px,100% - 32px);padding-bottom:32px}
+.card{position:relative;left:1px;z-index:2;width:min(var(--app-w),100% - 2 * var(--gutter));margin:28px auto 0;padding:32px 29px 0 31px;border:1px solid #e5e7eb;border-radius:16px;background:#fefefe;box-shadow:0 1px 2px rgba(15,20,29,.02),0 12px 36px rgba(15,20,29,.035)}
+.card.narrow{width:min(704px,100% - 2 * var(--gutter));padding-bottom:32px}
 .hd{display:flex;align-items:flex-start;gap:28px}
 .seal{display:grid;place-items:center;flex:none;width:82px;height:82px;border-radius:50%;background:#e4f4e9;color:#20ae53}
 .seal .ic{width:51px;height:51px;stroke-width:3.2}
@@ -126,7 +126,7 @@ details[open]>summary{min-height:91px}
 .pickl .go{margin-left:auto}
 .p-flow .foot{position:relative;z-index:2;margin:24px 0 0;padding-bottom:32px}
 @media (max-width:900px){
-.p-flow{--nh:68px;--nl:20px;--nr:20px;--ls:.1}
+.p-flow{--nh:68px;--ls:.1}
 .acct{width:44px;height:44px}
 .card{left:0;margin-top:16px;padding:22px 16px 0}
 .card.narrow{padding-bottom:22px}

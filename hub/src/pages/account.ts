@@ -28,20 +28,20 @@ const CSS = `
 .p-login .bg{background:${blob(274, 331, "49px 922px", 0.28)},${blob(245, 317, "1487px 292px", 0.25)},${blob(188, 174, "1494px 967px", 0.19)}}
 .p-reg .bg{background:${blob(290, 345, "52px 884px", 0.33)},${blob(208, 266, "1509px 355px", 0.25)},${blob(200, 190, "1505px 964px", 0.33)}}
 .p-center .bg{background:${blob(283, 342, "69px 744px", 0.38)},${blob(334, 357, "1562px 339px", 0.39)},${blob(317, 254, "1599px 1023px", 0.42)}}
-.p-login{--nh:81px;--nl:100px;--nr:91px;--ls:.139;--ly:4px;--ry:0px;--lk:36px;--nfs:15px;--ph:42px;--pw:14.5px;
+.p-login{--nh:81px;--ls:.139;--ly:4px;--ry:0px;--lk:36px;--nfs:15px;--ph:42px;--pw:14.5px;
 --cw:531px;--cr:14px;--px:66px;--pt:32px;--pb:26px;--smw:99;--sww:128.2;--sgp:13.8;--swx:1.5;--g3:13px;--ts:18px;--tl:24px;--g4:26px;--sg:13.2px;--sh:53px;--si:25px;--sic:32px;--sfs:18px;
 --g5:20.4px;--dsz:14px;--fg:19.8px;--lfs:16px;--lg:6.3px;--ih:49px;--ip:45px;--ifs:15.25px;--bh:51px;--bfs:17.5px;--g6:17px;--g7:15.4px;--afs:15.75px;--br:7.5px;--ffs:14.5px;--fp:26px;--g10:21px;
 --ft:47px;--hx:100px}
-.p-reg{--nh:87px;--nl:96px;--nr:83px;--ls:.136;--ly:0px;--ry:-1.5px;--lk:36px;--nfs:14.75px;--ph:44px;--pw:14.5px;
+.p-reg{--nh:87px;--ls:.136;--ly:0px;--ry:-1.5px;--lk:36px;--nfs:14.75px;--ph:44px;--pw:14.5px;
 --cw:543px;--cr:20px;--px:47.5px;--pt:34px;--pb:30px;--smw:83.26;--sww:124.29;--sgp:9.44;--swx:.2;--g2:11.1px;--th:31px;--g3:9.2px;--ts:17.25px;--tl:22px;--g4:25px;--sg:12.4px;--sh:54.5px;--si:22px;--sic:32px;--sfs:17px;
 --g5:27.7px;--dsz:14px;--fg:21.1px;--lfs:16px;--lg:6.7px;--ih:48px;--ip:46px;--ifs:15.75px;--bh:53px;--bfs:17.5px;--g6:20.7px;--g7:20px;--afs:16px;--br:10px;--ffs:14.25px;--fp:29px;--g10:26px;
 --ft:66px;--hx:106px}
-.p-center{--nh:94px;--nl:100px;--nr:86px;--ls:.1432;--ly:0px;--ry:5px;--lk:42px;--nfs:16.5px;--ph:48px;--pw:17px;
+.p-center{--nh:94px;--ls:.1432;--ly:0px;--ry:5px;--lk:42px;--nfs:16.5px;--ph:48px;--pw:17px;
 --cw:573px;--cr:22px;--px:44.5px;--pt:37.7px;--pb:35px;--smw:97.93;--sww:137.31;--sgp:14.5;--g2:24.3px;--th:32.5px;--g3:12px;--ts:20px;--tl:27px;--g4:34px;--sg:15px;--sh:58px;--si:26px;--sic:32px;--sfs:17px;
 --g5:28px;--dsz:14px;--fg:36px;--lfs:17px;--lg:12px;--ih:58px;--ip:58px;--ifs:19px;--bh:60px;--bfs:19.5px;--g6:22.8px;--g7:22px;--afs:16.5px;--br:12px;--ffs:16px;--fp:29px;--g10:28px;
 --ft:66px;--hx:106px}
 .p-reg .nav,.p-center .nav{border-bottom:1px solid #f0f1f3;background:#fbfbfb}
-.stage{position:relative;z-index:2;max-width:1536px;margin:0 auto}
+.stage{position:relative;z-index:2;max-width:var(--app-w);margin:0 auto}
 .s-login{display:grid;grid-template-columns:1fr var(--cw) 1fr;padding:5px 0 29px}
 .s-reg{display:grid;grid-template-columns:1fr var(--cw) 306px;padding:35px 0 51px}
 .s-center{display:flex;justify-content:center;padding:53px 0 56px}
@@ -272,7 +272,7 @@ input:focus{border-color:var(--orange-line);box-shadow:0 0 0 3px rgba(255,106,44
 .rt p{max-width:190px}
 }
 @media (max-width:900px){
-.p-login,.p-reg,.p-center{--nh:64px;--nl:20px;--nr:20px;--ls:.105;--ly:0px;--ry:0px;--ph:40px;--cw:100%;--cr:18px;--px:24px;--pt:28px;--pb:22px;--smw:78;--sww:101;--sgp:10;--g2:18px;--th:26px;--g3:10px;--ts:15.5px;--tl:22px;--g4:22px;--sg:12px;--sh:50px;--si:18px;--sic:26px;--sfs:15.5px;--g5:20px;--fg:18px;--ih:48px;--ip:46px;--ifs:16px;--bh:50px;--bfs:16px;--g6:20px;--g7:18px;--afs:15.5px;--ffs:14.5px;--fp:20px;--g10:20px}
+.p-login,.p-reg,.p-center{--nh:64px;--ls:.105;--ly:0px;--ry:0px;--ph:40px;--cw:100%;--cr:18px;--px:24px;--pt:28px;--pb:22px;--smw:78;--sww:101;--sgp:10;--g2:18px;--th:26px;--g3:10px;--ts:15.5px;--tl:22px;--g4:22px;--sg:12px;--sh:50px;--si:18px;--sic:26px;--sfs:15.5px;--g5:20px;--fg:18px;--ih:48px;--ip:46px;--ifs:16px;--bh:50px;--bfs:16px;--g6:20px;--g7:18px;--afs:15.5px;--ffs:14.5px;--fp:20px;--g10:20px}
 .p-reg .nav,.p-center .nav{background:#fbfbfb}
 .hero,.side{display:none}
 .s-login,.s-reg,.s-center{display:block;padding:12px 16px 28px}

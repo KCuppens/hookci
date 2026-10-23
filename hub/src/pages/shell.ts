@@ -21,7 +21,7 @@ export const FONT_PATH = "/assets/inter.woff2";
 /** Tokens, reset, header, footer, buttons and background layers. Page CSS is appended after it. */
 export const SHELL_CSS = `
 @font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:block;src:url(${FONT_PATH}) format("woff2")}
-:root{--ink:#0f141d;--ink-2:#3b4350;--muted:#6b7280;--line:#e8e9ec;--line-2:#eeeef1;--orange:#ff6a2c;--orange-soft:#fff1ea;--orange-line:#ffb08f;--nh:81px;--nl:100px;--nr:91px;--ls:.139;--ly:0px;--ry:0px;--nfs:15px;--ph:41px;--pw:14.5px;--ffs:14.5px;--fp:29px;--g10:21px;--bh:51px;--bfs:16px;--br:10px;--g6:0px}
+:root{--ink:#0f141d;--ink-2:#3b4350;--muted:#6b7280;--line:#e8e9ec;--line-2:#eeeef1;--orange:#ff6a2c;--orange-soft:#fff1ea;--orange-line:#ffb08f;--nh:81px;--app-w:1410px;--gutter:24px;--edge:max(var(--gutter),calc((100% - var(--app-w)) / 2));--ls:.139;--ly:0px;--ry:0px;--nfs:15px;--ph:41px;--pw:14.5px;--ffs:14.5px;--fp:29px;--g10:21px;--bh:51px;--bfs:16px;--br:10px;--g6:0px}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{position:relative;min-height:100vh;overflow-x:hidden;background:#fafafa;color:var(--ink);font-family:${FONT};font-size:16px;line-height:1.4;letter-spacing:.005em;-webkit-font-smoothing:antialiased}
@@ -33,7 +33,7 @@ a{color:inherit}
 .cv{fill:none;stroke:#ff8a54;stroke-width:.8}
 .dt{fill:#fd6810}
 .ic{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.nav{position:relative;z-index:3;display:flex;align-items:center;justify-content:space-between;height:var(--nh);padding:0 var(--nr) 0 var(--nl)}
+.nav{position:relative;z-index:3;display:flex;align-items:center;justify-content:space-between;height:var(--nh);padding:0 var(--edge)}
 ${BRAND_CSS}
 .navr{display:flex;align-items:center;transform:translateY(var(--ry))}
 .links{display:flex;align-items:center;gap:36px;margin-right:42px}
@@ -54,13 +54,15 @@ ${BRAND_CSS}
 .foot a+a{border-left:1px solid #d3d6db}
 .foot a:hover{color:var(--ink)}
 .mm{display:none}
+@media (max-width:640px){
+:root{--gutter:16px}
+}
 @media (max-width:900px){
 .links,.curves{display:none}
 .pill.ico{width:40px;padding:0;justify-content:center;gap:0}
 .pill.ico span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .pill.ghp{display:none}
 body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
-.nav{padding-left:min(var(--nl),20px);padding-right:min(var(--nr),20px)}
 .navr{transform:none}
 .mm{display:block;margin-left:8px}
 .mm summary{display:grid;place-items:center;width:44px;height:44px;border:1px solid #e1e3e7;border-radius:12px;background:#fff;color:var(--ink);list-style:none;cursor:pointer}

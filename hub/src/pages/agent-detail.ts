@@ -59,22 +59,6 @@ for (const form of document.querySelectorAll("form[data-confirm]")) {
 
 const CSS = `
 body.agent{--ink:#060913;--muted:#4f5b79;--line:#ebeef3;--line-2:#f0f2f5;background:#f9f9fa;font-size:15px}
-body.agent .app{--ls:.107;--bmw:38.8;--bww:100.6;--bwy:7.5;border-bottom:0;box-shadow:inset 0 -1px #e7ebf1}
-body.agent .app .in{max-width:none;gap:0;padding:0 40px 0 48px;height:67px}
-body.agent .tabs{margin-left:134px;gap:24px}
-body.agent .tabs a{margin-bottom:0;padding:8px 8.5px 0;border-bottom-width:3px;font-size:14.25px;color:#5b6587}
-body.agent .tabs a:nth-child(1){letter-spacing:-.19px}
-body.agent .tabs a:nth-child(2){margin-left:-1.9px}
-body.agent .tabs a:nth-child(3){margin:0 5.85px 0 2.65px;padding:8px 2.65px 0 3.65px;letter-spacing:-.46px;border-color:#fb521f}
-body.agent .tabs a:nth-child(4){margin-left:-1.2px;letter-spacing:-.34px}
-body.agent .tabs a:nth-child(5){margin-left:-1.5px;letter-spacing:-.15px}
-body.agent .tabs a.on{color:var(--ink)}
-body.agent .rt{gap:42px;font-size:14.25px}
-body.agent .rt a{color:#626d8f;letter-spacing:-.3px}
-body.agent .rt .dc{position:relative;top:2px}
-body.agent .usr{width:46px;height:46px;margin-top:2px;border-color:#e5e8f0}
-body.agent .usr .ic{width:26px;height:26px}
-.main.agent{max-width:none;margin:0;padding:21px 37px 40px 39px}
 .agent .bc{display:flex;align-items:center;gap:13px;height:20px;margin:1px 0 15px;color:#667085;font-size:14px;letter-spacing:-.02em}
 .agent .bc a{display:flex;align-items:center;gap:13.4px;color:inherit;font-size:13.75px;letter-spacing:0;text-decoration:none}
 .agent .bc .ic{width:24px;height:24px;margin:0 -4px}
@@ -243,14 +227,6 @@ body.agent .usr .ic{width:26px;height:26px}
 .agent .mc .cb .cp{margin-top:-2.2px}
 .agent .mc .cb .cp .ic{width:22px;height:22px}
 @media (max-width:900px){
-body.agent .app .in{gap:0 12px;padding:8px 16px 0;height:auto;flex-wrap:wrap}
-body.agent .rt{margin-left:auto}
-body.agent .tabs{order:3;flex:0 0 100%;margin-left:0;gap:0;overflow-x:auto;min-width:0}
-body.agent .tabs a{padding:8px 8px 0;white-space:nowrap;font-size:13.5px;letter-spacing:-.2px}
-body.agent .rt{gap:14px}
-body.agent .usr{width:34px;height:34px;flex:none}
-body.agent .usr .ic{width:18px;height:18px}
-.main.agent{padding:20px 16px 40px}
 .agent .top{flex-wrap:wrap}
 .agent h1{font-size:30px;line-height:36px}
 .agent .inf{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 0}

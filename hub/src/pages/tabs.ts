@@ -21,13 +21,6 @@ td .chip{vertical-align:middle}
 .settings .two{align-items:start}
 .settings .kv dd a{display:inline-flex}
 td.num,th.num{text-align:right}
-@media (max-width:640px){
-.app .in{gap:14px;padding:0 16px}
-.tabs{flex:1;min-width:0;gap:16px;overflow-x:auto;scrollbar-width:none}
-.tabs a{flex:none}
-.rt{flex:none;gap:12px;white-space:nowrap}
-.rt .dc{display:none}
-}
 `;
 
 interface TabView {

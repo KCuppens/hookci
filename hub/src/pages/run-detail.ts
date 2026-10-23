@@ -70,19 +70,8 @@ const ICONS: Record<string, string> = {
 const GATED_REASONS = ["fork_gated", "fork_never"];
 
 const CSS = `
-body.detail .app .in{max-width:none;gap:0;padding:0 51px 0 49px;height:65px}
-body.detail .app{--ls:.102;--ly:1px}
-body.detail .tabs{margin-left:101px;gap:25px}
-body.detail .tabs a{padding:4px 8.5px 0;border-bottom-width:3px;font-size:13px;color:#515b7e}
-body.detail .tabs a.on{color:var(--ink)}
-body.detail .tabs a.on+a{margin-left:3px}
-body.detail .rt{gap:42px;font-size:13px}
-body.detail .rt a{color:#555f80}
-body.detail .rt .dc{position:relative;top:1px}
-body.detail .usr{width:44px;height:44px}
-body.detail .usr .ic{width:23px;height:23px}
-body.detail{background:#f8f9fa;will-change:opacity}
-.main.detail{--ink:#03050e;max-width:none;margin:0;padding:18px 36px 21px}
+body.detail{background:#f8f9fa}
+.main.detail{--ink:#03050e}
 .detail .card{border-color:#f1f4f7;border-radius:8px;background:#fefefe}
 .detail .bc{display:flex;align-items:center;gap:13px;height:20px;margin-bottom:18px;color:#667085;font-size:14px;letter-spacing:-.02em}
 .detail .bc a{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none}
@@ -251,17 +240,7 @@ body.detail{background:#f8f9fa;will-change:opacity}
 .detail .al .sep{margin:0 7px;font-style:normal}
 .detail .anc:has(.fmenu input[value=failure]:not(:checked)) .an.lv-failure,.detail .anc:has(.fmenu input[value=warning]:not(:checked)) .an.lv-warning,.detail .anc:has(.fmenu input[value=notice]:not(:checked)) .an.lv-notice{display:none}
 @media (max-width:900px){
-body.detail .app .in{padding:0 16px;gap:18px;height:56px}
-body.detail .tabs{flex:1 1 0;min-width:0;margin-left:0;gap:18px;overflow-x:auto;scrollbar-width:none}
-body.detail .tabs a{flex:none}
-body.detail .rt{flex:none}
-body.detail .tabs a{padding:4px 0 0}
-body.detail .tabs a.on+a{margin-left:0}
-body.detail .rt{gap:12px}
-body.detail .usr{width:34px;height:34px}
-body.detail .usr .ic{width:19px;height:19px}
 .detail .who{flex-wrap:wrap}
-.main.detail{padding:16px 16px 40px}
 .detail .cols{grid-template-columns:1fr}
 .detail .top{flex-direction:column}
 .detail .acts{justify-content:flex-start}

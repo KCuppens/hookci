@@ -70,23 +70,6 @@ if (box) {
 
 const CSS = `
 body.agentp{--ink:#020514;--muted:#5d6788;--line:#e6e9f0;--line-2:#eef0f5;background:#f9fafb;font-size:15px}
-body.agentp{will-change:opacity}
-body.agentp .app{--ls:.103;border-bottom:1px solid #e6e9f0}
-body.agentp .app .in{max-width:none;gap:0;padding:0 57px 0 52px;height:67px}
-body.agentp .tabs{margin-left:108.35px;gap:18.8px}
-body.agentp .tabs a{padding:6.6px 8.5px 0;border-bottom-width:3px;font-size:14.5px;color:#4b5679}
-body.agentp .tabs a:nth-child(1){letter-spacing:-.216px}
-body.agentp .tabs a:nth-child(2){letter-spacing:-.34px}
-body.agentp .tabs a:nth-child(3){letter-spacing:-.44px}
-body.agentp .tabs a:nth-child(4){letter-spacing:-.3px}
-body.agentp .tabs a:nth-child(5){margin-left:2px;letter-spacing:-.14px}
-body.agentp .tabs a.on{color:var(--ink);font-weight:500}
-body.agentp .rt{gap:44.4px;font-size:14.5px}
-body.agentp .rt a{color:#555f80}
-body.agentp .rt .dc{position:relative;top:2.4px}
-body.agentp .usr{width:44px;height:44px}
-body.agentp .usr .ic{width:26px;height:26px}
-body.agentp .main{max-width:none;margin:0;padding:21px 49px 60px 51px}
 .bc{display:flex;align-items:center;gap:13px;height:20px;margin-bottom:26px;color:#5d688e;font-size:15px;letter-spacing:-.04em}
 .bc a{color:inherit;text-decoration:none}
 .bc .ic{width:12px;height:12px}
@@ -95,12 +78,9 @@ body.agentp .main{max-width:none;margin:0;padding:21px 49px 60px 51px}
 .bc>.ic{margin:0 .97px 0 -3.3px}
 .bc .cur{letter-spacing:-.056em}
 .bc .cur{color:var(--ink);font-weight:500}
-body.agentp .ph{align-items:flex-start;margin-bottom:17px}
-body.agentp h1{margin-left:.9px;font-size:38px;line-height:48px;font-weight:700;letter-spacing:-.01em;color:var(--ink)}
-body.agentp .sub{margin:2px 0 0 1.3px;font-size:17.5px;line-height:26px;letter-spacing:-.0029em;color:#505980}
 .gb{display:inline-flex;align-items:center;gap:11.1px;height:43px;margin-top:3px;padding:0 18px 0 21.9px;border:1px solid #f1f4f8;border-radius:10px;background:#fff;color:var(--ink);font-size:14.75px;font-weight:500;letter-spacing:-.04em;text-decoration:none}
 .gb .ic{width:24px;height:24px;margin-top:-2.2px}
-.pc{display:grid;grid-template-columns:703px 1fr;border:1px solid #eef1f6;border-radius:10px;background:#fff}
+.pc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid #eef1f6;border-radius:10px;background:#fff}
 .pc>*,.sp>div{min-width:0}
 .pl{padding:20.5px 24px 34px 18.5px}
 .pr{padding:22px 20px 0 21px;border-left:1px solid #eef1f6}
@@ -186,16 +166,6 @@ body.agentp .sub{margin:2px 0 0 1.3px;font-size:17.5px;line-height:26px;letter-s
 .fail{max-width:640px}
 ${AGENT_UI_CSS}
 @media (max-width:900px){
-body.agentp .app .in{flex-wrap:wrap;padding:10px 16px 0;gap:6px 18px;height:auto}
-body.agentp .tabs{order:3;flex:1 0 100%;min-width:0;margin-left:0;gap:12px;overflow-x:auto;scrollbar-width:none}
-body.agentp .tabs a,body.agentp .tabs a:nth-child(n){margin-left:0;padding:4px 0 6px;font-size:13px;letter-spacing:0}
-body.agentp .rt{gap:12px;margin-left:auto}
-body.agentp .rt .dc{top:0}
-body.agentp .usr{width:34px;height:34px}
-body.agentp .usr .ic{width:20px;height:20px}
-body.agentp .main{padding:16px 16px 40px}
-body.agentp h1{font-size:28px;line-height:34px}
-body.agentp .sub{font-size:15px;line-height:22px}
 body.agentp .ph{flex-direction:column;gap:12px}
 .gb{margin-top:0}
 .pc{grid-template-columns:minmax(0,1fr)}

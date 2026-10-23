@@ -10,7 +10,7 @@ const T = S.flow.link;
 const e = escapeHtml;
 
 const CSS = `
-.p-linked{--nh:92px;--nl:110px;--nr:107.3px;--ls:.141;--bmw:54.3;--bww:131.5;--bgap:11.7;--bwy:10.7;--lx:-1.4px;--ly:-.2px;--ry:3px;--nfs:18px}
+.p-linked{--nh:92px;--ls:.141;--bmw:54.3;--bww:131.5;--bgap:11.7;--bwy:10.7;--lx:-1.4px;--ly:-.2px;--ry:3px;--nfs:18px}
 .p-linked{will-change:opacity}
 .p-linked .nav{background:#fefefe;border-bottom:2px solid #eeeff3}
 .p-linked .links{gap:52px;margin-right:0}
@@ -38,7 +38,7 @@ const CSS = `
 .mcurves{display:none;position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 @media (max-width:900px){
 .mcurves{display:block}
-.p-linked{--nh:62px;--nl:20px;--nr:20px;--ls:.095;--bmw:calc(387 * var(--ls));--bww:calc(922 * var(--ls));--bgap:calc(89 * var(--ls));--bwy:calc(86 * var(--ls));--lx:0px;--ly:0px;--ry:0px;--nfs:13px}
+.p-linked{--nh:62px;--ls:.095;--bmw:calc(387 * var(--ls));--bww:calc(922 * var(--ls));--bgap:calc(89 * var(--ls));--bwy:calc(86 * var(--ls));--lx:0px;--ly:0px;--ry:0px;--nfs:13px}
 .p-linked .links{display:flex;gap:22px}
 .p-linked .card{margin-top:28px;padding:44px 18px 28px}
 .p-linked .card,.p-linked .stage{left:0}

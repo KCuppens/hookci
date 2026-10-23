@@ -59,17 +59,7 @@ const ICONS: Record<string, string> = {
 };
 
 const CSS = `
-body.logs{background:#fafafa;will-change:opacity}
-body.logs .app{--ls:.116;--ly:1px;border-bottom-color:#edeff4}
-body.logs .app .in{max-width:none;gap:0;padding:0 50px 0 45px;height:72px}
-body.logs .tabs{margin-left:138px;gap:27px}
-body.logs .tabs a{margin-bottom:-1px;padding:8px 8px 0;border-bottom-width:3px;font-size:14.5px;letter-spacing:.016em;color:#515b7e}
-body.logs .tabs a.on{border-color:#ec491b;color:var(--ink)}
-body.logs .rt{gap:39px;font-size:14.5px}
-body.logs .rt a{position:relative;top:2px;color:#555f80}
-body.logs .usr{width:48px;height:48px}
-body.logs .usr .ic{width:28px;height:28px}
-.main.logs{max-width:none;margin:0;padding:35px 34px 40px 44px}
+body.logs{background:#fafafa}
 .logs .bc{position:relative;top:-1.5px;display:flex;align-items:center;height:20px;margin-bottom:36px;color:#667085;font-size:15px;letter-spacing:-.02em}
 .logs .bc a{display:flex;align-items:center;gap:16px;color:inherit;text-decoration:none}
 .logs .bc .ic{width:16px;height:16px;margin:0 17px 0 9px}
@@ -171,13 +161,6 @@ body.logs .usr .ic{width:28px;height:28px}
 .logs .strip .bt .ic{width:27px;height:27px;margin:0 -2px;color:#2e374f}
 .logs .note{margin:0 6px 12px;color:#667085;font-size:14px}
 @media (max-width:900px){
-body.logs .app .in{padding:0 16px;gap:18px;height:56px}
-body.logs .tabs{flex:1 1 0;min-width:0;margin-left:0;gap:18px;overflow-x:auto;scrollbar-width:none}
-body.logs .tabs a{flex:none;padding:4px 0 0}
-body.logs .rt{flex:none;gap:12px}
-body.logs .usr{width:34px;height:34px}
-body.logs .usr .ic{width:19px;height:19px}
-.main.logs{padding:16px 16px 40px}
 .logs .bc{margin-bottom:20px}
 .logs .top{flex-direction:column}
 .logs .acts{justify-content:flex-start}

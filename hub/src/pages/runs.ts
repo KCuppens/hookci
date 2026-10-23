@@ -95,23 +95,6 @@ export const TABLE_UI_CSS = `
 
 const CSS = `
 body.runs{--ink:#060913;--muted:#4f5b79;--line:#ebeef3;--line-2:#f0f2f5;background:#f9f9fa;font-size:15px;will-change:opacity}
-.runs .app{--ls:.11;border-bottom:1px solid #e9ecf2}
-.runs .app .in{width:1410px;max-width:calc(100% - 48px);height:74px;padding:0;gap:0}
-.runs .tabs{gap:27px;margin-left:160.5px}
-.runs .tabs a{padding:3px 6.5px 0;border-bottom-width:3px;margin-bottom:-1px;font-size:15px;letter-spacing:-.04em;color:#59627d}
-.runs .tabs a:nth-child(3){margin-left:1.4px;letter-spacing:-.4px}
-.runs .tabs a:nth-child(4){letter-spacing:-.5px}
-.runs .tabs a:nth-child(5){margin-left:-1.7px;letter-spacing:-.37px}
-.runs .tabs a.on{border-color:#ee5030;color:#060915}
-.runs .rt{gap:50px;font-size:15px}
-.runs .rt a{color:#59627d;letter-spacing:-.04em}
-.runs .rt .dc{position:relative;top:1px}
-.runs .usr{width:46px;height:46px}
-.runs .usr .ic{width:24px;height:24px}
-.runs .main{width:1410px;max-width:calc(100% - 48px);padding:22px 0 56px}
-.runs .ph{align-items:flex-start;height:105px;margin:0}
-.runs h1{color:#050c1a;font-size:42px;font-weight:600;letter-spacing:-.015em;line-height:48px}
-.runs .sub{margin-top:6px;font-size:18.75px;letter-spacing:-.02em;line-height:26px;color:#5c657f}
 .runs .card{border-radius:7px;background:#fdfdfd;border-color:#edeff3}
 .rc{display:flex;gap:16px;align-self:flex-start;margin-top:22px}
 .live{display:flex;align-items:center;gap:12px;width:133px;height:42px;padding:0 0 0 16px;border:1px solid #e7eaf0;border-radius:10px;background:#fff;font-size:13px;font-weight:500;letter-spacing:-.01em;color:#090e1f}
@@ -139,7 +122,7 @@ ${PILL_CSS}
 .nb .x{display:flex;align-items:center;justify-content:center;width:28px;height:28px;margin-left:10px;border:0;border-radius:8px;background:none;color:#0856e8;cursor:pointer}
 .nb .x .ic{position:relative;top:1px;width:24px;height:24px}
 .rl{margin-top:16px}
-.rtb{table-layout:fixed;width:1410px;border-collapse:separate;border-spacing:0}
+.rtb{table-layout:fixed;width:var(--app-w);border-collapse:separate;border-spacing:0}
 .rtb th,.rtb td{padding:13px 0 0;line-height:20px;vertical-align:top;text-align:left;white-space:nowrap}
 .rtb th:first-child,.rtb td:first-child{padding-left:16px}
 .rtb th:first-child{padding-left:17.9px}
@@ -232,16 +215,7 @@ ${PILL_CSS}
 .fb .fs{margin-left:0}
 }
 @media (max-width:900px){
-.runs .app .in{flex-wrap:wrap;gap:0 12px;width:auto;max-width:none;height:auto;padding:0 16px}
-.runs .rt{order:2;height:56px}
-.runs .tabs{order:3;flex:0 0 100%;height:44px;margin-left:-8px;gap:0;overflow-x:auto;scrollbar-width:none}
-.runs .tabs a,.runs .tabs a:nth-child(n){flex:none;margin-left:0;padding:3px 8px 0;font-size:14px;letter-spacing:-.02em}
-.runs .rt{gap:14px;font-size:14px}
-.runs .usr{width:36px;height:36px}
-.runs .main{padding-top:20px}
-.runs .ph{flex-wrap:wrap;gap:16px;height:auto;margin-bottom:20px}
-.runs h1{font-size:32px;line-height:38px}
-.runs .sub{font-size:16px}
+.runs .ph{flex-wrap:wrap}
 .rc{margin-top:0;flex-wrap:wrap}
 .fb{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:8px}
 .fb .fs{grid-column:1/-1}

@@ -37,24 +37,6 @@ const RB = `${RT} tbody tr`;
 const CSS = `
 ${PILL_CSS}
 .repositories{background:#f9fafb}
-.repositories>*{will-change:opacity}
-.repositories .app{--ls:.105;--bmw:35.4;--bgap:9.6;--bww:98.8;--bwy:6.3;--lx:.8px;--ly:-.7px;border-bottom:2px solid #edf0f6}
-.repositories .app .in,.repositories .main{max-width:1476px}
-.repositories .app .in{height:62px;gap:0;padding:0 30px 0 32px}
-.repositories .tabs{gap:33px;margin-left:208px}
-.repositories .tabs a{margin:0;padding:5px 4px 0;border-bottom:3px solid transparent;color:#556089;font-size:14px;letter-spacing:-.02em}
-.repositories .tabs a.on{background:linear-gradient(#fd8968 1px,#fc4715 1px 2px,#f26f4c 2px) bottom/100% 3px no-repeat border-box;color:#040718}
-.repositories .rt{gap:35px;color:#556089;letter-spacing:-.02em}
-.repositories .rt a:not(.usr){position:relative;top:1.3px;color:#556089}
-.repositories .tabs a:nth-child(3){margin-left:2.35px;letter-spacing:-.034em}
-.repositories .tabs a:nth-child(4){margin-left:-.8px;letter-spacing:-.03em}
-.repositories .tabs a:nth-child(5){margin-left:-2.1px}
-.repositories .usr{width:43px;height:43px;color:#586487}
-.repositories .usr .ic{width:23px;height:23px}
-.repositories .main{padding-top:25px}
-.repositories .ph{align-items:flex-start;margin-bottom:18px}
-.repositories h1{font-size:37px;letter-spacing:-.04em;line-height:1}
-.repositories .sub{margin-top:4px;color:#556082;font-size:17px;letter-spacing:-.01em;line-height:20px}
 .rc{display:flex;align-items:center;align-self:flex-start;gap:16px;margin-top:5px}
 .rcount{margin:5.2px 8px 0 0;color:#525e80;font-size:14.5px;letter-spacing:-.025em}
 .rcount b{color:#111b38;font-weight:700}
@@ -62,7 +44,7 @@ ${PILL_CSS}
 .rc .ob .ic{width:19.3px;height:19.3px}
 .repositories .ob.bl{border-color:#055cfa;background:#0163fc;color:#fff;letter-spacing:.004em;cursor:pointer}
 .repositories .ob.bl:hover{background:#0458e0}
-.repositories .card{margin:0 -1px 0 1px;border-color:#e9edf4}
+.repositories .card{border-color:#e9edf4}
 .tb{display:flex;gap:15px;padding:13px 13px 13px 13px;border-bottom:1px solid #e9edf4}
 .sf{flex:1}
 .sf label{position:relative;display:block}
@@ -74,7 +56,7 @@ ${PILL_CSS}
 .fm summary .ic:last-child{width:9.6px;height:9.6px;margin-left:14.6px}
 .fm .menu a[aria-current]{font-weight:600}
 .repositories .scroll{overflow:visible}
-.repositories table{table-layout:fixed;min-width:1410px}
+.repositories table{table-layout:fixed;min-width:var(--app-w)}
 .repositories th{height:39.5px;padding:4px 16px 0;background:#f9fbfd;color:#6f799a;font-size:12px;font-weight:400;letter-spacing:-.005em;white-space:nowrap}
 .repositories th:nth-child(1){width:55px}
 .repositories th:nth-child(2){width:207px}
@@ -257,11 +239,7 @@ ${RB} td:nth-child(6){grid-column:1;grid-row:3}
 ${RB} td:nth-child(7){grid-column:2;grid-row:3}
 ${RB} td:nth-child(8){grid-column:3;grid-row:3}
 }
-@media (max-width:900px){
-.repositories h1{font-size:28px;line-height:1.15}
-}
 @media (max-width:767px){
-.repositories .sub{font-size:15px;line-height:1.4}
 .repositories .ph{flex-direction:column;align-items:stretch;gap:16px}
 .rc{align-self:stretch;margin-top:0;gap:12px}
 .rcount{flex:1 1 100%;margin:0}

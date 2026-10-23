@@ -51,24 +51,6 @@ for (const input of document.querySelectorAll("[data-filter]")) {
 
 const CSS = `
 body.agents{--ink:#060913;--muted:#4f5b79;--line:#e6e9ef;--line-2:#f0f2f5;background:#f9fafb;font-size:15px;will-change:opacity}
-body.agents .app{--ls:.117;--bmw:41;--bww:112;--bgap:9.9;--bwy:6.9;--lx:.28px;--ly:-1px;border-bottom:1px solid #e9ecf2}
-body.agents .app .in{width:1414px;max-width:calc(100% - 48px);height:73px;padding:0;gap:0}
-body.agents .tabs{gap:28px;margin-left:158.6px}
-body.agents .tabs a{padding:6.4px 6px 0;border-bottom-width:3px;margin-bottom:0;font-size:14.4px;color:#596383}
-body.agents .tabs a:nth-child(2){margin-left:-2.36px}
-body.agents .tabs a:nth-child(3){margin-left:3.02px}
-body.agents .tabs a:nth-child(4){margin-left:4.57px}
-body.agents .tabs a:nth-child(5){margin-left:5px}
-body.agents .tabs a.on{border-color:#f64d27;color:var(--ink)}
-body.agents .rt{gap:49.65px;margin-right:1px;font-size:14.4px}
-body.agents .rt a{color:#5b6685}
-body.agents .rt .dc{position:relative;top:1.35px}
-body.agents .usr{width:50px;height:50px;color:#676d89}
-body.agents .usr .ic{position:relative;top:-.5px;left:-.5px;width:28px;height:28px}
-body.agents .main{width:1414px;max-width:calc(100% - 48px);padding:22px 0 72px}
-body.agents .ph{align-items:flex-start;height:97px;margin:0}
-body.agents h1{font-size:39px;letter-spacing:-.01em;line-height:48px;color:#070e1b}
-body.agents .sub{margin-top:1px;font-size:18.5px;letter-spacing:.01em;line-height:26px;color:#5a6481}
 body.agents .card{border-radius:12px;background:#fefdfe;border-color:#e6e9ef}
 ${TABLE_UI_CSS}
 ${AGENT_UI_CSS}
@@ -84,7 +66,7 @@ ${AGENT_UI_CSS}
 .srch .sel input{height:42px;padding-left:46.2px;border-color:#e8ecf2;border-radius:5.2px;background:#fefefe;font-size:15.5px;font-weight:500;letter-spacing:-.035em}
 .srch .sel input::placeholder{color:#6c7692}
 .srch .sel .l{left:13px;width:24px;height:24px;margin-top:-12px;color:#555d78}
-.agt{table-layout:fixed;width:1412px;border-collapse:separate;border-spacing:0}
+.agt{table-layout:fixed;width:var(--app-w);border-collapse:separate;border-spacing:0}
 .agt th,.agt td{padding:0;text-align:left;vertical-align:middle;white-space:nowrap}
 .agt th:first-child,.agt td:first-child{padding-left:22px}
 .agt th{height:44px;padding-top:2px;border-top:1px solid #eceef3;border-bottom:1px solid #eef0f4;background:#f9fafc;font-size:15px;font-weight:400;color:#5b6582;text-transform:none;letter-spacing:0}
@@ -167,17 +149,7 @@ ${AGENT_UI_CSS}
 .em .lk{position:relative;left:2.2px;display:inline-flex;align-items:center;gap:0;margin-top:17.7px;font-size:15.5px;font-weight:400;letter-spacing:-.025em;color:#0a56db;text-decoration:none}
 .em .lk .ic{width:24px;height:24px;margin-left:3.3px;color:#1852d9}
 @media (max-width:900px){
-body.agents .app .in{flex-wrap:wrap;align-items:center;gap:0 12px;height:auto;min-height:56px;padding:10px 16px 0}
-body.agents .tabs{order:3;flex:1 0 100%;gap:0;margin-left:-8px;height:44px;overflow-x:auto;scrollbar-width:none}
-body.agents .tabs a{flex:none;padding:0 8px;font-size:14px;margin-left:0}
-body.agents .tabs a:nth-child(n){margin-left:0}
-body.agents .rt{gap:14px;margin-right:0}
-body.agents .usr{width:34px;height:34px}
-body.agents .usr .ic{top:0;left:0;width:18px;height:18px}
-body.agents .main{padding-top:20px}
-body.agents .ph{flex-wrap:wrap;gap:16px;height:auto;margin-bottom:20px}
-body.agents h1{font-size:32px;line-height:38px}
-body.agents .sub{font-size:16px}
+body.agents .ph{flex-wrap:wrap}
 .ac{margin-top:0;flex-wrap:wrap}
 .agt,.agt tbody,.agt tr,.agt td{display:block;width:auto}
 .agt thead,.agt col{display:none}
@@ -229,6 +201,9 @@ body.agents .sub{font-size:16px}
 .agt col:nth-child(9){width:110px}
 .agt col:nth-child(10){width:150px}
 .agt .ac2{gap:8px}
+}
+@media (min-width:1101px) and (max-width:1459px){
+.scroll{overflow-x:auto}
 }
 @media (pointer:coarse){
 .agt .go{min-height:44px}

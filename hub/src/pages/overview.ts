@@ -62,20 +62,6 @@ const OVERVIEW_ICONS: Record<string, string> = {
 
 const CSS = `
 body.overview{--ink:#080b16;--muted:#646f8a;--line:#ecf0f3;--line-2:#eef0f4;background:#f8f9fa;text-rendering:geometricPrecision}
-.overview .app,.overview .main{will-change:transform}
-.overview .app{--ls:.089;border-bottom-color:#ebeef3}
-.overview .app .in{width:min(912px,100% - 48px);max-width:none;height:55px;padding:0;gap:58px}
-.overview .tabs{gap:28px}
-.overview .tabs a{padding-top:2px;border-bottom-width:1px;color:#515b7e;font-size:12.5px;font-weight:500;letter-spacing:-.025em}
-.overview .tabs a.on{color:var(--ink);font-weight:600;letter-spacing:-.04em}
-.overview .rt{padding-top:2px;font-size:12.5px;font-weight:400;letter-spacing:-.03em;gap:23px}
-.overview .rt a{color:#555f80}
-.overview .usr{width:36px;height:36px;margin-top:-2px}
-.overview .usr .ic{width:26px;height:26px}
-.overview .main{width:min(912px,100% - 48px);max-width:none;padding:0 0 46px}
-.overview .ph{align-items:flex-start;margin:0;padding:24px 0 0;height:111px}
-.overview h1{position:relative;top:1.5px;font-size:34px;line-height:40px;letter-spacing:-.025em}
-.overview .sub{margin-top:5px;font-size:14.75px;line-height:20px;letter-spacing:0}
 .rng{margin-top:9px}
 .rng label{position:relative;display:block}
 .rng select{appearance:none;width:127px;height:37px;padding:0 30px 0 38px;border:1px solid #e1e5ec;border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:13px;font-weight:500;letter-spacing:-.04em;cursor:pointer}
@@ -83,7 +69,6 @@ body.overview{--ink:#080b16;--muted:#646f8a;--line:#ecf0f3;--line-2:#eef0f4;back
 .rng .ic.l{left:10px;top:7px;width:22px;height:22px}
 .rng .ic.r{right:12px;top:13px;width:13px;height:13px}
 .overview .card{overflow:visible;border-color:#edf0f4;border-radius:8px;background:#fbfbfd;box-shadow:none}
-.overview{padding-left:2px}
 .overview .stack-gap>*+*{margin-top:14px}
 .overview .stack-gap>.card+.card{margin-top:17px}
 .att{border:1px solid #f6e9ed;border-radius:8px;background:#fcf1f3}
@@ -203,8 +188,6 @@ body.overview{--ink:#080b16;--muted:#646f8a;--line:#ecf0f3;--line-2:#eef0f4;back
 .su .ob:not(.dk){padding:2px 17px 0 12px}
 .su .ob .ic{width:28px;height:28px;margin:-4px 0 -4px -3px}
 @media (max-width:900px){
-.overview .main{width:calc(100% - 32px)}
-.overview .ph{height:auto;padding-bottom:20px}
 .att .ag{grid-template-columns:1fr}
 .att .ai,.att .ai+.ai,.att .ai.gh{grid-template-columns:46px minmax(0,1fr);column-gap:20px;padding:12px 20px 12px 22px;border-left:0}
 .att .ai:first-child .ob,.att .ai+.ai .ob,.att .ai.gh .ob{margin-left:0}

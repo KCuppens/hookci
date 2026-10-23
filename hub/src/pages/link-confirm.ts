@@ -15,7 +15,7 @@ const T = S.flow.link;
 const e = escapeHtml;
 
 const CSS = `
-.p-confirm{--nh:55px;--nl:20px;--nr:20px;--bmw:27.4;--bww:79.5;--bgap:7.5;--bwy:4.4;--ly:0px;--nfs:12px;background:#fcfbfa}
+.p-confirm{--nh:55px;--bmw:27.4;--bww:79.5;--bgap:7.5;--bwy:4.4;--ly:0px;--nfs:12px;background:#fcfbfa}
 .p-confirm .nav{background:#fefefe;border-bottom:1px solid #eceef2}
 .p-confirm .links{gap:24px;margin-right:0}
 .p-confirm .links a{color:#5f6a80}
@@ -56,7 +56,7 @@ const CSS = `
 .p-confirm .links{display:flex}
 }
 @media (min-width:900px){
-.p-confirm{--nh:111px;--nl:55.7px;--nr:56px;--bmw:55.37;--bww:159.11;--bgap:14.57;--bwy:7.65;--lx:-.55px;--ly:1.4px;--nfs:19.25px}
+.p-confirm{--nh:111px;--bmw:55.37;--bww:159.11;--bgap:14.57;--bwy:7.65;--lx:-.55px;--ly:1.4px;--nfs:19.25px}
 .p-confirm .nav{border-bottom-width:2px}
 .p-confirm .bg{background:${blob(307, 422, "-47px 1031px", 0.296)},${blob(594, 332, "1128px 558px", 0.283)}}
 .p-confirm .links{gap:65.3px;position:relative;left:-.55px}
