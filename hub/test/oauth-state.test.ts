@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { HubError } from "../src/errors";
-import { consumeState, issueSession, issueState, readSession, STATE_COOKIE } from "../src/oauth/state";
+import { consumeState, issueSession, issueState, readSession, renewSession, STATE_COOKIE } from "../src/oauth/state";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 
@@ -58,9 +58,9 @@ describe("oauth state", () => {
 });
 
 describe("session cookie", () => {
-  it("covers only its installations, for 30 minutes, and only with a valid signature", async () => {
+  it("covers only its installations, for 12 hours idle, and only with a valid signature", async () => {
     const setCookie = await issueSession(env, { installationIds: [42, 43], githubUserId: 7, githubLogin: "octo-cat" }, testClock.now());
-    expect(setCookie).toMatch(/^__Host-hookci_session=42-43\.7\.octo-cat\.\d+\.[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=1800$/);
+    expect(setCookie).toMatch(/^__Host-hookci_session=42-43\.7\.octo-cat\.\d+\.\d+\.[A-Za-z0-9_-]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=43200$/);
     const header = cookieHeader(setCookie);
 
     expect(await readSession(env, header, 43, testClock.now())).toEqual({ installationIds: [42, 43], githubUserId: 7, githubLogin: "octo-cat" });
@@ -69,7 +69,35 @@ describe("session cookie", () => {
     expect(await readSession(env, header.replace("octo-cat", "mallory"), 42, testClock.now())).toBeNull();
     expect(await readSession(env, null, 42, testClock.now())).toBeNull();
 
-    testClock.advance(30 * 60_000 + 1);
+    testClock.advance(12 * 3600_000 + 1);
+    expect(await readSession(env, header, 42, testClock.now())).toBeNull();
+  });
+
+  it("renews an active session but never past 7 days from sign-in", async () => {
+    const session = { installationIds: [42], githubUserId: 7, githubLogin: "octo-cat" };
+    let header = cookieHeader(await issueSession(env, session, testClock.now()));
+    expect(await renewSession(env, header, testClock.now() + 60_000)).toBeNull();
+
+    // Active every 6 hours for 6 days: still signed in.
+    for (let i = 0; i < 24; i++) {
+      testClock.advance(6 * 3600_000);
+      const renewed = await renewSession(env, header, testClock.now());
+      expect(renewed).not.toBeNull();
+      header = cookieHeader(renewed ?? "");
+      expect(await readSession(env, header, 42, testClock.now())).not.toBeNull();
+    }
+
+    // The cap: a renewal at 6 days 16 hours would run to 7 days 4 hours, so it is cut to the 7-day mark (8 hours).
+    testClock.advance(10 * 3600_000);
+    header = cookieHeader((await renewSession(env, header, testClock.now())) ?? "");
+    testClock.advance(6 * 3600_000);
+    const capped = await renewSession(env, header, testClock.now());
+    expect(capped).toMatch(/Max-Age=28800$/);
+    header = cookieHeader(capped ?? "");
+    testClock.advance(7 * 3600_000);
+    expect(await readSession(env, header, 42, testClock.now())).not.toBeNull();
+    expect(await renewSession(env, header, testClock.now())).toBeNull();
+    testClock.advance(2 * 3600_000);
     expect(await readSession(env, header, 42, testClock.now())).toBeNull();
   });
 });

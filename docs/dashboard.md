@@ -31,7 +31,7 @@ The sign-in, create-account, reset-password and connect-GitHub pages share one d
 
 ## Sessions
 
-A sign-in lasts 30 minutes. The session is a signed cookie, so the hub keeps no session table. When it expires, the dashboard asks you to sign in again. Signing out removes the cookie from your browser straight away. A copy of the cookie made earlier would still be accepted by the hub until its 30 minutes end.
+A sign-in stays valid while you use the dashboard: each request restarts a 12-hour idle window, so you are signed out after 12 hours of inactivity, and never later than 7 days after you signed in, however active you were. The session is a signed cookie, so the hub keeps no session table. When it expires, the dashboard asks you to sign in again. Signing out removes the cookie from your browser straight away. A copy of the cookie made earlier would still be accepted by the hub until it expires.
 
 ## Account settings, sign out and delete
 

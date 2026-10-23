@@ -117,6 +117,17 @@ describe("sign out", () => {
     expect((await browser.fetch("/account/settings")).status).toBe(303);
   });
 
+  it("signs out after the renewal window with one clearing cookie and no renewed one", async () => {
+    await registerVerified(mailer, ALICE);
+    const browser = await signInWithPassword(ALICE);
+    testClock.advance(10 * 60_000);
+    const res = await browser.submit("/account/settings", "/account/logout", {});
+    const sessionCookies = res.headers.getSetCookie().filter((v) => v.startsWith(`${SESSION_COOKIE}=`));
+    expect(sessionCookies).toHaveLength(1);
+    expect(sessionCookies[0]).toMatch(/Max-Age=0/);
+    expect(browser.cookie(SESSION_COOKIE)).toBeUndefined();
+  });
+
   it("refuses a sign out without a csrf token or from another origin, and keeps the session", async () => {
     await registerVerified(mailer, ALICE);
     const browser = await signInWithPassword(ALICE);
@@ -251,7 +262,7 @@ describe("delete account", () => {
     expect(await count("users")).toBe(1);
     expect(browser.cookie(SESSION_COOKIE)).toBeUndefined();
 
-    // A copy of the old cookie, which stays signed for 30 minutes, no longer reaches an account.
+    // A copy of the old cookie, which stays signed until it expires, no longer reaches an account.
     const replay = new Browser();
     replay.adopt(`${SESSION_COOKIE}=${oldSession}`);
     expect((await replay.fetch("/account/settings")).status).toBe(303);

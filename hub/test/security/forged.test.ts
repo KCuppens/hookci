@@ -15,6 +15,7 @@ import { escapeHtml } from "../../src/pages/layout";
 import { rotateCredential } from "../../src/pairing/agents";
 import { authenticateAgent } from "../../src/routes/agent-auth";
 import { verifySlackRequest } from "../../src/slack/verify";
+import { SESSION_IDLE_MS } from "../../src/oauth/state";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
@@ -218,7 +219,7 @@ function oauthRequest(method: string, path: string, fields: Record<string, strin
 
 /** A session cookie for the tenant with a signature made under a key the hub does not hold. */
 async function forgedSession(tenant: Tenant): Promise<string> {
-  const body = `${tenant.installationId}.${tenant.githubUserId}.${tenant.githubLogin}.${testClock.now() + 30 * 60_000}`;
+  const body = `${tenant.installationId}.${tenant.githubUserId}.${tenant.githubLogin}.${testClock.now() + SESSION_IDLE_MS}.${testClock.now()}`;
   return `__Host-hookci_session=${body}.${base64url(await hmacSha256(WRONG_SECRET, `session.${body}`))}`;
 }
 

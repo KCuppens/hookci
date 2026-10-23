@@ -2,8 +2,10 @@
 // handler; the security suites read app.routes to check every route is covered.
 
 import { type Context, Hono } from "hono";
+import { systemClock } from "./do/clock";
 import type { Env } from "./env";
 import { HubError } from "./errors";
+import { renewSession, SESSION_COOKIE } from "./oauth/state";
 import { reportError } from "./observability";
 import { accountRoutes } from "./routes/account";
 import { agentConnect } from "./routes/agent-connect";
@@ -44,6 +46,19 @@ export function handleError(err: Error, c: Context<AppEnv>): Response {
 }
 
 export const app = new Hono<AppEnv>();
+
+/** Background polls repeat without anyone using the page, so they must not keep a session alive. */
+const POLL_PATH = /^\/app\/\d+\/(?:runs\/newer|agents\/pair\/status)$/;
+
+/** Keeps an active person signed in: any dashboard or account request with a valid session restarts its idle window. */
+app.use("*", async (c, next) => {
+	await next();
+	if (!c.req.path.startsWith("/app") && !c.req.path.startsWith("/account")) return;
+	if (POLL_PATH.test(c.req.path)) return;
+	if (c.res.headers.getSetCookie().some((v) => v.startsWith(`${SESSION_COOKIE}=`))) return;
+	const renewed = await renewSession(c.env, c.req.header("cookie"), (c.env.__TEST_CLOCK ?? systemClock).now());
+	if (renewed !== null) c.header("Set-Cookie", renewed, { append: true });
+});
 
 app.get("/healthz", (c) => c.json({ ok: true, version: c.env.HUB_VERSION }));
 app.get("/v1/info", info);

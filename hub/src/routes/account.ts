@@ -296,7 +296,7 @@ accountRoutes.post("/connect-github", async (c) => {
 
 const CLEAR_SESSION_COOKIE = setCookie(SESSION_COOKIE, "", 0);
 
-/** Ends the session: the cookie is cleared in the browser. Sessions are stateless, so a copy of the old cookie stays valid until its 30 minutes run out. */
+/** Ends the session: the cookie is cleared in the browser. Sessions are stateless, so a copy of the old cookie stays valid until it expires. */
 accountRoutes.post("/logout", async (c) => {
 	const form = await readCheckedForm(c.env, c.req.raw);
 	if (!form) return renderLogin(c, { status: 403, error: E.csrf });

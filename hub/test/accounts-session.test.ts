@@ -235,12 +235,27 @@ describe("what an account session may see", () => {
     expect(res.status).toBe(404);
   });
 
-  it("lets the session lapse after 30 minutes", async () => {
+  it("lets an idle session lapse after 12 hours, and keeps an active one signed in", async () => {
     await registerVerified(mailer, ALICE);
     const browser = await signIn(ALICE, "203.0.113.46");
     await connectGithub(browser);
     expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
-    testClock.advance(31 * 60_000);
+    testClock.advance(11 * 3600_000);
+    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    testClock.advance(11 * 3600_000);
+    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    testClock.advance(13 * 3600_000);
+    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(404);
+  });
+
+  it("does not count a background poll as activity", async () => {
+    await registerVerified(mailer, ALICE);
+    const browser = await signIn(ALICE, "203.0.113.48");
+    await connectGithub(browser);
+    testClock.advance(11 * 3600_000);
+    const poll = await browser.fetch(`/app/${ACME}/runs/newer`);
+    expect(poll.headers.getSetCookie().some((v) => v.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+    testClock.advance(2 * 3600_000);
     expect((await browser.fetch(`/app/${ACME}`)).status).toBe(404);
   });
 

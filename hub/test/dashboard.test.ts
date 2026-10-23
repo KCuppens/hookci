@@ -112,7 +112,7 @@ describe("GET /app", () => {
   });
 
   it("shows the sign-in page for an expired session", async () => {
-    const stale = await sessionFor([ACME], testClock.now() - 31 * 60_000);
+    const stale = await sessionFor([ACME], testClock.now() - 13 * 3600_000);
     const res = await get("/app", stale);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('href="/app/login"');
@@ -161,7 +161,7 @@ describe("GET /app/login and the OAuth callback", () => {
     expect(res.headers.get("location")).toBe("/app");
     const setCookie = res.headers.getSetCookie();
     const session = setCookie.find((c) => c.startsWith("__Host-hookci_session="));
-    expect(session).toMatch(/Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=1800$/);
+    expect(session).toMatch(/Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=43200$/);
     expect(setCookie.some((c) => c.startsWith("__Host-hookci_oauth=") && c.includes("Max-Age=0"))).toBe(true);
 
     const sessionCookie = (session ?? "").split(";")[0] ?? "";

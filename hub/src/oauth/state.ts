@@ -19,7 +19,12 @@ export interface IssuedState {
 
 export const STATE_TTL_MS = 600_000;
 export const STATE_COOKIE = "__Host-hookci_oauth";
-export const SESSION_TTL_MS = 30 * 60_000;
+/** A session ends after this long without a request... */
+export const SESSION_IDLE_MS = 12 * 3600_000;
+/** ...and never outlives this, however active: GitHub access is only re-checked at sign-in. */
+export const SESSION_MAX_MS = 7 * 24 * 3600_000;
+/** An active session's cookie is re-issued once this much of its idle window has passed. */
+const SESSION_RENEW_AFTER_MS = 5 * 60_000;
 export const SESSION_COOKIE = "__Host-hookci_session";
 
 export function setCookie(name: string, value: string, maxAgeSeconds: number): string {
@@ -179,35 +184,69 @@ export interface Session {
 const IDS_SHAPE = /^(?:0|[1-9]\d*(?:-[1-9]\d*)*)$/;
 const ACCOUNT_ID_SHAPE = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
-/**
- * Set-Cookie value for a session valid for 30 minutes from now. The value is
- * "<id>-<id>.<github user id>.<github login>.<expires at ms>[.<account id>].<hmac>".
- */
-export async function issueSession(env: Env, session: Session, now: number): Promise<string> {
-	const ids = session.installationIds.length > 0 ? session.installationIds.join("-") : "0";
-	const account = session.accountId === undefined ? "" : `.${session.accountId}`;
-	const body = `${ids}.${session.githubUserId}.${session.githubLogin}.${now + SESSION_TTL_MS}${account}`;
-	return setCookie(SESSION_COOKIE, `${body}.${await sign(env, `session.${body}`)}`, SESSION_TTL_MS / 1000);
+/** When a session touched at now ends: the idle window, cut off at the absolute cap after startedAt. */
+function sessionExpiry(now: number, startedAt: number): number {
+	return Math.min(now + SESSION_IDLE_MS, startedAt + SESSION_MAX_MS);
 }
 
-/** The session from the Cookie header when its signature holds, its fields are well formed and it is unexpired; else null. */
-export async function readAnySession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<Session | null> {
+/**
+ * Set-Cookie value for a session. It lasts SESSION_IDLE_MS from now, capped at
+ * SESSION_MAX_MS after startedAt (the sign-in time, which defaults to now). The value is
+ * "<id>-<id>.<github user id>.<github login>.<expires at ms>.<started at ms>[.<account id>].<hmac>".
+ */
+export async function issueSession(env: Env, session: Session, now: number, startedAt: number = now): Promise<string> {
+	const ids = session.installationIds.length > 0 ? session.installationIds.join("-") : "0";
+	const account = session.accountId === undefined ? "" : `.${session.accountId}`;
+	const expires = sessionExpiry(now, startedAt);
+	const body = `${ids}.${session.githubUserId}.${session.githubLogin}.${expires}.${startedAt}${account}`;
+	return setCookie(SESSION_COOKIE, `${body}.${await sign(env, `session.${body}`)}`, Math.max(0, Math.ceil((expires - now) / 1000)));
+}
+
+interface ParsedSession {
+	session: Session;
+	expires: number;
+	startedAt: number;
+}
+
+async function parseSession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<ParsedSession | null> {
 	const value = readCookie(cookieHeader, SESSION_COOKIE);
 	if (!value) return null;
 	const parts = value.split(".");
 	const signature = parts.pop();
-	if (!signature || (parts.length !== 4 && parts.length !== 5)) return null;
-	const [ids = "", user = "", login = "", expires = "", accountId] = parts;
-	if (!IDS_SHAPE.test(ids) || !/^\d+$/.test(user) || !/^[A-Za-z0-9-]+$/.test(login) || !/^\d+$/.test(expires)) return null;
+	if (!signature || (parts.length !== 5 && parts.length !== 6)) return null;
+	const [ids = "", user = "", login = "", expires = "", started = "", accountId] = parts;
+	if (!IDS_SHAPE.test(ids) || !/^\d+$/.test(user) || !/^[A-Za-z0-9-]+$/.test(login) || !/^\d+$/.test(expires) || !/^\d+$/.test(started)) return null;
 	if (accountId !== undefined && !ACCOUNT_ID_SHAPE.test(accountId)) return null;
 	if (!timingSafeEqual(signature, await sign(env, `session.${parts.join(".")}`))) return null;
 	if (Number(expires) <= now) return null;
 	return {
-		installationIds: ids === "0" ? [] : ids.split("-").map(Number),
-		githubUserId: Number(user),
-		githubLogin: login,
-		...(accountId === undefined ? {} : { accountId }),
+		session: {
+			installationIds: ids === "0" ? [] : ids.split("-").map(Number),
+			githubUserId: Number(user),
+			githubLogin: login,
+			...(accountId === undefined ? {} : { accountId }),
+		},
+		expires: Number(expires),
+		startedAt: Number(started),
 	};
+}
+
+/** The session from the Cookie header when its signature holds, its fields are well formed and it is unexpired; else null. */
+export async function readAnySession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<Session | null> {
+	return (await parseSession(env, cookieHeader, now))?.session ?? null;
+}
+
+/**
+ * A fresh Set-Cookie for the valid session in the Cookie header, with the idle window restarted and
+ * the sign-in time kept; null when there is no valid session or its expiry would not move by
+ * at least SESSION_RENEW_AFTER_MS (an idle window already near full, or the absolute cap reached).
+ */
+export async function renewSession(env: Env, cookieHeader: string | null | undefined, now: number): Promise<string | null> {
+	const parsed = await parseSession(env, cookieHeader, now);
+	if (!parsed) return null;
+	const next = sessionExpiry(now, parsed.startedAt);
+	if (next - parsed.expires < SESSION_RENEW_AFTER_MS) return null;
+	return issueSession(env, parsed.session, now, parsed.startedAt);
 }
 
 /** The session from the Cookie header when its signature holds, it is unexpired and it covers installationId; else null. */
