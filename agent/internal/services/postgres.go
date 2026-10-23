@@ -14,10 +14,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/isolation"
 )
 
@@ -37,15 +37,25 @@ var (
 const (
 	defaultReadyTimeout = 30 * time.Second
 	defaultPollEvery    = 250 * time.Millisecond
+	// execTimeout bounds each docker exec of a readiness poll, so a stuck
+	// pg_isready or psql cannot hold a poll open.
+	execTimeout = 5 * time.Second
 	// stopTimeout bounds the cleanup rm -f after a failed start, which runs
 	// even when the caller's context is already cancelled.
 	stopTimeout = 30 * time.Second
+	// pidsLimit bounds the container's processes: postgres runs one per
+	// connection plus a few background workers, well under this.
+	pidsLimit = 512
 
 	containerSocketDir = "/var/run/postgresql"
 	containerDataDir   = "/var/lib/postgresql/data"
 )
 
-var imageRe = regexp.MustCompile(`^[a-z0-9./:@_-]+$`)
+// containerCaps are the only capabilities the container keeps. The official
+// image's entrypoint starts as root, chowns and chmods the data and socket
+// dirs (CHOWN, FOWNER, DAC_OVERRIDE) and then drops to the postgres user
+// with gosu or su-exec (SETUID, SETGID).
+var containerCaps = []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
 
 // PostgresOptions configures one run's postgres container.
 type PostgresOptions struct {
@@ -91,6 +101,12 @@ func BuildRunArgv(o PostgresOptions) []string {
 		"--cpus", fmt.Sprintf("%g", o.CPUs),
 		"--memory", fmt.Sprintf("%db", o.MemoryBytes),
 		"--network", "none",
+		"--pids-limit", fmt.Sprintf("%d", pidsLimit),
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL",
+	}
+	for _, c := range containerCaps {
+		argv = append(argv, "--cap-add", c)
 	}
 	if o.Tmpfs {
 		argv = append(argv, "--tmpfs", fmt.Sprintf("%s:rw,size=%d", containerDataDir, o.MemoryBytes/2))
@@ -109,8 +125,8 @@ func BuildRunArgv(o PostgresOptions) []string {
 // postgres is not ready within ReadyTimeout the error wraps ErrNotReady,
 // carries the tail of the container log, and the container is removed.
 func StartPostgres(ctx context.Context, o PostgresOptions) (*Postgres, error) {
-	if o.Image != "" && (!imageRe.MatchString(o.Image) || strings.HasPrefix(o.Image, "-")) {
-		return nil, fmt.Errorf("services: invalid postgres image %q", o.Image)
+	if o.Image != "" && !config.ValidPostgresImage(o.Image) {
+		return nil, fmt.Errorf("services: invalid postgres image %q: only the official postgres image or pgvector/pgvector with a tag or digest", o.Image)
 	}
 	if o.ReadyTimeout <= 0 {
 		o.ReadyTimeout = defaultReadyTimeout
@@ -173,12 +189,16 @@ func (p *Postgres) stopDetached(ctx context.Context) error {
 // so only a non-empty listen_addresses proves the final server answers.
 func (p *Postgres) waitReady(ctx context.Context, o PostgresOptions) error {
 	deadline := o.Clock().Add(o.ReadyTimeout)
+	readyCtx, cancel := context.WithTimeout(ctx, o.ReadyTimeout)
+	defer cancel()
 	for {
-		if p.ready(ctx) {
+		if p.ready(readyCtx) {
 			return nil
 		}
-		if !o.Clock().Before(deadline) {
-			logs, logErr, _ := p.docker.run(ctx, "logs", "--tail", "40", p.Name)
+		if !o.Clock().Before(deadline) || (readyCtx.Err() != nil && ctx.Err() == nil) {
+			logCtx, cancelLog := context.WithTimeout(ctx, execTimeout)
+			logs, logErr, _ := p.docker.run(logCtx, "logs", "--tail", "40", p.Name)
+			cancelLog()
 			return fmt.Errorf("%w after %s: %s: %s", ErrNotReady, o.ReadyTimeout, p.Name, strings.TrimSpace(logs+logErr))
 		}
 		if err := o.Sleep(ctx, o.PollEvery); err != nil {
@@ -187,12 +207,18 @@ func (p *Postgres) waitReady(ctx context.Context, o PostgresOptions) error {
 	}
 }
 
+// ready runs one poll; every docker exec gets its own execTimeout.
 func (p *Postgres) ready(ctx context.Context) bool {
-	if _, _, err := p.docker.run(ctx, "exec", p.Name, "pg_isready", "-h", containerSocketDir, "-U", "postgres"); err != nil {
+	exec := func(args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(ctx, execTimeout)
+		defer cancel()
+		out, _, err := p.docker.run(ctx, append([]string{"exec", p.Name}, args...)...)
+		return out, err
+	}
+	if _, err := exec("pg_isready", "-h", containerSocketDir, "-U", "postgres"); err != nil {
 		return false
 	}
-	out, _, err := p.docker.run(ctx, "exec", p.Name, "psql", "-h", containerSocketDir, "-U", "postgres", "-d", "postgres",
-		"-tAc", "SHOW listen_addresses")
+	out, err := exec("psql", "-h", containerSocketDir, "-U", "postgres", "-d", "postgres", "-tAc", "SHOW listen_addresses")
 	return err == nil && strings.TrimSpace(out) != ""
 }
 

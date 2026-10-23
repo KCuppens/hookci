@@ -8,7 +8,7 @@ checks:
     - run: pnpm install --frozen-lockfile
       cache:
         key: [pnpm-lock.yaml]
-        paths: [apps/*/node_modules, node_modules, packages/*/node_modules]
+        paths: [apps/web/node_modules, node_modules, packages/ui/node_modules]
   jobs:
     lint:
       run: sh -c 'pnpm exec turbo run lint ${HOOKCI_BASE_SHA:+--filter=...[$HOOKCI_BASE_SHA]}'

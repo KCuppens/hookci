@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,7 +118,7 @@ func TestUpload(t *testing.T) {
 			var slept []time.Duration
 			u := &Uploader{
 				HubURL: srv.URL,
-				Token:  func() string { return "zc_agent_secret" },
+				Token:  func() string { return "hci_agent_secret" },
 				HTTP:   srv.Client(),
 				sleep: func(_ context.Context, d time.Duration) error {
 					slept = append(slept, d)
@@ -141,7 +142,7 @@ func TestUpload(t *testing.T) {
 			if c.path != "/v1/logs/run_1/build" {
 				t.Errorf("path = %q", c.path)
 			}
-			if got := c.header.Get("Authorization"); got != "Bearer zc_agent_secret" {
+			if got := c.header.Get("Authorization"); got != "Bearer hci_agent_secret" {
 				t.Errorf("Authorization = %q", got)
 			}
 			if got := c.header.Get("Content-Encoding"); got != "gzip" {
@@ -166,10 +167,10 @@ func TestUpload(t *testing.T) {
 
 func TestLogURL(t *testing.T) {
 	tests := []struct{ in, want, err string }{
-		{"https://ci.webuno.io", "https://ci.webuno.io/v1/logs/run_1/build", ""},
-		{"https://ci.webuno.io/", "https://ci.webuno.io/v1/logs/run_1/build", ""},
+		{"https://ci.hookci.com", "https://ci.hookci.com/v1/logs/run_1/build", ""},
+		{"https://ci.hookci.com/", "https://ci.hookci.com/v1/logs/run_1/build", ""},
 		{"http://127.0.0.1:8787", "http://127.0.0.1:8787/v1/logs/run_1/build", ""},
-		{"wss://ci.webuno.io", "", "scheme must be http or https"},
+		{"wss://ci.hookci.com", "", "scheme must be http or https"},
 		{"https://", "", "missing host"},
 	}
 	for _, tc := range tests {
@@ -183,6 +184,48 @@ func TestLogURL(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("logURL(%q) = %q, %v, want %q", tc.in, got, err, tc.want)
 		}
+	}
+}
+
+func TestRedactMatchesUpload(t *testing.T) {
+	token := "ghs_" + strings.Repeat("Z", 36)
+	got := string(Redact([]byte("token " + token + "\ntail " + token)))
+	if strings.Contains(got, token) || got != "token ***\ntail ***" {
+		t.Errorf("Redact = %q; want both tokens masked", got)
+	}
+}
+
+// TestEncodeIncompressibleFitsHubCap: random bytes do not compress, so
+// 10 MB of them gzip to more than the hub's cap; the log is cut short so
+// the body still fits.
+func TestEncodeIncompressibleFitsHubCap(t *testing.T) {
+	log := make([]byte, 11<<20)
+	if _, err := rand.Read(log); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1023; i < len(log); i += 1024 {
+		log[i] = '\n'
+	}
+	body, res, err := (&Uploader{}).encode(bytes.NewReader(log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > DefaultMaxBytes {
+		t.Fatalf("gzip body = %d bytes, want <= %d", len(body), DefaultMaxBytes)
+	}
+	if !res.Truncated || res.Bytes < DefaultMaxBytes-64<<10 {
+		t.Fatalf("Result = %+v, want truncated just under %d", res, DefaultMaxBytes)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := append(log[:res.Bytes:res.Bytes], TruncationMarker...); !bytes.Equal(got, want) {
+		t.Fatalf("body = %d bytes, want the first %d log bytes and the marker", len(got), res.Bytes)
 	}
 }
 

@@ -1,25 +1,29 @@
 # hookci-hub Worker. Secrets are set with `wrangler secret put` and typed in
-# src/env.ts; none belong in this file. Database ids and SLACK_APP_ID are
-# placeholders until the Cloudflare resources and Slack Apps are created (M1-29).
+# src/env.ts; none belong in this file. The staging database id and the
+# staging SLACK_APP_ID are placeholders until those resources exist.
 
 name = "hookci-hub"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "enable_request_signal"]
+routes = [{ pattern = "ci.hookci.com", custom_domain = true }]
 # The hub is served from its own domain; keep the default workers.dev URLs off.
 workers_dev = false
 preview_urls = false
 
 [vars]
-HUB_ORIGIN = "https://ci.webuno.io"
+HUB_ORIGIN = "https://ci.hookci.com"
 HUB_VERSION = "dev"
-# RFC 9116 Expires for /.well-known/security.txt: one year past the build date; bump on each release.
-SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
+# security.txt Contact (mailto: or https:).
+SECURITY_CONTACT = "mailto:security@hookci.com"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci"
-SLACK_APP_ID = "A0000000000"
-# Email accounts are off unless "true"; see docs/self-hosting.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
+HUB_MODE = "shared"
+SLACK_APP_ID = "A0CB2HS8VUH"
+TELEGRAM_API_BASE = "https://api.telegram.org"
+LINEAR_API_URL = "https://api.linear.app/graphql"
+# Email accounts are off unless "true"; see docs/self-host.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
 ACCOUNTS_ENABLED = "false"
 
 [observability]
@@ -28,7 +32,7 @@ enabled = true
 [[d1_databases]]
 binding = "DB"
 database_name = "hookci-hub"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "cc2a0a92-85fc-4d62-9686-a3b8f6b2719c"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -43,6 +47,10 @@ class_name = "AgentDO"
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
 
+[[durable_objects.bindings]]
+name = "SINK_OUTBOX"
+class_name = "SinkOutboxDO"
+
 # Sends account mail (verify email, reset password). Used only when ACCOUNTS_ENABLED is "true" and ACCOUNTS_MAIL_FROM is set.
 [[send_email]]
 name = "EMAIL"
@@ -51,26 +59,42 @@ name = "EMAIL"
 tag = "v1"
 new_sqlite_classes = ["AgentDO", "SlackWorkspaceDO"]
 
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SinkOutboxDO"]
+
+# A deploy without SinkOutboxDO moved production to tag v3 and dropped the class; v4 recreates it.
+[[migrations]]
+tag = "v3"
+deleted_classes = ["SinkOutboxDO"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["SinkOutboxDO"]
+
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "17 3 * * *"]
 
 [[rules]]
 type = "Text"
-globs = ["**/*.sh"]
+globs = ["**/*.sh", "**/*.css", "**/*viewer.js"]
 fallthrough = true
 
 [env.staging]
 name = "hookci-hub-staging"
 
 [env.staging.vars]
-HUB_ORIGIN = "https://ci-staging.webuno.io"
+HUB_ORIGIN = "https://ci-staging.hookci.com"
 HUB_VERSION = "dev"
-SECURITY_TXT_EXPIRES = "2027-10-20T00:00:00Z"
+SECURITY_CONTACT = "mailto:security@hookci.com"
 LATEST_AGENT_VERSION = ""
 MIN_AGENT_VERSION = ""
 GITHUB_APP_SLUG = "hookci-staging"
+HUB_MODE = "shared"
 SLACK_APP_ID = "A0000000001"
-# Email accounts are off unless "true"; see docs/self-hosting.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
+TELEGRAM_API_BASE = "https://api.telegram.org"
+LINEAR_API_URL = "https://api.linear.app/graphql"
+# Email accounts are off unless "true"; see docs/self-host.md. ACCOUNTS_MAIL_FROM is the sender address on a domain onboarded to Cloudflare Email Service.
 ACCOUNTS_ENABLED = "false"
 
 [env.staging.observability]
@@ -93,6 +117,10 @@ class_name = "AgentDO"
 [[env.staging.durable_objects.bindings]]
 name = "SLACK_DO"
 class_name = "SlackWorkspaceDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "SINK_OUTBOX"
+class_name = "SinkOutboxDO"
 
 [[env.staging.send_email]]
 name = "EMAIL"

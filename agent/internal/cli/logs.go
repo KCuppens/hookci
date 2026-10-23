@@ -27,8 +27,9 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	follow := fs.Bool("f", false, "follow the logs until the run ends")
+	dirFlags := addStateDirFlags(fs, d)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: hookci [global flags] logs <run> [job|setup] [-f]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] logs <run> [job|setup] [-f] [--state-dir DIR | --installation ID]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Print the setup log and the job logs of a run in plan order, or one log.")
 		fs.PrintDefaults()
@@ -44,6 +45,11 @@ func cmdLogs(ctx context.Context, d Deps, args []string, stdout, stderr io.Write
 		fs.Usage()
 		return ExitUsage
 	}
+	stateDir, ok := dirFlags.resolve(stderr)
+	if !ok {
+		return ExitUsage
+	}
+	d.Globals.StateDir = stateDir
 	runID := pos[0]
 
 	db, err := openStateStore(d)

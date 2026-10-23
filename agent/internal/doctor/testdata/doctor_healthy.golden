@@ -1,0 +1,13 @@
+STATUS  CHECK              DETAIL
+pass    hookci binary      hookci dev
+pass    agent service      hookci-agent@42.service active
+pass    state directory    /var/lib/hookci is 0711 root
+pass    agent credential   agt_1 (installation 42)
+pass    job user           hookci-run exists
+pass    git                git version 2.39.2
+pass    disk space         10.0 GiB free on /var/lib/hookci
+pass    hub reachable      https://hub.test/healthz answered 200
+pass    hub                https://hub.test (self_hosted, version 1.4.0)
+pass    hub TLS            certificate valid until 2084-01-29
+pass    clock skew         0s from the hub
+pass    WebSocket upgrade  upgrade reached the hub (401 without credential)

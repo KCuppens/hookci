@@ -107,6 +107,58 @@ func TestPipeStepMarkers(t *testing.T) {
 	}
 }
 
+func TestPipeCapsLogFile(t *testing.T) {
+	runDir := t.TempDir()
+	var mirror bytes.Buffer
+	var steps []StepEvent
+	p, err := New(Options{RunDir: runDir, Job: "big", MaxBytes: 200, Mirror: &mirror, Now: stepClock(), OnStep: func(e StepEvent) { steps = append(steps, e) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Repeat("a", 39) + "\n" // 65 bytes on disk with its stamp
+	fmt.Fprint(p.Stdout(), line+line+"partial")
+	fmt.Fprint(p.Stdout(), "\n"+line+"::hookci step late\nlast\n")
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(LogPath(runDir, "big"))
+	if want := stamp(0) + line + stamp(1) + line + stamp(2) + "partial\n" + stamp(4) + truncationNote(200); string(data) != want {
+		t.Errorf("file = %q, want %q", data, want)
+	}
+	if !strings.HasSuffix(mirror.String(), "last\n") {
+		t.Errorf("mirror stopped at the file cap: %q", mirror.String())
+	}
+	if tail := p.Tail(); tail[len(tail)-1] != "last" {
+		t.Errorf("Tail ends %q, want last", tail[len(tail)-1])
+	}
+	if len(steps) != 1 || steps[0].Name != "late" {
+		t.Errorf("steps = %+v, want the marker past the cap", steps)
+	}
+}
+
+func TestPipeIgnoresStepMarkersPastMax(t *testing.T) {
+	runDir := t.TempDir()
+	var steps int
+	p, err := New(Options{RunDir: runDir, Job: "loop", Now: stepClock(), OnStep: func(StepEvent) { steps++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range MaxSteps + 7 {
+		fmt.Fprintf(p.Stdout(), "::hookci step s%d\n", i)
+	}
+	fmt.Fprint(p.Stdout(), "unterminated")
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if steps != MaxSteps {
+		t.Errorf("OnStep called %d times, want %d", steps, MaxSteps)
+	}
+	data, _ := os.ReadFile(LogPath(runDir, "loop"))
+	if want := fmt.Sprintf("%sunterminated\n%s[hookci: ignored 7 step markers past the first %d]\n", stamp(MaxSteps+7), stamp(MaxSteps+8), MaxSteps); !strings.HasSuffix(string(data), want) {
+		t.Errorf("log does not end with %q", want)
+	}
+}
+
 func TestCountStepMarkers(t *testing.T) {
 	script := "echo '::hookci step install'\nnpm ci\necho \"::hookci step build\"\nmake\nprintf '::hookci step test\\n'"
 	if got := CountStepMarkers(script); got != 3 {

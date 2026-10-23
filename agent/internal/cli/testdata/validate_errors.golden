@@ -1,12 +1,12 @@
 testdata/validate_errors.yml:3: error: checks.trust: trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network
-  fix: use trust: approve, or self-host the hub without deployments
+  fix: use trust: collaborators, or self-host the hub without deployments
 testdata/validate_errors.yml:7: error: checks.jobs.lint.needs[0]: cycle: lint -> test -> lint
   fix: remove one of these needs so the jobs can run in order
 testdata/validate_errors.yml:10: error: checks.jobs.test.needs[1]: unknown job "biuld"
   fix: known jobs: lint, test
 testdata/validate_errors.yml:20: error: deployments.production.health.url: health.url must point at 127.0.0.1 or localhost, got "example.com"
   fix: the check runs on the deploy host; point it at the local port, for example http://127.0.0.1:8000/health
-testdata/validate_errors.yml:20: error: deployments.production.health.url: {port} is only filled in by strategy: compose-bluegreen
-  fix: set strategy: compose-bluegreen, or use a fixed port
+testdata/validate_errors.yml:20: error: deployments.production.health.url: {port} is only filled in by the compose strategies
+  fix: use a fixed port, or a compose strategy
 testdata/validate_errors.yml:22: error: redact[0]: invalid pattern: missing closing ) in "(?i)token=(\\w+"
   fix: patterns use RE2 syntax: no lookaround or backreferences, and literal ( [ { . * + ? need a \ before them

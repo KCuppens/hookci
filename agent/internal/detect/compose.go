@@ -26,7 +26,7 @@ func detectCompose(fsys fs.FS) (*partial, error) {
 		if e.IsDir() || !isComposeFile(e.Name()) {
 			continue
 		}
-		data, err := fs.ReadFile(fsys, e.Name())
+		data, err := readFile(fsys, e.Name())
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", e.Name(), err)
 		}
@@ -40,10 +40,10 @@ func detectCompose(fsys fs.FS) (*partial, error) {
 		}
 		for _, name := range sortedKeys(doc.Services) {
 			image := strings.TrimSpace(doc.Services[name].Image)
-			if !strings.HasPrefix(image, "postgres") {
+			normalized, ok := postgresImage(image)
+			if !ok {
 				continue
 			}
-			normalized := postgresImage(image)
 			return &partial{
 				ecosystem: "compose",
 				services:  &config.ChecksServices{Postgres: &config.ChecksServicesPostgres{Image: normalized, Tmpfs: true}},
@@ -64,12 +64,18 @@ func isComposeFile(name string) bool {
 	return false
 }
 
-// postgresImage maps a bare major tag to its alpine variant (postgres:16 ->
-// postgres:16-alpine) and keeps every other image verbatim.
-func postgresImage(image string) string {
-	repo, tag, ok := strings.Cut(image, ":")
-	if !ok || tag == "" || strings.Trim(tag, "0123456789") != "" {
-		return image
+// postgresImage returns the service image for a compose image that is the
+// official postgres image, matched on its exact repository name. A bare major
+// tag maps to its alpine variant (postgres:16 -> postgres:16-alpine), no tag
+// means latest, and any other tag or digest is kept. ok is false for every
+// other image.
+func postgresImage(image string) (string, bool) {
+	_, tag, hasTag := strings.Cut(image, ":")
+	switch {
+	case !hasTag:
+		image += ":latest"
+	case tag != "" && strings.Trim(tag, "0123456789") == "":
+		image += "-alpine"
 	}
-	return repo + ":" + tag + "-alpine"
+	return image, config.OfficialPostgresImage(image)
 }

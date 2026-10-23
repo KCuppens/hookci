@@ -22,8 +22,9 @@ import (
 
 // TestKill9RecoveryIntegration runs `hookci run` on a sleeping job with a
 // postgres service under systemd, kills the agent with SIGKILL while the job
-// runs, then checks that Recover interrupts and requeues the run and leaves
-// no unit, namespace, pasta or service container behind.
+// runs, then checks that Recover interrupts the run without re-queueing it
+// (a local run has no trigger to retry for) and leaves no unit, namespace,
+// pasta or service container behind.
 func TestKill9RecoveryIntegration(t *testing.T) {
 	testutil.RequireIntegration(t)
 	for _, bin := range []string{"systemd-run", "docker"} {
@@ -107,15 +108,8 @@ func TestKill9RecoveryIntegration(t *testing.T) {
 	if !slices.Contains(rep.Interrupted, runID) || !slices.Contains(rep.UnitsStopped, unit) {
 		t.Fatalf("report = %+v, want run %s interrupted and unit %s stopped", rep, runID, unit)
 	}
-	if len(rep.Requeued) != 1 {
-		t.Fatalf("Requeued = %v, want one retry of run %s", rep.Requeued, runID)
-	}
-	retry, err := db.GetRun(ctx, rep.Requeued[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retry.State != store.RunQueued || retry.SHA != runs[0].SHA || retry.Attempt != runs[0].Attempt+1 {
-		t.Fatalf("retry = %s %s attempt %d, want queued %s attempt %d", retry.State, retry.SHA, retry.Attempt, runs[0].SHA, runs[0].Attempt+1)
+	if len(rep.Requeued) != 0 {
+		t.Fatalf("Requeued = %v, want no retry of local run %s", rep.Requeued, runID)
 	}
 
 	run, err := db.GetRun(ctx, runID)

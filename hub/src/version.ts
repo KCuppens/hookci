@@ -1,4 +1,8 @@
+import { PROTOCOL_MAX, PROTOCOL_MIN } from "./do/agent-protocol";
 import type { Env } from "./env";
+
+/** The agent protocol versions this hub speaks, oldest first: [N-1, N], never below 1. */
+export const PROTOCOL_VERSIONS: [number, number] = [PROTOCOL_MIN, PROTOCOL_MAX];
 
 /** Var naming the newest released agent version; agents older than it log an upgrade hint. */
 export const LATEST_AGENT_VERSION = "LATEST_AGENT_VERSION";

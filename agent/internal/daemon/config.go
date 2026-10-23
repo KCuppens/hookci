@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/detect"
 	"github.com/KCuppens/hookci/agent/internal/protocol"
@@ -32,8 +33,10 @@ type plan struct {
 	// slack is the trusted configuration's notify.slack block for the hub;
 	// nil when it has none.
 	slack *protocol.JobPlannedSlack
-	// legacy is set when the trusted configuration came from .zeroci.yml.
-	legacy bool
+	// policy is what the trusted .hookci.yml declares about forks, before
+	// the semantic checks judge it; nil when there is no file or it fails
+	// the schema.
+	policy *config.Policy
 }
 
 // resolvePlan picks the checks of co. A pull request (BaseDir set) runs the
@@ -41,22 +44,25 @@ type plan struct {
 // the agent or where Slack hears of it; its own .hookci.yml, when it
 // differs, is only validated. A base without a .hookci.yml falls back to
 // detection on the head tree, as does a push without one.
-func resolvePlan(co source.Checkout) (plan, error) {
+func resolvePlan(co source.Checkout, opts config.ParseOptions) (plan, error) {
 	trusted := co.Dir
 	if co.BaseDir != "" {
 		trusted = co.BaseDir
 	}
-	trustedData, legacy, err := readConfig(trusted)
+	trustedData, err := readConfig(trusted)
 	if err != nil {
 		return plan{}, err
 	}
-	p := plan{legacy: legacy}
+	var p plan
 	var cfg *config.Config
 	if trustedData != nil {
 		var diags config.Diagnostics
-		cfg, diags = config.Parse(trustedData, config.ParseOptions{})
+		cfg, diags = config.Parse(trustedData, opts)
 		if diags.HasErrors() {
 			p.invalid = diags
+		}
+		if policy, ok := config.DeclaredPolicy(trustedData); ok {
+			p.policy = &policy
 		}
 	} else {
 		det, err := detect.DetectDir(co.Dir)
@@ -77,12 +83,12 @@ func resolvePlan(co source.Checkout) (plan, error) {
 	if co.BaseDir == "" {
 		return p, nil
 	}
-	headData, _, err := readConfig(co.Dir)
+	headData, err := readConfig(co.Dir)
 	if err != nil {
 		return plan{}, err
 	}
 	if headData != nil && !bytes.Equal(headData, trustedData) {
-		_, diags := config.Parse(headData, config.ParseOptions{})
+		_, diags := config.Parse(headData, opts)
 		p.head = &diags
 	}
 	return p, nil
@@ -107,17 +113,16 @@ func slackOverride(cfg *config.Config) *protocol.JobPlannedSlack {
 	return out
 }
 
-// readConfig returns dir's .hookci.yml, or .zeroci.yml when that is all it
-// has, or nil when it has neither. legacy reports the fallback.
-func readConfig(dir string) (data []byte, legacy bool, err error) {
-	data, name, err := compat.ReadConfig(dir)
+// readConfig returns dir's .hookci.yml, or nil when it has none.
+func readConfig(dir string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(dir, ConfigFile))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("daemon: read %s: %w", name, err)
+		return nil, fmt.Errorf("daemon: read %s: %w", ConfigFile, err)
 	}
-	return data, name == compat.LegacyConfigFile, nil
+	return data, nil
 }
 
 // annotations turns diagnostics into .hookci.yml annotations.

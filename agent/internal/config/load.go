@@ -21,7 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const schemaURL = "https://hookci.com/hookci.schema.json"
+const schemaURL = "https://ci.hookci.com/schema/hookci.schema.json"
 
 // Config is a parsed .hookci.yml: the generated root type plus the resolved
 // view of the checks that Parse builds once the file is valid.
@@ -88,23 +88,39 @@ func FromRoot(root HookCIConfig) (*Config, Diagnostics) {
 	return build(raw, lineIndex{}, ParseOptions{})
 }
 
+// Policy is the fork policy a configuration declares.
+type Policy struct {
+	Trust          ChecksTrust
+	HasDeployments bool
+}
+
+// DeclaredPolicy reads the policy of a configuration that passes the schema.
+// Unlike Parse it skips the semantic checks, which refuse trust: all, so the
+// agent can record what a repository asks for. ok is false when the file
+// does not decode or fails the schema.
+func DeclaredPolicy(data []byte) (p Policy, ok bool) {
+	raw, lines, diags := decodeYAML(data)
+	if diags.HasErrors() {
+		return Policy{}, false
+	}
+	var root HookCIConfig
+	if decodeRoot(raw, lines, &root).HasErrors() {
+		return Policy{}, false
+	}
+	p = Policy{Trust: ChecksTrustCollaborators, HasDeployments: len(root.Deployments) > 0}
+	if root.Checks != nil {
+		p.Trust = root.Checks.Trust
+	}
+	return p, true
+}
+
 // build validates a decoded document and turns it into a Config with its
 // resolved checks.
 func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
-	if diags := validateSchema(raw, lines); diags.HasErrors() {
-		diags.sort()
+	var cfg Config
+	if diags := decodeRoot(raw, lines, &cfg.HookCIConfig); diags.HasErrors() {
 		return nil, diags
 	}
-
-	var cfg Config
-	encoded, err := json.Marshal(raw)
-	if err == nil {
-		err = json.Unmarshal(encoded, &cfg.HookCIConfig)
-	}
-	if err != nil {
-		return nil, Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
-	}
-
 	diags := checkSemantics(&cfg.HookCIConfig, opts, lines)
 	diags.sort()
 	if diags.HasErrors() {
@@ -112,6 +128,24 @@ func build(raw any, lines lineIndex, opts ParseOptions) (*Config, Diagnostics) {
 	}
 	cfg.checks = resolveChecks(&cfg.HookCIConfig, raw)
 	return &cfg, diags
+}
+
+// decodeRoot schema-validates a decoded document and decodes it into root
+// with deployment defaults filled in. Only errors come back.
+func decodeRoot(raw any, lines lineIndex, root *HookCIConfig) Diagnostics {
+	if diags := validateSchema(raw, lines); diags.HasErrors() {
+		diags.sort()
+		return diags
+	}
+	encoded, err := json.Marshal(raw)
+	if err == nil {
+		err = json.Unmarshal(encoded, root)
+	}
+	if err != nil {
+		return Diagnostics{{Message: fmt.Sprintf("cannot decode configuration: %v", err), Severity: SeverityError}}
+	}
+	fillDeploymentDefaults(root)
+	return nil
 }
 
 // Limits on what one document may expand to, so alias cycles and alias
@@ -511,14 +545,12 @@ func nameDiagnostic(parent, name string, li lineIndex) Diagnostic {
 
 var egressPathRe = regexp.MustCompile(`^checks\.egress\[[0-9]+\]$`)
 
-// patternProblem explains a failed pattern. Egress entries, env_file, memory
-// and durations get specific wording; anything else names the pattern.
+// patternProblem explains a failed pattern. Egress entries, memory and
+// durations get specific wording; anything else names the pattern.
 func patternProblem(path, got, want string) (msg, fix string) {
 	switch {
 	case egressPathRe.MatchString(path):
 		return egressProblem(got)
-	case strings.HasPrefix(path, "deployments.") && strings.HasSuffix(path, ".env_file"):
-		return fmt.Sprintf("env_file %s must be an absolute path", quote(got)), "use a path that starts with /, for example /etc/hookci/production.env"
 	case strings.HasSuffix(path, ".memory"):
 		return fmt.Sprintf("%s is not a memory size", quote(got)), "use a number with a K, M or G suffix, for example 4G or 512M"
 	case strings.HasSuffix(path, ".timeout"):

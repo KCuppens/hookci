@@ -5,6 +5,7 @@ import { FLUSH_INTERVAL_MS } from "../../src/checks/coalesce";
 import { getCheckRun } from "../../src/db/check-runs";
 import { upsertInstallation } from "../../src/db/installations";
 import { tenantDb } from "../../src/db/tenant";
+import { stableLogLink } from "../../src/logs/links";
 import { AGGREGATE_CHECK, type ChecksSink, checksSinkFactory } from "../../src/sinks/checks";
 import type { Annotation, JobView, RunView } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -76,7 +77,7 @@ function checkCalls(): Record<string, unknown>[] {
 /** Runs fn with the ChecksSink an AgentDO's fan-out builds: coalesced, with the DO's storage and clock. */
 async function inAgent(agent: Agent, fn: (sink: ChecksSink) => Promise<void>): Promise<void> {
   await runInDurableObject(agent.stub, (dob) =>
-    fn(checksSinkFactory(dob.bindings, INSTALLATION, { storage: dob.state.storage, now: () => dob.clock.now() })),
+    fn(checksSinkFactory(dob.bindings, INSTALLATION, { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() })),
   );
 }
 
@@ -168,6 +169,54 @@ describe("ChecksSink", () => {
     testClock.advance(FLUSH_INTERVAL_MS);
     expect(await runDurableObjectAlarm(agent.stub)).toBe(true);
     expect(checkCalls().map((c) => c.title)).toEqual(["Running: compile", "Running: unit"]);
+  });
+
+  it("an alarm flush that lands behind the run's completed update does not overwrite it", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    let release = () => {};
+    let entered = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const patching = new Promise<void>((resolve) => (entered = resolve));
+    await inAgent(agent, async (sink) => {
+      const run = runView({ jobs: PLANNED });
+      await sink.onJobPlanned(run);
+      await sink.onRunUpdate(run);
+      await sink.onRunUpdate(runView({ jobs: [{ name: "lint", state: "running" }, ...PLANNED.slice(1)] }));
+      gh.calls.length = 0;
+      gh.respond("PATCH", "/repos/:owner/:repo/check-runs/102", async (req) => {
+        entered();
+        await held;
+        return Response.json({ id: 102, ...fields(req.body) });
+      });
+      const job = sink.onJobUpdate(run, { name: "test", state: "running", step: "unit", stepIndex: 0, stepsTotal: 1 });
+      await patching;
+      const done = sink.onRunUpdate(runView({ state: "failed", jobs: [{ name: "lint", state: "success" }, { name: "test", state: "failed" }] }));
+      testClock.advance(FLUSH_INTERVAL_MS);
+      const flushed = sink.flush();
+      release();
+      await Promise.all([job, done, flushed]);
+    });
+    expect(checkCalls().filter((c) => c.id === 100)).toEqual([expect.objectContaining({ method: "PATCH", status: "completed", conclusion: "failure" })]);
+  });
+
+  it("points each check's Details at its job's stable log link and the aggregate's at the failed job's", async () => {
+    const lint: JobView = { name: "lint", state: "success", logLink: stableLogLink(env, "run_1", "lint") };
+    const test: JobView = { name: "test", state: "failed", logLink: stableLogLink(env, "run_1", "test") };
+    const agent = await seedAgent(INSTALLATION);
+    await inAgent(agent, async (sink) => {
+      await sink.onJobPlanned(runView({ jobs: PLANNED }));
+      gh.calls.length = 0;
+      await sink.onJobUpdate(runView({ jobs: [lint, test] }), lint);
+      await sink.onJobUpdate(runView({ jobs: [lint, test] }), test);
+      await sink.onRunUpdate(runView({ state: "failed", jobs: [lint, test] }));
+    });
+    const details = gh.calls
+      .filter((call) => call.method === "PATCH")
+      .map((call) => [Number(/\/(\d+)$/.exec(new URL(call.url).pathname)?.[1]), fields(call.body).details_url]);
+    expect(details).toContainEqual([101, stableLogLink(env, "run_1", "lint")]);
+    expect(details).toContainEqual([102, stableLogLink(env, "run_1", "test")]);
+    expect(details).toContainEqual([100, stableLogLink(env, "run_1", "test")]);
+    expect(JSON.stringify(gh.calls.map((call) => call.body))).not.toContain("/logs/view");
   });
 
   it("120 annotations go out as 3 updates of at most 50, each with the title", async () => {

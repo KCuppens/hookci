@@ -18,7 +18,8 @@ import (
 
 // TestInstallerThenDoctor runs the real installer on a disposable VM (root,
 // systemd, network) and checks the host it leaves behind.
-// HOOKCI_INSTALL_VERSION picks the release to install.
+// HOOKCI_INSTALL_VERSION picks the release to install. The installer needs
+// cosign on PATH, or HOOKCI_ALLOW_UNSIGNED=1 in the environment.
 func TestInstallerThenDoctor(t *testing.T) {
 	testutil.RequireIntegration(t)
 	if os.Geteuid() != 0 {
@@ -41,7 +42,7 @@ func TestInstallerThenDoctor(t *testing.T) {
 
 	env := Env{
 		StateRoot: "/var/lib/hookci",
-		HubOrigin: "https://ci.webuno.io",
+		HubOrigin: "https://ci.hookci.com",
 		HTTP:      &http.Client{},
 		Clock:     clock.Real{},
 		Exec:      execx.OS{},

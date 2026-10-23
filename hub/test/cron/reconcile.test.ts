@@ -11,7 +11,7 @@ import type { Env } from "../../src/env";
 import { ulid } from "../../src/ulid";
 import type { TriggerRequest } from "../../src/webhook/route";
 import { clearTables } from "../db/helpers";
-import { createFakeGitHub, type FakeBranchHead, serveBranchHeads, serveInstallationTokens } from "../fakes/github";
+import { createFakeGitHub, type FakeBranchHead, serveBranchHeads, serveInstallationTokens, serveRepoFiles } from "../fakes/github";
 import type { FakeService } from "../fakes/http";
 import { generateAppKey } from "../github/helpers";
 
@@ -76,6 +76,7 @@ beforeEach(async () => {
   gh = createFakeGitHub();
   doCalls = [];
   serveInstallationTokens(gh, NOW);
+  serveRepoFiles(gh, {});
   testEnv = { ...env, AGENT_DO: fakeAgentDOs(), __TEST_FETCHER: gh.fetcher, GITHUB_APP_PRIVATE_KEY: pem, __TEST_CLOCK: { now: () => NOW } };
   await addInstallation(INSTALLATION);
 });
@@ -138,6 +139,20 @@ describe("reconcileDefaultBranches", () => {
     ]);
     const events = logs.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>).filter((l) => l.event === "reconcile_synthesized");
     expect(events).toEqual([expect.objectContaining({ installation_id: INSTALLATION, repo_id: 1, sha: "sha-missed", outcome: "dispatched" })]);
+  });
+
+  it.each([
+    ["its config does not want", "checks:\n  on:\n    push:\n      branches: [release]\n"],
+    ["without a .hookci.yml", null],
+  ])("neither counts nor logs a head %s", async (_, config) => {
+    await addRepos(INSTALLATION, [1]);
+    serveBranchHeads(gh, { "org42/r1": { sha: "sha-1", committedAt: NOW - 30 * MINUTE } });
+    serveRepoFiles(gh, { "org42/r1@sha-1:.hookci.yml": config });
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(await reconcileDefaultBranches(testEnv, NOW)).toEqual({ checked: 1, synthesized: 0 });
+    expect(doCalls).toEqual([]);
+    expect(logs.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>).filter((l) => l.event === "reconcile_synthesized")).toEqual([]);
   });
 
   it("reports a repo whose branch lookup fails and goes on with the next", async () => {

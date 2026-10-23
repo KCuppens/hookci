@@ -20,11 +20,7 @@ mkbin() {
 }
 mkdir -p "$work/tmp" "$work/home" "$work/cwd"
 bin="$work/bin"
-if command -v curl >/dev/null 2>&1; then
-	mkbin "$bin" curl
-else
-	mkbin "$bin" wget
-fi
+mkbin "$bin" curl
 
 failures=0
 fail() {
@@ -32,18 +28,20 @@ fail() {
 	failures=$((failures + 1))
 }
 
-# install BASE [ENV...] runs $installer with the tools in $path and sets $code
-# and $out.
+# install BASE [ENV...] runs $installer with the tools in $path and the
+# argument in $arg, if any, and sets $code and $out. Runs allow an unsigned
+# install unless they pass HOOKCI_ALLOW_UNSIGNED=.
 path=$bin
 installer=$script
+arg=
 install() {
 	base=$1
 	shift
 	set +e
 	out=$(cd "$work/cwd" && env -i PATH="$path" HOME="$work/home" TMPDIR="$work/tmp" \
-		HOOKCI_INSTALL_DRY_RUN=1 HOOKCI_VERSION=v0.0.0-test HOOKCI_TEST_UNAME_M=x86_64 HOOKCI_TEST_SYSTEMD_DIR="$work/units" \
-		HOOKCI_RELEASE_BASE="file://$fixtures/$base" HOOKCI_PREFIX="$work/prefix" \
-		"$@" sh "$installer" 2>&1)
+		HOOKCI_INSTALL_DRY_RUN=1 HOOKCI_VERSION=v0.0.0-test HOOKCI_TEST_UNAME_M=x86_64 \
+		HOOKCI_RELEASE_BASE="file://$fixtures/$base" HOOKCI_PREFIX="$work/prefix" HOOKCI_ALLOW_UNSIGNED=1 \
+		"$@" sh "$installer" ${arg:+"$arg"} 2>&1)
 	code=$?
 	set -e
 }
@@ -63,10 +61,13 @@ $out" ;;
 
 install good
 expect_code 0 "good checksums"
-for step in "useradd --system" "hookci.slice" "hookci-agent@.service" "systemctl daemon-reload" "sudo hookci connect <pair-token>"; do
+for step in "useradd --system" "hookci.slice" "hookci-agent@.service" "systemctl daemon-reload" "sudo hookci connect --hub __HUB_ORIGIN__ <pair-token>"; do
 	expect_out "$step" "dry-run plan"
 done
-expect_out "cosign not found: checksum verified, signature not verified" "no cosign"
+expect_out "cosign not found and HOOKCI_ALLOW_UNSIGNED=1: checksum verified, signature not verified" "unsigned allowed"
+case $out in
+*"hookci connect --hub __HUB_ORIGIN__ hci_pair_"*) fail "paired without a pair token: $out" ;;
+esac
 expect_out "+ " "dry-run prefix"
 expect_out "ExecStart=$work/prefix/bin/hookci agent --installation %i" "unit runs the binary under HOOKCI_PREFIX"
 expect_out "RestartPreventExitStatus=3 4" "unit stays down when revoked or too old"
@@ -75,22 +76,42 @@ if [ -n "$left" ] || [ -e "$work/prefix" ]; then
 	fail "dry run left files outside its mktemp -d: $left"
 fi
 case $out in
-*zeroci* | *MIGRATING*) fail "no legacy install, yet the installer mentioned zeroci: $out" ;;
+*"usermod -aG docker hookci-deploy"*) fail "added hookci-deploy to a docker group the host lacks: $out" ;;
 esac
 
-# A host with a ZeroCI unit gets a zeroci symlink to the new binary and one notice.
-mkdir -p "$work/legacy-units"
-: >"$work/legacy-units/zeroci-agent@.service"
-install good HOOKCI_TEST_SYSTEMD_DIR="$work/legacy-units"
-expect_code 0 "legacy unit"
-expect_out "ln -sf hookci $work/prefix/bin/zeroci" "legacy unit symlink"
-expect_out "https://github.com/KCuppens/hookci/blob/main/MIGRATING.md" "legacy unit notice"
+# With a docker group, hookci-deploy joins it; the installer never creates it.
+printf '#!/bin/sh\n[ "$1 $2" = "group docker" ]\n' >"$bin/getent"
+chmod +x "$bin/getent"
+install good
+expect_code 0 "docker group"
+expect_out "usermod -aG docker hookci-deploy" "deploy user joins the docker group"
+case $out in
+*groupadd*) fail "installer created a group: $out" ;;
+esac
+rm "$bin/getent"
 
-# The ZEROCI_ spellings still drive the installer.
-out=$(cd "$work/cwd" && env -i PATH="$path" HOME="$work/home" TMPDIR="$work/tmp" \
-	ZEROCI_INSTALL_DRY_RUN=1 ZEROCI_VERSION=v0.0.0-test HOOKCI_TEST_UNAME_M=x86_64 HOOKCI_TEST_SYSTEMD_DIR="$work/units" \
-	ZEROCI_RELEASE_BASE="file://$fixtures/good" ZEROCI_PREFIX="$work/prefix" sh "$script" 2>&1) || fail "ZEROCI_ env: exit $?: $out"
-expect_out "ExecStart=$work/prefix/bin/hookci agent --installation %i" "ZEROCI_ env"
+# Without cosign the installer refuses unless the user allows an unsigned install.
+install good HOOKCI_ALLOW_UNSIGNED=
+expect_code 4 "no cosign"
+expect_out "cosign not found: install cosign" "no cosign"
+case $out in
+*"+ "*) fail "unsigned install ran privileged steps: $out" ;;
+esac
+
+# A pair token argument pairs the machine after the install.
+arg=hci_pair_Test-token_1
+install good
+expect_code 0 "pair token"
+expect_out "$work/prefix/bin/hookci connect --hub __HUB_ORIGIN__ hci_pair_Test-token_1" "pair token"
+case $out in
+*"<pair-token>"*) fail "pair token run still prints the manual connect hint: $out" ;;
+esac
+for arg in --force "hci_pair_a;b" hci_pair_ "ghp_x"; do
+	install good
+	expect_code 1 "argument $arg"
+	expect_out "the argument must be a pair token" "argument $arg"
+done
+arg=
 
 install bad
 expect_code 3 "bad checksums"
@@ -105,20 +126,18 @@ for prefix in relative/prefix "/opt/zero ci" '/opt/$HOME' '/opt/%i'; do
 	expect_out "HOOKCI_PREFIX" "HOOKCI_PREFIX=$prefix"
 done
 
-# Downloads refuse plain http whichever downloader is present.
-for downloader in curl wget; do
-	command -v "$downloader" >/dev/null 2>&1 || continue
-	path="$work/bin-$downloader"
-	mkbin "$path" "$downloader"
-	install good HOOKCI_RELEASE_BASE=http://127.0.0.1:1/download
-	expect_code 1 "$downloader over http"
-	expect_out "refusing to download http://127.0.0.1:1/download/" "$downloader over http"
+# Downloads refuse plain http, also through a redirect, so the installer needs
+# curl: wget follows a redirect from https to http.
+install good HOOKCI_RELEASE_BASE=http://127.0.0.1:1/download
+expect_code 1 "curl over http"
+expect_out "refusing to download http://127.0.0.1:1/download/" "curl over http"
+if command -v wget >/dev/null 2>&1; then
+	path="$work/bin-wget"
+	mkbin "$path" wget
+	install good
+	expect_code 1 "wget only"
+	expect_out "need curl" "wget only"
 	path=$bin
-done
-if command -v curl >/dev/null 2>&1; then
-	install good HOOKCI_VERSION=latest HOOKCI_RELEASE_BASE=http://127.0.0.1:1/download
-	expect_code 1 "latest over http"
-	expect_out 'Protocol "http"' "latest over http"
 fi
 
 # A download cut off inside the script runs none of it.

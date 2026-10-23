@@ -1,12 +1,14 @@
 // Package detect infers a check configuration from the files at a
-// repository root. It reads only the root (workspace globs are kept as
-// literal strings, never expanded), never parses lockfile contents, never
-// installs toolchains and never proposes deployments.
+// repository root. It reads only the root and the directories that workspace
+// globs match, never follows symlinks, caps every file read at maxFileSize,
+// never parses lockfile contents, never installs toolchains and never
+// proposes deployments.
 package detect
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"sort"
@@ -98,27 +100,61 @@ func Detect(fsys fs.FS) (*Result, error) {
 	return &Result{Config: cfg, Notes: notes, Sources: uniqueSorted(sources)}, nil
 }
 
-// DetectDir is a convenience wrapper: Detect(os.DirFS(dir)).
+// DetectDir runs Detect on dir through an os.Root, so no path can resolve
+// outside dir.
 func DetectDir(dir string) (*Result, error) {
-	return Detect(os.DirFS(dir))
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return Detect(root.FS())
 }
 
-// exists reports whether name exists at the root of fsys.
+// maxFileSize caps every file detection reads.
+const maxFileSize = 1 << 20
+
+// exists reports whether name exists in fsys and is not a symlink.
 func exists(fsys fs.FS, name string) bool {
-	_, err := fs.Stat(fsys, name)
-	return err == nil
+	info, err := fs.Lstat(fsys, name)
+	return err == nil && info.Mode()&fs.ModeSymlink == 0
 }
 
-// isDir reports whether name is a directory at the root of fsys.
+// isDir reports whether name is a directory in fsys, not a symlink to one.
 func isDir(fsys fs.FS, name string) bool {
-	info, err := fs.Stat(fsys, name)
+	info, err := fs.Lstat(fsys, name)
 	return err == nil && info.IsDir()
+}
+
+// readFile reads name, refusing symlinks, anything other than a regular file
+// and files larger than maxFileSize.
+func readFile(fsys fs.FS, name string) ([]byte, error) {
+	info, err := fs.Lstat(fsys, name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file (%s); symlinks are not followed", info.Mode().Type())
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileSize {
+		return nil, fmt.Errorf("larger than %d bytes", maxFileSize)
+	}
+	return data, nil
 }
 
 // readOptional returns the file contents, or nil and no error when the file
 // does not exist.
 func readOptional(fsys fs.FS, name string) ([]byte, error) {
-	data, err := fs.ReadFile(fsys, name)
+	data, err := readFile(fsys, name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

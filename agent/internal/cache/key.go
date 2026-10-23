@@ -18,6 +18,7 @@ import (
 // Key identifies one snapshot.
 type Key struct {
 	TrustDomain string   `json:"trust_domain"` // "trusted:<repo>" or "untrusted:<repo>"; local runs use source.LocalStorageRepo for <repo>
+	Scope       string   `json:"scope"`        // branch the entry belongs to; a run saves only under its own branch
 	Platform    string   `json:"platform"`     // runtime.GOOS + "-" + runtime.GOARCH
 	FileHashes  []string `json:"file_hashes"`  // "<relpath>:<sha256 hex>" for every key file, sorted
 	Paths       []string `json:"paths"`        // cleaned relative cache paths, sorted
@@ -25,7 +26,7 @@ type Key struct {
 }
 
 // ComputeKey hashes key files relative to workdir. Missing key files hash as "<relpath>:missing".
-func ComputeKey(trustDomain, platform, workdir string, keyFiles, paths []string) (Key, error) {
+func ComputeKey(trustDomain, scope, platform, workdir string, keyFiles, paths []string) (Key, error) {
 	if _, err := domainDir(trustDomain); err != nil {
 		return Key{}, err
 	}
@@ -60,9 +61,17 @@ func ComputeKey(trustDomain, platform, workdir string, keyFiles, paths []string)
 			hashes = append(hashes, f+":"+hex.EncodeToString(sum[:]))
 		}
 	}
-	k := Key{TrustDomain: trustDomain, Platform: platform, FileHashes: hashes, Paths: cleanPaths}
+	k := Key{TrustDomain: trustDomain, Scope: scope, Platform: platform, FileHashes: hashes, Paths: cleanPaths}
 	k.Hash = k.sum()
 	return k, nil
+}
+
+// InScope returns k under scope with its hash recomputed, so one run can
+// look up the same lockfile in several branches without rehashing files.
+func (k Key) InScope(scope string) Key {
+	k.Scope = scope
+	k.Hash = k.sum()
+	return k
 }
 
 // sum is the hex sha256 of the key fields. Every field is prefixed with its
@@ -79,6 +88,7 @@ func (k Key) sum() string {
 		h.Write([]byte(s))
 	}
 	field(k.TrustDomain)
+	field(k.Scope)
 	field(k.Platform)
 	for _, list := range [][]string{k.FileHashes, k.Paths} {
 		put(len(list))

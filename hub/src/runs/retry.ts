@@ -10,8 +10,11 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { gateForkRun } from "../forks/gate";
+import { isForkPr } from "../forks/policy";
 import { getPull } from "../github/api";
 import type { GitHubClient } from "../github/client";
+import { reportError } from "../observability";
+import { fetchRepoConfig, triggerConfigRef } from "../policy/repo-config";
 import { loadRunView } from "../sinks/runview";
 import type { ResolvedRepo } from "../slack/resolve";
 import type { TriggerRequest } from "../webhook/route";
@@ -46,7 +49,7 @@ async function rebuildTrigger(gh: GitHubClient, repo: ResolvedRepo, run: RunRow,
 	const fork = headRepoFullName.toLowerCase() !== repo.fullName.toLowerCase();
 	return {
 		...base,
-		pr: { number: pull.number, headRef: pull.head.ref, headRepoFullName, fork, authorLogin: pull.user.login },
+		pr: { number: pull.number, headRef: pull.head.ref, baseRef: pull.base.ref, headRepoFullName, fork, authorLogin: pull.user.login },
 		baseSha: pull.base.sha,
 		trust: fork ? "untrusted" : "trusted",
 	};
@@ -65,7 +68,8 @@ export async function retryRun(env: Env, gh: GitHubClient, repo: ResolvedRepo, r
 	const binding = await getBinding(t, repo.repoId, target);
 	if (!binding) return { kind: "no_agent", target };
 	const trigger = await rebuildTrigger(gh, repo, run, target);
-	const gate = await gateForkRun(env, trigger, binding.agent_id);
+	const baseConfig = isForkPr(trigger.pr) ? await fetchRepoConfig(env, repo.installationId, repo.fullName, triggerConfigRef(trigger)) : null;
+	const gate = await gateForkRun(env, trigger, binding.agent_id, baseConfig);
 	if (gate.gated) return { kind: gate.reason === "fork_never" ? "fork_never" : "gated" };
 	const res = await env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id)).fetch("https://do/trigger", {
 		method: "POST",
@@ -75,7 +79,13 @@ export async function retryRun(env: Env, gh: GitHubClient, repo: ResolvedRepo, r
 	if (!res.ok) throw new HubError("agent_do_failed", 502, `trigger for ${binding.agent_id} answered ${res.status}`);
 	const answer = await res.json<{ trigger_id?: string; duplicate?: boolean }>();
 	if (answer.duplicate || !answer.trigger_id) return { kind: "duplicate" };
-	if (!(await agentOnline(env, binding.agent_id))) return { kind: "offline" };
-	const view = await loadRunView(env.DB, repo.installationId, { triggerId: answer.trigger_id });
-	return { kind: "retried", state: view?.state ?? "received" };
+	// The attempt is queued from here on, so a failed lookup only loses its current state.
+	try {
+		if (!(await agentOnline(env, binding.agent_id))) return { kind: "offline" };
+		const view = await loadRunView(env, repo.installationId, { triggerId: answer.trigger_id });
+		return { kind: "retried", state: view?.state ?? "received" };
+	} catch (err) {
+		reportError(err, { installation_id: repo.installationId, op: "retry" });
+		return { kind: "retried", state: "received" };
+	}
 }

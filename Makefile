@@ -20,9 +20,11 @@ agent:
 	cd agent && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../dist/hookci-darwin-arm64 ./cmd/hookci
 
 # Runs tests tagged "integration" against real external resources. Intended
-# to run on a human-operated VM, never in CI, never unattended.
+# to run on a human-operated VM, never in CI, never unattended. -p 1: the
+# suites share the host's systemd units and docker, so packages run one at a
+# time. The M2 deploy suite alone takes about 20 minutes.
 test-integration:
-	cd agent && HOOKCI_INTEGRATION=1 go test -tags integration -count=1 ./...
+	cd agent && HOOKCI_INTEGRATION=1 go test -tags integration -count=1 -p 1 -timeout 90m ./...
 
 hub-test:
 	cd hub && npm test

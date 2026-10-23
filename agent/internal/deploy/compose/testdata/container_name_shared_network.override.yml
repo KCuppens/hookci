@@ -1,0 +1,12 @@
+networks:
+  caddy:
+    external: true
+services:
+  web:
+    container_name: !reset null
+    image: myapp:def5678
+    networks:
+      caddy: {}
+      default: {}
+    ports: !override
+      - "127.0.0.1:3104:8000"

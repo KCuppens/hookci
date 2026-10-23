@@ -1,25 +1,29 @@
 import { getRedeliveryCursor, setRedeliveryCursor } from "../db/cron-state";
-import { deliveryStatuses } from "../db/deliveries";
+import { countRedelivery, deliveryStatuses, redeliveryAttempts } from "../db/deliveries";
 import type { Env } from "../env";
 import { listHookDeliveries, redeliverHook } from "../github/api";
 import type { GitHubRequester } from "../github/client";
-import { reportError } from "../observability";
+import { logEvent, reportError } from "../observability";
 
 /** GitHub lists deliveries of the last few days; older ones are not worth sending again. */
 const LOOKBACK_MS = 72 * 60 * 60 * 1000;
 /** Redelivery requests per tick, so an outage's backlog cannot flood the hub at once. */
 const MAX_REDELIVERIES = 50;
+/** Redelivery requests per guid, so a delivery that fails every time is not sent again forever. */
+const MAX_REDELIVERIES_PER_GUID = 5;
 
 /**
  * Asks GitHub to send again the webhook deliveries the hub failed to accept
  * (app is the app requester). It pages /app/hook/deliveries newest first down
  * to the redelivery cursor or LOOKBACK_MS ago. A guid is redelivered when the
  * hub recorded it as failed (it answered 202 and then its handler threw, so
- * GitHub saw success), or when its newest attempt failed and the hub has not
- * recorded it as processed or dropped. The cursor moves to the newest id seen,
- * unless MAX_REDELIVERIES ran out or a redelivery request failed: then it
- * stays, and the next tick scans the same range again, where the redelivered
- * guids show as handled.
+ * GitHub saw success) or as pending past PENDING_STALE_MS (its handler was cut
+ * off), or when its newest attempt failed and the hub has not recorded it. A
+ * guid already redelivered MAX_REDELIVERIES_PER_GUID times is given up on. The
+ * cursor moves to the newest id seen, unless MAX_REDELIVERIES ran out or a
+ * redelivery request failed: then it stays, and the next tick scans the same
+ * range again, where the redelivered guids show as handled or count against
+ * their cap.
  */
 export async function redeliverFailed(env: Env, app: GitHubRequester, now: number): Promise<{ scanned: number; redelivered: number }> {
 	const cursor = await getRedeliveryCursor(env.DB);
@@ -48,13 +52,23 @@ export async function redeliverFailed(env: Env, app: GitHubRequester, now: numbe
 		const statuses = await deliveryStatuses(
 			env.DB,
 			newest.map((d) => d.guid),
+			now,
 		);
 		const failed = newest.filter((d) => {
 			const status = statuses.get(d.guid);
 			if (status === "failed") return true;
 			return status === undefined && (d.status_code >= 500 || d.status !== "OK");
 		});
+		const attempts = await redeliveryAttempts(
+			env.DB,
+			failed.map((d) => d.guid),
+		);
 		for (const d of failed) {
+			const tries = attempts.get(d.guid) ?? 0;
+			if (tries >= MAX_REDELIVERIES_PER_GUID) {
+				logEvent("redelivery_abandoned", { delivery_id: d.guid, attempts: tries });
+				continue;
+			}
 			if (attempted === MAX_REDELIVERIES) {
 				leftOver = true;
 				break scan;
@@ -62,6 +76,7 @@ export async function redeliverFailed(env: Env, app: GitHubRequester, now: numbe
 			attempted++;
 			try {
 				await redeliverHook(app, d.id);
+				await countRedelivery(env.DB, d.guid, now);
 				redelivered++;
 			} catch (err) {
 				leftOver = true;

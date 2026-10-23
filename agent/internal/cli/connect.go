@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,23 +19,23 @@ import (
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/hubclient"
+	"github.com/KCuppens/hookci/agent/internal/protocol"
 	"github.com/KCuppens/hookci/agent/internal/redact"
 	"github.com/KCuppens/hookci/agent/internal/systemd"
 	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 const (
-	defaultHubURL      = "https://ci.webuno.io"
+	defaultHubURL      = "https://ci.hookci.com"
+	defaultStateRoot   = "/var/lib/hookci"
 	redeemTimeout      = 30 * time.Second
 	handshakeTimeout   = 15 * time.Second
 	maxRedeemRespBytes = 1 << 20
+	// pairTokenEnv holds the pair token when connect gets no argument.
+	pairTokenEnv = "HOOKCI_PAIR_TOKEN"
+	connectUsage = "usage: hookci connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]"
 )
-
-// stateRoot is the machine-wide state root, /var/lib/hookci unless only the
-// legacy /var/lib/zeroci exists.
-func stateRoot() string { return compat.StateRoot() }
 
 // redeemRequest is the body of POST /v1/pair/redeem.
 type redeemRequest struct {
@@ -61,16 +62,18 @@ type redeemResponse struct {
 func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	hub := fs.String("hub", defaultHubURL, "hub base URL")
+	hub := fs.String("hub", "", "hub base URL (default $HOOKCI_HUB_URL, else "+defaultHubURL+")")
 	name := fs.String("name", "", "agent name shown in Slack (default the hostname)")
-	stateDir := fs.String("state-dir", "", "agent state directory (default $HOOKCI_STATE_DIR or "+stateRoot()+"/<installation_id>)")
+	stateDir := fs.String("state-dir", "", "agent state directory (default $HOOKCI_STATE_DIR or "+d.StateRoot+"/<installation_id>)")
 	force := fs.Bool("force", false, "replace an agent already configured in the state directory")
 	noService := fs.Bool("no-service", false, "do not enable and start the hookci-agent@<installation_id> systemd unit")
 	fs.Usage = func() {
-		fmt.Fprintln(stdout, "Usage: hookci connect <pair-token> [flags]")
+		fmt.Fprintln(stdout, "Usage: hookci connect [pair-token] [flags]")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Pair this machine with the hub using a pair token from Slack App Home,")
-		fmt.Fprintln(stdout, "save the agent credential and check that the hub accepts it.")
+		fmt.Fprintln(stdout, "save the agent credential and check that the hub accepts it. Without a")
+		fmt.Fprintln(stdout, "pair-token argument the token comes from $"+pairTokenEnv+", else one line")
+		fmt.Fprintln(stdout, "on stdin, which keeps it out of the process list and shell history.")
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "Flags:")
 		fs.SetOutput(stdout)
@@ -83,11 +86,21 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	if err != nil {
 		return ExitUsage
 	}
-	if len(pos) != 1 || pos[0] == "" {
-		fmt.Fprintln(stderr, "usage: hookci connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]")
+	if len(pos) > 1 || (len(pos) == 1 && pos[0] == "") {
+		fmt.Fprintln(stderr, connectUsage)
 		return ExitUsage
 	}
-	pairToken := pos[0]
+	var pairToken string
+	if len(pos) == 1 {
+		pairToken = pos[0]
+	} else if pairToken, err = readSecret(pairTokenEnv, "Pair token", d.Stdin, stderr); err != nil {
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
+		return ExitRunFailed
+	}
+	if pairToken == "" {
+		fmt.Fprintln(stderr, connectUsage)
+		return ExitUsage
+	}
 
 	hostname, err := os.Hostname()
 	if err != nil && *name == "" {
@@ -97,10 +110,14 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	if *name == "" {
 		*name = hostname
 	}
-	hubURL := strings.TrimRight(*hub, "/")
+	hubURL, err := resolveHubURL(*hub, os.Getenv("HOOKCI_HUB_URL"))
+	if err != nil {
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
+		return ExitUsage
+	}
 	dir := *stateDir
 	if dir == "" {
-		dir = compat.Getenv("STATE_DIR")
+		dir = os.Getenv("HOOKCI_STATE_DIR")
 	}
 	// A known state dir is checked before redeeming so a refusal does not
 	// burn the single-use pair token.
@@ -109,6 +126,17 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 			fmt.Fprintf(stderr, "hookci: %v\n", err)
 			return ExitRunFailed
 		}
+	}
+	// The hub must speak our protocol before the single-use token is spent.
+	info, err := hubclient.FetchInfo(ctx, http.DefaultClient, hubURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "hookci: %v\n", err)
+		return ExitRunFailed
+	}
+	if !compatible(info.ProtocolVersions, protocol.Version, protocol.Version) {
+		fmt.Fprintf(stderr, "hookci: hub speaks protocol versions %d..%d, this agent speaks %d; upgrade with `hookci upgrade`\n",
+			info.ProtocolVersions[0], info.ProtocolVersions[1], protocol.Version)
+		return ExitRunFailed
 	}
 
 	resp, err := redeemPairToken(ctx, hubURL, redeemRequest{
@@ -128,8 +156,9 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 	errw := red.Writer(stderr)
 	defer errw.Close()
 
+	defaultDir := filepath.Join(d.StateRoot, strconv.FormatInt(resp.InstallationID, 10))
 	if dir == "" {
-		dir = filepath.Join(stateRoot(), strconv.FormatInt(resp.InstallationID, 10))
+		dir = defaultDir
 		if !*force {
 			if err := checkNoAgent(dir); err != nil {
 				fmt.Fprintf(errw, "hookci: %v\n", err)
@@ -137,9 +166,18 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 			}
 		}
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// Job users must traverse the state dir's parents to reach their run
+	// dirs (executor.OpenTo); agent.json itself stays 0600.
+	if err := os.MkdirAll(dir, 0o711); err != nil {
 		fmt.Fprintf(errw, "hookci: create state directory: %v\n", err)
 		return ExitRunFailed
+	}
+	// MkdirAll is subject to the umask and keeps the mode of an existing root.
+	if dir == defaultDir {
+		if err := os.Chmod(d.StateRoot, 0o711); err != nil {
+			fmt.Fprintf(errw, "hookci: create state directory: %v\n", err)
+			return ExitRunFailed
+		}
 	}
 	cfg := &agentconf.AgentConfig{
 		HubURL:         hubURL,
@@ -147,6 +185,7 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		Credential:     resp.Credential,
 		Name:           resp.Name,
 		InstallationID: resp.InstallationID,
+		HubMode:        info.Mode,
 	}
 	if err := agentconf.Save(dir, cfg); err != nil {
 		fmt.Fprintf(errw, "hookci: %v\n", err)
@@ -170,6 +209,12 @@ func cmdConnect(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 
 	fmt.Fprintf(stdout, "Connected to %s as %s (agent %s)\n", cfg.HubURL, cfg.Name, cfg.AgentID)
 	unit := systemd.AgentUnit(cfg.InstallationID)
+	// The unit runs hookci agent --installation <id>, which reads defaultDir;
+	// starting it would not run the agent saved anywhere else.
+	if filepath.Clean(dir) != defaultDir {
+		fmt.Fprintf(stdout, "%s runs the agent in %s, not %s; start this agent with hookci agent --state-dir %s\n", unit, defaultDir, dir, dir)
+		return ExitOK
+	}
 	if *noService {
 		if *force {
 			fmt.Fprintf(stdout, "Next: sudo systemctl enable %s && sudo systemctl restart %s\n", unit, unit)
@@ -217,6 +262,36 @@ func unitRunning(state string) bool {
 		return true
 	}
 	return false
+}
+
+// resolveHubURL picks the hub from --hub, else $HOOKCI_HUB_URL, else the
+// shared hub. It must be https, except on loopback where a local hub runs
+// over plain http.
+func resolveHubURL(flagURL, envURL string) (string, error) {
+	raw := flagURL
+	if raw == "" {
+		raw = envURL
+	}
+	if raw == "" {
+		raw = defaultHubURL
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("hub URL %q is not an absolute URL", raw)
+	}
+	switch host := u.Hostname(); {
+	case u.Scheme == "https":
+	case u.Scheme == "http" && (host == "localhost" || host == "127.0.0.1" || host == "::1"):
+	default:
+		return "", fmt.Errorf("hub URL %q must use https (plain http only for localhost)", raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
+// compatible reports whether the hub's [oldest, newest] protocol range
+// overlaps the agent's.
+func compatible(hub []int, agentMin, agentMax int) bool {
+	return len(hub) == 2 && hub[0] <= agentMax && agentMin <= hub[1]
 }
 
 // checkNoAgent refuses a state dir that already holds an agent config.
@@ -269,6 +344,9 @@ func redeemPairToken(ctx context.Context, hubURL string, body redeemRequest) (*r
 	}
 	if out.AgentID == "" || out.Credential == "" {
 		return nil, errors.New("cli: redeem: hub response lacks agent_id or credential")
+	}
+	if out.InstallationID <= 0 {
+		return nil, errors.New("cli: redeem: hub response lacks installation_id")
 	}
 	if out.Name == "" {
 		out.Name = body.Name

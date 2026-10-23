@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/clock"
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/doctor"
 	"github.com/KCuppens/hookci/agent/internal/executor"
 	"github.com/KCuppens/hookci/agent/internal/execx"
@@ -20,6 +20,7 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/netns"
 	"github.com/KCuppens/hookci/agent/internal/osrelease"
 	"github.com/KCuppens/hookci/agent/internal/scheduler"
+	"github.com/KCuppens/hookci/agent/internal/store"
 	"github.com/KCuppens/hookci/agent/internal/systemd"
 )
 
@@ -57,20 +58,17 @@ func parseGlobals(fs *flag.FlagSet, args []string, getenv func(string) string) (
 	return g, fs.Args(), nil
 }
 
-// defaultStateDir is $HOOKCI_STATE_DIR (or the legacy $ZEROCI_STATE_DIR),
-// else $XDG_STATE_HOME/hookci, else ~/.local/state/hookci; a legacy zeroci
-// directory is used in place of the hookci one only when it alone exists.
-// It is empty when none of them is known.
+// defaultStateDir is $HOOKCI_STATE_DIR, else $XDG_STATE_HOME/hookci, else
+// ~/.local/state/hookci. It is empty when none of them is known.
 func defaultStateDir(getenv func(string) string) string {
-	if dir := compat.Env(getenv, "STATE_DIR"); dir != "" {
+	if dir := getenv("HOOKCI_STATE_DIR"); dir != "" {
 		return dir
 	}
 	if dir := getenv("XDG_STATE_HOME"); dir != "" {
-		return compat.Dir(filepath.Join(dir, "hookci"), filepath.Join(dir, "zeroci"))
+		return filepath.Join(dir, "hookci")
 	}
 	if home := getenv("HOME"); home != "" {
-		state := filepath.Join(home, ".local", "state")
-		return compat.Dir(filepath.Join(state, "hookci"), filepath.Join(state, "zeroci"))
+		return filepath.Join(home, ".local", "state", "hookci")
 	}
 	return ""
 }
@@ -79,6 +77,9 @@ func defaultStateDir(getenv func(string) string) string {
 // them to stay hermetic.
 type Deps struct {
 	Globals Globals
+	// StateRoot holds the state dir of each installation's agent, as
+	// <StateRoot>/<installation_id>.
+	StateRoot string
 	// Isolation selects the job isolation by --isolation name and returns
 	// its warnings.
 	Isolation func(name string) (isolation.Isolation, []string, error)
@@ -100,6 +101,11 @@ type Deps struct {
 	Doctor func(stateRoot, hubOrigin string) doctor.Env
 	// Releases is where upgrade fetches signed releases.
 	Releases Releases
+	// Stdin is where sink add telegram reads the bot token. When it is a
+	// terminal *os.File the token is read without echo.
+	Stdin io.Reader
+	// Hub runs the hookci-hub CLI for `hookci hub`.
+	Hub HubDeps
 	// OSRelease names the host operating system for the hello frame; nil
 	// reports none.
 	OSRelease osrelease.Source
@@ -108,7 +114,8 @@ type Deps struct {
 // DefaultDeps are the real host deps. Isolation warnings go to stderr.
 func DefaultDeps(g Globals, stderr io.Writer) Deps {
 	return Deps{
-		Globals: g,
+		Globals:   g,
+		StateRoot: defaultStateRoot,
 		Isolation: func(name string) (isolation.Isolation, []string, error) {
 			env := isolation.HostSelectEnv()
 			env.Warn = func(msg string) { fmt.Fprintf(stderr, "hookci: warning: %s\n", msg) }
@@ -122,6 +129,8 @@ func DefaultDeps(g Globals, stderr io.Writer) Deps {
 		Services:  systemd.Systemctl{Runner: execx.OS{}},
 		Doctor:    hostDoctorEnv,
 		Releases:  defaultReleases(),
+		Stdin:     os.Stdin,
+		Hub:       defaultHubDeps(),
 		OSRelease: osrelease.System{OS: runtime.GOOS},
 	}
 }
@@ -145,5 +154,9 @@ func hostDoctorEnv(stateRoot, hubOrigin string) doctor.Env {
 		FS:        os.DirFS("/"),
 		Systemd:   systemd.Systemctl{Runner: execx.OS{}},
 		DiskFree:  doctor.HostDiskFree,
+		Writable:  doctor.HostWritable,
+		RepoConfigs: func(ctx context.Context, stateDir string) ([]store.RepoConfig, error) {
+			return store.ReadRepoConfigs(ctx, filepath.Join(stateDir, "agent.db"))
+		},
 	}
 }

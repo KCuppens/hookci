@@ -60,6 +60,7 @@ export async function finishInstall(env: Env, gh: GitHubClient, f: FinishInstall
 		accountType: f.installation.account_type,
 		pairToken: token,
 		hubOrigin: env.HUB_ORIGIN,
+		latestAgentVersion: env.LATEST_AGENT_VERSION,
 		expiresInMinutes: PAIR_TOKEN_TTL_MS / 60_000,
 		progress: await installProgress(tenantDb(env.DB, installationId)),
 		cookies,

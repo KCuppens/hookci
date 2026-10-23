@@ -1,0 +1,14 @@
+# hookci config for the shop app.
+#   Keep the jobs fast.
+version: 1
+
+checks:
+    # install once before the jobs
+    setup:
+        - run: npm ci   # uses the lockfile
+    jobs:
+        lint: { run: "npm run lint" }
+        test:
+            run: 'npm test'
+            needs: [lint]
+# trailing note about the checks

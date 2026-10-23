@@ -1,0 +1,18 @@
+version: 1
+deployments:
+  production:
+    on:
+      push: main
+      after: checks
+    strategy: compose-bluegreen
+    compose:
+      project: shop-app
+      file: compose.yaml
+      service: web
+    route:
+      kind: caddy
+      file: /etc/caddy/routes/Shop_App-production.caddy
+      upstream_host: 127.0.0.1
+    health:
+      url: http://127.0.0.1:{port}/healthz
+    env_file: /etc/hookci/env/Shop_App/production.env

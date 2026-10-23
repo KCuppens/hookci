@@ -12,8 +12,12 @@ import "./webhook/check-run";
 import "./webhook/installation";
 import "./sinks/checks";
 import "./sinks/slack";
+import "./sinks/webhook";
+import "./sinks/telegram";
+import "./sinks/linear";
 
 export { AgentDO } from "./do/agent";
+export { SinkOutboxDO } from "./do/sink-outbox";
 export { SlackWorkspaceDO } from "./do/slack-workspace";
 
 export default {

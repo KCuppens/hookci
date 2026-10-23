@@ -132,7 +132,7 @@ func TestCopyTreeDoesNotFollowSymlinks(t *testing.T) {
 }
 
 func TestCopyTreeSkipsSpecialFiles(t *testing.T) {
-	src, err := os.MkdirTemp("", "zc")
+	src, err := os.MkdirTemp("", "hci")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,25 +6,40 @@
 // A run's D1 run_id is its trigger_id until the agent accepts it and names
 // the run; the triggers table remembers which run_id each trigger became.
 
+import { aggregateFor } from "../checks/map";
 import { getAgent } from "../db/agents";
 import { insertAnnotations, validAnnotations } from "../db/annotations";
 import { type BindingTarget, deployEnv, getBinding } from "../db/bindings";
-import { acceptRun, insertRun, markJobLogsLocal, markRunPending, type RunPatch, setRunSlackOverride, supersedeRun, updateRunState, upsertJob } from "../db/runs";
+import {
+	acceptRun,
+	insertRun,
+	listJobNames,
+	markJobLogsLocal,
+	markRunPending,
+	type RunPatch,
+	setRunSlackOverride,
+	supersedeRun,
+	updateRunState,
+	upsertJob,
+} from "../db/runs";
+import { chainDeploys, recordDeployReply } from "../deploy/chain";
+import { onDeployEvent } from "../deploy/render";
 import { HubError } from "../errors";
 import { GitHubClient } from "../github/client";
 import type { HubTrigger } from "../github/normalize";
 import { defaultFetcher } from "../http";
 import { logEvent, reportError } from "../observability";
+import type { TrustRefusal } from "../policy/trust";
 import type { Event as EventFrame, Interrupt } from "../protocol";
-import { QUOTAS } from "../quotas";
-import { fanOut, sinksFor } from "../sinks";
+import { checkQuota, QUOTAS } from "../quotas";
+import { fanOut, type SinkHost, sinksFor, sinksForRun } from "../sinks";
 import { loadRunView } from "../sinks/runview";
-import { pruneStoredTails } from "../sinks/slack";
+import { pruneStoredTails, type SlackFoldRequest, slackSinkFactory } from "../sinks/slack";
 import type { Annotation, RunView, Sink } from "../sinks/types";
+import { TERMINAL as RUN_ENDED } from "../slack/badge";
 import { S } from "../strings";
 import { ulid } from "../ulid";
 import type { TriggerRequest } from "../webhook/route";
-import { wireHeader } from "../wire-headers";
 import type { AgentDO, OutboundFrame } from "./agent";
 import { registerFrameHandler } from "./agent-frames";
 import { registerAlarmTask, registerOfflineHook } from "./agent-hooks";
@@ -121,9 +136,21 @@ function triggerById(dob: AgentDO, triggerId: string): TriggerRow {
 	return row;
 }
 
-/** The trigger the agent accepted as runId; null when this agent never ran it. */
+/** The newest trigger the agent accepted as runId (a deploy retry reuses the run id); null when this agent never ran it. */
 function triggerByRun(dob: AgentDO, runId: string): TriggerRow | null {
-	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ?", runId).toArray()[0] ?? null;
+	return dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE run_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", runId).toArray()[0] ?? null;
+}
+
+/**
+ * A deploy trigger this agent has not answered yet; its checks read GitHub before the agent accepts it, so the agent asks for a
+ * token by trigger id. A trigger superseded before its ack arrived still counts: the agent may already be checking it, and a
+ * refusal is an auth_failed frame. Once accepted it has a run_id and the agent asks by that instead.
+ */
+function sentDeployTrigger(dob: AgentDO, triggerId: string): TriggerRow | null {
+	const row = dob.sql
+		.exec<TriggerRow>("SELECT * FROM triggers WHERE trigger_id = ? AND (state = 'sent' OR (state = 'superseded' AND run_id IS NULL))", triggerId)
+		.toArray()[0];
+	return row !== undefined && deployEnv(row.target) != null ? row : null;
 }
 
 function ownedRun(dob: AgentDO, runId: string): TriggerRow {
@@ -135,7 +162,7 @@ function ownedRun(dob: AgentDO, runId: string): TriggerRow {
 	return row;
 }
 
-/** Loads the run and hands it to fn for every sink, unless no sink is configured. */
+/** Loads the run and hands it to fn for every sink of its repo. */
 async function fanOutRun(dob: AgentDO, runId: string, fn: (sink: Sink, run: RunView) => Promise<void>): Promise<void> {
 	await fanOutView(dob, { runId }, fn);
 }
@@ -150,10 +177,15 @@ async function fanOutView(
 	key: { runId: string } | { triggerId: string },
 	fn: (sink: Sink, run: RunView) => Promise<void>,
 ): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
-	if (sinks.length === 0) return;
-	const run = await loadRunView(dob.bindings.DB, dob.installationId, key);
-	if (run) fanOut(dob.state, sinks, (sink) => fn(sink, run));
+	const run = await loadRunView(dob.bindings, dob.installationId, key);
+	if (!run) return;
+	const sinks = await sinksForRun(dob.bindings, dob.installationId, run.repo, sinkHost(dob));
+	fanOut(dob.state, sinks, (sink) => fn(sink, run));
+}
+
+/** The DO's agent, storage and clock, so sinks queue their work in it. */
+function sinkHost(dob: AgentDO): SinkHost {
+	return { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() };
 }
 
 const runUpdate = (sink: Sink, run: RunView) => sink.onRunUpdate(run);
@@ -163,15 +195,22 @@ const runUpdate = (sink: Sink, run: RunView) => sink.onRunUpdate(run);
  * the interrupts to send. Checks work on the same pull request (or, for a
  * push, the same branch) is replaced whether sent or running. Deploys are
  * only replaced while the agent has not received them; a running deploy is
- * never interrupted.
+ * never interrupted. A retry (attempt > 1) replaces only earlier attempts of
+ * its own commit: retrying an older commit must not drop a newer one.
  */
-function supersede(dob: AgentDO, own: TriggerRow): { replaced: TriggerRow[]; interrupts: OutboundFrame[] } {
+function supersede(dob: AgentDO, own: TriggerRow, attempt: number): { replaced: TriggerRow[]; interrupts: OutboundFrame[] } {
 	const scope = own.pr_number === null ? "pr_number IS NULL AND ref = ?" : "pr_number = ?";
 	const older = dob.sql
 		.exec<TriggerRow>(
 			`SELECT * FROM triggers WHERE trigger_id != ? AND repo_id = ? AND target = ? AND state IN ('sent', 'gated', 'accepted')
-			${own.target === "checks" ? `AND ${scope}` : ""} ORDER BY created_at`,
-			...[own.trigger_id, own.repo_id, own.target, ...(own.target === "checks" ? [own.pr_number ?? own.ref] : [])],
+			${own.target === "checks" ? `AND ${scope}` : ""} ${attempt > 1 ? "AND sha = ?" : ""} ORDER BY created_at`,
+			...[
+				own.trigger_id,
+				own.repo_id,
+				own.target,
+				...(own.target === "checks" ? [own.pr_number ?? own.ref] : []),
+				...(attempt > 1 ? [own.sha] : []),
+			],
 		)
 		.toArray();
 	const replaced: TriggerRow[] = [];
@@ -217,12 +256,12 @@ function newRun(dob: AgentDO, trig: HubTrigger & { attempt?: number }, triggerId
 	};
 }
 
-function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number }, state: TriggerState, now: number): TriggerRow | undefined {
+function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number; triggerId?: string }, state: TriggerState, now: number): TriggerRow | undefined {
 	return dob.sql
 		.exec<TriggerRow>(
 			`INSERT INTO triggers (trigger_id, idem_key, repo_id, pr_number, ref, target, sha, state, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (idem_key) DO NOTHING RETURNING *`,
-			ulid(now),
+			trig.triggerId ?? ulid(now),
 			idemKey(trig),
 			trig.repoId,
 			trig.pr?.number ?? null,
@@ -237,9 +276,16 @@ function insertTrigger(dob: AgentDO, trig: HubTrigger & { attempt?: number }, st
 
 /** Records a fork run that waits for approval (or never runs) and supersedes older work; the agent hears nothing. */
 async function onGate(dob: AgentDO, req: Request): Promise<Response> {
-	const agentId = wireHeader(req.headers, "agent-id");
-	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never" }>();
-	if (!agentId || (trig.reason !== "fork_gated" && trig.reason !== "fork_never")) return Response.json({ error: "bad_request" }, { status: 400 });
+	const agentId = req.headers.get("x-hookci-agent-id");
+	const trig = await req.json<HubTrigger & { reason: "fork_gated" | "fork_never"; trustRefused?: TrustRefusal | null }>();
+	const trustRefused = trig.trustRefused ?? null;
+	if (
+		!agentId ||
+		(trig.reason !== "fork_gated" && trig.reason !== "fork_never") ||
+		(trustRefused !== null && trustRefused !== "shared_hub" && trustRefused !== "deploy_bindings")
+	) {
+		return Response.json({ error: "bad_request" }, { status: 400 });
+	}
 	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
 
 	const now = dob.clock.now();
@@ -252,13 +298,13 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 	const triggerId = own.trigger_id;
 	const t = dob.tenant();
 	try {
-		await insertRun(t, newRun(dob, trig, triggerId, "gated", trig.reason), now);
+		await insertRun(t, { ...newRun(dob, trig, triggerId, "gated", trig.reason), trust_refused: trustRefused }, now);
 	} catch (err) {
 		dob.sql.exec("DELETE FROM triggers WHERE trigger_id = ?", triggerId);
 		throw err;
 	}
 
-	const { replaced, interrupts } = supersede(dob, own);
+	const { replaced, interrupts } = supersede(dob, own, 1);
 	for (const interrupt of interrupts) await dob.send(interrupt);
 	for (const row of replaced) await supersedeRun(t, row.trigger_id, now);
 	await Promise.all([
@@ -269,7 +315,7 @@ async function onGate(dob: AgentDO, req: Request): Promise<Response> {
 }
 
 async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
-	const agentId = wireHeader(req.headers, "agent-id");
+	const agentId = req.headers.get("x-hookci-agent-id");
 	const trig = await req.json<TriggerRequest>();
 	if (!agentId || (trig.trust !== "trusted" && trig.trust !== "untrusted")) return Response.json({ error: "bad_request" }, { status: 400 });
 	if (!dob.adopt(agentId, trig.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
@@ -302,7 +348,7 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			day,
 		);
 		counted = true;
-		capped = (counter?.runs ?? 0) > QUOTAS.runsPerDay;
+		capped = !checkQuota(dob.bindings, "runsPerDay", counter?.runs ?? 0);
 		const state = capped ? "pending" : "received";
 		const reason = capped ? "daily_cap" : null;
 		if (trig.runId === undefined) await insertRun(t, newRun(dob, trig, triggerId, state, reason), now);
@@ -328,8 +374,9 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 
 	// A newer trigger may have replaced this one while D1 was awaited.
 	const stillSent = triggerById(dob, triggerId).state === "sent";
-	const { replaced, interrupts } = stillSent ? supersede(dob, own) : { replaced: [], interrupts: [] };
+	const { replaced, interrupts } = stillSent ? supersede(dob, own, attempt) : { replaced: [], interrupts: [] };
 	if (stillSent) {
+		const env = deployEnv(trig.target);
 		const seq = await dob.send({
 			v: 1,
 			type: "trigger",
@@ -337,13 +384,16 @@ async function onTrigger(dob: AgentDO, req: Request): Promise<Response> {
 			repo: trig.repo,
 			sha: trig.sha,
 			ref: trig.ref,
-			event: trig.event,
+			event: trig.retry ? "retry" : trig.event,
+			...(env === null ? {} : { env }),
 			pr: trig.pr && {
 				number: trig.pr.number,
 				head_ref: trig.pr.headRef,
 				head_repo_full_name: trig.pr.headRepoFullName,
 				fork: trig.pr.fork,
+				base_ref: trig.pr.baseRef,
 			},
+			default_branch: trig.defaultBranch,
 			base_sha: trig.baseSha,
 			attempt,
 			trust: trig.trust,
@@ -376,6 +426,22 @@ async function interruptAccepted(dob: AgentDO, reason: Interrupt["reason"]): Pro
 async function onRepair(dob: AgentDO): Promise<Response> {
 	await interruptAccepted(dob, "repair");
 	dob.disconnect(CLOSE.replaced, "repair");
+	return Response.json({ ok: true });
+}
+
+/**
+ * Renders the deploys of a checks run this agent ran into its Slack message,
+ * for a deploy on another agent: in this DO's queue for the run, so the
+ * render waits behind the run's own and none lands out of order.
+ */
+async function onSlackFold(dob: AgentDO, req: Request): Promise<Response> {
+	const agentId = req.headers.get("x-hookci-agent-id");
+	const fold = await req.json<SlackFoldRequest>();
+	if (!agentId || typeof fold.checksRunId !== "string" || typeof fold.checksTriggerId !== "string") {
+		return Response.json({ error: "bad_request" }, { status: 400 });
+	}
+	if (!dob.adopt(agentId, fold.installationId)) return Response.json({ error: "agent_mismatch" }, { status: 409 });
+	await slackSinkFactory(dob.bindings, dob.installationId, sinkHost(dob)).foldInto(fold.checksRunId, fold.checksTriggerId, fold.deploy);
 	return Response.json({ ok: true });
 }
 
@@ -449,13 +515,13 @@ async function pendOfflineRuns(dob: AgentDO, now: number): Promise<boolean> {
 }
 
 async function notifyAgentOffline(dob: AgentDO): Promise<void> {
-	const sinks = await sinksFor(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() });
+	const sinks = await sinksFor(dob.bindings, dob.installationId, sinkHost(dob));
 	if (sinks.length === 0) return;
 	const agent = await getAgent(dob.tenant(), dob.agentId);
 	if (!agent) return;
 	const open = dob.sql.exec<TriggerRow>("SELECT * FROM triggers WHERE state IN ('sent', 'accepted') ORDER BY created_at").toArray();
 	const affected = (
-		await Promise.all(open.map((row) => loadRunView(dob.bindings.DB, dob.installationId, { runId: row.run_id ?? row.trigger_id })))
+		await Promise.all(open.map((row) => loadRunView(dob.bindings, dob.installationId, { runId: row.run_id ?? row.trigger_id })))
 	).filter((run): run is RunView => run !== null);
 	const view = {
 		agentId: agent.agent_id,
@@ -475,9 +541,13 @@ export function registerRunLifecycle(): () => void {
 		registerDoRoute("cancel", onCancel),
 		registerDoRoute("repair", onRepair),
 		registerDoRoute("revoke", onRevoke),
+		registerDoRoute("slack-fold", onSlackFold),
 
 		registerFrameHandler("accepted", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
+			// First: a malformed or taken run_id throws a 4xx before anything records it.
+			await acceptRun(dob.tenant(), row.trigger_id, frame.run_id, dob.agentId);
+			await recordDeployReply(dob.bindings, dob.installationId, frame);
 			dob.sql.exec(
 				"UPDATE triggers SET run_id = ?, state = CASE WHEN state = 'sent' THEN 'accepted' ELSE state END WHERE trigger_id = ?",
 				frame.run_id,
@@ -485,12 +555,12 @@ export function registerRunLifecycle(): () => void {
 			);
 			// Replaced after the agent already had it: stop the run it just started.
 			if (row.state === "superseded") await dob.send({ v: 1, type: "interrupt", run_id: frame.run_id, reason: "superseded" });
-			await acceptRun(dob.tenant(), row.trigger_id, frame.run_id, dob.agentId);
 			await fanOutRun(dob, frame.run_id, runUpdate);
 		}),
 
 		registerFrameHandler("rejected", async (dob, frame) => {
 			const row = triggerById(dob, frame.trigger_id);
+			await recordDeployReply(dob.bindings, dob.installationId, frame);
 			// rejected too: a replay of a frame whose D1 write failed must write it again.
 			if (row.state !== "sent" && row.state !== "accepted" && row.state !== "rejected") return;
 			dob.sql.exec("UPDATE triggers SET state = 'rejected' WHERE trigger_id = ?", row.trigger_id);
@@ -502,6 +572,11 @@ export function registerRunLifecycle(): () => void {
 		registerFrameHandler("job_planned", async (dob, frame) => {
 			ownedRun(dob, frame.run_id);
 			const t = dob.tenant();
+			const names = new Set(await listJobNames(t, frame.run_id));
+			for (const job of frame.jobs) names.add(job.name);
+			if (names.size > QUOTAS.jobsPerRun) {
+				throw new HubError("job_limit", 422, `run ${frame.run_id} would have ${names.size} jobs, over the ${QUOTAS.jobsPerRun} limit`);
+			}
 			for (const job of frame.jobs) {
 				await upsertJob(t, { run_id: frame.run_id, name: job.name, state: "queued", step: null, step_index: null, steps_total: null, duration_ms: null });
 			}
@@ -514,6 +589,11 @@ export function registerRunLifecycle(): () => void {
 			const t = dob.tenant();
 			const { job: name } = frame;
 			if (name !== undefined) {
+				const names = await listJobNames(t, frame.run_id);
+				if (!names.includes(name) && names.length >= QUOTAS.jobsPerRun) {
+					logEvent("job_limit", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, job: name });
+					return;
+				}
 				await upsertJob(t, {
 					run_id: frame.run_id,
 					name,
@@ -528,6 +608,7 @@ export function registerRunLifecycle(): () => void {
 					const job = run.jobs.find((j) => j.name === name);
 					if (job) await sink.onJobUpdate(run, { ...job, reason: frame.reason, tail: frame.tail, logs: frame.logs });
 				});
+				await onDeployEvent(dob.bindings, dob.installationId, frame, dob.state, sinkHost(dob));
 				return;
 			}
 			const now = dob.clock.now();
@@ -537,9 +618,19 @@ export function registerRunLifecycle(): () => void {
 					: TERMINAL[frame.state]
 						? { finished_at: now, duration_ms: frame.duration_ms, reason: frame.reason }
 						: { reason: frame.reason };
-			if (TERMINAL[frame.state]) dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
+			if (TERMINAL[frame.state]) {
+				dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);
+				// A push's deploys are recorded before its checks run reads as done, so no sink sees the run passed without them.
+				// The view is read before this frame's state is written: a run D1 already ended (superseded, cancelled) chains nothing.
+				const view = await loadRunView(dob.bindings, dob.installationId, { runId: frame.run_id });
+				if (view && !RUN_ENDED.has(view.state) && view.target === "checks" && view.reason !== "suspended") {
+					const check = aggregateFor({ ...view, state: frame.state }, dob.bindings.HUB_ORIGIN);
+					if (check.status === "completed") await chainDeploys(dob.bindings, view, check.conclusion);
+				}
+			}
 			await updateRunState(t, frame.run_id, frame.state, patch);
 			await fanOutRun(dob, frame.run_id, runUpdate);
+			await onDeployEvent(dob.bindings, dob.installationId, frame, dob.state, sinkHost(dob));
 		}),
 
 		registerFrameHandler("annotations", async (dob, frame) => {
@@ -559,11 +650,11 @@ export function registerRunLifecycle(): () => void {
 		}),
 
 		registerFrameHandler("token_request", async (dob, frame) => {
-			const row = triggerByRun(dob, frame.run_id);
+			const row = triggerByRun(dob, frame.run_id) ?? sentDeployTrigger(dob, frame.run_id);
 			const binding = row && (await getBinding(dob.tenant(), row.repo_id, row.target));
 			if (!row || binding?.agent_id !== dob.agentId) {
 				logEvent("tenant_denied", { installation_id: dob.installationId, agent_id: dob.agentId, run_id: frame.run_id, reason: "run_not_bound" });
-				await dob.send({ v: 1, type: "error", code: "auth_failed", message: S.runNotBound });
+				await dob.send({ v: 1, type: "error", code: "auth_failed", run_id: frame.run_id, message: S.runNotBound });
 				return;
 			}
 			const github = new GitHubClient(dob.bindings, dob.bindings.__TEST_FETCHER ?? defaultFetcher, () => dob.clock.now());

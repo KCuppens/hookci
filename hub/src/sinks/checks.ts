@@ -18,6 +18,7 @@ import { defaultFetcher } from "../http";
 import { QUOTAS } from "../quotas";
 import { S } from "../strings";
 import { registerSinkFactory, type SinkHost } from "./index";
+import { logJob } from "./runview";
 import type { AgentView, Annotation, JobView, RunView, Sink } from "./types";
 
 export const AGGREGATE_CHECK = "hookci";
@@ -46,14 +47,15 @@ export class ChecksSink implements Sink {
 
 	async onRunUpdate(run: RunView): Promise<void> {
 		if (!usesChecks(run)) return;
-		await this.inOrder(run.repoId, run.sha, () => this.push(run, AGGREGATE_CHECK, this.body(run, aggregateFor(run, this.env.HUB_ORIGIN))));
+		const view = aggregateFor(run, this.env.HUB_ORIGIN);
+		await this.inOrder(run.repoId, run.sha, () => this.push(run, AGGREGATE_CHECK, this.body(run, view, logJob(run)?.logLink)));
 	}
 
 	/** Creates the aggregate and every job's check run that does not exist yet; updates none. */
 	async onJobPlanned(run: RunView): Promise<void> {
 		if (!usesChecks(run)) return;
 		await this.inOrder(run.repoId, run.sha, async () => {
-			await this.createMissing(run, AGGREGATE_CHECK, this.body(run, aggregateFor(run, this.env.HUB_ORIGIN)));
+			await this.createMissing(run, AGGREGATE_CHECK, this.body(run, aggregateFor(run, this.env.HUB_ORIGIN), logJob(run)?.logLink));
 			for (const job of run.jobs) await this.createMissing(run, checkName(job.name), this.jobBody(run, job));
 		});
 	}
@@ -89,7 +91,11 @@ export class ChecksSink implements Sink {
 	/** Alarm task: sends the coalesced updates that are due; resolves true while some wait. */
 	async flush(): Promise<boolean> {
 		if (!this.host) return false;
-		return new CheckUpdateCoalescer(this.host, (u) => this.inOrder(u.repoId, u.headSha, () => this.send(u))).flushDue();
+		return new CheckUpdateCoalescer(
+			this.host,
+			(u) => this.send(u),
+			(t, fn) => this.inOrder(t.repoId, t.headSha, fn),
+		).flushDue();
 	}
 
 	private async push(run: RunView, name: string, body: UpdateCheckRunBody): Promise<void> {
@@ -135,15 +141,16 @@ export class ChecksSink implements Sink {
 	private jobBody(run: RunView, job: JobView, truncated = false): UpdateCheckRunBody {
 		const view = job.name === CONFIG_JOB ? configCheck(job) : jobCheck(job);
 		const over = truncated || (this.coalescer?.annotationsSeen(this.target(run, checkName(job.name))) ?? 0) > QUOTAS.annotationsPerJob;
-		return this.body(run, over ? { ...view, summary: `${view.summary}\n\n${S.checks.annotationsTruncated(QUOTAS.annotationsPerJob)}` } : view);
+		return this.body(run, over ? { ...view, summary: `${view.summary}\n\n${S.checks.annotationsTruncated(QUOTAS.annotationsPerJob)}` } : view, job.logLink);
 	}
 
-	private body(run: RunView, view: CheckView): UpdateCheckRunBody {
+	/** detailsUrl: the stable log link the check's Details opens. */
+	private body(run: RunView, view: CheckView, detailsUrl: string | undefined): UpdateCheckRunBody {
 		return {
 			status: view.status,
 			...(view.status === "completed" ? { conclusion: view.conclusion, completed_at: new Date(this.now()).toISOString() } : {}),
 			external_id: run.runId ?? run.triggerId,
-			...(run.logUrl ? { details_url: run.logUrl } : {}),
+			...(detailsUrl ? { details_url: detailsUrl } : {}),
 			output: { title: view.title, summary: view.summary },
 			actions: view.actions ?? [],
 		};
@@ -185,4 +192,6 @@ export function checksSinkFactory(env: Env, _installationId: number, host?: Sink
 }
 
 registerSinkFactory("checks", checksSinkFactory);
-registerAlarmTask((dob) => checksSinkFactory(dob.bindings, dob.installationId, { storage: dob.state.storage, now: () => dob.clock.now() }).flush());
+registerAlarmTask((dob) =>
+	checksSinkFactory(dob.bindings, dob.installationId, { agentId: dob.agentId, storage: dob.state.storage, now: () => dob.clock.now() }).flush(),
+);

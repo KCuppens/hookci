@@ -2,7 +2,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseEncKeys } from "../src/crypto";
 import { runCron } from "../src/cron";
-import { reencryptTokens } from "../src/cron/reencrypt";
+import { reencryptSinkSecrets, reencryptTokens } from "../src/cron/reencrypt";
+import { createSinkConfig, getSinkConfigWithSecret, type SinkConfigRow } from "../src/db/sinks";
+import { tenantDb } from "../src/db/tenant";
 import { getWorkspace } from "../src/db/workspaces";
 import { getBotToken, storeWorkspace } from "../src/slack/tokens";
 import { clearTables } from "./db/helpers";
@@ -88,5 +90,59 @@ describe("reencryptTokens", () => {
 
     expect(await versions()).toEqual({ T0001: 2, T0002: 1, T0003: 2 });
     expect(errors.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining("T0002"));
+  });
+});
+
+describe("reencryptSinkSecrets", () => {
+  const SECRETS: Record<number, string> = { 7: "telegram-bot-token-7", 8: "webhook-secret-8" };
+  let configs: { installationId: number; cfg: SinkConfigRow }[];
+
+  async function sinkVersions(): Promise<(number | null)[]> {
+    const { results } = await env.DB.prepare("SELECT key_version FROM sink_configs ORDER BY installation_id, id").all<{ key_version: number | null }>();
+    return results.map((r) => r.key_version);
+  }
+
+  beforeEach(async () => {
+    env.TOKEN_ENC_KEYS = JSON.stringify({ current: 1, keys: { "1": key1 } });
+    configs = [];
+    for (const [installationId, secret] of Object.entries(SECRETS).map(([id, s]) => [Number(id), s] as const)) {
+      const cfg = await createSinkConfig(env, tenantDb(env.DB, installationId), { kind: "webhook", repo: "org/api", target: "https://hooks.example/ci", secret, createdBy: "slack:T1:U1" });
+      configs.push({ installationId, cfg });
+    }
+    await createSinkConfig(env, tenantDb(env.DB, 9), { kind: "webhook", repo: "org/api", target: "https://hooks.example/ci", secret: null, createdBy: "slack:T1:U1" });
+    env.TOKEN_ENC_KEYS = JSON.stringify({ current: 2, keys: { "1": key1, "2": key2 } });
+  });
+
+  it("moves every secret to the current key in one cron pass, so the old key can be dropped", async () => {
+    expect(await sinkVersions()).toEqual([1, 1, null]);
+
+    await runCron(env, "*/5 * * * *");
+
+    expect(await sinkVersions()).toEqual([2, 2, null]);
+    env.TOKEN_ENC_KEYS = JSON.stringify({ current: 2, keys: { "2": key2 } });
+    for (const { installationId, cfg } of configs) {
+      expect((await getSinkConfigWithSecret(env, tenantDb(env.DB, installationId), cfg.id))?.secret).toBe(SECRETS[installationId]);
+    }
+  });
+
+  it("moves at most limit secrets per pass, continuing where the last pass ended", async () => {
+    expect(await reencryptSinkSecrets(env, 0, 1)).toBe(1);
+    expect(await sinkVersions()).toEqual([2, 1, null]);
+    expect(await reencryptSinkSecrets(env, 0, 1)).toBe(1);
+    expect(await reencryptSinkSecrets(env, 0, 1)).toBe(0);
+    expect(await sinkVersions()).toEqual([2, 2, null]);
+  });
+
+  it("skips a secret it cannot decrypt and still moves the rest", async () => {
+    const [broken, kept] = configs;
+    await env.DB.prepare("UPDATE sink_configs SET secret_enc = (SELECT secret_enc FROM sink_configs WHERE installation_id = ?1) WHERE installation_id = ?2")
+      .bind(kept?.installationId, broken?.installationId)
+      .run();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await reencryptSinkSecrets(env, 0)).toBe(1);
+
+    expect(await sinkVersions()).toEqual([1, 2, null]);
+    expect(errors.mock.calls.map(([line]) => String(line))).toContainEqual(expect.stringContaining(broken?.cfg.id ?? "missing"));
   });
 });

@@ -180,6 +180,46 @@ func TestCLIInit(t *testing.T) {
 	}
 }
 
+func TestCLIInitDeploy(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-shop")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "package.json"), `{"scripts": {"test": "jest"}}`)
+	writeFile(t, filepath.Join(dir, "package-lock.json"), "{}")
+	writeFile(t, filepath.Join(dir, "compose.yaml"), "services:\n  web:\n    build: .\n    ports: [\"3000:3000\"]\n")
+	path := filepath.Join(dir, ".hookci.yml")
+
+	if code, _, stderr := runCLI("init", dir, "--yes"); code != ExitUsage || !strings.Contains(stderr, "--yes only applies to --deploy") {
+		t.Errorf("init --yes: exit = %d, stderr %q", code, stderr)
+	}
+	if code, _, stderr := runCLI("init", dir); code != ExitOK {
+		t.Fatalf("init: exit = %d (stderr %q)", code, stderr)
+	}
+	checks := readFile(t, path)
+
+	code, stdout, stderr := runCLI("init", dir, "--deploy", "--yes")
+	if code != ExitOK {
+		t.Fatalf("init --deploy --yes: exit = %d (stderr %q)", code, stderr)
+	}
+	if !strings.Contains(stdout, "wrote deployments.production to "+path) {
+		t.Errorf("stdout = %q", stdout)
+	}
+	got := readFile(t, path)
+	if !strings.HasPrefix(got, checks) || !strings.Contains(got, "project: my-shop") || !strings.Contains(got, "/etc/hookci/env/my-shop/production.env") {
+		t.Errorf("written file:\n%s", got)
+	}
+	assertValidConfig(t, path)
+
+	code, _, stderr = runCLI("init", dir, "--deploy", "--yes")
+	if want := "hookci: deployments: already present in .hookci.yml; edit it or remove it to re-run init --deploy\n"; code != ExitUsage || stderr != want {
+		t.Errorf("second init --deploy: exit = %d, stderr %q; want %d, %q", code, stderr, ExitUsage, want)
+	}
+	if code, _, stderr := runCLI("init", dir, "--deploy", "--force"); code != ExitUsage || !strings.Contains(stderr, "--force does not apply to --deploy") {
+		t.Errorf("init --deploy --force: exit = %d, stderr %q", code, stderr)
+	}
+}
+
 func assertValidConfig(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Stat(path)

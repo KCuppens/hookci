@@ -61,6 +61,25 @@ func TestSystemdIntegrationTrue(t *testing.T) {
 	}
 }
 
+// TestSystemdIntegrationDollarSigns checks that the job script reaches sh
+// unchanged: systemd would otherwise expand ${x} to "" and $$ to "$".
+func TestSystemdIntegrationDollarSigns(t *testing.T) {
+	s, dir := integrationSystemd(t)
+	spec := integrationSpec(dir, "dollar", "/bin/sh", "-ec", `x=1; echo "${x} ${HOME} $1"; [ "$$" -gt 1 ] && echo pid 100%`, "argv0", "one")
+	var out bytes.Buffer
+	spec.Stdout = &out
+	res, err := s.Run(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("Result = %+v, want exit 0", res)
+	}
+	if got, want := out.String(), "1 /tmp one\npid 100%\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
 func TestSystemdIntegrationProperties(t *testing.T) {
 	s, dir := integrationSystemd(t)
 	spec := integrationSpec(dir, "props", "/bin/sleep", "30")

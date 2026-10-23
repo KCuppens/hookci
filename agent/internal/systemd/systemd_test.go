@@ -30,7 +30,7 @@ func TestSystemctl(t *testing.T) {
 	if st, err := s.ActiveState(ctx, AgentUnit(42)); st != "active" || err != nil {
 		t.Errorf("ActiveState = %q, %v", st, err)
 	}
-	if err := s.TryRestart(ctx, AllAgentUnits()); err != nil {
+	if err := s.TryRestart(ctx, AllAgentUnits); err != nil {
 		t.Errorf("TryRestart = %v", err)
 	}
 	if !slices.ContainsFunc(ex.Calls, func(c execx.Cmd) bool {

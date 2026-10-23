@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 // maxFrameBytes matches the hub's MAX_FRAME_BYTES.
 const maxFrameBytes = 1 << 20
+
+// dialTimeout bounds the WebSocket upgrade, so a hub or proxy that accepts
+// the TCP connection but never answers cannot stall the reconnect loop.
+const dialTimeout = 30 * time.Second
 
 // Dialer opens a WebSocket to the hub.
 type Dialer interface {
@@ -41,10 +46,18 @@ func (e *StatusError) Unwrap() error { return e.Err }
 type WebSocketDialer struct {
 	// HTTPClient is used for the upgrade request; nil uses http.DefaultClient.
 	HTTPClient *http.Client
+	// Timeout bounds the upgrade; 0 means dialTimeout.
+	Timeout time.Duration
 }
 
 // Dial opens the connection. A refused upgrade returns a *StatusError.
 func (d WebSocketDialer) Dial(ctx context.Context, url string, h http.Header) (Conn, error) {
+	timeout := d.Timeout
+	if timeout == 0 {
+		timeout = dialTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	c, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPClient: d.HTTPClient, HTTPHeader: h})
 	if err != nil {
 		if resp != nil && resp.StatusCode != 0 && resp.StatusCode != http.StatusSwitchingProtocols {

@@ -7,37 +7,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
-// unitDir is where the installer writes the agent unit template.
-var unitDir = "/etc/systemd/system"
-
-// unitPrefix is "hookci", or the legacy "zeroci" when the host only has the
-// legacy zeroci-agent@.service template.
-func unitPrefix() string {
-	if _, err := os.Stat(filepath.Join(unitDir, "hookci-agent@.service")); err != nil {
-		if _, err := os.Stat(filepath.Join(unitDir, "zeroci-agent@.service")); err == nil {
-			return "zeroci"
-		}
-	}
-	return "hookci"
-}
-
-// AgentUnit is the hookci-agent@ instance (zeroci-agent@ on a host that
-// only has the legacy unit) that runs the agent of an installation.
+// AgentUnit is the hookci-agent@ instance that runs the agent of an
+// installation.
 func AgentUnit(installationID int64) string {
-	return unitPrefix() + "-agent@" + strconv.FormatInt(installationID, 10) + ".service"
+	return "hookci-agent@" + strconv.FormatInt(installationID, 10) + ".service"
 }
 
-// AllAgentUnits matches every agent instance of the unit family in use.
-func AllAgentUnits() string { return unitPrefix() + "-agent@*.service" }
+// AllAgentUnits matches every hookci-agent@ instance.
+const AllAgentUnits = "hookci-agent@*.service"
 
 // ServiceManager is the part of systemd that connect and doctor use.
 type ServiceManager interface {

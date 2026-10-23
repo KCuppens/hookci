@@ -7,17 +7,16 @@ import { AGENT_CREDENTIAL_PREFIX, agentCredentialHash, countActiveAgents, getAge
 import { bindAllRepos } from "../db/bindings";
 import { getInstallation } from "../db/installations";
 import { hitIpRate } from "../db/ip-rate";
-import { consumePairToken } from "../db/pair-tokens";
+import { consumePairToken, findPairToken } from "../db/pair-tokens";
 import { tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { QUOTAS } from "../quotas";
+import { checkQuota } from "../quotas";
 import { ulid } from "../ulid";
-import { callAgentDo, rotateCredential } from "./agents";
+import { rotateCredential } from "./agents";
 
-export const PAIR_TOKEN_PREFIX = "hc_pair_";
-const LEGACY_PAIR_TOKEN_PREFIX = "zc_pair_";
+export const PAIR_TOKEN_PREFIX = "hci_pair_";
 export const PAIR_TOKEN_TTL_MS = 15 * 60_000;
 const HOUR_MS = 60 * 60_000;
 /** Redeem attempts one IP may make per hour. */
@@ -30,7 +29,8 @@ export type RedeemResult = { agent_id: string; credential: string; installation_
  * Issues a pair token for the installation, valid for 15 minutes. With
  * replacesAgentId, redeeming it rotates that agent's credential instead of
  * pairing a new agent. Throws pair_rate_limited (429) past
- * QUOTAS.pairTokensPerHour tokens for the installation in the last hour.
+ * QUOTAS.pairTokensPerHour tokens for the installation in the last hour,
+ * unless the hub is self-hosted.
  */
 export async function createPairToken(
 	env: Env,
@@ -43,7 +43,7 @@ export async function createPairToken(
 		"SELECT count(*) AS n FROM pair_tokens WHERE installation_id = ?1 AND expires_at > ?2",
 		now - HOUR_MS + PAIR_TOKEN_TTL_MS,
 	);
-	if ((recent?.n ?? 0) >= QUOTAS.pairTokensPerHour) throw new HubError("pair_rate_limited", 429);
+	if (!checkQuota(env, "pairTokensPerHour", (recent?.n ?? 0) + 1)) throw new HubError("pair_rate_limited", 429);
 
 	const token = randomToken(PAIR_TOKEN_PREFIX, 20);
 	const expiresAt = now + PAIR_TOKEN_TTL_MS;
@@ -66,7 +66,9 @@ function isRedeemInput(body: unknown): body is RedeemInput {
 
 /**
  * Redeems a pair token from ip: pairs a new agent, or rotates the credential
- * of the agent the token replaces. The credential is returned only here.
+ * of the agent the token replaces. The credential is returned only here. The
+ * token is used up only once every check passed, so a refusal (suspended,
+ * agent_limit) leaves it redeemable once the cause is fixed.
  */
 export async function redeemPairToken(env: Env, input: RedeemInput, ip: string): Promise<RedeemResult> {
 	const now = (env.__TEST_CLOCK ?? systemClock).now();
@@ -75,10 +77,9 @@ export async function redeemPairToken(env: Env, input: RedeemInput, ip: string):
 	if (!isRedeemInput(input) || input.name.trim() === "") throw new HubError("bad_request", 400);
 
 	// Unknown, used and expired tokens all fail here with the same answer.
-	const token = input.pair_token.startsWith(PAIR_TOKEN_PREFIX) || input.pair_token.startsWith(LEGACY_PAIR_TOKEN_PREFIX)
-		? await consumePairToken(env.DB, await sha256Hex(input.pair_token), now)
-		: null;
-	if (!token) throw new HubError("invalid_pair_token", 400);
+	const tokenHash = input.pair_token.startsWith(PAIR_TOKEN_PREFIX) ? await sha256Hex(input.pair_token) : null;
+	const token = tokenHash === null ? null : await findPairToken(env.DB, tokenHash, now);
+	if (!tokenHash || !token) throw new HubError("invalid_pair_token", 400);
 
 	const installation = await getInstallation(env.DB, token.installation_id);
 	if (!installation || installation.suspended_at !== null || installation.deleted_at !== null) {
@@ -90,13 +91,15 @@ export async function redeemPairToken(env: Env, input: RedeemInput, ip: string):
 	if (token.replaces_agent_id !== null) {
 		const agent = await getAgent(t, token.replaces_agent_id);
 		if (!agent || agent.revoked_at !== null) throw new HubError("invalid_pair_token", 400);
+		// A concurrent redeem of the same token got here first.
+		if (!(await consumePairToken(env.DB, tokenHash, now))) throw new HubError("invalid_pair_token", 400);
 		const credential = await rotateCredential(env, agent.agent_id);
-		await callAgentDo(env, agent.agent_id, "repair");
 		return { agent_id: agent.agent_id, credential, installation_id: token.installation_id, hub_ws_url: hubWsUrl, name: agent.name };
 	}
 
 	const active = await countActiveAgents(t);
-	if (active >= QUOTAS.agentsPerInstallation) throw new HubError("agent_limit", 409);
+	if (!checkQuota(env, "agentsPerInstallation", active + 1)) throw new HubError("agent_limit", 409);
+	if (!(await consumePairToken(env.DB, tokenHash, now))) throw new HubError("invalid_pair_token", 400);
 	const agentId = `agt_${ulid(now)}`;
 	const credential = randomToken(AGENT_CREDENTIAL_PREFIX, 32);
 	await insertAgent(t, {

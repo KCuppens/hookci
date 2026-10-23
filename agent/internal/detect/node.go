@@ -186,7 +186,7 @@ func detectNode(fsys fs.FS) (*partial, error) {
 	}
 	p.setup = []config.SetupStep{{
 		Run:   pm.Install,
-		Cache: &config.SetupStepCache{Key: []string{key}, Paths: nodeModulesPaths(globs)},
+		Cache: &config.SetupStepCache{Key: []string{key}, Paths: nodeModulesPaths(fsys, globs)},
 	}}
 
 	if note, src := nodeVersionNote(fsys, pkg); note != "" {
@@ -255,19 +255,48 @@ func nodeJobs(present map[string]bool, run func(string) string) map[string]confi
 	return jobs
 }
 
-// nodeModulesPaths returns node_modules plus <glob>/node_modules for every
-// workspace glob, kept literal and sorted. Negated globs are skipped.
-func nodeModulesPaths(globs []string) []string {
-	paths := []string{"node_modules"}
+// nodeModulesPaths returns node_modules plus <dir>/node_modules for every
+// workspace package dir in fsys, sorted. Globs are expanded here because the
+// cache stores literal paths; a match counts when it is a real dir (not a
+// symlink) holding a package.json. Matches of a negated glob are dropped.
+func nodeModulesPaths(fsys fs.FS, globs []string) []string {
+	var include, exclude []string
 	for _, g := range globs {
-		g = strings.TrimPrefix(strings.TrimSpace(g), "./")
-		g = strings.TrimRight(g, "/")
-		if g == "" || g == "." || strings.HasPrefix(g, "!") {
+		g = strings.TrimSpace(g)
+		negated := strings.HasPrefix(g, "!")
+		g = strings.TrimRight(strings.TrimPrefix(strings.TrimPrefix(g, "!"), "./"), "/")
+		if g == "" || g == "." {
 			continue
 		}
-		paths = append(paths, path.Join(g, "node_modules"))
+		if negated {
+			exclude = append(exclude, g)
+		} else {
+			include = append(include, g)
+		}
+	}
+	paths := []string{"node_modules"}
+	for _, g := range include {
+		matches, err := fs.Glob(fsys, g)
+		if err != nil {
+			continue
+		}
+		for _, dir := range matches {
+			if !isDir(fsys, dir) || !exists(fsys, path.Join(dir, "package.json")) || excluded(dir, exclude) {
+				continue
+			}
+			paths = append(paths, path.Join(dir, "node_modules"))
+		}
 	}
 	return uniqueSorted(paths)
+}
+
+func excluded(dir string, patterns []string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, dir); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeVersionNote reports the requested Node version from .nvmrc,
@@ -275,7 +304,7 @@ func nodeModulesPaths(globs []string) []string {
 // version is informational only: no toolchain is installed.
 func nodeVersionNote(fsys fs.FS, pkg packageJSON) (note, source string) {
 	for _, name := range []string{".nvmrc", ".node-version"} {
-		data, err := fs.ReadFile(fsys, name)
+		data, err := readFile(fsys, name)
 		if err != nil {
 			continue
 		}

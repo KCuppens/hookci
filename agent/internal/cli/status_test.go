@@ -104,6 +104,24 @@ func TestStatusEmptyStateDir(t *testing.T) {
 	}
 }
 
+// status --installation ID reads <state root>/ID, where the unit's agent
+// keeps its database, like gc, retry, runs and sink do.
+func TestStatusInstallation(t *testing.T) {
+	d, _, _ := seedStore(t)
+	d.StateRoot = t.TempDir()
+	if err := os.Symlink(d.Globals.StateDir, filepath.Join(d.StateRoot, "7")); err != nil {
+		t.Fatal(err)
+	}
+	d.Globals.StateDir = filepath.Join(t.TempDir(), "none")
+	code, stdout, stderr := statusOf(d, "--installation", "7")
+	if code != ExitOK || !strings.Contains(stdout, failedRun) || !strings.Contains(stdout, queuedRun) {
+		t.Fatalf("status --installation 7 = %d, %q, %q; want both runs", code, stdout, stderr)
+	}
+	if code, _, stderr := statusOf(d, "--installation", "-3"); code != ExitUsage || !strings.Contains(stderr, "positive installation id") {
+		t.Errorf("status --installation -3 = %d, %q; want a usage error", code, stderr)
+	}
+}
+
 func TestStatusRunJobs(t *testing.T) {
 	d, _, _ := seedStore(t)
 	code, stdout, stderr := statusOf(d, failedRun)

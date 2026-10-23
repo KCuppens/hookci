@@ -13,7 +13,8 @@ import type { HubTrigger } from "../../src/github/normalize";
 import { resetPermissionCacheForTests } from "../../src/github/permission-cache";
 import type { PullRequest } from "../../src/github/types";
 import worker from "../../src/index";
-import { signLogUrl } from "../../src/logs/sign";
+import { signLogUrl } from "../../src/logs/signing";
+import { escapeHtml } from "../../src/pages/layout";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
@@ -32,13 +33,17 @@ let slack: FakeService;
 let log: MockInstance<typeof console.log>;
 let appKey: string | undefined;
 let gates = 0;
+let seeds = 0;
 const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
 
 beforeEach(async () => {
   await clearTables();
   resetPermissionCacheForTests();
-  a = await seedTenant(env, { installationId: 701, teamId: "T0TENANTA" });
-  b = await seedTenant(env, { installationId: 702, teamId: "T0TENANTB" });
+  // Each test gets fresh workspaces: their Slack queue DO outlives the test, and a post an
+  // earlier test made to the same channel would hold the gate's post for up to 1 s (1 post/s per channel).
+  const seed = ++seeds;
+  a = await seedTenant(env, { installationId: 701, teamId: `T0TENANTA${seed}` });
+  b = await seedTenant(env, { installationId: 702, teamId: `T0TENANTB${seed}` });
 
   appKey ??= (await generateAppKey()).pem;
   env.GITHUB_APP_PRIVATE_KEY = appKey;
@@ -85,7 +90,7 @@ async function gateForkRun(t: Tenant): Promise<string> {
     sha: t.headSha,
     ref: "refs/heads/feature",
     event: "pull_request",
-    pr: { number: t.prNumber, headRef: "feature", headRepoFullName: `fork${t.installationId}/api`, fork: true, authorLogin: "mallory" },
+    pr: { number: t.prNumber, headRef: "feature", baseRef: "main", headRepoFullName: `fork${t.installationId}/api`, fork: true, authorLogin: "mallory" },
     baseSha: "0".repeat(40),
     authorLogin: "mallory",
     commitTitle: "Fork change",
@@ -235,7 +240,7 @@ describe("tenant isolation", () => {
       }),
     ).toEqual([]);
     expect(await sock.request({ type: "token_request", run_id: b.runId, purpose: "fetch" })).toEqual([
-      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound },
+      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: b.runId, message: S.runNotBound },
     ]);
     sock.ws.close();
 
@@ -289,8 +294,8 @@ describe("tenant isolation", () => {
     const before = await tenantRows(env, b.installationId);
     const agentB = await agentDoState(b);
 
-    const view = await click(a, "log:view", `${b.runId}:${b.job}`);
-    expect(view).toMatchObject({ text: S.slack.forbidden });
+    const view = await click(a, "hookci_view_logs", `${b.runId}:${b.job}`);
+    expect(view).toMatchObject({ text: S.slack.viewLogsNoAccess });
     expect(JSON.stringify(view)).not.toContain("/logs/");
     expect(await click(a, "fork:approve", `${gated}:${b.headSha}`)).toMatchObject({ text: S.forks.notGated });
     expect(await click(a, `home:revoke_agent:${b.agentId}`, String(b.installationId))).toMatchObject({ text: S.slack.forbidden });
@@ -314,22 +319,30 @@ describe("tenant isolation", () => {
   });
 
   it("serves B's log only to a URL signed by the hub for B's run", async () => {
-    const own = await call(new Request(await signLogUrl(env, b.runId, b.job)));
+    const now = new Date(testClock.now());
+    const own = await call(new Request(await signLogUrl(env, { installationId: b.installationId, runId: b.runId, job: b.job }, now)));
     expect(own.status).toBe(200);
+    expect(await own.text()).toContain("secret log");
 
-    const signedForA = new URL(await signLogUrl(env, a.runId, a.job));
-    const exp = signedForA.searchParams.get("exp") ?? "";
-    const forged = [`https://hub.test/logs/${b.runId}/${b.job}${signedForA.search}`];
+    // A hub-signed link for installation A that names B's run, and A's real link retargeted at B's run.
+    const crossed = await signLogUrl(env, { installationId: a.installationId, runId: b.runId, job: b.job }, now);
+    const retargeted = new URL(await signLogUrl(env, { installationId: a.installationId, runId: a.runId, job: a.job }, now));
+    retargeted.searchParams.set("r", b.runId);
+    retargeted.searchParams.set("j", b.job);
+    const forged = [crossed, retargeted.toString()];
+    const exp = retargeted.searchParams.get("exp") ?? "";
     for (const key of [a.credential, a.pairToken, `xoxb-${a.teamId}`, env.SLACK_SIGNING_SECRET]) {
-      const sig = base64url(await hmacSha256(key, `${b.runId}|${b.job}|${exp}`));
-      forged.push(`https://hub.test/logs/${b.runId}/${b.job}?exp=${exp}&sig=${sig}`);
+      const params = { i: String(b.installationId), r: b.runId, j: b.job, exp, kid: "c" };
+      const sig = base64url(await hmacSha256(key, `v1\n${params.i}\n${params.r}\n${params.j}\n${exp}`));
+      forged.push(`https://hub.test/logs/view?${new URLSearchParams({ ...params, sig })}`);
     }
 
     for (const url of forged) {
       const res = await call(new Request(url));
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({ error: "log_sig_invalid" });
+      expect(await res.text()).toContain(escapeHtml(S.logViewer.linkExpired));
     }
+    expect(denials()).toEqual([expect.objectContaining({ installation_id: a.installationId, run_id: b.runId, reason: "run_not_owned" })]);
   });
 
   it("purging A leaves every B row and log in place", async () => {

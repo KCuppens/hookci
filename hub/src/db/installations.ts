@@ -1,6 +1,8 @@
 // installations is the tenant root, keyed by the GitHub installation id, so
 // these helpers take the raw D1Database.
 
+import { TENANT_TABLES } from "./tenant";
+
 export interface InstallationRow {
 	id: number;
 	account_login: string;
@@ -73,26 +75,13 @@ export async function listPurgeDue(db: D1Database, now: number, limit: number): 
 	return results.map((r) => r.id);
 }
 
-// Every table holding installation data. jobs, slack_messages and
-// slack_job_replies hang off runs, so they go before it.
+// jobs, slack_messages and slack_job_replies hang off runs, so they go before
+// it; then every table keyed by installation_id.
 const PURGE_STATEMENTS = [
 	"DELETE FROM jobs WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_messages WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
 	"DELETE FROM slack_job_replies WHERE run_id IN (SELECT run_id FROM runs WHERE installation_id = ?1)",
-	"DELETE FROM annotations WHERE installation_id = ?1",
-	"DELETE FROM runs WHERE installation_id = ?1",
-	"DELETE FROM repos WHERE installation_id = ?1",
-	"DELETE FROM workspace_links WHERE installation_id = ?1",
-	"DELETE FROM agents WHERE installation_id = ?1",
-	"DELETE FROM pair_tokens WHERE installation_id = ?1",
-	"DELETE FROM repo_bindings WHERE installation_id = ?1",
-	"DELETE FROM watches WHERE installation_id = ?1",
-	"DELETE FROM check_runs WHERE installation_id = ?1",
-	"DELETE FROM deliveries WHERE installation_id = ?1",
-	"DELETE FROM author_cache WHERE installation_id = ?1",
-	"DELETE FROM author_map WHERE installation_id = ?1",
-	"DELETE FROM daily_counters WHERE installation_id = ?1",
-	"DELETE FROM fork_approvals WHERE installation_id = ?1",
+	...TENANT_TABLES.map((table) => `DELETE FROM ${table} WHERE installation_id = ?1`),
 	"DELETE FROM installations WHERE id = ?1",
 ];
 

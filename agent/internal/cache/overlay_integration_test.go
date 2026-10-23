@@ -33,11 +33,11 @@ func TestOverlayRestoreIntegration(t *testing.T) {
 	writeFile(t, filepath.Join(src, "package-lock.json"), "lock", 0o644)
 	writeFile(t, filepath.Join(src, "node_modules", "a", "index.js"), "a", 0o644)
 	writeFile(t, filepath.Join(src, "node_modules", "b", "index.js"), "b", 0o644)
-	k, err := ComputeKey("trusted:kcuppens/app", runtime.GOOS+"-"+runtime.GOARCH, src, []string{"package-lock.json"}, []string{"node_modules"})
+	k, err := ComputeKey("trusted:kcuppens/app", "main", runtime.GOOS+"-"+runtime.GOARCH, src, []string{"package-lock.json"}, []string{"node_modules"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Save(ctx, k, Policy{Kind: "check", Event: "push", Protected: true, Trusted: true}, src); err != nil {
+	if err := c.Save(ctx, k, Policy{Kind: "check", Event: "push", Trusted: true}, src); err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(c.root, "trusted__kcuppens__app", k.Hash)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,7 +23,7 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-const testCredential = "zc_agent_secretsecretsecret"
+const testCredential = "hci_agent_secretsecretsecret"
 
 // fakeHub serves /v1/agent/connect. While refuse is non-zero it answers the
 // upgrade with that HTTP status; otherwise it accepts and hands the socket to
@@ -506,6 +507,141 @@ func TestRevoked(t *testing.T) {
 	}
 }
 
+// refusalHandler records the token refusals it is told about and reports
+// claim for them.
+type refusalHandler struct {
+	recordingHandler
+	claim bool
+	asked atomic.Int32
+}
+
+func (h *refusalHandler) TokenRefused(runID, _ string) bool {
+	if runID == "run_7" {
+		h.asked.Add(1)
+	}
+	return h.claim
+}
+
+// TestTokenRefusals: an auth_failed frame with a run_id refuses that one
+// token request and keeps the session, even with no request waiting; an
+// auth_failed without a run_id, or a revoked frame, ends Run with
+// ErrRevoked.
+func TestTokenRefusals(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      string
+		runID     string
+		claim     bool
+		wantAsked int32
+		wantErr   bool
+	}{
+		{name: "refusal of a waiting request", code: "auth_failed", runID: "run_7", claim: true, wantAsked: 1},
+		{name: "refusal with no request waiting", code: "auth_failed", runID: "run_7", wantAsked: 1},
+		{name: "auth_failed without run_id", code: "auth_failed", claim: true, wantErr: true},
+		{name: "revoked never asked", code: "revoked", runID: "run_7", claim: true, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newHarness(t)
+			h := &refusalHandler{claim: tc.claim}
+			x.client = New(x.client.cfg, x.st, h, x.client.log)
+			x.start(t)
+			c := x.hub.next(t)
+			c.handshake(t)
+			waitFor(t, "Connected()", x.client.Connected)
+			runID := ""
+			if tc.runID != "" {
+				runID = `"run_id":"` + tc.runID + `",`
+			}
+			c.send(t, `{"v":1,"type":"error","seq":3,`+runID+`"code":"`+tc.code+`","message":"run not bound"}`)
+			if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 3.0 {
+				t.Fatalf("reply = %v, want ack upto 3", m)
+			}
+			if tc.wantErr {
+				c.drain()
+				if err := x.runErr(t); !errors.Is(err, ErrRevoked) {
+					t.Fatalf("Run = %v, want ErrRevoked", err)
+				}
+			} else {
+				c.send(t, `{"v":1,"type":"token","seq":4,"run_id":"run_1","token":"ghs_x","exp":1700000000}`)
+				if m := c.readFrame(t); m["type"] != "ack" || m["upto"] != 4.0 {
+					t.Fatalf("reply = %v, want ack upto 4 on the same session", m)
+				}
+				if n := h.count(); n != 1 {
+					t.Fatalf("HandleFrame called %d times, want 1", n)
+				}
+			}
+			if n := h.asked.Load(); n != tc.wantAsked {
+				t.Errorf("TokenRefused called %d times, want %d", n, tc.wantAsked)
+			}
+		})
+	}
+}
+
+// liveHandler records live tail frames and ended sessions.
+type liveHandler struct {
+	recordingHandler
+	live  chan protocol.Frame
+	ended atomic.Int32
+}
+
+func (h *liveHandler) HandleLive(f protocol.Frame) { h.live <- f }
+func (h *liveHandler) SessionEnded()               { h.ended.Add(1) }
+
+// TestLiveLogTail: log_subscribe and log_unsubscribe reach HandleLive without
+// a seq or an ack, SendLog writes on the open session outside the outbox,
+// and a closed session ends the live tail.
+func TestLiveLogTail(t *testing.T) {
+	x := newHarness(t)
+	h := &liveHandler{live: make(chan protocol.Frame, 2)}
+	x.client = New(x.client.cfg, x.st, h, x.client.log)
+	if err := x.client.SendLog(protocol.Log{RunId: "run_1", Job: "build"}); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("SendLog before connecting = %v, want ErrNotConnected", err)
+	}
+	x.start(t)
+	c := x.hub.next(t)
+	c.handshake(t)
+	waitFor(t, "Connected()", x.client.Connected)
+
+	c.send(t, `{"v":1,"type":"log_subscribe","run_id":"run_1","job":"build","offset":4096}`)
+	c.send(t, `{"v":1,"type":"log_unsubscribe","run_id":"run_1","job":"build"}`)
+	for _, want := range []protocol.Frame{
+		protocol.LogSubscribe{V: 1, Type: "log_subscribe", RunId: "run_1", Job: "build", Offset: 4096},
+		protocol.LogUnsubscribe{V: 1, Type: "log_unsubscribe", RunId: "run_1", Job: "build"},
+	} {
+		select {
+		case got := <-h.live:
+			if got != want {
+				t.Errorf("HandleLive got %+v, want %+v", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("HandleLive never got %T", want)
+		}
+	}
+
+	sent := make(chan error, 1)
+	go func() {
+		sent <- x.client.SendLog(protocol.Log{RunId: "run_1", Job: "build", Offset: 4096, Bytes: "aGkK", Eof: true})
+	}()
+	m := c.readFrame(t)
+	want := map[string]any{"v": 1.0, "type": "log", "run_id": "run_1", "job": "build", "offset": 4096.0, "bytes": "aGkK", "eof": true}
+	if !reflect.DeepEqual(m, want) {
+		t.Errorf("hub got %v, want %v (no ack, no seq)", m, want)
+	}
+	if err := <-sent; err != nil {
+		t.Fatalf("SendLog = %v", err)
+	}
+	if n, err := x.st.Pending(context.Background(), 0, 0); err != nil || len(n) != 0 {
+		t.Errorf("outbox = %v, %v; want the log frame never stored", n, err)
+	}
+
+	c.c.CloseNow()
+	waitFor(t, "SessionEnded", func() bool { return h.ended.Load() == 1 })
+	if err := x.client.SendLog(protocol.Log{RunId: "run_1", Job: "build"}); !errors.Is(err, ErrNotConnected) {
+		t.Errorf("SendLog after the session ended = %v, want ErrNotConnected", err)
+	}
+}
+
 func TestPingTimeout(t *testing.T) {
 	x := newHarness(t)
 	x.start(t)
@@ -532,10 +668,10 @@ func TestPingTimeout(t *testing.T) {
 
 func TestConnectURL(t *testing.T) {
 	tests := []struct{ in, want, err string }{
-		{"https://ci.webuno.io", "wss://ci.webuno.io/v1/agent/connect", ""},
-		{"https://ci.webuno.io/", "wss://ci.webuno.io/v1/agent/connect", ""},
+		{"https://ci.hookci.com", "wss://ci.hookci.com/v1/agent/connect", ""},
+		{"https://ci.hookci.com/", "wss://ci.hookci.com/v1/agent/connect", ""},
 		{"http://127.0.0.1:8787", "ws://127.0.0.1:8787/v1/agent/connect", ""},
-		{"ftp://ci.webuno.io", "", "scheme must be http or https"},
+		{"ftp://ci.hookci.com", "", "scheme must be http or https"},
 		{"https://", "", "missing host"},
 	}
 	for _, tc := range tests {
@@ -580,5 +716,31 @@ func TestSendEventSetsAgentSeq(t *testing.T) {
 	}
 	if _, err := c.Send(ctx, protocol.Ack{Upto: 1}); err == nil {
 		t.Fatal("Send(ack) succeeded, want an error: ack is not an outbox frame")
+	}
+}
+
+// TestWithdrawDropsFrame: a withdrawn token_request leaves the outbox, so
+// the next session does not replay it; other frames stay queued.
+func TestWithdrawDropsFrame(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(Config{HubURL: "https://hub.invalid"}, st, nil, nil)
+	ctx := context.Background()
+	req, err := c.Send(ctx, protocol.TokenRequest{RunId: "run_1", Purpose: protocol.TokenRequestPurposeFetch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Send(ctx, protocol.Accepted{TriggerId: "trg_1", RunId: "run_1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Withdraw(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	items, err := st.Pending(ctx, 0, 0)
+	if err != nil || len(items) != 1 || items[0].Kind != "accepted" {
+		t.Fatalf("Pending after Withdraw = %+v, %v; want only the accepted frame", items, err)
 	}
 }

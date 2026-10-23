@@ -1,0 +1,13 @@
+version: 1
+deployments:
+  production:
+    on: { push: main }
+    strategy: compose-inplace
+    compose:
+      project: app
+      service: web
+    migrate:
+      before:
+        run: "pg_dump -Fc -f /backup/{env}-{ts}.dump \"$DATABASE_URL\""
+        output_dir: /var/backups/hookci/app
+    health: { url: "http://127.0.0.1:{port}/health" }

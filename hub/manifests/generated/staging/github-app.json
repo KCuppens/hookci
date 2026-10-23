@@ -1,13 +1,13 @@
 {
   "name": "hookci-staging",
-  "url": "https://ci-staging.webuno.io",
-  "hook_attributes": { "url": "https://ci-staging.webuno.io/github/webhook", "active": true },
-  "redirect_url": "https://ci-staging.webuno.io/github/oauth/callback",
-  "callback_urls": ["https://ci-staging.webuno.io/github/oauth/callback", "https://ci-staging.webuno.io/github/link/callback"],
-  "setup_url": "https://ci-staging.webuno.io/github/oauth/callback",
+  "url": "https://ci-staging.hookci.com",
+  "hook_attributes": { "url": "https://ci-staging.hookci.com/github/webhook", "active": true },
+  "redirect_url": "https://ci-staging.hookci.com/github/oauth/callback",
+  "callback_urls": ["https://ci-staging.hookci.com/github/oauth/callback", "https://ci-staging.hookci.com/github/link/callback", "https://ci-staging.hookci.com/auth/github/callback"],
+  "setup_url": "https://ci-staging.hookci.com/github/oauth/callback",
   "setup_on_update": true,
   "request_oauth_on_install": true,
   "public": true,
   "default_permissions": { "contents": "read", "metadata": "read", "pull_requests": "read", "checks": "write", "members": "read" },
-  "default_events": ["pull_request", "push", "check_suite", "check_run", "installation_repositories"]
+  "default_events": ["pull_request", "push", "check_suite", "check_run"]
 }

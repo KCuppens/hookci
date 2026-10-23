@@ -13,9 +13,9 @@ checks:
 deployments:
   production:
     on:
-      push:
-        branch: main
-    strategy: restart
+      push: main
+    strategy: script
+    run: ./deploy.sh
     health:
       url: http://example.com:{port}/health
 redact:

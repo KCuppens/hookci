@@ -12,18 +12,13 @@ features:
     always_online: false
   slash_commands:
     - command: /hookci
-      url: https://ci.webuno.io/slack/commands
+      url: https://ci.hookci.com/slack/commands
       description: Watch repos, check status, retry runs and link your GitHub account.
-      usage_hint: "watch|unwatch|status|retry|bind|me|help"
-      should_escape: false
-    - command: /zeroci
-      url: https://ci.webuno.io/slack/commands
-      description: Alias of /hookci, kept for installs that still use the old name.
       usage_hint: "watch|unwatch|status|retry|bind|me|help"
       should_escape: false
 oauth_config:
   redirect_urls:
-    - https://ci.webuno.io/slack/oauth/callback
+    - https://ci.hookci.com/slack/oauth/callback
   scopes:
     bot:
       - chat:write
@@ -35,7 +30,7 @@ oauth_config:
       - users:read.email
 settings:
   event_subscriptions:
-    request_url: https://ci.webuno.io/slack/events
+    request_url: https://ci.hookci.com/slack/events
     bot_events:
       - app_home_opened
       - app_uninstalled
@@ -44,7 +39,7 @@ settings:
       - group_left
   interactivity:
     is_enabled: true
-    request_url: https://ci.webuno.io/slack/interactive
+    request_url: https://ci.hookci.com/slack/interactive
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

@@ -1,15 +1,16 @@
 // Browser-flow proofs shared by the GitHub install (M1-11), GitHub user link
-// (M1-14) and Slack install (M1-12) flows:
+// (M1-14), Slack install (M1-12) and log sign-in (M3-09) flows:
 // - OAuth state: signed, single use, 10 minutes, bound to the browser through
 //   the __Host-hookci_oauth cookie.
 // - Session: the __Host-hookci_session cookie set when a browser completed the
 //   GitHub flow, naming the installations GitHub said that user can access.
+//   The log sign-in keeps its own session; see auth/session.ts.
 
 import { base64url, hmacSha256, sha256Hex, timingSafeEqual } from "../crypto";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 
-export type OAuthKind = "github_install" | "github_link" | "slack_install" | "dashboard_login" | "google_login";
+export type OAuthKind = "github_install" | "github_link" | "slack_install" | "github_logs" | "dashboard_login" | "google_login";
 /** cookie is the full Set-Cookie header value. */
 export interface IssuedState {
 	state: string;

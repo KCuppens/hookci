@@ -25,3 +25,9 @@ func HostDiskFree(path string) (uint64, error) {
 	}
 	return st.Bavail * uint64(st.Bsize), nil
 }
+
+// HostWritable is nil when the real user may create files in dir.
+func HostWritable(dir string) error {
+	const wOK = 0x2
+	return syscall.Access(dir, wOK)
+}

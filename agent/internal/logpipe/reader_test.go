@@ -37,3 +37,25 @@ func TestReadLogOffset(t *testing.T) {
 		off = next
 	}
 }
+
+func TestReadLogBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job.log")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxRead + 5); err != nil { // sparse
+		t.Fatal(err)
+	}
+	f.Close()
+	data, next, err := ReadLog(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != maxRead || next != maxRead {
+		t.Fatalf("ReadLog read %d bytes, next %d; want %d", len(data), next, maxRead)
+	}
+	if data, next, _ = ReadLog(path, next); len(data) != 5 || next != maxRead+5 {
+		t.Errorf("second ReadLog read %d bytes, next %d; want the last 5", len(data), next)
+	}
+}

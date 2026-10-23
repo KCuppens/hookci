@@ -42,12 +42,12 @@ func TestValidateOK(t *testing.T) {
 	if err := os.Chmod(envFile, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	path = writeConfig(t, "version: 1\nchecks:\n  jobs:\n    test:\n      run: npm test\ndeployments:\n  production:\n    on:\n      push:\n        branch: main\n    env_file: "+envFile+"\n")
+	path = writeConfig(t, "version: 1\nchecks:\n  jobs:\n    test:\n      run: npm test\ndeployments:\n  production:\n    on:\n      push: main\n    strategy: script\n    run: ./deploy.sh\n    env_file: "+envFile+"\n")
 	code, stdout, stderr = validate(path)
 	if code != ExitOK || !strings.HasPrefix(stdout, "ok: ") {
 		t.Errorf("validate with warnings = %d, stdout %q", code, stdout)
 	}
-	if !strings.Contains(stderr, "warning: deployments.production.env_file: env_file "+`"`+envFile+`" is writable by group or others`) {
+	if !strings.Contains(stderr, "warning: deployments.production.env_file: env_file "+`"`+envFile+`" gives group or others access (mode 0666)`) {
 		t.Errorf("stderr %q does not carry the env_file warning", stderr)
 	}
 }

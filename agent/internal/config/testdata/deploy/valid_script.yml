@@ -1,0 +1,11 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: pnpm turbo run test
+deployments:
+  production:
+    on: { push: main }
+    strategy: script
+    run: ./deploy.sh
+    rollback: ./rollback.sh

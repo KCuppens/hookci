@@ -43,7 +43,7 @@ func defaultReleases() Releases {
 			}
 			return filepath.EvalSymlinks(p)
 		},
-		TrustedRoot: filepath.Join(stateRoot(), selfupdate.TrustedRootName),
+		TrustedRoot: filepath.Join(defaultStateRoot, selfupdate.TrustedRootName),
 		NewVerifier: func(trustedRoot []byte) (selfupdate.Verifier, error) {
 			return selfupdate.NewSigstoreVerifier(selfupdate.Identity, selfupdate.Issuer, trustedRoot)
 		},
@@ -132,7 +132,7 @@ func cmdUpgrade(ctx context.Context, d Deps, args []string, stdout, stderr io.Wr
 		return fail(err)
 	}
 	u.Restart = func(ctx context.Context) error {
-		return d.Services.TryRestart(ctx, systemd.AllAgentUnits())
+		return d.Services.TryRestart(ctx, systemd.AllAgentUnits)
 	}
 	if err := u.Apply(ctx, r); err != nil {
 		return fail(err)

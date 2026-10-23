@@ -34,6 +34,17 @@ describe("getLogTail", () => {
     expect(await getLogTail(env, RUN, "test", 40)).toEqual(lines(19_961, 20_000));
   });
 
+  it("shows what a terminal would of progress redrawn with carriage returns, keeping \\r\\n line ends", async () => {
+    await env.LOGS.put(KEY, await gzip("line 1\r\nfetch 10%\rfetch 50%\rfetch 100%\nline 3\rline 4\r"));
+    expect(await getLogTail(env, RUN, "test", 40)).toEqual(["line 1", "fetch 100%", "line 4"]);
+  });
+
+  it("keeps only the last 64 KiB of a line that never ends", async () => {
+    const long = `${"a".repeat(1_000_000)}${"b".repeat(65_536)}`;
+    await env.LOGS.put(KEY, await gzip(`line 1\n${long}\nline 3\n${long}`));
+    expect(await getLogTail(env, RUN, "test", 40)).toEqual(["line 1", "b".repeat(65_536), "line 3", "b".repeat(65_536)]);
+  });
+
   it("drops the agent's timestamp prefix and leaves unstamped lines alone", async () => {
     await env.LOGS.put(KEY, await gzip("old\n2026-05-05T14:32:01.123Z line 2\n2026-05-05T14:32:01.124Z \n2026-05-05T14:32:01.125Z line 4"));
     expect(await getLogTail(env, RUN, "test", 40)).toEqual(["old", "line 2", "", "line 4"]);

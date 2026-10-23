@@ -1,0 +1,11 @@
+networks:
+  proxy:
+    external: true
+services:
+  web:
+    image: myapp:abc1234
+    networks:
+      default: {}
+      proxy: {}
+    ports: !override
+      - "127.0.0.1:3102:8080"

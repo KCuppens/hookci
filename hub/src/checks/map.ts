@@ -84,12 +84,15 @@ export function aggregateFor(run: RunView, hubOrigin: string): CheckView {
 		case "gated":
 		case "pending": {
 			const reason = run.reason ?? (run.state === "gated" ? "fork_gated" : undefined);
+			if (!reason) return { status: "in_progress", title: S.checks.state.queued, summary };
+			const text = actionRequiredText(reason, { hubOrigin, repo: run.repo });
+			// A refused `trust: all` says why the fork still waits on a maintainer.
+			const output = run.trustRefused ? { ...text, summary: `${text.summary}\n\n${S.checks.trustRefused[run.trustRefused]}` } : text;
 			if (reason === "fork_gated") {
 				const actions = [{ label: S.forks.approveButton, description: S.forks.approveDescription, identifier: APPROVE_ACTION }];
-				return { status: "completed", conclusion: "action_required", ...actionRequiredText(reason, { hubOrigin, repo: run.repo }), actions };
+				return { status: "completed", conclusion: "action_required", ...output, actions };
 			}
-			if (reason) return { status: "completed", conclusion: "action_required", ...actionRequiredText(reason, { hubOrigin, repo: run.repo }) };
-			return { status: "in_progress", title: S.checks.state.queued, summary };
+			return { status: "completed", conclusion: "action_required", ...output };
 		}
 		case "received":
 		case "queued":

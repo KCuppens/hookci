@@ -40,9 +40,19 @@ export async function consumeApproval(db: TenantDb, k: ApprovalKey): Promise<boo
 	return res.meta.changes === 1;
 }
 
-/** Whether an approval exists for the key and the key's SHA is still the pull request head. */
-export async function isApprovalCurrent(db: TenantDb, k: ApprovalKey, currentHeadSha: string): Promise<boolean> {
-	if (k.headSha !== currentHeadSha) return false;
+/** Gives back a spent approval whose dispatch failed, so the approver can approve again. */
+export async function releaseApproval(db: TenantDb, k: ApprovalKey): Promise<void> {
+	await db.run(
+		"UPDATE fork_approvals SET used_at = NULL WHERE installation_id = ?1 AND repo_id = ?2 AND pr_number = ?3 AND head_sha = ?4 AND attempt = ?5",
+		k.repoId,
+		k.prNumber,
+		k.headSha,
+		k.attempt,
+	);
+}
+
+/** Whether an approval exists for the key. */
+export async function isApprovalRecorded(db: TenantDb, k: ApprovalKey): Promise<boolean> {
 	const row = await db.first<{ head_sha: string }>(
 		"SELECT head_sha FROM fork_approvals WHERE installation_id = ?1 AND repo_id = ?2 AND pr_number = ?3 AND head_sha = ?4 AND attempt = ?5",
 		k.repoId,

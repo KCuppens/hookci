@@ -5,7 +5,7 @@ import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import type { HubTrigger } from "../github/normalize";
 import { logEvent } from "../observability";
-import { fanOut, sinksFor, type WaitUntil } from "../sinks";
+import { fanOut, sinksForRun, type WaitUntil } from "../sinks";
 import { loadRunView } from "../sinks/runview";
 import { ulid } from "../ulid";
 import type { RouteOutcome } from "./route";
@@ -55,9 +55,8 @@ export async function notifyOutcome(
 		},
 		now,
 	);
-	const [view, sinks] = await Promise.all([
-		loadRunView(env.DB, trig.installationId, { runId: triggerId }),
-		sinksFor(env, trig.installationId),
-	]);
-	if (view) fanOut(ctx, sinks, (sink) => sink.onRunUpdate(view));
+	const view = await loadRunView(env, trig.installationId, { runId: triggerId });
+	if (!view) return;
+	const sinks = await sinksForRun(env, trig.installationId, view.repo);
+	fanOut(ctx, sinks, (sink) => sink.onRunUpdate(view));
 }

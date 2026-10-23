@@ -119,3 +119,35 @@ func TestWriterLongLine(t *testing.T) {
 		t.Errorf("emitted %d bytes, want %d", total, len(line))
 	}
 }
+
+func TestWriterLongLineMasksSecretAcrossCut(t *testing.T) {
+	literal := "lit-" + strings.Repeat("L", 36)
+	token := fake("ghp_", 36)
+	r, _ := New([]string{literal}, nil)
+	for _, tc := range []struct{ name, secret string }{{"literal", literal}, {"pattern", token}} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The secret straddles the first MaxLine window end.
+			pad := MaxLine - len(tc.secret)/2
+			line := strings.Repeat("x", pad) + tc.secret + " " + strings.Repeat("y", 3*MaxLine)
+			rec := &chunkRecorder{}
+			w := r.Writer(rec)
+			if _, err := w.Write([]byte(line)); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			var out strings.Builder
+			for i, c := range rec.chunks {
+				if len(c) > MaxLine {
+					t.Errorf("chunk %d is %d bytes, over MaxLine", i, len(c))
+				}
+				out.Write(c)
+			}
+			want := strings.Repeat("x", pad) + Mask + " " + strings.Repeat("y", 3*MaxLine)
+			if out.String() != want {
+				t.Errorf("secret straddling the cut not masked whole (output %d bytes, want %d)", out.Len(), len(want))
+			}
+		})
+	}
+}

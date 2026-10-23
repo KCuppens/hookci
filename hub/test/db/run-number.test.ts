@@ -48,7 +48,7 @@ describe("run_number", () => {
     const t = tenantDb(env.DB, A);
     for (const id of ["r1", "r2", "r3"]) await insertRun(t, newRun(id));
 
-    expect((await listRecentRuns(t)).map((r) => [r.run_id, r.run_number])).toEqual([
+    expect((await listRecentRuns(t, [100], 50)).map((r) => [r.run_id, r.run_number])).toEqual([
       ["r3", 3],
       ["r2", 2],
       ["r1", 1],
@@ -75,7 +75,7 @@ describe("run_number", () => {
     await Promise.all(ids.flatMap((id) => [insertRun(a, newRun(`a-${id}`)), insertRun(b, newRun(`b-${id}`))]));
 
     for (const t of [a, b]) {
-      const all = await listRecentRuns(t, 50);
+      const all = await listRecentRuns(t, [100], 50);
       expect(all.map((r) => r.run_number).sort((x, y) => x - y)).toEqual(ids.map((_, i) => i + 1));
     }
   });
@@ -207,7 +207,7 @@ describe("created_at", () => {
   });
 });
 
-describe("migration 0018_run_number", () => {
+describe("migration 0029_run_number", () => {
   // The migration is replayed on a scratch table with the columns it reads, as
   // the runs table was before it: its statements with "runs" renamed.
   const SCRATCH = "legacy_runs";
@@ -229,7 +229,7 @@ describe("migration 0018_run_number", () => {
   }
 
   async function migrate(): Promise<void> {
-    const migration = env.TEST_MIGRATIONS.find((m) => m.name === "0018_run_number.sql");
+    const migration = env.TEST_MIGRATIONS.find((m) => m.name === "0029_run_number.sql");
     expect(migration).toBeDefined();
     await env.DB.batch(migration!.queries.map((q) => env.DB.prepare(q.replaceAll("runs", SCRATCH))));
   }

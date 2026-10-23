@@ -40,7 +40,7 @@ nfpms:
     homepage: https://github.com/KCuppens/hookci
     maintainer: Kobe Cuppens <kobecuppens@hotmail.com>
     description: HookCI agent, runs CI checks sent by the HookCI hub.
-    license: MIT
+    license: Proprietary
     formats:
       - deb
       - rpm

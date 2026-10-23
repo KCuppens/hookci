@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -16,7 +17,9 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/executor"
 	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/hubclient"
 	"github.com/KCuppens/hookci/agent/internal/isolation"
 	"github.com/KCuppens/hookci/agent/internal/systemd"
 	"github.com/KCuppens/hookci/agent/internal/version"
@@ -28,7 +31,7 @@ const (
 	skewFail          = 300 * time.Second
 	minFreeBytes      = 2 << 30
 	certExpiryWarning = 14 * 24 * time.Hour
-	reinstallFix      = "rerun the installer: curl -fsSL https://ci.webuno.io/install | sh"
+	reinstallFix      = "rerun the installer: curl -fsSL https://ci.hookci.com/install | sh"
 	connectFix        = "pair this host: sudo hookci connect <pair-token>"
 )
 
@@ -46,13 +49,14 @@ type installation struct {
 	conf agentconf.AgentConfig
 }
 
-// installations lists the state directories under the state root that hold
-// a readable agent.json, ordered by name.
+// installations lists the paired state directories under the state root,
+// the ones holding an agent.json, ordered by name. An agent.json that cannot
+// be read or decoded is an error naming it, not an unpaired directory.
 func installations(env Env) ([]installation, error) {
 	root := fsPath(env.StateRoot)
 	entries, err := fs.ReadDir(env.FS, root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", env.StateRoot, pathCause(err))
 	}
 	var out []installation
 	for _, e := range entries {
@@ -60,17 +64,30 @@ func installations(env Env) ([]installation, error) {
 			continue
 		}
 		dir := path.Join(root, e.Name())
-		raw, err := fs.ReadFile(env.FS, path.Join(dir, agentconf.FileName))
-		if err != nil {
+		file := "/" + path.Join(dir, agentconf.FileName)
+		raw, err := fs.ReadFile(env.FS, fsPath(file))
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file, pathCause(err))
+		}
 		var c agentconf.AgentConfig
-		if json.Unmarshal(raw, &c) != nil {
-			continue
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		out = append(out, installation{dir: "/" + dir, conf: c})
 	}
 	return out, nil
+}
+
+// pathCause drops the Env.FS path of a *fs.PathError, which lacks the
+// leading slash of the host path the caller names instead.
+func pathCause(err error) error {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		return pe.Err
+	}
+	return err
 }
 
 // PairedHub is the hub URL of the first paired installation under the state
@@ -127,8 +144,11 @@ func (systemdUnitCheck) ID() string { return "systemd_unit" }
 func (systemdUnitCheck) Run(ctx context.Context, env Env) Result {
 	const title = "agent service"
 	insts, err := installations(env)
-	if err != nil || len(insts) == 0 {
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && len(insts) == 0) {
 		return warn(title, "no paired installation under "+env.StateRoot, connectFix)
+	}
+	if err != nil {
+		return fail(title, err.Error(), connectFix)
 	}
 	var active []string
 	for _, in := range insts {
@@ -153,7 +173,9 @@ func orUnknown(s string) string {
 	return s
 }
 
-// stateDirPermsCheck wants the state root 0700 and owned by root.
+// stateDirPermsCheck wants the state root owned by root, unreadable to other
+// users, and, with every ancestor, searchable by the job user: the executor
+// refuses jobs otherwise, see executor.OpenTo.
 type stateDirPermsCheck struct{}
 
 func (stateDirPermsCheck) ID() string { return "state_dir_perms" }
@@ -167,8 +189,9 @@ func (stateDirPermsCheck) Run(_ context.Context, env Env) Result {
 	if !fi.IsDir() {
 		return fail(title, env.StateRoot+" is not a directory", reinstallFix)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o700 {
-		return fail(title, fmt.Sprintf("%s has mode %04o, want 0700", env.StateRoot, perm), "sudo chmod 0700 "+env.StateRoot)
+	perm := fi.Mode().Perm()
+	if perm&0o066 != 0 {
+		return fail(title, fmt.Sprintf("%s has mode %04o, want 0711", env.StateRoot, perm), "sudo chmod 0711 "+env.StateRoot)
 	}
 	uid, ok := ownerUID(fi)
 	if !ok {
@@ -177,7 +200,37 @@ func (stateDirPermsCheck) Run(_ context.Context, env Env) Result {
 	if uid != 0 {
 		return fail(title, fmt.Sprintf("%s is owned by uid %d, want root", env.StateRoot, uid), "sudo chown root:root "+env.StateRoot)
 	}
-	return pass(title, env.StateRoot+" is 0700 root")
+	if r, ok := jobUserReaches(env, title); !ok {
+		return r
+	}
+	return pass(title, fmt.Sprintf("%s is %04o root", env.StateRoot, perm))
+}
+
+// jobUserReaches fails when the state root or an ancestor is not searchable
+// by the job user, by the executor's own test. Without a job user it passes:
+// runUserCheck reports that.
+func jobUserReaches(env Env, title string) (Result, bool) {
+	cred, ok := passwdCred(env, isolation.DefaultUser)
+	if !ok {
+		return Result{}, true
+	}
+	for dir := path.Clean("/" + env.StateRoot); ; dir = path.Dir(dir) {
+		name := fsPath(dir)
+		if name == "" {
+			name = "."
+		}
+		fi, err := fs.Stat(env.FS, name)
+		if err != nil {
+			return fail(title, fmt.Sprintf("%s: %v", dir, err), reinstallFix), false
+		}
+		if !executor.Searchable(fi, cred) {
+			return fail(title, fmt.Sprintf("%s (mode %04o) is not searchable by %s (uid %d), so the agent refuses every job",
+				dir, fi.Mode().Perm(), isolation.DefaultUser, cred.Uid), "sudo chmod a+x "+dir), false
+		}
+		if dir == "/" {
+			return Result{}, true
+		}
+	}
 }
 
 // credentialCheck wants at least one paired installation with a credential
@@ -190,7 +243,7 @@ func (credentialCheck) Run(_ context.Context, env Env) Result {
 	const title = "agent credential"
 	insts, err := installations(env)
 	if err != nil {
-		return fail(title, fmt.Sprintf("%s: %v", env.StateRoot, err), connectFix)
+		return fail(title, err.Error(), connectFix)
 	}
 	var agents []string
 	for _, in := range insts {
@@ -327,6 +380,27 @@ func (hubReachableCheck) Run(ctx context.Context, env Env) Result {
 		return fail(title, fmt.Sprintf("GET /healthz answered %d", resp.StatusCode), hubFix(env))
 	}
 	return pass(title, env.HubOrigin+"/healthz answered 200")
+}
+
+// hubInfoCheck names the hub from GET /v1/info: its URL, mode and version.
+// A hub too old to serve /v1/info still runs agents, so failing to read it
+// only warns.
+type hubInfoCheck struct{}
+
+func (hubInfoCheck) ID() string { return "hub_info" }
+
+func (hubInfoCheck) Run(ctx context.Context, env Env) Result {
+	const title = "hub"
+	ctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	info, err := hubclient.FetchInfo(ctx, env.HTTP, env.HubOrigin)
+	if errors.Is(err, hubclient.ErrNotAHub) {
+		return warn(title, err.Error(), "point --hub at a hookci hub, or pair again with hookci connect --hub <url>")
+	}
+	if err != nil {
+		return warn(title, err.Error(), hubFix(env))
+	}
+	return pass(title, fmt.Sprintf("%s (%s, version %s)", env.HubOrigin, info.Mode, info.Version))
 }
 
 // hubTLSCheck wants the hub over HTTPS with a trusted certificate that is

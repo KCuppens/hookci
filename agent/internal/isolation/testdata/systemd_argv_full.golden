@@ -35,13 +35,11 @@ CPUQuota=150%
 -p
 MemoryMax=2147483648
 -p
+MemorySwapMax=0
+-p
 TasksMax=512
 -p
 RuntimeMaxSec=91
--p
-IOReadBandwidthMax=/var/lib/hookci/runs/01HXRUN 52428800
--p
-IOWriteBandwidthMax=/var/lib/hookci/runs/01HXRUN 20971520
 -p
 Nice=10
 -p
@@ -49,7 +47,7 @@ IPAddressDeny=any
 -p
 IPAddressAllow=localhost
 -p
-NetworkNamespacePath=/run/netns/zc-01HXRUN
+NetworkNamespacePath=/run/netns/hci-01HXRUN
 -E
 PATH=/usr/bin:/bin
 -E

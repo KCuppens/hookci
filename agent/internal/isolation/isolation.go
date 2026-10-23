@@ -20,11 +20,9 @@ const UnitPrefix = "hookci-run-"
 // the corresponding systemd property is omitted.
 type Limits struct {
 	CPUs        float64       // 2 -> CPUQuota=200%
-	MemoryBytes int64         // MemoryMax=<bytes>
+	MemoryBytes int64         // MemoryMax=<bytes> MemorySwapMax=0
 	Tasks       int           // TasksMax=<n>
 	Timeout     time.Duration // RuntimeMaxSec=<seconds, rounded up>
-	IOReadBps   int64         // IOReadBandwidthMax=<rundir> <bytes>
-	IOWriteBps  int64         // IOWriteBandwidthMax=<rundir> <bytes>
 }
 
 // Spec describes one process to run in isolation.
@@ -35,7 +33,7 @@ type Spec struct {
 	Dir            string   // working directory (inside the run dir)
 	Env            []string // full, already-clean environment (KEY=VALUE); backends add nothing
 	Limits         Limits
-	NetNSPath      string   // netns.Network.NSPath ("/run/netns/zc-<run>") when a netns exists, else ""
+	NetNSPath      string   // netns.Network.NSPath ("/run/netns/hci-<run>") when a netns exists, else ""
 	ReadWritePaths []string // usually exactly [<rundir>]
 	// Hide is a dir the unit sees as an empty read-only tmpfs, with only the
 	// ReadWritePaths under it bound back in. The executor hides <state>/runs

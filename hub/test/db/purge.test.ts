@@ -14,7 +14,20 @@ import { clearTables, columnsOf, schemaTables } from "./helpers";
 
 // Tables that hold no installation data. Adding a table to the schema that is
 // neither listed here nor keyed by installation_id or run_id fails the test.
-const GLOBAL_TABLES = ["workspaces", "user_links", "slack_events", "ip_rate", "redelivery_cursor", "oauth_states", "cron_state", "users", "email_tokens", "login_attempts", "status_checks"];
+const GLOBAL_TABLES = [
+  "workspaces",
+  "user_links",
+  "slack_events",
+  "ip_rate",
+  "redelivery_cursor",
+  "hook_redeliveries",
+  "oauth_states",
+  "cron_state",
+  "users",
+  "email_tokens",
+  "login_attempts",
+  "status_checks",
+];
 
 beforeEach(clearTables);
 
@@ -88,8 +101,25 @@ async function seed(id: number): Promise<void> {
     env.DB.prepare(
       "INSERT INTO fork_approvals (installation_id, repo_id, pr_number, head_sha, attempt, approved_by_github_id, approved_at) VALUES (?1, ?2, 5, ?3, 1, 7, 1)",
     ).bind(id, repoId, "b".repeat(40)),
+    env.DB.prepare(
+      "INSERT INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, 'staging', 1, 'push', 'refs/heads/main', ?4, 'agt', 'sent', 1, 1)",
+    ).bind(id, `acme/repo-${id}`, "c".repeat(40), `dt-${id}`),
     env.DB.prepare("INSERT INTO slack_messages (run_id, team_id, channel_id, ts, alert_ts) VALUES (?1, 'T1', 'C1', '1.0', NULL)").bind(runId),
     env.DB.prepare("INSERT INTO slack_job_replies (run_id, team_id, channel_id, job, ts) VALUES (?1, 'T1', 'C1', 'build', '1.1')").bind(runId),
+    env.DB.prepare(
+      "INSERT INTO deploy_renders (installation_id, run_id, repo, env, sha, slack_channel, slack_ts, check_run_id, state, step, step_index, steps_total, started_at, updated_at) VALUES (?1, ?2, 'acme/repo', 'staging', ?3, 'C1', '1.2', 5, 'running', NULL, NULL, NULL, 1, 1)",
+    ).bind(id, runId, "c".repeat(40)),
+    env.DB.prepare(
+      "INSERT INTO sink_configs (installation_id, id, kind, repo, target, secret_enc, key_version, created_by, created_at) VALUES (?1, ?2, 'webhook', 'acme/repo', 'https://example.com/hook', NULL, NULL, 'agent:agt', 1)",
+    ).bind(id, `snk_${id}`),
+    env.DB.prepare("INSERT INTO sink_messages (installation_id, sink_id, run_id, external_id, last_hash, updated_at) VALUES (?1, ?2, ?3, NULL, 'h', 1)").bind(
+      id,
+      `snk_${id}`,
+      runId,
+    ),
+    env.DB.prepare(
+      "INSERT INTO sink_deliveries (installation_id, sink_id, delivery_id, run_id, attempt, status, http_status, at) VALUES (?1, ?2, 'dlv', ?3, 1, 'ok', 200, 1)",
+    ).bind(id, `snk_${id}`, runId),
   ]);
 }
 

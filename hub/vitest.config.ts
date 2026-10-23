@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Fixed values for the secrets typed in src/env.ts, so tests never need real ones.
 const testKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -16,7 +16,7 @@ const testSecrets = {
   SLACK_SIGNING_SECRET: "test-slack-signing-secret",
   TOKEN_ENC_KEYS: JSON.stringify({ current: 1, keys: { "1": testKey } }),
   STATE_SIGNING_KEY: "test-state-signing-key",
-  LOG_SIGNING_KEYS: JSON.stringify({ "1": testKey }),
+  LOG_SIGNING_KEY: "test-log-signing-key",
 };
 
 // Miniflare keeps D1 and Durable Object storage in a directory under
@@ -42,5 +42,7 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
+    // test/cli runs under vitest.cli.config.ts in the node environment.
+    exclude: [...configDefaults.exclude, "test/cli/**"],
   },
 });

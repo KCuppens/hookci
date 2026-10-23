@@ -38,6 +38,11 @@ export async function getRepoByFullName(t: TenantDb, fullName: string): Promise<
 	return t.first<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 AND full_name = ?2 COLLATE NOCASE", fullName);
 }
 
+/** Records the default branch a webhook reports for a known repo, so a renamed one reaches the deploy chain. */
+export async function setDefaultBranch(t: TenantDb, repoId: number, branch: string): Promise<void> {
+	await t.run("UPDATE repos SET default_branch = ?3 WHERE installation_id = ?1 AND repo_id = ?2 AND default_branch != ?3", repoId, branch);
+}
+
 export async function getRepo(t: TenantDb, repoId: number): Promise<RepoRow | null> {
 	return t.first<RepoRow>("SELECT * FROM repos WHERE installation_id = ?1 AND repo_id = ?2", repoId);
 }

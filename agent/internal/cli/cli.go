@@ -38,8 +38,12 @@ func commandTable() map[string]command {
 			run:     cmdAgent,
 		},
 		"connect": {
-			summary: "pair this machine with a hub: connect <pair-token> [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
+			summary: "pair this machine with a hub: connect [pair-token] [--hub URL] [--name NAME] [--state-dir DIR] [--force] [--no-service]",
 			run:     cmdConnect,
+		},
+		"deploy": {
+			summary: "preview a deployment without running it: deploy <env> --dry-run [--repo owner/name] [--sha SHA] [--state-dir DIR | --installation ID]",
+			run:     cmdDeploy,
 		},
 		"detect": {
 			summary: "auto-detect project ecosystem and print inferred config",
@@ -49,6 +53,10 @@ func commandTable() map[string]command {
 			summary: "diagnose this host and its path to the hub: doctor [--hub URL] [--state-root DIR] [--json]",
 			run:     cmdDoctor,
 		},
+		"gc": {
+			summary: "remove old deploy images, cap the build cache and delete finished run dirs: gc [--dry-run] [--state-dir DIR | --installation ID]",
+			run:     cmdGC,
+		},
 		"help": {
 			summary: "show help for hookci",
 			run: func(_ context.Context, _ Deps, _ []string, stdout, _ io.Writer) int {
@@ -56,20 +64,36 @@ func commandTable() map[string]command {
 				return ExitOK
 			},
 		},
+		"hub": {
+			summary: "set up or upgrade a self-hosted hub on Cloudflare through npx hookci-hub: hub setup|upgrade [hookci-hub options]",
+			run:     cmdHub,
+		},
 		"init": {
-			summary: "scaffold a .hookci.yml config file for the project",
+			summary: "scaffold a .hookci.yml config file for the project (--deploy adds a deployment)",
 			run:     noDeps(runInit),
 		},
 		"logs": {
-			summary: "print or follow job logs: logs <run> [job] [-f]",
+			summary: "print or follow job logs: logs <run> [job] [-f] [--state-dir DIR | --installation ID]",
 			run:     cmdLogs,
 		},
 		"run": {
 			summary: "run the checks of the current repo's HEAD: run [job]",
 			run:     cmdRun,
 		},
+		"runs": {
+			summary: "export finished runs or report their medians and savings vs a hosted CI baseline: runs export|stats",
+			run:     cmdRuns,
+		},
+		"retry": {
+			summary: "retry a Failed or Interrupted deploy run: retry <run_id> [--state-dir DIR | --installation ID]",
+			run:     cmdRetry,
+		},
+		"sink": {
+			summary: "manage the repo's Telegram and webhook sinks on the hub: sink add telegram|webhook, sink ls, sink rm <id>, sink test <id>",
+			run:     cmdSink,
+		},
 		"status": {
-			summary: "list recent runs, or one run's jobs: status [run] [--json]",
+			summary: "list recent runs, or one run's jobs: status [run] [--json] [--state-dir DIR | --installation ID]",
 			run:     cmdStatus,
 		},
 		"upgrade": {

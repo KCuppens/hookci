@@ -53,26 +53,8 @@ func NewRunDir(stateDir, runID string, job JobUser) (RunDir, error) {
 }
 
 func (j JobUser) handOver(stateDir string, d RunDir) error {
-	abs, err := filepath.Abs(stateDir)
-	if err != nil {
+	if err := OpenTo(stateDir, j.Cred, filepath.Join(stateDir, "runs"), d.Root); err != nil {
 		return err
-	}
-	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
-		info, err := os.Stat(dir)
-		if err != nil {
-			return err
-		}
-		if !searchable(info, j.Cred) {
-			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; use a state dir every user can reach, such as /var/lib/hookci", dir, info.Mode().Perm(), j.Cred.Uid)
-		}
-		if dir == filepath.Dir(dir) {
-			break
-		}
-	}
-	for _, p := range []string{stateDir, filepath.Join(stateDir, "runs"), d.Root} {
-		if err := os.Chmod(p, 0o711); err != nil {
-			return err
-		}
 	}
 	chown := j.Chown
 	if chown == nil {
@@ -86,9 +68,37 @@ func (j JobUser) handOver(stateDir string, d RunDir) error {
 	return nil
 }
 
-// searchable reports whether cred may traverse a dir with info by its owner,
+// OpenTo lets cred reach dirs under stateDir without listing them: it checks
+// that every ancestor of stateDir is searchable by cred, then makes stateDir
+// and dirs mode 0711.
+func OpenTo(stateDir string, cred *syscall.Credential, dirs ...string) error {
+	abs, err := filepath.Abs(stateDir)
+	if err != nil {
+		return err
+	}
+	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+		if !Searchable(info, cred) {
+			return fmt.Errorf("%s (mode %o) is not searchable by uid %d; run chmod a+x %s or use a state dir every user can reach", dir, info.Mode().Perm(), cred.Uid, dir)
+		}
+		if dir == filepath.Dir(dir) {
+			break
+		}
+	}
+	for _, p := range append([]string{stateDir}, dirs...) {
+		if err := os.Chmod(p, 0o711); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Searchable reports whether cred may traverse a dir with info by its owner,
 // group and other bits. Supplementary groups and ACLs are not consulted.
-func searchable(info fs.FileInfo, cred *syscall.Credential) bool {
+func Searchable(info fs.FileInfo, cred *syscall.Credential) bool {
 	perm := info.Mode().Perm()
 	st, ok := info.Sys().(*syscall.Stat_t)
 	switch {
