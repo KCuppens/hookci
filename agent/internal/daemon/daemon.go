@@ -519,7 +519,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.reject(bg, w, ReasonAgentError, err)
 		return
 	}
-	runner := &logRunner{JobRunner: inner, up: d.logs, runDir: dir.Root, local: p.checks.LogsLocal, log: d.log}
+	runner := &logRunner{JobRunner: inner, st: d.st, up: d.logs, runDir: dir.Root, local: p.checks.LogsLocal, log: d.log}
 
 	d.mu.Lock()
 	if w.ctx.Err() == nil {
@@ -810,10 +810,11 @@ func retryTrigger(retry store.Run) protocol.Trigger {
 	return t
 }
 
+// storeJobs plans checks' jobs behind the setup job.
 func storeJobs(checks *config.ResolvedChecks) []store.Job {
 	jobs := make([]store.Job, 0, len(checks.Jobs))
 	for _, j := range checks.Jobs {
 		jobs = append(jobs, store.Job{Name: j.Name, Needs: j.Needs})
 	}
-	return jobs
+	return store.WithSetup(jobs)
 }

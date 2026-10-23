@@ -28,7 +28,7 @@ export const QUOTAS = {
 	slackMaxAttempts: 5,
 	/** Annotations sent to one GitHub check run. */
 	annotationsPerJob: 500,
-	/** Jobs one run may record; job_planned and job events past it are dropped. */
+	/** Jobs one run may record, not counting its `setup` job; job_planned and job events past it are dropped. */
 	jobsPerRun: 200,
 	/** Annotations the hub stores for the run page: per job, and per run across its jobs. */
 	storedAnnotationsPerJob: 50,

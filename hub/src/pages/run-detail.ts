@@ -2,7 +2,7 @@
 // Every element shows data the hub stores or fetches (the commit's changed files
 // come live from GitHub and the card is left out when they are not available).
 
-import { CONFIG_JOB } from "../checks/map";
+import { CONFIG_JOB, SETUP_JOB } from "../checks/map";
 import type { RunActions } from "../dashboard/run-actions";
 import { runActionPath } from "../dashboard/run-actions";
 import type { AnnotationRow } from "../db/annotations";
@@ -437,10 +437,10 @@ function workJobs(v: RunDetailView): JobLogRow[] {
 	return v.jobs.filter((j) => j.name !== CONFIG_JOB);
 }
 
-/** The agent's latest setup stage while the run's jobs have not started, so a long setup does not look stuck. Empty otherwise. */
+/** The agent's latest setup stage while the run's jobs have not started, so a long setup does not look stuck. Empty otherwise, and when the run has a setup job: that row shows the stage itself. */
 function setupBanner(v: RunDetailView, jobs: JobLogRow[]): string {
 	const { run } = v;
-	if (run.state !== "running" || run.setup_step === null || jobs.some((j) => NOT_STARTED[j.state] !== true)) return "";
+	if (run.state !== "running" || run.setup_step === null || jobs.some((j) => j.name === SETUP_JOB || NOT_STARTED[j.state] !== true)) return "";
 	return `<p class="muted setup-stage">${e(T.setupStage(run.setup_step, run.setup_step_index ?? 0, run.setup_steps_total))}</p>`;
 }
 
@@ -504,7 +504,7 @@ function configBlock(v: RunDetailView): string {
 	const { run } = v;
 	const open =
 		run.repo_name === null ? "" : `<a class="bt" href="${e(T.configUrl(run.repo_name, run.sha))}" rel="noopener noreferrer">${e(T.viewConfiguration)}${icon("out")}</a>`;
-	const detail = valid ? `<p class="cfd">${e(T.configJobs(workJobs(v).length))}<i class="sep">\u00b7</i>${e(T.configValidated)}</p>` : "";
+	const detail = valid ? `<p class="cfd">${e(T.configJobs(workJobs(v).filter((j) => j.name !== SETUP_JOB).length))}<i class="sep">\u00b7</i>${e(T.configValidated)}</p>` : "";
 	return (
 		`<div class="cmh"><h2>${e(T.configuration)}</h2>${open}</div>` +
 		`<p class="cfv ${valid ? "ok" : "bad"}">${valid ? tmMark("ok") : statusCircle("failed")}${e(valid ? S.checks.configValid : S.checks.configInvalid)}</p>${detail}`

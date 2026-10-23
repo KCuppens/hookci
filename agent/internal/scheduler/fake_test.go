@@ -56,6 +56,7 @@ type fakeRunner struct {
 	max      int
 	finishes map[string][]store.RunState
 	onSetup  func(run store.Run)
+	setupOut JobOutcome // what RunSetup returns next to its error
 	onFinish func(run store.Run)
 }
 
@@ -69,14 +70,15 @@ func newFakeRunner() *fakeRunner {
 	}
 }
 
-func (r *fakeRunner) RunSetup(ctx context.Context, run store.Run) error {
+func (r *fakeRunner) RunSetup(ctx context.Context, run store.Run) (JobOutcome, error) {
 	r.mu.Lock()
 	hook := r.onSetup
+	out := r.setupOut
 	r.mu.Unlock()
 	if hook != nil {
 		hook(run)
 	}
-	return r.do(ctx, run.ID+":setup")
+	return out, r.do(ctx, run.ID+":setup")
 }
 
 func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (JobOutcome, error) {

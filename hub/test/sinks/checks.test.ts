@@ -134,6 +134,19 @@ describe("ChecksSink", () => {
     expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "hookci/test")).toBe(102);
   });
 
+  it("the setup job gets its own hookci/setup check, first after the aggregate, and a failed setup completes it as a failure", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const planned: JobView[] = [{ name: "setup", state: "queued" }, ...PLANNED];
+    await inAgent(agent, async (sink) => {
+      const run = runView({ jobs: planned });
+      await sink.onJobPlanned(run);
+      gh.calls.length = 0;
+      await sink.onJobUpdate(run, { name: "setup", state: "failed", durationMs: 900, reason: "setup failed: npm ci exited 1" });
+    });
+    expect(await getCheckRun(tenantDb(env.DB, INSTALLATION), REPO, SHA, "hookci/setup")).toBe(101);
+    expect(checkCalls()).toEqual([expect.objectContaining({ method: "PATCH", id: 101, status: "completed", conclusion: "failure" })]);
+  });
+
   it("20 job updates within a second make at most 2 update calls, the completed one at once", async () => {
     const agent = await seedAgent(INSTALLATION);
     await inAgent(agent, async (sink) => {

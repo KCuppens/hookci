@@ -286,6 +286,19 @@ func (h *harness) create(t *testing.T, run store.Run, cfg *config.ResolvedChecks
 	}
 }
 
+// createWithSetup is create for a run planned the way the agent plans it:
+// with the setup job in front of the configured ones.
+func (h *harness) createWithSetup(t *testing.T, run store.Run, cfg *config.ResolvedChecks) {
+	t.Helper()
+	jobs := make([]store.Job, len(cfg.Jobs))
+	for i, j := range cfg.Jobs {
+		jobs[i] = store.Job{Name: j.Name, Needs: j.Needs}
+	}
+	if err := h.st.CreateRun(context.Background(), run, store.WithSetup(jobs)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (h *harness) runDir(id string) RunDir {
 	return RunDir{Root: filepath.Join(h.state, "runs", id)}
 }

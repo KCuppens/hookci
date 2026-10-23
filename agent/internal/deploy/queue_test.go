@@ -707,10 +707,10 @@ func TestScheduler_RecoverRetryFlag(t *testing.T) {
 // blockingCI holds every CI setup until its context ends.
 type blockingCI struct{ setups chan string }
 
-func (b blockingCI) RunSetup(ctx context.Context, run store.Run) error {
+func (b blockingCI) RunSetup(ctx context.Context, run store.Run) (scheduler.JobOutcome, error) {
 	b.setups <- run.ID
 	<-ctx.Done()
-	return ctx.Err()
+	return scheduler.JobOutcome{}, ctx.Err()
 }
 
 func (blockingCI) RunJob(context.Context, store.Run, store.Job) (scheduler.JobOutcome, error) {

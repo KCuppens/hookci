@@ -106,7 +106,9 @@ type fakeRunner struct {
 	cancelled bool
 }
 
-func (r *fakeRunner) RunSetup(context.Context, store.Run) error { return nil }
+func (r *fakeRunner) RunSetup(context.Context, store.Run) (scheduler.JobOutcome, error) {
+	return scheduler.JobOutcome{}, nil
+}
 
 func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (scheduler.JobOutcome, error) {
 	r.mu.Lock()
@@ -309,6 +311,37 @@ func TestDaemonDuplicateTrigger(t *testing.T) {
 	}
 	if run.State != store.RunSuccess || run.TriggerID != "trg_1" || run.Event != "push" || run.TrustDomain != "trusted:acme/app" {
 		t.Fatalf("run = %+v", run)
+	}
+}
+
+// Every run the daemon plans carries the setup job first, and the configured
+// jobs wait for it.
+func TestDaemonPlansSetupJob(t *testing.T) {
+	h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{})
+	h.send(h.trigger("trg_1", false))
+	h.waitTrigger("trg_1", store.TriggerDone)
+
+	jobs, err := h.st.Jobs(h.ctx, h.frames("accepted")[0]["run_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 || jobs[0].Name != store.SetupJob || jobs[1].Name != "unit" {
+		t.Fatalf("jobs = %+v, want [setup unit]", jobs)
+	}
+	if !slices.Equal(jobs[1].Needs, []string{store.SetupJob}) {
+		t.Errorf("unit needs = %v, want [setup]", jobs[1].Needs)
+	}
+	if jobs[0].State != store.JobSuccess || jobs[1].State != store.JobSuccess {
+		t.Errorf("job states = %s, %s, want success", jobs[0].State, jobs[1].State)
+	}
+	var setupEvents int
+	for _, ev := range h.frames("event") {
+		if ev["job"] == store.SetupJob {
+			setupEvents++
+		}
+	}
+	if setupEvents == 0 {
+		t.Error("no setup job events in the outbox")
 	}
 }
 
@@ -756,12 +789,19 @@ func (l *logHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := *l.h
 	runID := strings.Split(r.URL.Path, "/")[3]
 	jobs, err := h.st.Jobs(context.Background(), runID)
+	uploaded := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+	var state store.JobState
+	for _, j := range jobs {
+		if j.Name == uploaded {
+			state = j.State
+		}
+	}
 	if err != nil || len(jobs) == 0 {
 		http.Error(w, "no such run", http.StatusNotFound)
 		return
 	}
 	l.mu.Lock()
-	l.calls = append(l.calls, logPut{path: r.URL.Path, auth: r.Header.Get("Authorization"), body: string(body), jobState: jobs[0].State})
+	l.calls = append(l.calls, logPut{path: r.URL.Path, auth: r.Header.Get("Authorization"), body: string(body), jobState: state})
 	l.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

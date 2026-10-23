@@ -32,7 +32,7 @@ func job(name string) store.Job { return store.Job{RunID: "01run", Name: name} }
 
 func setUp(t *testing.T, h *harness, run store.Run) {
 	t.Helper()
-	if err := h.ex.RunSetup(context.Background(), run); err != nil {
+	if _, err := h.ex.RunSetup(context.Background(), run); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
 }
@@ -391,7 +391,7 @@ func TestSetupNetworkFallbacks(t *testing.T) {
 	h.netns.available = false
 	run := localRun()
 	run.TrustDomain = "untrusted:local/app"
-	err := h.ex.RunSetup(context.Background(), run)
+	_, err := h.ex.RunSetup(context.Background(), run)
 	if !errors.Is(err, ErrSetupFailed) || !errors.Is(err, netns.ErrNetnsRequired) {
 		t.Errorf("untrusted without netns: err = %v, want ErrSetupFailed wrapping ErrNetnsRequired", err)
 	}
@@ -455,7 +455,7 @@ func TestRunPolicyEgressProxyOnly(t *testing.T) {
 	h = newHarness(t, "systemd", cfg, untrusted)
 	h.netns.available = false
 	run = localRun()
-	err := h.ex.RunSetup(context.Background(), run)
+	_, err := h.ex.RunSetup(context.Background(), run)
 	if !errors.Is(err, ErrSetupFailed) || !errors.Is(err, netns.ErrNetnsRequired) {
 		t.Errorf("proxy only without netns: err = %v, want ErrSetupFailed wrapping ErrNetnsRequired", err)
 	}
@@ -489,7 +489,7 @@ func TestRunPolicyDeploy(t *testing.T) {
 
 	for _, p := range []RunPolicy{{EgressProxyOnly: true}, {AllowDeploy: true}, {AllowSecrets: true}} {
 		h := newHarness(t, "none", cfg, func(o *Options) { o.Policy = p })
-		err := h.ex.RunSetup(context.Background(), run)
+		_, err := h.ex.RunSetup(context.Background(), run)
 		if !errors.Is(err, ErrSetupFailed) || !errors.Is(err, ErrDeployNotAllowed) {
 			t.Errorf("policy %+v: err = %v, want ErrSetupFailed wrapping ErrDeployNotAllowed", p, err)
 		}
@@ -811,7 +811,7 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 
 	h = newHarness(t, "none", cfg, nil)
 	h.cfgErr = errors.New("hookci.yml: bad")
-	err = h.ex.RunSetup(context.Background(), run)
+	_, err = h.ex.RunSetup(context.Background(), run)
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "hookci.yml: bad") {
 		t.Errorf("config error: err = %v, want ErrSetupFailed with the cause", err)
 	}
@@ -859,6 +859,125 @@ func TestSetupEmitsStageEventsAndTimings(t *testing.T) {
 		if !strings.Contains(log, s) {
 			t.Errorf("setup.log lacks %q:\n%s", s, log)
 		}
+	}
+}
+
+func jobsByName(t *testing.T, h *harness, runID string) map[string]store.Job {
+	t.Helper()
+	jobs, err := h.st.Jobs(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.Job{}
+	for _, j := range jobs {
+		byName[j.Name] = j
+	}
+	return byName
+}
+
+// With a setup job planned, the stage progress belongs to that job: its
+// events name it, and no event is a run-level step, which the hub would
+// show as the old banner.
+func TestSetupJobStageEventsAreJobScoped(t *testing.T) {
+	cfg := &config.ResolvedChecks{
+		Setup: []config.SetupStep{{Run: "npm ci"}},
+		Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.createWithSetup(t, run, cfg)
+	h.iso.jobs["build"] = func(context.Context, isolation.Spec) (isolation.Result, error) { return isolation.Result{}, nil }
+
+	if state := drive(t, h, run.ID); state != store.RunSuccess {
+		t.Fatalf("run = %s, want success", state)
+	}
+	var got []string
+	var setupStates []string
+	for _, ev := range frames[protocol.Event](t, h.st, store.KindEvent) {
+		if ev.Step != nil && ev.Job == nil {
+			t.Errorf("run-level step event %q with a setup job planned", *ev.Step)
+		}
+		if ev.Job == nil || *ev.Job != "setup" {
+			continue
+		}
+		setupStates = append(setupStates, string(ev.State))
+		if ev.Step != nil && ev.StepIndex != nil {
+			got = append(got, fmt.Sprintf("%d %s", *ev.StepIndex, *ev.Step))
+		}
+	}
+	want := []string{"0 Checking out", "1 Reading config", "2 Starting network", "3 Restoring caches and starting services", "4 Setup step 1: npm ci"}
+	if !slices.Equal(got, want) {
+		t.Errorf("setup job stage events = %q, want %q", got, want)
+	}
+	if len(setupStates) < 2 || setupStates[0] != "running" || setupStates[len(setupStates)-1] != "success" {
+		t.Errorf("setup job event states = %q, want running ... success", setupStates)
+	}
+	jobs := jobsByName(t, h, run.ID)
+	if jobs["setup"].State != store.JobSuccess || jobs["setup"].DurationMS == nil {
+		t.Errorf("setup job = %+v, want success with a duration", jobs["setup"])
+	}
+	if jobs["build"].State != store.JobSuccess {
+		t.Errorf("build = %s, want success", jobs["build"].State)
+	}
+}
+
+// A failing setup step fails the setup job with the step's output as its
+// tail, skips the jobs behind it and fails the run.
+func TestSetupJobFailure(t *testing.T) {
+	cfg := &config.ResolvedChecks{
+		Setup: []config.SetupStep{{Run: "npm ci"}},
+		Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.createWithSetup(t, run, cfg)
+	h.iso.jobs["setup"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
+		writeOut(s.Stderr, "npm ERR! missing lockfile\n")
+		return isolation.Result{ExitCode: 1}, nil
+	}
+
+	if state := drive(t, h, run.ID); state != store.RunFailed {
+		t.Fatalf("run = %s, want failed", state)
+	}
+	stored, err := h.st.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Reason != "setup failed: setup[0] exit 1" {
+		t.Errorf("run reason = %q", stored.Reason)
+	}
+	jobs := jobsByName(t, h, run.ID)
+	if jobs["setup"].State != store.JobFailed || jobs["setup"].Reason != "setup[0] exit 1" {
+		t.Errorf("setup job = %+v, want failed with reason %q", jobs["setup"], "setup[0] exit 1")
+	}
+	if jobs["build"].State != store.JobSkipped || jobs["build"].Reason != "needs setup failed" {
+		t.Errorf("build = %+v, want skipped with reason %q", jobs["build"], "needs setup failed")
+	}
+	var tail []string
+	for _, ev := range frames[protocol.Event](t, h.st, store.KindEvent) {
+		if ev.Job != nil && *ev.Job == "setup" && string(ev.State) == "failed" && ev.Tail != nil {
+			tail = ev.Tail
+		}
+	}
+	if !slices.ContainsFunc(tail, func(l string) bool { return strings.Contains(l, "npm ERR! missing lockfile") }) {
+		t.Errorf("setup failed event tail = %q, want the step output", tail)
+	}
+}
+
+// A setup that fails before any step (here the config) still fails the
+// setup job, with the executor's own log lines as the tail.
+func TestSetupJobFailureBeforeSteps(t *testing.T) {
+	cfg := &config.ResolvedChecks{Jobs: []config.ResolvedJob{{Name: "build", Run: "make"}}}
+	h := newHarness(t, "none", cfg, nil)
+	h.cfgErr = errors.New("hookci.yml: bad")
+	run := localRun()
+	h.createWithSetup(t, run, cfg)
+
+	if state := drive(t, h, run.ID); state != store.RunFailed {
+		t.Fatalf("run = %s, want failed", state)
+	}
+	if jobs := jobsByName(t, h, run.ID); jobs["setup"].State != store.JobFailed || !strings.Contains(jobs["setup"].Reason, "hookci.yml: bad") {
+		t.Errorf("setup job = %+v, want failed with the config error", jobs["setup"])
 	}
 }
 

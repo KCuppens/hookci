@@ -48,7 +48,7 @@ free, with daily caps that keep it fair for everyone.
 
 ### Results where you already look
 
-Each job becomes a GitHub check run, and a single `hookci` check sums them up
+Each job becomes a GitHub check run, including `hookci/setup` for the run's setup, and a single `hookci` check sums them up
 for branch protection. Slack gets one message per push, updated in place
 until any deploy it starts is done, with a thread for steps and failures.
 
