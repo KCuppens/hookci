@@ -39,6 +39,11 @@ const RunDirMaxAge = 24 * time.Hour
 // use. gc.cache_max_bytes caps the total size of the younger ones.
 const CacheMaxAge = 14 * 24 * time.Hour
 
+// PullCacheMaxAge is how long an entry saved by a pull request (scope
+// pull/<n>) is kept after its last use. The pull request may be closed by
+// then, and nothing else reads its scope.
+const PullCacheMaxAge = 3 * 24 * time.Hour
+
 // Retention defaults of retain.images.
 const (
 	DefaultRetain = 5
@@ -296,10 +301,12 @@ func (c *Collector) gcConfig() *config.AgentConfigGc {
 }
 
 // planCache returns the cache entries to evict, least recently used first:
-// those unused for longer than CacheMaxAge, and, walking from the most
-// recently used, every entry past the point where the sizes sum to more than
-// gc.cache_max_bytes. Entries a job still uses count toward the sum but are
-// never evicted.
+// those unused for longer than CacheMaxAge (PullCacheMaxAge for pull request
+// scopes), and, walking branch entries from the most recently used and then
+// pull request entries likewise, every entry past the point where the sizes
+// sum to more than gc.cache_max_bytes, so a size cap evicts pull request
+// entries before any branch's. Entries a job still uses count toward the sum
+// but are never evicted.
 func (c *Collector) planCache() ([]string, error) {
 	remove := []string{}
 	if c.Cache == nil {
@@ -309,16 +316,35 @@ func (c *Collector) planCache() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gc: %w", err)
 	}
-	cutoff := c.now().Add(-CacheMaxAge)
+	isPull := func(e cache.Entry) bool { return strings.HasPrefix(e.Scope, "pull/") }
+	walk := slices.Clone(entries)
+	slices.SortStableFunc(walk, func(a, b cache.Entry) int {
+		switch pa, pb := isPull(a), isPull(b); {
+		case pa == pb:
+			return 0
+		case pb:
+			return -1
+		}
+		return 1
+	})
+	now := c.now()
 	limit := int64(c.gcConfig().CacheMaxBytes)
 	var total int64
-	for _, e := range entries {
+	var evict []cache.Entry
+	for _, e := range walk {
 		total += e.Bytes
-		if !e.InUse && (total > limit || e.LastUse.Before(cutoff)) {
-			remove = append(remove, e.Rel)
+		maxAge := CacheMaxAge
+		if isPull(e) {
+			maxAge = PullCacheMaxAge
+		}
+		if !e.InUse && (total > limit || e.LastUse.Before(now.Add(-maxAge))) {
+			evict = append(evict, e)
 		}
 	}
-	slices.Reverse(remove)
+	slices.SortStableFunc(evict, func(a, b cache.Entry) int { return a.LastUse.Compare(b.LastUse) })
+	for _, e := range evict {
+		remove = append(remove, e.Rel)
+	}
 	return remove, nil
 }
 

@@ -17,6 +17,7 @@ var ErrInUse = errors.New("cache: entry in use")
 // Entry is one stored cache entry.
 type Entry struct {
 	Rel     string    // entry dir under the cache root: <trust domain dir>/<hash>
+	Scope   string    // the branch, or pull/<n> for a pull request, that saved the entry
 	Bytes   int64     // snapshot size recorded by Save
 	LastUse time.Time // entry dir mtime: set by Save, refreshed by Restore
 	InUse   bool      // a Restore's cleanup has not finished; Remove refuses it
@@ -55,7 +56,7 @@ func (c *Cache) Entries() ([]Entry, error) {
 			c.mu.Lock()
 			inUse := c.inUse[rel] > 0
 			c.mu.Unlock()
-			out = append(out, Entry{Rel: rel, Bytes: m.Bytes, LastUse: info.ModTime(), InUse: inUse})
+			out = append(out, Entry{Rel: rel, Scope: m.Key.Scope, Bytes: m.Bytes, LastUse: info.ModTime(), InUse: inUse})
 		}
 	}
 	slices.SortFunc(out, func(a, b Entry) int { return b.LastUse.Compare(a.LastUse) })

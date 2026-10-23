@@ -463,8 +463,14 @@ func (h *harness) newCache(t *testing.T) string {
 }
 
 // saveCacheEntry saves a node_modules of size bytes under a lockfile unique
-// to name, sets its last use to at and returns the entry's rel.
+// to name on the main branch, sets its last use to at and returns the
+// entry's rel.
 func (h *harness) saveCacheEntry(t *testing.T, root, name string, size int, at time.Time) string {
+	t.Helper()
+	return h.saveScopedCacheEntry(t, root, "main", name, size, at)
+}
+
+func (h *harness) saveScopedCacheEntry(t *testing.T, root, scope, name string, size int, at time.Time) string {
 	t.Helper()
 	wd := t.TempDir()
 	for file, content := range map[string]string{"package-lock.json": name, "node_modules/m.js": strings.Repeat("x", size)} {
@@ -476,7 +482,7 @@ func (h *harness) saveCacheEntry(t *testing.T, root, name string, size int, at t
 			t.Fatal(err)
 		}
 	}
-	k, err := cache.ComputeKey("trusted:kcuppens/app", "main", "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
+	k, err := cache.ComputeKey("trusted:kcuppens/app", scope, "linux-amd64", wd, []string{"package-lock.json"}, []string{"node_modules"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,6 +525,26 @@ func TestCacheEvictsOldAndLeastRecentlyUsedOverCap(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Rel != newest {
 		t.Errorf("Entries after GC = %+v, want only %s", entries, newest)
+	}
+}
+
+// Pull request scopes are kept for days, not weeks, and a size cap takes
+// them before any branch's entry, however recently they were used.
+func TestCacheEvictsPullRequestScopesFirst(t *testing.T) {
+	h := newHarness(t)
+	root := h.newCache(t)
+	h.c.Cfg = config.AgentConfig{Gc: &config.AgentConfigGc{CacheMaxBytes: 250}}
+	branch := h.saveScopedCacheEntry(t, root, "main", "branch", 100, start.Add(-10*24*time.Hour))
+	freshPull := h.saveScopedCacheEntry(t, root, "pull/7", "fresh pull", 100, start.Add(-time.Hour))
+	stalePull := h.saveScopedCacheEntry(t, root, "pull/8", "stale pull", 10, start.Add(-PullCacheMaxAge-time.Hour))
+	overCapPull := h.saveScopedCacheEntry(t, root, "pull/9", "over cap pull", 100, start.Add(-2*time.Hour))
+
+	p, err := h.c.Plan(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{stalePull, overCapPull}; !slices.Equal(p.RemoveCacheEntries, want) {
+		t.Fatalf("RemoveCacheEntries = %q, want %q (%s kept: within the cap; %s kept: a branch entry)", p.RemoveCacheEntries, want, freshPull, branch)
 	}
 }
 
