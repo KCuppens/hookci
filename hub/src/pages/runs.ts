@@ -5,7 +5,7 @@ import type { InstallationRow } from "../db/installations";
 import type { AgentOption, RepoOption } from "../db/overview";
 import type { RunListRow } from "../db/runs";
 import { S } from "../strings";
-import { accountNav, agoHtml, appPage, branchLabel, type DashboardChrome, durationText, initOf, PAGE_SCRIPT, rowMenu, runHref, shortRepo, viewerOf } from "./dashboard";
+import { accountNav, activeAttr, agoHtml, appPage, branchLabel, type DashboardChrome, durationText, initOf, PAGE_SCRIPT, rowMenu, runHref, shortRepo, viewerOf } from "./dashboard";
 import { escapeHtml } from "./layout";
 import { PILL_CSS, PILL_ICONS, runPill } from "./pills";
 import { RUNS_TRACED_ICONS } from "./runs-icons";
@@ -408,7 +408,7 @@ function pager(v: RunsView, base: string): string {
 
 function liveBanner(v: RunsView, base: string): string {
 	return (
-		`<div class="nb" data-newer="${base}/runs/newer" data-after="${v.newest}" data-one="${e(L.newRunsOne)}" data-many="${e(L.newRunsMany)}" role="status" hidden>` +
+		`<div class="nb" data-newer="${base}/runs/newer" data-after="${v.newest}"${v.page === 1 && v.filters.sort !== "oldest" ? " data-follow" : ""} data-one="${e(L.newRunsOne)}" data-many="${e(L.newRunsMany)}" role="status" hidden>` +
 		`<i></i><b data-count>${e(L.newRunsMany)}</b><span>${e(L.newRunsBody)}</span>` +
 		`<a class="go" href="${e(`${base}/runs${query(v.filters, 1)}`)}">${e(L.showNewRuns)}</a>` +
 		`<button class="x" type="button" data-dismiss aria-label="${e(L.dismiss)}">${icon("x")}</button></div>`
@@ -431,7 +431,7 @@ export function runsListPage(v: RunsView): Promise<Response> {
 		`${filterBar(v)}<noscript><button class="ob" type="submit">${e(L.apply)}</button></noscript></form>`;
 	const main =
 		`${accountNav(v.accounts, v.account.id)}${form}${liveBanner(v, base)}` +
-		`<section class="card rl">${runTable(v, base)}<div class="rf2"><span>${e(L.showing(v.runs.length))}</span>${pager(v, base)}</div></section>`;
+		`<section class="card rl" data-swap="runs" data-idle="20000"${activeAttr(v.runs.map((r) => r.state))}>${runTable(v, base)}<div class="rf2"><span>${e(L.showing(v.runs.length))}</span>${pager(v, base)}</div></section>`;
 	return appPage({
 		title: v.account.account_login,
 		bodyClass: "runs",

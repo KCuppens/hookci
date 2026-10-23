@@ -20,6 +20,7 @@ import {
 	branchLabel,
 	type DashboardChrome,
 	durationText,
+	activeAttr,
 	initOf,
 	PAGE_SCRIPT,
 	repoText,
@@ -598,15 +599,19 @@ function timeline(v: RunDetailView): string {
 	return `<section class="card"><div class="ch"><h2>${e(T.timeline)}</h2></div><ol class="tm">${items.join("")}</ol></section>`;
 }
 
+function swap(name: string, v: RunDetailView, html: string): string {
+	return `<div data-swap="${name}"${activeAttr([v.run.state])}>${html}</div>`;
+}
+
 export function runPage(v: RunDetailView): Promise<Response> {
 	const { run } = v;
 	const base = `/app/${v.account.id}`;
 	const commitUrl = run.repo_name === null ? null : D.githubCommitUrl(run.repo_name, run.sha);
 	const main =
 		`<div class="bc"><a href="${base}/runs">${icon("back")}${e(T.breadcrumb)}</a>${icon("chev")}<b>${e(T.run(String(run.run_number)))}</b></div>` +
-		`${v.notice === null ? "" : `<p class="notice" role="status">${e(v.notice)}</p>`}${summaryCard(v, commitUrl)}${banner(run)}` +
-		`<div class="cols"><div class="col">${jobsCard(v)}${commitCard(v, commitUrl)}</div><div class="col">${configCard(v)}${logsCard(v)}</div></div>` +
-		`<div class="tmw">${timeline(v)}</div>`;
+		`${v.notice === null ? "" : `<p class="notice" role="status">${e(v.notice)}</p>`}${swap("summary", v, summaryCard(v, commitUrl) + banner(run))}` +
+		`<div class="cols"><div class="col">${swap("jobs", v, jobsCard(v))}${commitCard(v, commitUrl)}</div><div class="col">${configCard(v)}${logsCard(v)}</div></div>` +
+		`<div class="tmw">${swap("timeline", v, timeline(v))}</div>`;
 	return appPage({
 		title: D.runTitle(repoText(run)),
 		bodyClass: "detail",

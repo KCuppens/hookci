@@ -6,6 +6,7 @@ import type { AgentRow } from "../db/agents";
 import type { InstallationRow } from "../db/installations";
 import type { OverviewData } from "../db/overview";
 import type { RunListRow } from "../db/runs";
+import { TERMINAL } from "../slack/badge";
 import { S } from "../strings";
 import { AVATAR_GLYPH, brandLink } from "./brand";
 import { escapeHtml, type PageInit } from "./layout";
@@ -423,21 +424,36 @@ export function rowMenu(items: readonly (readonly [string, string])[], copyPath:
 	return `<details class="mnu"><summary aria-label="${e(D.menu.label)}">${icon("ellipsis")}</summary><div class="menu">${links}${copy}</div></details>`;
 }
 
+/** The marker of a data-swap element whose content can still change: any of the run states has not reached its end. */
+export function activeAttr(states: Iterable<string>): string {
+	const final: ReadonlySet<string> = TERMINAL;
+	for (const s of states) if (!final.has(s)) return " data-active";
+	return "";
+}
+
 /**
  * The one script of the dashboard pages, pinned by hash. Forms marked data-auto submit when a select changes (they carry a noscript
  * button), data-copy buttons copy their text (an absolute path is made absolute) and the runs banner (data-newer) asks the hub every
  * 30 seconds how many runs matching the filter form are newer than data-after. The first answer also reveals the data-live pill and
  * the banner shows once there is something new; closing it waits for runs newer still.
+ * Elements marked data-swap refresh themselves: the script fetches the page again and replaces their content with the fresh copy
+ * of the element with the same data-swap name, every 4 seconds while any of them is data-active and otherwise every data-idle
+ * milliseconds (never when that is missing). A swap waits while a menu is open or focus is inside the element, keeps the table's
+ * scroll position, and makes a data-follow banner count from the fresh newest run, as the table now shows it.
  */
 export const PAGE_SCRIPT = `
+{
+const wire = (root) => {
+  for (const b of root.querySelectorAll("[data-copy]")) {
+    b.hidden = false;
+    b.addEventListener("click", () => {
+      const v = b.dataset.copy;
+      navigator.clipboard.writeText(v.startsWith("/") ? location.origin + v : v).then(() => { b.dataset.done = "1"; });
+    });
+  }
+};
 for (const form of document.querySelectorAll("form[data-auto]")) form.addEventListener("change", () => form.requestSubmit());
-for (const b of document.querySelectorAll("[data-copy]")) {
-  b.hidden = false;
-  b.addEventListener("click", () => {
-    const v = b.dataset.copy;
-    navigator.clipboard.writeText(v.startsWith("/") ? location.origin + v : v).then(() => { b.dataset.done = "1"; });
-  });
-}
+wire(document);
 for (const n of document.querySelectorAll("[data-newer]")) {
   const form = document.getElementById("runs-filter");
   const poll = () => {
@@ -459,6 +475,48 @@ for (const n of document.querySelectorAll("[data-newer]")) {
   for (const x of n.querySelectorAll("[data-dismiss]")) x.addEventListener("click", () => { n.hidden = true; n.dataset.after = n.dataset.latest; });
   poll();
   setInterval(poll, 30000);
+}
+const targets = [...document.querySelectorAll("[data-swap]")];
+if (targets.length > 0) {
+  const holds = (el) => el.contains(document.activeElement) || el.querySelector("details[open]") !== null;
+  const refresh = async () => {
+    const r = await fetch(location.href, { credentials: "same-origin", headers: { accept: "text/html" } });
+    if (!r.ok || r.redirected) throw new Error();
+    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+    for (const el of targets) {
+      const fresh = doc.querySelector('[data-swap="' + el.dataset.swap + '"]');
+      if (fresh === null) continue;
+      el.toggleAttribute("data-active", fresh.hasAttribute("data-active"));
+      if (holds(el)) continue;
+      const scrolls = [...el.querySelectorAll(".scroll")].map((s) => s.scrollLeft);
+      el.replaceChildren(...fresh.childNodes);
+      el.querySelectorAll(".scroll").forEach((s, i) => { s.scrollLeft = scrolls[i] || 0; });
+      wire(el);
+    }
+    const follow = doc.querySelector("[data-follow]");
+    const banner = document.querySelector("[data-follow]");
+    if (follow !== null && banner !== null && follow.dataset.after !== banner.dataset.after) {
+      banner.dataset.after = banner.dataset.latest = follow.dataset.after;
+      banner.hidden = true;
+    }
+    for (const l of document.querySelectorAll("[data-live]")) l.hidden = false;
+  };
+  const next = () => {
+    if (targets.some((t) => t.hasAttribute("data-active"))) return 4000;
+    const idle = Math.min(...targets.map((t) => Number(t.dataset.idle || Infinity)));
+    return Number.isFinite(idle) ? idle : 0;
+  };
+  const loop = () => {
+    const wait = next();
+    if (wait === 0) return;
+    setTimeout(async () => {
+      if (!document.hidden) await refresh().catch(() => {});
+      loop();
+    }, wait);
+  };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh().catch(() => {}); });
+  loop();
+}
 }
 `;
 
