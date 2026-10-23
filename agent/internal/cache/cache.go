@@ -44,10 +44,11 @@ type Policy struct {
 }
 
 // MaySave reports whether a run under p may write a cache entry: local runs,
-// and check runs of trusted pushes to any branch. PRs, deploys and untrusted
-// runs only read.
+// and check runs of trusted pushes and trusted pull requests. A pull request
+// run saves only under its own pull/<n> scope. Deploys and untrusted runs
+// only read.
 func MaySave(p Policy) bool {
-	return p.Event == "local" || (p.Kind == "check" && p.Event == "push" && p.Trusted)
+	return p.Event == "local" || (p.Kind == "check" && p.Trusted && (p.Event == "push" || p.Event == "pull_request"))
 }
 
 // Options configures New.

@@ -86,7 +86,8 @@ func TestMaySave(t *testing.T) {
 	}{
 		{"local", Policy{Kind: "check", Event: "local"}, true},
 		{"trusted push check to any branch", pushPolicy, true},
-		{"pull request", Policy{Kind: "check", Event: "pull_request", Trusted: true}, false},
+		{"trusted pull request", Policy{Kind: "check", Event: "pull_request", Trusted: true}, true},
+		{"untrusted pull request", Policy{Kind: "check", Event: "pull_request"}, false},
 		{"untrusted push", Policy{Kind: "check", Event: "push"}, false},
 		{"deploy", Policy{Kind: "deploy", Event: "push", Trusted: true}, false},
 	} {
@@ -195,7 +196,7 @@ func TestSaveNotAllowed(t *testing.T) {
 	c := newCache(t, ModeCopy, nil)
 	wd := newWorkdir(t, map[string]string{"node_modules/a.js": "a"})
 	for _, p := range []Policy{
-		{Kind: "check", Event: "pull_request", Trusted: true},
+		{Kind: "check", Event: "pull_request", Trusted: false},
 		{Kind: "deploy", Event: "push", Trusted: true},
 		{Kind: "check", Event: "push", Trusted: false},
 	} {

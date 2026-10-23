@@ -601,8 +601,8 @@ func TestCacheSaveGatedByPolicy(t *testing.T) {
 		tried []string
 		saved []string
 	}{
-		{"untrusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "untrusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
-		{"trusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
+		{"untrusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "untrusted:o/r"}, store.RunSuccess, []string{"pull/12", "main"}, nil},
+		{"trusted pull request", store.Run{Event: "pull_request", PR: &pr, Ref: "refs/pull/12/head", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"pull/12", "main"}, []string{"pull/12"}},
 		{"untrusted push", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "untrusted:o/r"}, store.RunSuccess, []string{"main"}, nil},
 		{"trusted push to the default branch", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"main"}, []string{"main"}},
 		{"trusted push to another branch", store.Run{Event: "push", Ref: "refs/heads/feature/x", TrustDomain: "trusted:o/r"}, store.RunSuccess, []string{"feature/x", "main"}, []string{"feature/x"}},
@@ -636,7 +636,7 @@ func TestCacheSaveGatedByPolicy(t *testing.T) {
 				t.Fatalf("saved under %q, want %q", saved, tc.saved)
 			}
 			if len(tc.saved) > 0 {
-				want := cache.Policy{Kind: "check", Event: "push", Trusted: true}
+				want := cache.Policy{Kind: "check", Event: run.Event, Trusted: true}
 				if h.cache.saved[0] != want {
 					t.Errorf("policy = %+v, want %+v", h.cache.saved[0], want)
 				}
@@ -695,8 +695,10 @@ func TestCacheScopesAcrossBranches(t *testing.T) {
 		{"a fallback miss still saves under the branch", push("feature/d"), []string{"feature/x", "main"}, []string{"feature/d", "feature/x", "main"}, "", []string{"feature/d"}},
 		{"default branch saves under itself", push("main"), []string{"main"}, []string{"main"}, "", []string{"main"}},
 		{"own branch beats the default", push("feature/b"), []string{"main"}, []string{"feature/b"}, "feature/b", []string{"feature/b"}},
-		{"pull request reads its base first", pull, []string{"feature/a", "main"}, []string{"feature/a"}, "feature/a", nil},
-		{"pull request falls back to the default", pull, []string{"release", "main"}, []string{"release", "main"}, "main", nil},
+		{"pull request reads its base first", pull, []string{"feature/a", "main"}, []string{"pull/7", "feature/a"}, "feature/a", nil},
+		{"pull request falls back to the default", pull, []string{"release", "main"}, []string{"pull/7", "release", "main"}, "main", nil},
+		{"pull request miss saves under its own scope", pull, []string{"release", "other"}, []string{"pull/7", "release", "other"}, "", []string{"pull/7"}},
+		{"pull request reads its own scope first", pull, []string{"main"}, []string{"pull/7"}, "pull/7", []string{"pull/7"}},
 		{"untrusted push never reads trusted entries", store.Run{Event: "push", Ref: "refs/heads/main", TrustDomain: "untrusted:o/r"}, []string{"main"}, []string{"main"}, "", nil},
 	} {
 		tried, hit, saved := cacheRun(t, c, step.run, step.fallback)

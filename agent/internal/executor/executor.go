@@ -530,15 +530,20 @@ func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 	}
 }
 
-// cacheScopes lists the branches whose caches run restores from, in order:
-// its own branch (Ref without refs/heads/) unless it is a pull request, then
-// fallback, skipping empty and repeated names. own reports whether the first
-// scope is the run's own branch. A run saves only under its own branch, so
-// pull requests, which have none, never save.
+// cacheScopes lists the scopes whose caches run restores from, in order: its
+// own scope, then fallback, skipping empty and repeated names. The own scope
+// is the run's branch (Ref without refs/heads/), or "pull/<n>" for a pull
+// request, so a pull request never writes the branch caches that pushes read.
+// own reports whether the first scope is the run's own. A run saves only
+// under its own scope.
 func cacheScopes(run store.Run, fallback []string) (scopes []string, own bool) {
-	own = run.Event != "pull_request"
-	if own {
+	switch {
+	case run.Event != "pull_request":
+		own = true
 		scopes = append(scopes, strings.TrimPrefix(run.Ref, "refs/heads/"))
+	case run.PR != nil:
+		own = true
+		scopes = append(scopes, fmt.Sprintf("pull/%d", *run.PR))
 	}
 	for _, s := range fallback {
 		if s != "" && !slices.Contains(scopes, s) {
