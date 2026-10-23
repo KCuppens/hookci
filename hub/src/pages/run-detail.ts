@@ -631,6 +631,6 @@ export function runPage(v: RunDetailView): Promise<Response> {
 		icons: ICONS,
 		script: PAGE_SCRIPT,
 		avatars: true,
-		forms: v.chrome !== undefined,
+		forms: v.chrome !== undefined || v.actions.approve || v.actions.cancel || v.actions.retry,
 	});
 }

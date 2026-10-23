@@ -216,3 +216,27 @@ describe("run page annotations card", () => {
     expect(html).toContain(escapeHtml(T.annotationsEmptyTitle));
   });
 });
+
+describe("run page action forms with email accounts off", () => {
+  beforeEach(() => {
+    const saved = env.ACCOUNTS_ENABLED;
+    env.ACCOUNTS_ENABLED = "false";
+    restore.push(() => {
+      env.ACCOUNTS_ENABLED = saved;
+    });
+  });
+
+  it("lets the Cancel form of an unfinished run post to the hub", async () => {
+    await seedRun(ACME, acme.repoId, "run_live", acme.agentId, "build", { state: "running", finished_at: null, duration_ms: null });
+    const res = await page(ACME, "run_live");
+    expect(res.headers.get("content-security-policy")).toContain("form-action 'self'");
+    expect(await res.text()).toContain(`action="/app/${ACME}/runs/run_live/cancel"`);
+  });
+
+  it("keeps forms locked down on a run that offers no action", async () => {
+    await seedRun(ACME, acme.repoId, "run_never", acme.agentId, "build", { state: "gated", reason: "fork_never", started_at: null, finished_at: null, duration_ms: null });
+    const res = await page(ACME, "run_never");
+    expect(res.headers.get("content-security-policy")).toContain("form-action 'none'");
+    expect(await res.text()).not.toContain('method="post"');
+  });
+});

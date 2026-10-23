@@ -158,12 +158,12 @@ describe("sign out", () => {
     expect(html).not.toContain("/account/settings");
   });
 
-  it("shows no header controls and keeps the form-action lockdown when accounts are off", async () => {
+  it("shows no header controls when accounts are off, and still lets the range form submit", async () => {
     env.ACCOUNTS_ENABLED = "false";
     const browser = await dashboardBrowser();
     const page = await browser.fetch(`/app/${ACME}`);
     expect(page.status).toBe(200);
-    expect(page.headers.get("content-security-policy")).toContain("form-action 'none'");
+    expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
     const html = await page.text();
     expect(html).not.toContain("/account/");
     expect(html).not.toContain(S.dashboard.signOut);
