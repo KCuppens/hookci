@@ -153,6 +153,9 @@ type runState struct {
 	serviceEnv []string
 	cacheKeys  []cache.Key
 	cleanups   []func() error
+
+	stageN     int // setup stages started so far
+	stageTotal int // stages in all once the config is read; 0 before
 }
 
 // New checks o and fills its defaults.
@@ -256,12 +259,15 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 		return ErrDeployNotAllowed
 	}
 
-	if err := e.checkout(ctx, rs); err != nil {
+	if err := e.stage(ctx, rs, "Checking out", func() error { return e.checkout(ctx, rs) }); err != nil {
 		return fmt.Errorf("checkout: %w", err)
 	}
 
-	cfg, err := e.o.Config(rs.run, dir.Src())
-	if err != nil {
+	var cfg *config.ResolvedChecks
+	if err := e.stage(ctx, rs, "Reading config", func() (err error) {
+		cfg, err = e.o.Config(rs.run, dir.Src())
+		return err
+	}); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if cfg == nil {
@@ -290,14 +296,41 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 		rs.logf("redact: %s", w)
 	}
 
-	if err := e.startNetwork(ctx, rs); err != nil {
+	// Checkout and config come first, before the total is known; the rest are counted.
+	rs.stageTotal = rs.stageN + 2 + len(cfg.Setup)
+	if err := e.stage(ctx, rs, "Starting network", func() error { return e.startNetwork(ctx, rs) }); err != nil {
 		return err
 	}
-	e.restoreCaches(ctx, rs)
-	if err := e.startServices(ctx, rs); err != nil {
+	// Restoring caches copies files and starting postgres boots a container; neither needs the other and both finish before the setup steps, so they overlap.
+	err = e.stage(ctx, rs, "Restoring caches and starting services", func() error {
+		restored := make(chan struct{})
+		go func() {
+			defer close(restored)
+			e.restoreCaches(ctx, rs)
+		}()
+		err := e.startServices(ctx, rs)
+		<-restored
+		return err
+	})
+	if err != nil {
 		return err
 	}
 	return e.runSetupSteps(ctx, rs)
+}
+
+// stage tells the hub which setup stage the run is in, runs it, and logs how
+// long it took so slow setups show where the time goes. Reporting is best
+// effort: a failed write is logged and the stage still runs.
+func (e *Executor) stage(ctx context.Context, rs *runState, name string, run func() error) error {
+	idx := rs.stageN
+	rs.stageN++
+	if err := e.appendSetupStage(ctx, rs.run.ID, name, idx, rs.stageTotal); err != nil {
+		rs.logf("report stage %q: %v", name, err)
+	}
+	start := e.o.Clock()
+	err := run()
+	rs.logf("stage %q took %s", name, e.o.Clock().Sub(start).Round(time.Millisecond))
+	return err
 }
 
 // checkout materialises the run into Src() as the job user. Mirrored repos
@@ -560,9 +593,14 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 	lim := EffectiveLimits(rs.run, rs.cfg.Limits, config.ResolvedJob{})
 	for i, step := range rs.cfg.Setup {
 		rs.logf("setup[%d]: %s", i, step.Run)
-		out := e.execute(ctx, rs, setupJob, step.Run, lim, pipe)
-		if out.State != store.JobSuccess {
-			return fmt.Errorf("setup[%d] %s", i, out.Reason)
+		err := e.stage(ctx, rs, stepStageName(rs, i, step.Run), func() error {
+			if out := e.execute(ctx, rs, setupJob, step.Run, lim, pipe); out.State != store.JobSuccess {
+				return fmt.Errorf("setup[%d] %s", i, out.Reason)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil

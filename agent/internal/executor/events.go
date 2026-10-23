@@ -2,11 +2,47 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/KCuppens/hookci/agent/internal/logpipe"
 	"github.com/KCuppens/hookci/agent/internal/protocol"
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
+
+// stageNameRunes caps a setup command in a stage name.
+const stageNameRunes = 60
+
+// appendSetupStage writes a run-level step event: the run is running, in the
+// named setup stage. No job is named, so the hub reads it as setup progress
+// and not as a run state change. total is left out while it is 0.
+func (e *Executor) appendSetupStage(ctx context.Context, runID, name string, idx, total int) error {
+	var stepsTotal *int
+	if total > 0 {
+		stepsTotal = &total
+	}
+	_, err := e.o.Store.AppendSeqFrame(ctx, store.KindEvent, func(seq int) any {
+		return protocol.Event{
+			AgentSeq:   seq,
+			RunId:      runID,
+			State:      protocol.EventState(store.RunRunning),
+			Step:       &name,
+			StepIndex:  &idx,
+			StepsTotal: stepsTotal,
+		}
+	})
+	return err
+}
+
+// stepStageName names setup step i after the first line of its command, with
+// secrets masked, because the name goes to the hub.
+func stepStageName(rs *runState, i int, cmd string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(cmd), "\n")
+	if r := []rune(line); len(r) > stageNameRunes {
+		line = string(r[:stageNameRunes]) + "..."
+	}
+	return rs.redact(fmt.Sprintf("Setup step %d: %s", i+1, line))
+}
 
 // appendStep writes a step event for a running job. It is not a job state
 // change, so it goes to the outbox directly instead of through TransitionJob.

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -119,7 +120,7 @@ func TestRunJobSuccess(t *testing.T) {
 
 	var steps []protocol.Event
 	for _, ev := range frames[protocol.Event](t, h.st, store.KindEvent) {
-		if ev.Step != nil {
+		if ev.Step != nil && ev.Job != nil {
 			steps = append(steps, ev)
 		}
 	}
@@ -148,7 +149,7 @@ func TestRunJobStepsTotal(t *testing.T) {
 
 	var got []string
 	for _, ev := range frames[protocol.Event](t, h.st, store.KindEvent) {
-		if ev.Step != nil && ev.StepsTotal != nil {
+		if ev.Step != nil && ev.Job != nil && ev.StepsTotal != nil {
 			got = append(got, fmt.Sprintf("%d/%d %s", *ev.StepIndex+1, *ev.StepsTotal, *ev.Step))
 		}
 	}
@@ -813,6 +814,50 @@ func TestSetupFailureMarksRunFailed(t *testing.T) {
 		t.Errorf("config error: err = %v, want ErrSetupFailed with the cause", err)
 	}
 	finish(t, h, run, store.RunFailed)
+}
+
+func TestSetupEmitsStageEventsAndTimings(t *testing.T) {
+	cfg := &config.ResolvedChecks{
+		Setup: []config.SetupStep{{Run: "npm ci\nnpm rebuild"}},
+		Jobs:  []config.ResolvedJob{{Name: "build", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.create(t, run, cfg)
+	setUp(t, h, run)
+
+	items, err := h.st.Pending(context.Background(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range items {
+		var ev protocol.Event
+		if err := json.Unmarshal(it.Payload, &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Job != nil || ev.Step == nil || ev.StepIndex == nil {
+			continue
+		}
+		total := 0
+		if ev.StepsTotal != nil {
+			total = *ev.StepsTotal
+		}
+		got = append(got, fmt.Sprintf("%d/%d %s", *ev.StepIndex, total, *ev.Step))
+	}
+	want := []string{
+		"0/0 Checking out", "1/0 Reading config", "2/5 Starting network", "3/5 Restoring caches and starting services",
+		"4/5 Setup step 1: npm ci",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("stage events = %q, want %q", got, want)
+	}
+	log := readFile(t, logpipe.LogPath(h.runDir(run.ID).Root, "setup"))
+	for _, s := range []string{`stage "Checking out" took`, `stage "Setup step 1: npm ci" took`} {
+		if !strings.Contains(log, s) {
+			t.Errorf("setup.log lacks %q:\n%s", s, log)
+		}
+	}
 }
 
 // A setup error that quotes a secret, as docker's stderr can, must reach the

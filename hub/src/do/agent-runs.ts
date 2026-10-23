@@ -612,11 +612,21 @@ export function registerRunLifecycle(): () => void {
 				return;
 			}
 			const now = dob.clock.now();
+			// A running event that names a step is setup progress, not the run starting: it must not restart the clock.
+			if (frame.state === "running" && frame.step !== undefined) {
+				await updateRunState(t, frame.run_id, "running", {
+					setup_step: frame.step,
+					setup_step_index: frame.step_index ?? null,
+					setup_steps_total: frame.steps_total ?? null,
+				});
+				return;
+			}
+			const clearSetup = { setup_step: null, setup_step_index: null, setup_steps_total: null };
 			const patch: RunPatch =
 				frame.state === "running"
-					? { started_at: now, reason: null }
+					? { started_at: now, reason: null, ...clearSetup }
 					: TERMINAL[frame.state]
-						? { finished_at: now, duration_ms: frame.duration_ms, reason: frame.reason }
+						? { finished_at: now, duration_ms: frame.duration_ms, reason: frame.reason, ...clearSetup }
 						: { reason: frame.reason };
 			if (TERMINAL[frame.state]) {
 				dob.sql.exec("UPDATE triggers SET state = 'done' WHERE trigger_id = ?", row.trigger_id);

@@ -38,6 +38,10 @@ export interface RunRow {
 	created_at: number;
 	/** The run's 1-based position among its installation's runs in the order they were recorded; shown as Run #N. */
 	run_number: number;
+	/** The setup stage the agent last reported while the run's jobs wait: its name, 0-based index and the stage count (null until known). */
+	setup_step: string | null;
+	setup_step_index: number | null;
+	setup_steps_total: number | null;
 }
 
 export interface JobRow {
@@ -50,16 +54,31 @@ export interface JobRow {
 	duration_ms: number | null;
 }
 
-export type NewRun = Omit<RunRow, "installation_id" | "slack_channel" | "slack_notify" | "slack_alert" | "trust_refused" | "created_at" | "run_number"> &
+export type NewRun = Omit<
+	RunRow,
+	"installation_id" | "slack_channel" | "slack_notify" | "slack_alert" | "trust_refused" | "created_at" | "run_number" | "setup_step" | "setup_step_index" | "setup_steps_total"
+> &
 	Partial<Pick<RunRow, "trust_refused">>;
 
 const SLACK_NOTIFY: Record<string, WatchRow["notify"]> = { quiet: "quiet", normal: "normal", verbose: "normal" };
 const SLACK_ALERT: Record<string, WatchRow["alert"]> = { channel: "channel", dm: "dm" };
 
 /** Columns updateRunState may set besides state; a key given as null clears the column. */
-export type RunPatch = Partial<Pick<RunRow, "reason" | "agent_id" | "started_at" | "finished_at" | "duration_ms" | "log_key">>;
+export type RunPatch = Partial<
+	Pick<RunRow, "reason" | "agent_id" | "started_at" | "finished_at" | "duration_ms" | "log_key" | "setup_step" | "setup_step_index" | "setup_steps_total">
+>;
 
-const PATCH_COLUMNS = ["reason", "agent_id", "started_at", "finished_at", "duration_ms", "log_key"] as const satisfies readonly (keyof RunPatch)[];
+const PATCH_COLUMNS = [
+	"reason",
+	"agent_id",
+	"started_at",
+	"finished_at",
+	"duration_ms",
+	"log_key",
+	"setup_step",
+	"setup_step_index",
+	"setup_steps_total",
+] as const satisfies readonly (keyof RunPatch)[];
 
 /** How many times insertRun tries to give a run its number before it lets the collision through. */
 const NUMBER_ATTEMPTS = 3;

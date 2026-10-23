@@ -429,12 +429,19 @@ function workJobs(v: RunDetailView): JobLogRow[] {
 	return v.jobs.filter((j) => j.name !== CONFIG_JOB);
 }
 
+/** The agent's latest setup stage while the run's jobs have not started, so a long setup does not look stuck. Empty otherwise. */
+function setupBanner(v: RunDetailView, jobs: JobLogRow[]): string {
+	const { run } = v;
+	if (run.state !== "running" || run.setup_step === null || jobs.some((j) => NOT_STARTED[j.state] !== true)) return "";
+	return `<p class="muted setup-stage">${e(T.setupStage(run.setup_step, run.setup_step_index ?? 0, run.setup_steps_total))}</p>`;
+}
+
 function jobsCard(v: RunDetailView): string {
 	const base = `/app/${v.account.id}`;
 	const jobs = workJobs(v);
 	const done = jobs.filter((j) => DONE[j.state] === true).length;
-	const body = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id)).join("")}</div>`;
-	return `<section class="card"><div class="ch"><h2>${e(T.jobs)}</h2><span class="cnt2">${e(T.jobsCount(done, jobs.length))}</span></div>${body}</section>`;
+	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id)).join("")}</div>`;
+	return `<section class="card"><div class="ch"><h2>${e(T.jobs)}</h2><span class="cnt2">${e(T.jobsCount(done, jobs.length))}</span></div>${setupBanner(v, jobs)}${list}</section>`;
 }
 
 const BAR_CELLS = 5;

@@ -328,6 +328,29 @@ describe("AgentDO run lifecycle", () => {
     expect(runUpdates(sink.calls).at(-1)).toEqual({ triggerId, runId: "run_a", state: "success", reason: undefined });
   });
 
+  it("a running event that names a step records setup progress without restarting the run or reaching the sinks", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", state: "running" });
+    const started = (await run("run_a"))?.started_at;
+    const updates = runUpdates(sink.calls).length;
+
+    testClock.advance(3000);
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", state: "running", step: "Checking out", step_index: 0 });
+    expect(await env.DB.prepare("SELECT setup_step, setup_step_index, setup_steps_total FROM runs WHERE run_id = 'run_a'").first()).toEqual({
+      setup_step: "Checking out",
+      setup_step_index: 0,
+      setup_steps_total: null,
+    });
+    await sock.request({ type: "event", agent_seq: 3, run_id: "run_a", state: "running", step: "Setup step 1: npm ci", step_index: 5, steps_total: 6 });
+    expect(await run("run_a")).toMatchObject({ state: "running", started_at: started, setup_step: "Setup step 1: npm ci", setup_step_index: 5, setup_steps_total: 6 });
+    expect(runUpdates(sink.calls)).toHaveLength(updates);
+
+    await sock.request({ type: "event", agent_seq: 4, run_id: "run_a", state: "success", duration_ms: 5000 });
+    expect(await run("run_a")).toMatchObject({ state: "success", setup_step: null, setup_step_index: null, setup_steps_total: null });
+  });
+
   it("token_request for bound repo returns token", async () => {
     const gh = createFakeGitHub();
     gh.respond("POST", "/app/installations/:id/access_tokens", () =>

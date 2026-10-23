@@ -452,6 +452,17 @@ describe("GET /app/:installationId/runs/:runId", () => {
     expect(html).not.toContain("/logs/");
   });
 
+  it("shows the setup stage of a running run whose jobs have not started, and drops it once one has", async () => {
+    await seedRun(ACME, acme.repoId, "run_setup", acme.agentId, "build", { state: "running", finished_at: null, duration_ms: null });
+    await env.DB.prepare("UPDATE runs SET setup_step = 'Restoring caches', setup_step_index = 3, setup_steps_total = 6 WHERE run_id = 'run_setup'").run();
+    await env.DB.prepare("UPDATE jobs SET state = 'queued' WHERE run_id = 'run_setup'").run();
+    const cookie = await sessionFor([ACME]);
+    const waiting = await (await get(`/app/${ACME}/runs/run_setup`, cookie)).text();
+    expect(waiting).toContain(escapeHtml(S.dashboard.detail.setupStage("Restoring caches", 3, 6)));
+    await env.DB.prepare("UPDATE jobs SET state = 'running' WHERE run_id = 'run_setup'").run();
+    expect(await (await get(`/app/${ACME}/runs/run_setup`, cookie)).text()).not.toContain("Setting up");
+  });
+
   it("shows the truncated notice when the agent truncated the log", async () => {
     await setJobLog(tenantDb(env.DB, ACME), acme.runId, acme.job, { key: acme.logKey, bytes: 10, truncated: true });
     const html = await (await get(`/app/${ACME}/runs/${acme.runId}`, await sessionFor([ACME]))).text();
