@@ -51,17 +51,19 @@ func (d *idleDialer) Dial(ctx context.Context, _ string, _ http.Header) (hubclie
 }
 
 // fakeSource writes Head (and Base, when the request has a base) as the
-// checked-out trees. With Block set, Checkout waits for ctx.
+// checked-out trees. With Block set, Checkout waits for ctx. started closes
+// on the first Checkout.
 type fakeSource struct {
 	Head, Base map[string]string
 	Block      bool
 	started    chan struct{}
+	once       sync.Once
 }
 
 func (f *fakeSource) Name() string { return "fake" }
 
 func (f *fakeSource) Checkout(ctx context.Context, req source.Request, dir string) (source.Checkout, error) {
-	close(f.started)
+	f.once.Do(func() { close(f.started) })
 	if f.Block {
 		<-ctx.Done()
 		return source.Checkout{}, ctx.Err()

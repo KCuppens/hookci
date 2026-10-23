@@ -1,8 +1,9 @@
 // Package scheduler drives one run's setup and jobs through the slot pool and
 // the store, and supersedes older queued runs left in the store. Callers make
-// one Scheduler per run; one daemon worker runs one trigger at a time and the
-// hub interrupts superseded runs. It never executes anything itself: an
-// injected JobRunner does the work.
+// one Scheduler per run; the daemon runs one trigger per lane at a time and
+// the hub interrupts superseded runs. A capacity.Pool shared by every
+// Scheduler admits each setup and job past its slot. It never executes
+// anything itself: an injected JobRunner does the work.
 package scheduler
 
 import (
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
@@ -44,6 +46,11 @@ type Options struct {
 	Slots  int // <= 0 means DefaultSlots()
 	Clock  Clock
 	Logger *slog.Logger
+	// Pool, when set, must admit every setup and job before it starts.
+	// Demand gives what each asks of it: job "" is the setup. A nil
+	// Demand asks for nothing.
+	Pool   *capacity.Pool
+	Demand func(job string) capacity.Demand
 }
 
 var (
@@ -99,6 +106,7 @@ type result struct {
 	rs   *runState
 	kind workKind
 	job  string
+	dem  capacity.Demand // held in the pool until the result is applied
 	dur  int64
 	out  JobOutcome
 	err  error
@@ -110,6 +118,9 @@ type Scheduler struct {
 	runner JobRunner
 	clock  Clock
 	log    *slog.Logger
+	pool   *capacity.Pool
+	demand func(job string) capacity.Demand
+	unsub  func() // drops the pool subscription; nil without a pool
 
 	base     context.Context
 	stopAll  context.CancelFunc
@@ -147,6 +158,8 @@ func New(st *store.Store, runner JobRunner, opts Options) *Scheduler {
 		runner:   runner,
 		clock:    clock,
 		log:      logger,
+		pool:     opts.Pool,
+		demand:   opts.Demand,
 		base:     base,
 		stopAll:  stopAll,
 		kick:     make(chan struct{}, 1),
@@ -154,6 +167,9 @@ func New(st *store.Store, runner JobRunner, opts Options) *Scheduler {
 		loopDone: make(chan struct{}),
 		free:     slots,
 		runs:     make(map[string]*runState),
+	}
+	if s.pool != nil {
+		s.unsub = s.pool.Subscribe(s.wake)
 	}
 	go s.loop()
 	return s
@@ -393,6 +409,9 @@ func (s *Scheduler) wake() {
 
 func (s *Scheduler) loop() {
 	defer close(s.loopDone)
+	if s.unsub != nil {
+		defer s.unsub()
+	}
 	for {
 		var res *result
 		select {
@@ -413,16 +432,29 @@ func (s *Scheduler) loop() {
 	}
 }
 
-// dispatch fills free slots: ready jobs of started runs first, then the
-// setup of the first queued run.
+// dispatch fills free slots that the pool admits: ready jobs of started
+// runs first, then the setup of the first queued run. Work the pool refuses
+// waits, and nothing behind it starts, so a large demand is not starved.
 func (s *Scheduler) dispatch() {
 	for !s.closed && s.free > 0 {
-		if rs, job := s.nextJob(); rs != nil {
-			s.startJob(rs, job)
-		} else if len(s.queue) > 0 {
-			s.startSetup(s.queue[0])
-		} else {
+		rs, job := s.nextJob()
+		if rs == nil {
+			if len(s.queue) == 0 {
+				return
+			}
+			rs = s.queue[0]
+		}
+		var dem capacity.Demand
+		if s.demand != nil {
+			dem = s.demand(job)
+		}
+		if s.pool != nil && !s.pool.TryAcquire(dem) {
 			return
+		}
+		if job == "" {
+			s.startSetup(rs, dem)
+		} else {
+			s.startJob(rs, job, dem)
 		}
 	}
 }
@@ -439,9 +471,17 @@ func (s *Scheduler) nextJob() (*runState, string) {
 	return nil, ""
 }
 
-func (s *Scheduler) startSetup(rs *runState) {
+// release returns dem to the pool.
+func (s *Scheduler) release(dem capacity.Demand) {
+	if s.pool != nil {
+		s.pool.Release(dem)
+	}
+}
+
+func (s *Scheduler) startSetup(rs *runState, dem capacity.Demand) {
 	id := rs.run.ID
 	if err := s.st.Transition(context.Background(), id, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
+		s.release(dem)
 		err = fmt.Errorf("scheduler: start run %s: %w", id, err)
 		s.log.Error("scheduler: store write failed", "run", id, "err", err)
 		s.forget(rs, "", err)
@@ -457,13 +497,14 @@ func (s *Scheduler) startSetup(rs *runState) {
 	run := rs.run
 	go func() {
 		err := s.runner.RunSetup(rs.ctx, run)
-		s.results <- result{rs: rs, kind: workSetup, err: err}
+		s.results <- result{rs: rs, kind: workSetup, dem: dem, err: err}
 	}()
 }
 
-func (s *Scheduler) startJob(rs *runState, name string) {
+func (s *Scheduler) startJob(rs *runState, name string, dem capacity.Demand) {
 	id := rs.run.ID
 	if err := s.st.TransitionJob(context.Background(), id, name, []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{}); err != nil {
+		s.release(dem)
 		s.writeFailed(rs, name, err)
 		s.stop(rs, store.RunFailed, "scheduler: "+err.Error(), store.JobSkipped)
 		return
@@ -479,7 +520,7 @@ func (s *Scheduler) startJob(rs *runState, name string) {
 	go func() {
 		out, err := s.runner.RunJob(rs.ctx, run, job)
 		dur := s.clock.Now().Sub(start).Milliseconds()
-		s.results <- result{rs: rs, kind: workJob, job: name, dur: dur, out: out, err: err}
+		s.results <- result{rs: rs, kind: workJob, job: name, dem: dem, dur: dur, out: out, err: err}
 	}()
 }
 
@@ -496,6 +537,7 @@ func (s *Scheduler) apply(r result) {
 		return
 	case workSetup:
 		s.free++
+		s.release(r.dem)
 		rs.running--
 		switch {
 		case r.err != nil && rs.stopState == "":
@@ -505,6 +547,7 @@ func (s *Scheduler) apply(r result) {
 		}
 	case workJob:
 		s.free++
+		s.release(r.dem)
 		rs.running--
 		s.settleJob(rs, r)
 	}

@@ -125,6 +125,14 @@ The installer needs `curl`, and `cosign` to check the release signature. Without
 
 `hookci connect` stores the agent credential under `/var/lib/hookci/<installation_id>` and enables the `hookci-agent@<installation_id>` systemd unit, so it runs as root. Without `--hub` the agent pairs with `HOOKCI_HUB_URL` if set, else the shared hub. A pair token works once. `hookci doctor` checks the agent and its hub connection, and prints a fix for each problem.
 
+The agent runs one trigger at a time per lane, a lane being the pushes of one branch or one pull request, and lanes side by side. Each setup and job waits until the budget has room for its CPU and memory limits: `--cpu-budget CORES` (default: every CPU) and `--mem-budget SIZE`, for example `32G` (default: no memory budget). It also waits while the host has less than 4G free past its memory limit, or its load average is at the CPU count. One setup or job always runs when nothing else does. Set the flags after `agent` in a drop-in, `systemctl edit hookci-agent@<installation_id>`:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/hookci agent --installation %i --cpu-budget 6 --mem-budget 32G
+```
+
 The agent can run the hub CLI for you on a machine with Node.js 20+ and npx: `hookci hub setup` and `hookci hub upgrade` run `npx --yes hookci-hub@<agent version> setup` or `upgrade` (`hookci-hub@latest` for a dev build), and pass every later argument to `hookci-hub`.
 
 ## Custom domain
