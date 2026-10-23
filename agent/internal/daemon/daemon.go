@@ -19,6 +19,7 @@ import (
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
 	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/control"
@@ -72,6 +73,9 @@ type Options struct {
 	Source  source.Source
 	JobUser executor.JobUser
 	Slots   int // job slots of a run; <= 0 means scheduler.DefaultSlots()
+	// Pool admits the setup and jobs of every run, across lanes; nil
+	// admits everything.
+	Pool *capacity.Pool
 	// Cache is the setup step cache the executor uses; GC evicts its
 	// entries. nil: GC leaves <state>/cache alone.
 	Cache *cache.Cache
@@ -90,7 +94,9 @@ type Options struct {
 	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
 }
 
-// Daemon runs the hub's triggers one at a time, in the order they arrive.
+// Daemon runs the hub's triggers in the order they arrive, one at a time per
+// lane (a branch's pushes, or one pull request) and lanes side by side as
+// far as Options.Pool admits their work.
 type Daemon struct {
 	agentID string
 	st      *store.Store
@@ -110,7 +116,7 @@ type Daemon struct {
 	wake    chan struct{}
 	mu      sync.Mutex
 	queue   []*work // accepted, not started
-	current *work
+	running []*work // taken by the worker, one per lane
 
 	deploys     DeployIntake
 	deployWake  chan struct{}
@@ -128,6 +134,7 @@ type Daemon struct {
 type work struct {
 	trig  protocol.Trigger
 	runID string
+	lane  string // scheduler.SupersedeKey of its run
 	// retry: runID is the queued retry recovery stored for the trigger's
 	// interrupted run, so the run exists before the worker takes it.
 	retry bool
@@ -235,6 +242,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		})
 	}
 	wg.Go(func() { d.refreshHubMode(wctx) })
+	if d.o.Pool != nil {
+		wg.Go(func() { d.o.Pool.Run(wctx) })
+	}
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
 	wg.Go(func() { d.deployWorker(wctx) })
@@ -321,13 +331,22 @@ func (d *Daemon) accept(ctx context.Context, t protocol.Trigger) error {
 	}
 	d.client.Flush()
 	d.mu.Lock()
-	d.queue = append(d.queue, &work{trig: t, runID: runID})
+	d.queue = append(d.queue, &work{trig: t, runID: runID, lane: lane(t)})
 	d.mu.Unlock()
+	d.kick()
+	return nil
+}
+
+// lane is the key of t's lane: triggers of one lane run one at a time.
+func lane(t protocol.Trigger) string {
+	return scheduler.SupersedeKey(storeRun(t, "", ""))
+}
+
+func (d *Daemon) kick() {
 	select {
 	case d.wake <- struct{}{}:
 	default:
 	}
-	return nil
 }
 
 // interrupt stops the run or trigger it names: a queued trigger is dropped,
@@ -346,11 +365,12 @@ func (d *Daemon) interrupt(ctx context.Context, it protocol.Interrupt) {
 		d.cancelUnstarted(ctx, w, reason)
 		return
 	}
-	w := d.current
-	if w == nil || !match(w) || w.interrupted != "" {
+	i := slices.IndexFunc(d.running, match)
+	if i < 0 || d.running[i].interrupted != "" {
 		d.mu.Unlock()
 		return
 	}
+	w := d.running[i]
 	w.interrupted = reason
 	if !w.started {
 		w.cancel()
@@ -368,32 +388,48 @@ func (d *Daemon) cancelRun(ctx context.Context, sched *scheduler.Scheduler, runI
 	}
 }
 
+// worker starts each lane's triggers in order, one at a time per lane, and
+// waits for them all once ctx ends.
 func (d *Daemon) worker(ctx context.Context) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	for {
 		w := d.next(ctx)
 		if w == nil {
 			return
 		}
-		d.process(ctx, w)
-		w.cancel()
-		d.mu.Lock()
-		d.current = nil
-		d.mu.Unlock()
+		wg.Go(func() {
+			d.process(ctx, w)
+			w.cancel()
+			d.mu.Lock()
+			d.running = slices.DeleteFunc(d.running, func(r *work) bool { return r == w })
+			d.mu.Unlock()
+			d.kick()
+		})
 	}
 }
 
-// next takes the oldest queued trigger, or returns nil once ctx ends.
+// next takes the oldest queued trigger that may start, or returns nil once
+// ctx ends. A trigger may start when its lane is idle and every running
+// trigger has its trust: check jobs of all runs share one job user and no
+// PID namespace, so an untrusted run must never overlap a trusted one. The
+// scan stops at the first trigger trust holds back, so the running side
+// drains and that trigger goes next instead of waiting forever.
 func (d *Daemon) next(ctx context.Context) *work {
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
 		d.mu.Lock()
-		if len(d.queue) > 0 {
-			w := d.queue[0]
-			d.queue = d.queue[1:]
+		i := slices.IndexFunc(d.queue, func(w *work) bool {
+			return slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(w) }) ||
+				!slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane })
+		})
+		if i >= 0 && !slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(d.queue[i]) }) {
+			w := d.queue[i]
+			d.queue = slices.Delete(d.queue, i, i+1)
 			w.ctx, w.cancel = context.WithCancel(ctx)
-			d.current = w
+			d.running = append(d.running, w)
 			d.mu.Unlock()
 			return w
 		}
@@ -405,6 +441,9 @@ func (d *Daemon) next(ctx context.Context) *work {
 		}
 	}
 }
+
+// trusted reports whether w runs under the trusted policy (optionsForTrust).
+func trusted(w *work) bool { return w.trig.Trust == protocol.TriggerTrustTrusted }
 
 // process checks w out, resolves its checks and runs them. ctx ending
 // (daemon shutdown) leaves an unstarted trigger accepted for the next start
@@ -492,15 +531,15 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 			d.log.Error("report head config failed", "run", w.runID, "err", err)
 		}
 	}
-	d.drive(ctx, w, run, runner, policy)
+	d.drive(ctx, w, run, runner, policy, p.checks)
 	d.client.Flush()
 }
 
 // drive submits w's stored run and waits for it to end. A deploy run that
 // policy forbids is not submitted: its jobs are skipped.
-func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy) {
+func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy, checks *config.ResolvedChecks) {
 	bg := context.WithoutCancel(ctx)
-	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log})
+	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks)})
 	defer func() {
 		if err := sched.Close(); err != nil {
 			d.log.Error("close scheduler failed", "run", w.runID, "err", err)
@@ -526,6 +565,23 @@ func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner sched
 	}
 	if _, err := sched.Wait(ctx, w.runID); err != nil && ctx.Err() == nil {
 		d.log.Error("run failed", "run", w.runID, "err", err)
+	}
+}
+
+// jobDemand is what each unit of run asks of the capacity pool: a job its
+// effective limits, the setup (job "") the check-level ones. nil checks ask
+// for nothing.
+func jobDemand(run store.Run, checks *config.ResolvedChecks) func(job string) capacity.Demand {
+	if checks == nil {
+		return nil
+	}
+	return func(name string) capacity.Demand {
+		var job config.ResolvedJob
+		if i := slices.IndexFunc(checks.Jobs, func(j config.ResolvedJob) bool { return j.Name == name }); i >= 0 {
+			job = checks.Jobs[i]
+		}
+		l := executor.EffectiveLimits(run, checks.Limits, job)
+		return capacity.Demand{CPUs: l.CPUs, MemoryBytes: l.MemoryBytes}
 	}
 }
 
@@ -655,7 +711,7 @@ func (d *Daemon) recoverTriggers(ctx context.Context) error {
 			return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
 		case run.State == store.RunQueued && run.RetryOf != nil:
 			d.mu.Lock()
-			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true})
+			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true, lane: scheduler.SupersedeKey(run)})
 			d.mu.Unlock()
 			continue
 		case run.State == store.RunQueued:

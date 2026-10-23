@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"runtime"
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
 	"github.com/KCuppens/hookci/agent/internal/cache"
+	"github.com/KCuppens/hookci/agent/internal/capacity"
 	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/daemon"
 	"github.com/KCuppens/hookci/agent/internal/executor"
@@ -35,10 +38,20 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dirFlags := addStateDirFlags(fs, d)
+	cpuBudget := fs.Float64("cpu-budget", 0, "")
+	memBudget := fs.String("mem-budget", "", "")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: hookci [global flags] agent [--state-dir DIR | --installation ID]")
+		fmt.Fprintln(stderr, "usage: hookci [global flags] agent [--state-dir DIR | --installation ID] [--cpu-budget CORES] [--mem-budget SIZE]")
 		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Connect to the hub and run the checks it sends until stopped.")
+		fmt.Fprintln(stderr, "Connect to the hub and run the checks it sends until stopped. Triggers run")
+		fmt.Fprintln(stderr, "one at a time per branch or pull request, side by side across them.")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "  --cpu-budget CORES  sum of job CPU limits running at once (default: all CPUs)")
+		fmt.Fprintln(stderr, "  --mem-budget SIZE   sum of job memory limits running at once, e.g. 32G (default: none)")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Past the budget, new setups and jobs also wait while the host has less than")
+		fmt.Fprintln(stderr, "4G free beyond their memory limit or its load is at its CPU count. One setup")
+		fmt.Fprintln(stderr, "or job always runs when nothing else does.")
 	}
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -50,6 +63,20 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 	if len(pos) != 0 {
 		fs.Usage()
 		return ExitUsage
+	}
+	if math.IsNaN(*cpuBudget) || math.IsInf(*cpuBudget, 0) || *cpuBudget < 0 {
+		fmt.Fprintln(stderr, "hookci: --cpu-budget must be a non-negative number")
+		return ExitUsage
+	}
+	if *cpuBudget == 0 {
+		*cpuBudget = float64(runtime.NumCPU())
+	}
+	var memBytes int64
+	if *memBudget != "" {
+		if memBytes, err = config.ParseMemory(*memBudget); err != nil {
+			fmt.Fprintf(stderr, "hookci: --mem-budget: %v\n", err)
+			return ExitUsage
+		}
 	}
 	stateDir, ok := dirFlags.resolve(stderr)
 	if !ok {
@@ -94,6 +121,14 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 		})
 	}
 	osRelease := d.osRelease()
+	// One pool across daemon restarts: work of the last daemon has
+	// returned its share before the next one starts.
+	pool := capacity.New(capacity.Options{
+		CPUs:        *cpuBudget,
+		MemoryBytes: memBytes,
+		Host:        capacity.ProcHost{},
+		Logger:      log,
+	})
 
 	for {
 		// A fresh daemon each time: the next one settles the triggers the
@@ -105,6 +140,7 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 			Logger:    log,
 			JobUser:   h.jobUser,
 			Slots:     d.Globals.Slots,
+			Pool:      pool,
 			Cache:     jobCache,
 		})
 		err := dm.Run(ctx)
