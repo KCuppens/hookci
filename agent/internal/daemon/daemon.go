@@ -409,8 +409,12 @@ func (d *Daemon) worker(ctx context.Context) {
 	}
 }
 
-// next takes the oldest queued trigger whose lane is idle, or returns nil
-// once ctx ends.
+// next takes the oldest queued trigger that may start, or returns nil once
+// ctx ends. A trigger may start when its lane is idle and every running
+// trigger has its trust: check jobs of all runs share one job user and no
+// PID namespace, so an untrusted run must never overlap a trusted one. The
+// scan stops at the first trigger trust holds back, so the running side
+// drains and that trigger goes next instead of waiting forever.
 func (d *Daemon) next(ctx context.Context) *work {
 	for {
 		if ctx.Err() != nil {
@@ -418,9 +422,10 @@ func (d *Daemon) next(ctx context.Context) *work {
 		}
 		d.mu.Lock()
 		i := slices.IndexFunc(d.queue, func(w *work) bool {
-			return !slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane })
+			return slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(w) }) ||
+				!slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane })
 		})
-		if i >= 0 {
+		if i >= 0 && !slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(d.queue[i]) }) {
 			w := d.queue[i]
 			d.queue = slices.Delete(d.queue, i, i+1)
 			w.ctx, w.cancel = context.WithCancel(ctx)
@@ -436,6 +441,9 @@ func (d *Daemon) next(ctx context.Context) *work {
 		}
 	}
 }
+
+// trusted reports whether w runs under the trusted policy (optionsForTrust).
+func trusted(w *work) bool { return w.trig.Trust == protocol.TriggerTrustTrusted }
 
 // process checks w out, resolves its checks and runs them. ctx ending
 // (daemon shutdown) leaves an unstarted trigger accepted for the next start

@@ -54,3 +54,41 @@ func TestDaemonLanes(t *testing.T) {
 	}
 	h.waitTrigger("main_2", store.TriggerRunning)
 }
+
+// TestDaemonLanesSplitTrust: an untrusted run never overlaps a trusted one,
+// and a trusted trigger queued behind a held-back untrusted one waits too.
+func TestDaemonLanesSplitTrust(t *testing.T) {
+	src := &fakeSource{Head: map[string]string{ConfigFile: unitOnly}, Base: map[string]string{ConfigFile: unitOnly}}
+	h := newHarness(t, src, &fakeRunner{Block: true})
+	main := h.trigger("main_1", false)
+	main.Sha = strings.Repeat("a", 40)
+	h.send(main)
+	first := h.waitTrigger("main_1", store.TriggerRunning)
+	<-h.runner.running
+
+	fork := h.trigger("fork_7", true)
+	fork.Sha = strings.Repeat("b", 40)
+	fork.Trust = protocol.TriggerTrustUntrusted
+	h.send(fork)
+	dev := h.trigger("dev_1", false)
+	dev.Ref, dev.Sha = "refs/heads/develop", strings.Repeat("c", 40)
+	h.send(dev)
+	select {
+	case job := <-h.runner.running:
+		t.Fatalf("job %q started next to the trusted run", job)
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.waitTrigger("fork_7", store.TriggerAccepted)
+	h.waitTrigger("dev_1", store.TriggerAccepted)
+
+	runID := first.RunID
+	h.send(protocol.Interrupt{RunId: &runID, Reason: protocol.InterruptReasonSuperseded, Seq: new(100)})
+	h.waitTrigger("fork_7", store.TriggerRunning)
+	<-h.runner.running
+	select {
+	case job := <-h.runner.running:
+		t.Fatalf("job %q started next to the untrusted run", job)
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.waitTrigger("dev_1", store.TriggerAccepted)
+}

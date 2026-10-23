@@ -133,6 +133,8 @@ ExecStart=
 ExecStart=/usr/local/bin/hookci agent --installation %i --cpu-budget 6 --mem-budget 32G
 ```
 
+A run with untrusted code, such as a pull request from a fork, never runs next to a trusted one: check jobs share one job user, so the agent finishes the runs of one kind before it starts the other. Jobs of trusted runs share the host network, also across lanes, so a test suite must not bind fixed ports on the host.
+
 The agent can run the hub CLI for you on a machine with Node.js 20+ and npx: `hookci hub setup` and `hookci hub upgrade` run `npx --yes hookci-hub@<agent version> setup` or `upgrade` (`hookci-hub@latest` for a dev build), and pass every later argument to `hookci-hub`.
 
 ## Custom domain

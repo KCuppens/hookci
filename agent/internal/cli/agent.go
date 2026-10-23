@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"runtime"
 	"time"
 
@@ -63,8 +64,8 @@ func cmdAgent(ctx context.Context, d Deps, args []string, stdout, stderr io.Writ
 		fs.Usage()
 		return ExitUsage
 	}
-	if *cpuBudget < 0 {
-		fmt.Fprintln(stderr, "hookci: --cpu-budget must not be negative")
+	if math.IsNaN(*cpuBudget) || math.IsInf(*cpuBudget, 0) || *cpuBudget < 0 {
+		fmt.Fprintln(stderr, "hookci: --cpu-budget must be a non-negative number")
 		return ExitUsage
 	}
 	if *cpuBudget == 0 {

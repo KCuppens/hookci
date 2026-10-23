@@ -434,7 +434,8 @@ func (s *Scheduler) loop() {
 
 // dispatch fills free slots that the pool admits: ready jobs of started
 // runs first, then the setup of the first queued run. Work the pool refuses
-// waits, and nothing behind it starts, so a large demand is not starved.
+// waits, and nothing behind it in this scheduler starts; other runs sharing
+// the pool may still take freed shares first.
 func (s *Scheduler) dispatch() {
 	for !s.closed && s.free > 0 {
 		rs, job := s.nextJob()
