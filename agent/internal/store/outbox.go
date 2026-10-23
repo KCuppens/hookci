@@ -89,6 +89,15 @@ func (s *Store) Ack(ctx context.Context, upto int64) error {
 	return nil
 }
 
+// DropOutbox deletes the item with seq, if it is still queued, so it is not
+// sent again after a reconnect. The out_acked HWM is unchanged.
+func (s *Store) DropOutbox(ctx context.Context, seq int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM outbox WHERE seq = ?`, seq); err != nil {
+		return fmt.Errorf("store: drop outbox %d: %w", seq, err)
+	}
+	return nil
+}
+
 // GetHWM returns the high-water mark for dir ("in" or "out_acked"), 0 if unset.
 func (s *Store) GetHWM(ctx context.Context, dir string) (int64, error) {
 	if err := checkDirection(dir); err != nil {

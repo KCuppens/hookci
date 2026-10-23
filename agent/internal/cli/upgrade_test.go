@@ -141,7 +141,7 @@ func TestUpgradeAppliesAndRestarts(t *testing.T) {
 	if b, _ := os.ReadFile(env.bin); string(b) != "new binary" {
 		t.Fatalf("binary = %q", b)
 	}
-	if !slices.Equal(env.svc.restarted, []string{systemd.AllAgentUnits()}) {
+	if !slices.Equal(env.svc.restarted, []string{systemd.AllAgentUnits}) {
 		t.Fatalf("restarted = %v", env.svc.restarted)
 	}
 	if stdout != "upgraded 1.2.0 -> v1.3.0\n" {
@@ -156,7 +156,7 @@ func TestUpgradeRefusesDowngrade(t *testing.T) {
 	srv := fakeReleases(t, "v1.0.0", []byte("old release"))
 	code, _, stderr, env := runUpgradeCLI(t, srv, "1.2.0", "--version", "v1.0.0")
 	if code != ExitInternal || !strings.Contains(stderr, "--allow-downgrade") {
-		t.Fatalf("exit = %d, stderr %q; want 4 and a downgrade refusal", code, stderr)
+		t.Fatalf("exit = %d, stderr %q; want %d and a downgrade refusal", code, stderr, ExitInternal)
 	}
 	if b, _ := os.ReadFile(env.bin); string(b) != "old binary" {
 		t.Fatalf("binary = %q", b)

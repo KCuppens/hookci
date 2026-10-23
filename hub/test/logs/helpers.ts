@@ -11,9 +11,9 @@ export async function gunzip(bytes: ArrayBuffer | Uint8Array): Promise<string> {
   return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
 }
 
-/** Pairs agentId to the installation under credential `zc_agent_<agentId>`, which it returns. */
+/** Pairs agentId to the installation under credential `hci_agent_<agentId>`, which it returns. */
 export async function seedAgent(installationId: number, agentId: string): Promise<string> {
-  const credential = `zc_agent_${agentId}`;
+  const credential = `hci_agent_${agentId}`;
   await insertAgent(tenantDb(env.DB, installationId), {
     agent_id: agentId,
     name: agentId,

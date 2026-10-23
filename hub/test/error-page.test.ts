@@ -1,20 +1,9 @@
-import { env, exports } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { upsertInstallation } from "../src/db/installations";
-import { LOG_URL_TTL_SECONDS, signLogUrl } from "../src/logs/sign";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { errorPage } from "../src/pages/error";
 import { escapeHtml } from "../src/pages/layout";
 import { S } from "../src/strings";
-import { testClock } from "./clock";
-import { clearTables } from "./db/helpers";
-import { gzip, seedAgent, seedRun } from "./logs/helpers";
 
 const ID_FORMAT = /req_[0-9A-Z]{20}/;
-const INSTALLATION = 41;
-const OTHER = 42;
-const RUN = "run_err_1";
-const OTHER_RUN = "run_err_2";
-const SECRET_LOG = "token=do-not-leak-this-line\n";
 
 async function page(code: string, status = 400): Promise<{ res: Response; html: string }> {
   const res = await errorPage(code, status);
@@ -124,66 +113,5 @@ describe("error page security headers", () => {
     expect(html).not.toMatch(/\sstyle=/);
     expect(html).not.toContain("onclick=");
     expect(html).not.toContain("<form");
-  });
-});
-
-describe("GET /logs/:runId/:job as a browser", () => {
-  beforeEach(async () => {
-    await clearTables();
-    for (const id of [INSTALLATION, OTHER]) {
-      await upsertInstallation(env.DB, { id, account_login: `acct${id}`, account_type: "Organization", account_id: id * 10, created_at: 1 });
-    }
-    await seedAgent(INSTALLATION, "agt_err_owner");
-    await seedAgent(OTHER, "agt_err_other");
-    await seedRun(INSTALLATION, 4100, RUN, "agt_err_owner");
-    await seedRun(OTHER, 4200, OTHER_RUN, "agt_err_other");
-    await env.LOGS.put(`logs/${OTHER}/${OTHER_RUN}/test.log.gz`, await gzip(SECRET_LOG));
-  });
-
-  const browser = { headers: { accept: "text/html,application/xhtml+xml" } };
-
-  it("answers an expired link with the 410 error page", async () => {
-    const url = await signLogUrl(env, RUN, "test");
-    testClock.advance(LOG_URL_TTL_SECONDS * 1000);
-    const res = await exports.default.fetch(url, browser);
-    const html = await res.text();
-    expect(res.status).toBe(410);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain(escapeHtml(S.errorPage.codes.log_expired.title));
-    expect(res.headers.get("x-request-id")).toMatch(ID_FORMAT);
-  });
-
-  it("answers a tampered signature with the 403 error page and no log bytes", async () => {
-    const url = new URL(await signLogUrl(env, RUN, "test"));
-    const sig = url.searchParams.get("sig") ?? "";
-    url.searchParams.set("sig", `${sig.startsWith("A") ? "B" : "A"}${sig.slice(1)}`);
-    const res = await exports.default.fetch(url, browser);
-    const html = await res.text();
-    expect(res.status).toBe(403);
-    expect(html).toContain(escapeHtml(S.errorPage.codes.log_sig_invalid.title));
-    expect(html).not.toContain(SECRET_LOG.trim());
-  });
-
-  it("refuses another installation's run through this run's signature without leaking its log", async () => {
-    const url = (await signLogUrl(env, RUN, "test")).replace(`/${RUN}/`, `/${OTHER_RUN}/`);
-    const res = await exports.default.fetch(url, browser);
-    const html = await res.text();
-    expect(res.status).toBe(403);
-    expect(html).toContain(escapeHtml(S.errorPage.codes.log_sig_invalid.title));
-    expect(html).not.toContain("do-not-leak");
-  });
-
-  it("answers a job without a stored log with the 404 error page", async () => {
-    const res = await exports.default.fetch(await signLogUrl(env, RUN, "lint"), browser);
-    const html = await res.text();
-    expect(res.status).toBe(404);
-    expect(html).toContain(escapeHtml(S.errorPage.codes.log_not_found.title));
-  });
-
-  it("keeps the JSON error for a client that does not ask for HTML", async () => {
-    const url = await signLogUrl(env, RUN, "lint");
-    const res = await exports.default.fetch(url);
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "log_not_found" });
   });
 });

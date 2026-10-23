@@ -9,7 +9,7 @@ import { getUserLink, listLinkedInstallationIds } from "../db/workspaces";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { QUOTAS } from "../quotas";
-import { ulid } from "../ulid";
+import { ulidTimePrefix } from "../ulid";
 
 export const EXPORT_TTL_MS = 15 * 60_000;
 const DAY_MS = 86_400_000;
@@ -71,7 +71,7 @@ export async function collectUserData(env: Env, teamId: string, slackUserId: str
 	const link = await getUserLink(env.DB, teamId, slackUserId);
 	const runs: ExportedRun[] = [];
 	if (link) {
-		const minTriggerId = `${ulid(now - QUOTAS.retentionDays * DAY_MS).slice(0, 10)}${"0".repeat(16)}`;
+		const minTriggerId = `${ulidTimePrefix(now - QUOTAS.retentionDays * DAY_MS)}${"0".repeat(16)}`;
 		for (const installationId of await listLinkedInstallationIds(env.DB, teamId)) {
 			for (const run of await listAuthoredRuns(env.DB, installationId, link.github_login, minTriggerId)) {
 				runs.push({

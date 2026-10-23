@@ -10,7 +10,7 @@ import type { TriggerRequest } from "../../src/webhook/route";
 import { clearTables } from "../db/helpers";
 import { type Agent, type AgentSocket, connect } from "../do/agent-socket";
 import { formField } from "../do/slack-queue-world";
-import { createFakeGitHub, serveInstallationTokens } from "../fakes/github";
+import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "../fakes/github";
 import { createFakeSlack } from "../fakes/slack";
 import pushMain from "../fixtures/github/push.main.json";
 import { generateAppKey } from "../github/helpers";
@@ -73,6 +73,7 @@ beforeEach(async () => {
 
   let checkRuns = 0;
   serveInstallationTokens(gh, clock.now());
+  serveRepoFiles(gh, {});
   gh.respond("POST", "/repos/:owner/:repo/check-runs", () => Response.json({ id: ++checkRuns }, { status: 201 }));
   gh.respond("PATCH", "/repos/:owner/:repo/check-runs/:id", ({ params }) => Response.json({ id: Number(params.id) }));
 
@@ -291,7 +292,7 @@ describe("D1 writes and Slack calls under load", () => {
                 sha: `${tenant.installationId}${String(r).padStart(2, "0")}`.padEnd(40, "c"),
                 ref: `refs/heads/feature-${r}`,
                 event: "pull_request",
-                pr: { number: 100 + r, headRef: `feature-${r}`, headRepoFullName: tenant.fullName, fork: false, authorLogin: tenant.githubLogin },
+                pr: { number: 100 + r, headRef: `feature-${r}`, baseRef: "main", headRepoFullName: tenant.fullName, fork: false, authorLogin: tenant.githubLogin },
                 baseSha: "a".repeat(40),
                 authorLogin: tenant.githubLogin,
                 commitTitle: `Change ${r}`,

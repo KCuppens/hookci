@@ -17,7 +17,7 @@ const BARE = 44;
 const OWNER = 7001;
 const A = S.agents;
 const P = A.pairing;
-const TOKEN = /hc_pair_[A-Za-z0-9_-]+/;
+const TOKEN = /hci_pair_[A-Za-z0-9_-]+/;
 
 let acme: Tenant;
 let umbrella: Tenant;

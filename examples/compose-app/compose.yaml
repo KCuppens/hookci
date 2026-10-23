@@ -1,0 +1,12 @@
+services:
+  web:
+    build: ./app
+    # hookci replaces ports with 127.0.0.1:<color port>:8080 in each color's
+    # override; the default only matters for a plain `docker compose up`.
+    ports: ["${HOOKCI_PORT:-8080}:8080"]
+    environment:
+      FAIL_HEALTH: ${FAIL_HEALTH:-0}
+    # The app answers 500 to every request while ./data/fail-after-start exists.
+    volumes:
+      - ./data:/data
+    stop_grace_period: 15s

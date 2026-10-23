@@ -157,6 +157,12 @@ func (h *harness) seed(r store.Run, state store.RunState, jobs ...store.JobState
 	if r.Kind == "" {
 		r.Kind = "check"
 	}
+	if r.Event != "local" {
+		r.TriggerID = "trig-" + r.ID
+		if _, err := h.db.AcceptTrigger(h.ctx, r.TriggerID, r.ID); err != nil {
+			h.t.Fatalf("AcceptTrigger %s: %v", r.TriggerID, err)
+		}
+	}
 	r.TrustDomain = "trusted:" + r.Repo
 	planned := make([]store.Job, len(jobs))
 	for i := range jobs {
@@ -273,6 +279,59 @@ func TestRecoverRequeuesCheck(t *testing.T) {
 	if r := h.run("r1"); r.State != store.RunInterrupted {
 		t.Fatalf("original run state = %s, want interrupted", r.State)
 	}
+	triggers, err := h.db.ListTriggers(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(triggers) != 1 || triggers[0].RunID != retry.ID {
+		t.Fatalf("triggers = %+v, want trig-r1 on run %s", triggers, retry.ID)
+	}
+}
+
+// The retry takes over the trigger: the hub hears of it in an accepted
+// frame before the interrupted run's events, so it renames the trigger's
+// run instead of finishing it.
+func TestRecoverReportsRetryAccepted(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
+	items, err := h.db.Pending(h.ctx, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := items[len(items)-1].Seq
+
+	rep := h.mustRecover()
+
+	items, err = h.db.Pending(h.ctx, after, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) == 0 || items[0].Kind != "accepted" {
+		t.Fatalf("first frame after recovery = %+v, want accepted", items)
+	}
+	var acc protocol.Accepted
+	if err := protocol.Unmarshal(items[0].Payload, &acc); err != nil {
+		t.Fatal(err)
+	}
+	if acc.TriggerId != "trig-r1" || acc.RunId != rep.Requeued[0] {
+		t.Fatalf("accepted = %+v, want trig-r1 on %s", acc, rep.Requeued[0])
+	}
+}
+
+// A local hookci run has no trigger and no daemon to run a retry, so it is
+// only interrupted.
+func TestRecoverLocalRunNotRequeued(t *testing.T) {
+	h := newHarness(t)
+	h.seed(store.Run{ID: "r1", Event: "local"}, store.RunRunning, store.JobRunning)
+
+	rep := h.mustRecover()
+
+	if len(rep.Requeued) != 0 || h.runCount() != 1 {
+		t.Fatalf("local run re-queued: %v", rep.Requeued)
+	}
+	if got := h.run("r1").State; got != store.RunInterrupted {
+		t.Fatalf("run state = %s, want interrupted", got)
+	}
 }
 
 func TestRecoverAttemptCap(t *testing.T) {
@@ -361,7 +420,7 @@ func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
 		{Name: "other-service", Active: "active"},
 		{Name: "hookci-run-r0-test", Active: "failed"},
 	}
-	h.netns.Names = []string{"zc-r1", "other-ns", "zc-r0"}
+	h.netns.Names = []string{"hci-r1", "other-ns", "hci-r0"}
 	h.docker.Runs = []string{"r1", "r0"}
 
 	rep := h.mustRecover()
@@ -370,7 +429,7 @@ func TestRecoverStopsUnitsAndNamespaces(t *testing.T) {
 	if !reflect.DeepEqual(h.iso.Stops, wantUnits) || !reflect.DeepEqual(rep.UnitsStopped, wantUnits) {
 		t.Fatalf("stops = %v, report = %v, want %v", h.iso.Stops, rep.UnitsStopped, wantUnits)
 	}
-	wantNS := []string{"zc-r1", "zc-r0"}
+	wantNS := []string{"hci-r1", "hci-r0"}
 	if !reflect.DeepEqual(h.netns.Removed, wantNS) || !reflect.DeepEqual(rep.NetnsRemoved, wantNS) {
 		t.Fatalf("removed = %v, report = %v, want %v", h.netns.Removed, rep.NetnsRemoved, wantNS)
 	}
@@ -391,18 +450,19 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.iso.Units = []isolation.Unit{
 		{Name: "hookci-run-r1-build", Active: "active"},
+		{Name: "hookci-run-r1-unit-tests", Active: "active"},
 		{Name: "hookci-run-foreign-build", Active: "active"},
 		{Name: "hookci-run-r10-build", Active: "active"},
 	}
-	h.netns.Names = []string{"zc-r1", "zc-foreign", "zc-r10"}
+	h.netns.Names = []string{"hci-r1", "hci-foreign", "hci-r10"}
 	h.docker.Runs = []string{"foreign", "r10", "r1"}
 
 	h.mustRecover()
 
-	if want := []string{"hookci-run-r1-build"}; !reflect.DeepEqual(h.iso.Stops, want) {
+	if want := []string{"hookci-run-r1-build", "hookci-run-r1-unit-tests"}; !reflect.DeepEqual(h.iso.Stops, want) {
 		t.Fatalf("stops = %v, want %v", h.iso.Stops, want)
 	}
-	if want := []string{"zc-r1"}; !reflect.DeepEqual(h.netns.Removed, want) {
+	if want := []string{"hci-r1"}; !reflect.DeepEqual(h.netns.Removed, want) {
 		t.Fatalf("removed namespaces = %v, want %v", h.netns.Removed, want)
 	}
 	if want := []string{services.LabelRun + "=r1"}; !reflect.DeepEqual(h.docker.Labels, want) {
@@ -414,7 +474,7 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 			pkills = append(pkills, c.Args)
 		}
 	}
-	if want := [][]string{{"-f", "^pasta .* --netns [^ ]*/zc-r1$"}}; !reflect.DeepEqual(pkills, want) {
+	if want := [][]string{{"-f", "^pasta .* --netns [^ ]*/hci-r1$"}}; !reflect.DeepEqual(pkills, want) {
 		t.Fatalf("pkill calls = %v, want %v", pkills, want)
 	}
 }
@@ -424,7 +484,7 @@ func TestRecoverLeavesForeignRuns(t *testing.T) {
 func TestRecoverCleansBeforeInterrupting(t *testing.T) {
 	h := newHarness(t)
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
-	h.netns.Names = []string{"zc-r1"}
+	h.netns.Names = []string{"hci-r1"}
 	h.docker.Runs = []string{"r1"}
 	var seen []store.RunState
 	record := func() { seen = append(seen, h.run("r1").State) }
@@ -483,7 +543,7 @@ func TestRecoverPkillNoMatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
-			h.netns.Names = []string{"zc-r1"}
+			h.netns.Names = []string{"hci-r1"}
 			h.runner.On("pkill", nil, tc.resp)
 
 			rep, err := h.recover()
@@ -503,7 +563,7 @@ func TestRecoverIdempotent(t *testing.T) {
 	h.seed(store.Run{ID: "r1"}, store.RunRunning, store.JobRunning)
 	h.seed(store.Run{ID: "r2", Kind: "deploy", Env: "prod"}, store.RunVerifying, store.JobSuccess)
 	h.iso.Units = []isolation.Unit{{Name: "hookci-run-r1-job0", Active: "active"}}
-	h.netns.Names = []string{"zc-r1"}
+	h.netns.Names = []string{"hci-r1"}
 
 	first := h.mustRecover()
 	if len(first.Interrupted) != 2 || len(first.UnitsStopped) != 1 || len(first.NetnsRemoved) != 1 {

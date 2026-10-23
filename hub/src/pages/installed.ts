@@ -17,6 +17,8 @@ export interface InstalledView {
 	accountType: string;
 	pairToken: string;
 	hubOrigin: string;
+	/** LATEST_AGENT_VERSION; empty until the first release, when /install has nothing to download. */
+	latestAgentVersion: string;
 	expiresInMinutes: number;
 	/** What the hub knows about each setup step; drives the checkmarks and the repository chips. */
 	progress: InstallProgress;
@@ -222,9 +224,11 @@ function steps(v: InstalledView) {
 	const ext = icon("ext-box", "ext fl");
 	const cmd = (text: string) =>
 		`<div class="cmd"><pre>${e(text)}</pre><button type="button" class="cp" data-copy data-copied="${e(T.copied)}" hidden>${e(T.copy)}</button></div>`;
-	const pair =
-		`<p>${e(T.pairRun)}</p>${cmd(`curl -fsSL ${v.hubOrigin}/install | sh -s -- ${v.pairToken}`)}` +
-		`${cmd(`hookci connect ${v.pairToken}`)}<p>${e(S.pages.installedExpiry(v.expiresInMinutes))}</p>`;
+	const connect = cmd(`sudo hookci connect --hub ${v.hubOrigin} ${v.pairToken}`);
+	const commands = v.latestAgentVersion
+		? `<p>${e(T.pairRun)}</p>${cmd(`curl -fsSL ${v.hubOrigin}/install | sh -s -- ${v.pairToken}`)}${connect}`
+		: `<p>${e(S.pages.installedNoRelease)} <a href="${e(S.pages.buildAgentUrl)}">${e(S.pages.buildAgent)}</a> ${e(S.pages.installedPairBuilt)}</p>${connect}`;
+	const pair = `${commands}<p>${e(S.pages.installedExpiry(v.expiresInMinutes))}</p>`;
 	const bind = `<p>${e(T.bindRun)}</p>${cmd(T.bindCommand)}`;
 	const rows = [
 		row({ key: "agent", n: 1, done: p.agentOnline, title: T.pairTitle, body: T.pairBody, action: `${e(T.pairAction)}${ext}`, panel: pair, open: !p.agentOnline }),

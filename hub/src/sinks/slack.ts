@@ -1,11 +1,14 @@
 // The Slack sink: in every channel watching the repo, or the channel the
 // repo's .hookci.yml notify.slack names in the watch's workspace, one message
 // per run posted once and then updated in place, a thread reply per finished
-// job (normal notify only), one alert when the run fails, and a DM to the
-// agent's admin when it goes offline. It never reads channel history: what
-// it posted is in slack_messages and slack_job_replies. A first post or reply
-// still queued after the queue's 10 s wait stays queued under its claim, and
-// the workspace queue hands its result to completeQueuedSlackPost.
+// job (normal notify only), one failure reply in the thread (or a DM to the
+// author) when the run fails, and a DM to the agent's admin when it goes
+// offline. A passed push's deploys fold into its message: a line per env,
+// a reply per deploy step and one when the deploy ends, and the same
+// failure reply. It never reads channel history: what it posted is in
+// slack_messages and slack_job_replies. A first post or reply still queued
+// after the queue's 10 s wait stays queued under its claim, and the
+// workspace queue hands its result to completeQueuedSlackPost.
 
 import { tenantDb, type TenantDb } from "../db/tenant";
 import {
@@ -13,6 +16,7 @@ import {
 	claimAlert,
 	claimSlackMessage,
 	claimThreadReply,
+	findMessagedChecksRun,
 	getSlackMessage,
 	putSlackMessage,
 	releaseSlackMessage,
@@ -20,20 +24,30 @@ import {
 	setAlertTs,
 	setThreadReply,
 } from "../db/slack-messages";
+import { type DeployBadgeState, loadDeployLines } from "../deploy/lines";
 import { listWatchesForRepo, type WatchRow } from "../db/watches";
 import { claimOfflineDm, clearOfflineDm } from "../do/agent-hooks";
 import { systemClock } from "../do/clock";
 import type { SlackCallResult } from "../do/slack-queue";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { signLogUrl } from "../logs/sign";
+import { stableLogLink } from "../logs/links";
 import { getLogTail } from "../logs/tail";
 import { logEvent, reportError } from "../observability";
 import { slackApi, slackApiFireAndForget } from "../slack/api";
 import { resolveAuthor } from "../slack/authors";
 import { TERMINAL } from "../slack/badge";
 import { findChannel } from "../slack/channels";
-import { renderAlert, renderJobReply, renderOfflineDm, renderRunMessage, TAIL_LINES } from "../slack/messages";
+import {
+	renderAlert,
+	renderDeployFailure,
+	renderDeployReply,
+	renderJobReply,
+	renderOfflineDm,
+	renderRunMessage,
+	type SlackMessage,
+	TAIL_LINES,
+} from "../slack/messages";
 import { registerSinkFactory, type SinkHost } from "./index";
 import { loadRunView } from "./runview";
 import type { AgentView, JobView, RunView, Sink } from "./types";
@@ -74,7 +88,7 @@ interface StoredTail {
 interface AlertLog {
 	job: JobView;
 	tail: string[];
-	logUrl: string | null;
+	logLink: string | null;
 }
 
 /**
@@ -86,6 +100,28 @@ type QueuedPostClaim = { installationId: number; teamId: string; channelId: stri
 	| { kind: "message"; triggerId: string }
 	| { kind: "reply"; job: string }
 );
+
+/**
+ * A deploy event to reply to in the thread: the deploy as that event left
+ * it, since later events may have moved its render on by the time the
+ * reply goes out, and the log tail the agent sent with it.
+ */
+export interface DeployReplyEvent {
+	badge: DeployBadgeState;
+	tail: string[];
+}
+
+/**
+ * The body of an AgentDO's POST /slack-fold: render the checks run's message
+ * with its deploys in the queue of the AgentDO that owns the run, and with
+ * deploy, that deploy's reply.
+ */
+export interface SlackFoldRequest {
+	installationId: number;
+	checksRunId: string;
+	checksTriggerId: string;
+	deploy?: DeployReplyEvent;
+}
 
 /** Per AgentDO storage, the tail of the work on each run: calls on one run go one after another. */
 const runQueues = new WeakMap<DurableObjectStorage, Map<string, Promise<void>>>();
@@ -112,7 +148,7 @@ export class SlackSink implements Sink {
 	}
 
 	async onJobUpdate(run: RunView, job: JobView): Promise<void> {
-		await this.inOrder(run.triggerId, () => this.update(run, [job]));
+		await this.inOrder(run.triggerId, () => this.update(run, { jobs: [job] }));
 	}
 
 	/**
@@ -121,13 +157,91 @@ export class SlackSink implements Sink {
 	 * finished meanwhile, and the alert when the run failed.
 	 */
 	async catchUp(run: RunView, teamId: string, channelId: string): Promise<void> {
-		await this.inOrder(run.triggerId, () =>
-			this.update(
-				run,
-				run.jobs.filter((job) => TERMINAL.has(job.state)),
-				`${teamId}:${channelId}`,
-			),
-		);
+		await this.inOrder(run.triggerId, () => this.update(run, { jobs: run.jobs.filter((job) => TERMINAL.has(job.state)), only: `${teamId}:${channelId}` }));
+	}
+
+	/**
+	 * Renders the deploys of the checks run that chained deployTriggerId into
+	 * its message, and with deploy, posts that deploy's step, final or failure
+	 * reply in the thread. Only a passed checks run shows them: one still
+	 * running folds them in when it ends. The render runs in the AgentDO that
+	 * owns the checks run, so it waits behind that run's own renders. False
+	 * when the checks run has no message, so the deploy keeps its own badge.
+	 */
+	async foldDeploy(deployTriggerId: string, deploy?: DeployReplyEvent): Promise<boolean> {
+		const found = await findMessagedChecksRun(this.t, deployTriggerId);
+		if (!found) return false;
+		if (found.agent_id === null || found.agent_id === this.host?.agentId) {
+			await this.foldInto(found.run_id, found.trigger_id, deploy);
+			return true;
+		}
+		const body: SlackFoldRequest = {
+			installationId: this.t.installationId,
+			checksRunId: found.run_id,
+			checksTriggerId: found.trigger_id,
+			...(deploy ? { deploy } : {}),
+		};
+		const res = await this.env.AGENT_DO.get(this.env.AGENT_DO.idFromName(found.agent_id)).fetch("https://do/slack-fold", {
+			method: "POST",
+			headers: { "x-hookci-agent-id": found.agent_id },
+			body: JSON.stringify(body),
+		});
+		if (!res.ok) throw new HubError("agent_do_failed", 502, `slack fold for ${found.agent_id} answered ${res.status}`);
+		return true;
+	}
+
+	/** Renders the checks run's message with its deploys, and deploy's reply, once its queued renders in this AgentDO are done. */
+	async foldInto(checksRunId: string, checksTriggerId: string, deploy?: DeployReplyEvent): Promise<void> {
+		await this.inOrder(checksTriggerId, async () => {
+			const run = await loadRunView(this.env, this.t.installationId, { runId: checksRunId });
+			if (run?.state === "success") await this.update(run, deploy ? { deploy } : {});
+		});
+	}
+
+	/**
+	 * Posts a deploy's reply in the thread of parentTs once per step and once
+	 * when it ends, claimed in slack_job_replies under runKey: steps and the
+	 * final line for normal notify only, a failure always. A success and a
+	 * failure mention the author; a failure goes to them as a DM instead when
+	 * the watch alerts by DM.
+	 */
+	async deployReply(
+		repo: string,
+		runKey: string,
+		watch: WatchRow,
+		parentTs: string,
+		s: DeployBadgeState,
+		tail: string[],
+		authorLogin: string | null,
+	): Promise<void> {
+		const key = deployReplyKey(s);
+		if (key === null || (s.state !== "failed" && watch.notify !== "normal")) return;
+		const { team_id: team, channel_id: channel } = watch;
+		if (!(await claimThreadReply(this.t, runKey, team, channel, key))) return;
+		if (s.state !== "failed") {
+			let mention: string | null = null;
+			try {
+				if (s.state === "succeeded" && authorLogin) mention = await this.deployAuthor(team, authorLogin);
+			} catch (err) {
+				await releaseThreadReply(this.t, runKey, team, channel, key);
+				throw err;
+			}
+			const msg = renderDeployReply(s, mention);
+			await this.postReply(runKey, watch, key, { channel, thread_ts: parentTs, text: msg.text, blocks: msg.blocks });
+			return;
+		}
+		let target: { channel: string; thread_ts?: string } = { channel, thread_ts: parentTs };
+		let msg: SlackMessage;
+		try {
+			const author = authorLogin ? await this.deployAuthor(team, authorLogin) : null;
+			if (watch.alert === "dm" && author) target = { channel: await this.openDm(team, author) };
+			const log = tail.length > 0 || !s.runId || !s.logJob ? tail : ((await getLogTail(this.env, s.runId, s.logJob, TAIL_LINES)) ?? []);
+			msg = renderDeployFailure(repo, s, log, watch.alert === "dm" ? null : author);
+		} catch (err) {
+			await releaseThreadReply(this.t, runKey, team, channel, key);
+			throw err;
+		}
+		await this.postReply(runKey, watch, key, { ...target, text: msg.text, blocks: msg.blocks }, "alert");
 	}
 
 	/** Annotations belong to the GitHub checks; Slack shows the job's result and log tail instead. */
@@ -159,8 +273,18 @@ export class SlackSink implements Sink {
 		if (sent === 0) clearOfflineDm(this.host.storage);
 	}
 
-	/** Posts or updates the run's message in each target channel, or in the one channel `${team}:${channel}` only names, and replies for jobs that finished. */
-	private async update(run: RunView, jobs: JobView[] = [], only?: string): Promise<void> {
+	/**
+	 * Posts or updates the run's message in each target channel, or in the
+	 * one channel `${team}:${channel}` only names, and replies for jobs that
+	 * finished; with a passed push, its deploys folded in, and with deploy,
+	 * that deploy's reply. A deploy run re-renders the message of the checks run that chained it instead.
+	 */
+	private async update(run: RunView, opts: { jobs?: JobView[]; only?: string; deploy?: DeployReplyEvent } = {}): Promise<void> {
+		if (run.target !== "checks") {
+			await this.foldDeploy(run.triggerId);
+			return;
+		}
+		const { jobs = [], only, deploy } = opts;
 		const watches = (await listWatchesForRepo(this.t, run.repoId)).filter((w) => w.status === "active");
 		if (watches.length === 0) return;
 		if (run.runId) await adoptSlackMessages(this.t, run.triggerId, run.runId);
@@ -179,14 +303,18 @@ export class SlackSink implements Sink {
 		}
 		let failure: Promise<AlertLog | null> | undefined;
 		const alertLog = () => (failure ??= this.alertLog(run, runKey));
+		const deploys = run.state === "success" && run.event === "push" ? await loadDeployLines(this.env, this.t, runKey, run.sha) : undefined;
+		const line = deploy && deploys?.find((s) => s.env === deploy.badge.env && s.runId === deploy.badge.runId);
+		const deployed = deploy && line && { ...line, ...deploy.badge };
 
 		for (const { watch, followOnly } of await this.targets(run, runKey, watches)) {
 			if (only !== undefined && `${watch.team_id}:${watch.channel_id}` !== only) continue;
 			try {
-				const ts = await this.postOrUpdate(run, runKey, watch, followOnly);
+				const ts = await this.postOrUpdate(run, runKey, watch, followOnly, deploys);
 				if (ts === null || followOnly) continue;
 				if (watch.notify === "normal") for (const job of jobs) if (TERMINAL.has(job.state)) await this.reply(run, runKey, watch, ts, job);
 				if (run.state === "failed") await this.alert(run, runKey, watch, ts, alertLog);
+				if (deployed) await this.deployReply(run.repo, runKey, watch, ts, deployed, deploy.tail, run.authorLogin);
 			} catch (err) {
 				this.failed(err, { team_id: watch.team_id, channel_id: watch.channel_id, run_id: runKey });
 			}
@@ -216,7 +344,7 @@ export class SlackSink implements Sink {
 				if (found.kind === "found") {
 					id = found.id;
 				} else if (found.firstReport) {
-					logEvent("slack_override_unresolved", { team_id: watch.team_id, channel: slack.channel, reason: found.reason, run_id: runKey });
+					logEvent("slack_override_unresolved", { team_id: watch.team_id, channel: slack.channel, run_id: runKey });
 				}
 			} catch (err) {
 				this.failed(err, { team_id: watch.team_id, channel: slack.channel, run_id: runKey, op: "find_channel" });
@@ -243,9 +371,9 @@ export class SlackSink implements Sink {
 	 * (another call's, or this one's left in the queue past 10 s, whose ts
 	 * completeQueuedSlackPost stores) or followOnly finds no message to update.
 	 */
-	private async postOrUpdate(run: RunView, runKey: string, watch: WatchRow, followOnly: boolean): Promise<string | null> {
+	private async postOrUpdate(run: RunView, runKey: string, watch: WatchRow, followOnly: boolean, deploys?: DeployBadgeState[]): Promise<string | null> {
 		const { team_id: team, channel_id: channel } = watch;
-		const msg = renderRunMessage(run, { notify: watch.notify });
+		const msg = renderRunMessage(run, { notify: watch.notify, ...(deploys ? { deploys } : {}) });
 		const priority = TERMINAL.has(run.state) ? "terminal" : "normal";
 		let row = await getSlackMessage(this.t, runKey, team, channel);
 		if (!row && followOnly) return null;
@@ -287,24 +415,47 @@ export class SlackSink implements Sink {
 		const { team_id: team, channel_id: channel } = watch;
 		if (!(await claimThreadReply(this.t, runKey, team, channel, job.name))) return;
 		const msg = renderJobReply(run, job);
-		const claim: QueuedPostClaim = { kind: "reply", installationId: this.t.installationId, teamId: team, channelId: channel, runKey, job: job.name };
+		await this.postReply(runKey, watch, job.name, { channel, thread_ts: parentTs, text: msg.text, blocks: msg.blocks });
+	}
+
+	/**
+	 * Posts a reply claimed under key in slack_job_replies and stores its ts;
+	 * one left in the queue past 10 s keeps the claim, which
+	 * completeQueuedSlackPost completes. Any other error releases the claim.
+	 */
+	private async postReply(runKey: string, watch: WatchRow, key: string, args: Record<string, unknown>, priority?: "alert"): Promise<void> {
+		const { team_id: team, channel_id: channel } = watch;
+		const claim: QueuedPostClaim = { kind: "reply", installationId: this.t.installationId, teamId: team, channelId: channel, runKey, job: key };
 		try {
-			const res = await slackApi(
-				this.env,
-				team,
-				"chat.postMessage",
-				{ channel, thread_ts: parentTs, text: msg.text, blocks: msg.blocks },
-				{ claim: JSON.stringify(claim) },
-			);
-			await setThreadReply(this.t, runKey, team, channel, job.name, String(res.ts));
+			const res = await slackApi(this.env, team, "chat.postMessage", args, { ...(priority ? { priority } : {}), claim: JSON.stringify(claim) });
+			await setThreadReply(this.t, runKey, team, channel, key, String(res.ts));
 		} catch (err) {
 			if (err instanceof HubError && err.code === "slack_api" && err.message === "queue_deferred") {
-				logEvent("slack_post_deferred", { run_id: runKey, team_id: team, channel_id: channel, job: job.name });
+				logEvent("slack_post_deferred", { run_id: runKey, team_id: team, channel_id: channel, job: key });
 				return;
 			}
-			await releaseThreadReply(this.t, runKey, team, channel, job.name);
+			await releaseThreadReply(this.t, runKey, team, channel, key);
 			throw err;
 		}
+	}
+
+	/** The DM channel with a Slack user. */
+	private async openDm(team: string, user: string): Promise<string> {
+		const { channel: dm } = await slackApi(this.env, team, "conversations.open", { users: user }, { priority: "alert" });
+		if (typeof dm !== "object" || dm === null || !("id" in dm) || typeof dm.id !== "string") {
+			throw new HubError("slack_api", 502, "conversations_open_no_channel");
+		}
+		return dm.id;
+	}
+
+	/** A deploy author's Slack user: as for a run's author, else the Slack account linked to their GitHub login. */
+	private async deployAuthor(team: string, login: string): Promise<string | null> {
+		const known = await resolveAuthor(this.env, this.t.installationId, team, { login });
+		if (known) return known;
+		const linked = await this.env.DB.prepare("SELECT slack_user_id FROM user_links WHERE team_id = ?1 AND github_login = ?2 COLLATE NOCASE LIMIT 1")
+			.bind(team, login)
+			.first<{ slack_user_id: string }>();
+		return linked?.slack_user_id ?? null;
 	}
 
 	/** Posts the run's one failure alert for the watch: a DM to the author when asked and known, else in the thread. */
@@ -317,17 +468,11 @@ export class SlackSink implements Sink {
 				await setAlertTs(this.t, runKey, team, channel, null);
 				return;
 			}
-			const { job, tail, logUrl } = log;
+			const { job, tail, logLink } = log;
 			const author = await resolveAuthor(this.env, this.t.installationId, team, { login: run.authorLogin, email: run.authorEmail });
 			let target = { channel, thread_ts: parentTs };
-			const msg = renderAlert(run, job, tail, watch.alert === "dm" ? null : author, logUrl);
-			if (watch.alert === "dm" && author) {
-				const { channel: dm } = await slackApi(this.env, team, "conversations.open", { users: author }, { priority: "alert" });
-				if (typeof dm !== "object" || dm === null || !("id" in dm) || typeof dm.id !== "string") {
-					throw new HubError("slack_api", 502, "conversations_open_no_channel");
-				}
-				target = { channel: dm.id, thread_ts: "" };
-			}
+			const msg = renderAlert(run, job, tail, watch.alert === "dm" ? null : author, logLink);
+			if (watch.alert === "dm" && author) target = { channel: await this.openDm(team, author), thread_ts: "" };
 			const res = await slackApi(
 				this.env,
 				team,
@@ -344,8 +489,8 @@ export class SlackSink implements Sink {
 
 	/**
 	 * The failed job and its log for the alert, read once per update: the
-	 * last TAIL_LINES lines of the uploaded log with a signed link to it, else
-	 * the tail the agent sent (kept in the AgentDO), else nothing.
+	 * last TAIL_LINES lines of the uploaded log with its stable link, else the
+	 * tail the agent sent (kept in the AgentDO), else nothing.
 	 */
 	private async alertLog(run: RunView, runKey: string): Promise<AlertLog | null> {
 		const stored = (await this.host?.storage.get<StoredTail>(tailKey(runKey))) ?? { job: "", tail: [], at: 0 };
@@ -353,11 +498,11 @@ export class SlackSink implements Sink {
 		if (!found) return null;
 		const own = stored.job === found.name;
 		const job: JobView = own && stored.logs ? { ...found, logs: stored.logs } : found;
-		const fallback = { job, tail: own ? stored.tail : [], logUrl: null };
+		const fallback = { job, tail: own ? stored.tail : [], logLink: null };
 		if (job.logs === "local" || !run.runId) return fallback;
 		const tail = await getLogTail(this.env, run.runId, job.name, TAIL_LINES);
 		if (!tail) return fallback;
-		return { job, tail, logUrl: await signLogUrl(this.env, run.runId, job.name, this.now()) };
+		return { job, tail, logLink: stableLogLink(this.env, run.runId, job.name) };
 	}
 
 	/**
@@ -382,7 +527,8 @@ export class SlackSink implements Sink {
 		}
 	}
 
-	private async inOrder(triggerId: string, fn: () => Promise<void>): Promise<void> {
+	/** Runs fn after the Slack work queued on triggerId in this AgentDO; without a host, right away. */
+	async inOrder(triggerId: string, fn: () => Promise<void>): Promise<void> {
 		if (!this.host) return fn();
 		let queues = runQueues.get(this.host.storage);
 		if (!queues) runQueues.set(this.host.storage, (queues = new Map()));
@@ -401,6 +547,30 @@ function tailKey(runKey: string): string {
 }
 
 /**
+ * A deploy reply's key in slack_job_replies, apart from job names by its
+ * `#deploy:` prefix: one per env, attempt and step, rollback or end; null
+ * for a state that gets no reply (queued, rejected).
+ */
+function deployReplyKey(s: DeployBadgeState): string | null {
+	const at = `#deploy:${s.env}:${s.attempt ?? 1}:`;
+	switch (s.state) {
+		case "running":
+			return s.stepIndex === undefined ? null : `${at}${s.stepIndex}`;
+		case "rolling_back":
+			return `${at}rollback`;
+		case "failed":
+			return `${at}failed`;
+		case "succeeded":
+		case "cancelled":
+		case "interrupted":
+		case "superseded":
+			return `${at}done`;
+		default:
+			return null;
+	}
+}
+
+/**
  * Finishes a post that stayed in the SlackWorkspaceDO queue after its sink
  * stopped waiting (queue_deferred): stores the ts Slack gave it, or drops the
  * claim when it failed, as the sink would have. A run message then catches
@@ -416,7 +586,7 @@ export async function completeQueuedSlackPost(env: Env, claim: string, result: S
 		else await setThreadReply(t, ref.runKey, ref.teamId, ref.channelId, ref.job, ts);
 		return;
 	}
-	const run = await loadRunView(env.DB, ref.installationId, ref.runKey === ref.triggerId ? { triggerId: ref.triggerId } : { runId: ref.runKey });
+	const run = await loadRunView(env, ref.installationId, ref.runKey === ref.triggerId ? { triggerId: ref.triggerId } : { runId: ref.runKey });
 	// The agent may have accepted the run under its own id while the post was queued.
 	const runKey = run?.runId ?? ref.runKey;
 	if (runKey !== ref.runKey) await adoptSlackMessages(t, ref.triggerId, runKey);

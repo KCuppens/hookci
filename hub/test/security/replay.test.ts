@@ -7,10 +7,12 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hex, hmacSha256 } from "../../src/crypto";
 import { approveForkRun } from "../../src/forks/gate";
+import type { Env } from "../../src/env";
 import type { Installation } from "../../src/github/types";
 import worker from "../../src/index";
-import { LOG_URL_TTL_SECONDS, signLogUrl } from "../../src/logs/sign";
+import { LOG_URL_TTL_SEC, signLogUrl } from "../../src/logs/signing";
 import { issueState } from "../../src/oauth/state";
+import { escapeHtml } from "../../src/pages/layout";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { type CommandWorld, INSTALLATION, LOGIN, REPO, setUpCommandWorld, slackCalls, TEAM, USER } from "../commands-helpers";
@@ -18,7 +20,6 @@ import { clearTables } from "../db/helpers";
 import pushMain from "../fixtures/github/push.main.json";
 import { deliver, type ForkWorld, forkPush, HEAD_SHA, outbox, runs, setUpForkWorld } from "../forks/world";
 import { seedTenant } from "../helpers/tenants";
-import { gunzip } from "../logs/helpers";
 
 /** Sends req to the worker and waits for its background work. */
 async function send(req: Request): Promise<Response> {
@@ -197,7 +198,7 @@ describe("pair token replay", () => {
 
     const first = await redeem();
     expect(first.status).toBe(200);
-    expect(await first.json()).toMatchObject({ credential: expect.stringMatching(/^hc_agent_/), installation_id: tenant.installationId });
+    expect(await first.json()).toMatchObject({ credential: expect.stringMatching(/^hci_agent_/), installation_id: tenant.installationId });
     const replay = await redeem();
 
     expect(replay.status).toBe(400);
@@ -216,41 +217,70 @@ describe("fork approval replay", () => {
 
   afterEach(() => world.restore());
 
-  it("dispatches one trigger for an approval and answers its reuse with already_used", async () => {
+  async function gatedRunId(): Promise<string> {
     const [gated] = await runs();
     expect(gated).toMatchObject({ state: "gated", reason: "fork_gated" });
     const runId = gated?.run_id;
     if (typeof runId !== "string") throw new Error("the fork push stored no gated run");
-    const approve = () =>
-      approveForkRun(env, {
-        installationId: INSTALLATION,
-        runId,
-        headSha: HEAD_SHA,
-        approverGithubId: 7001,
-        approverLogin: LOGIN,
-        via: "slack",
-      });
+    return runId;
+  }
 
-    expect(await approve()).toBe("dispatched");
-    expect(await approve()).toBe("already_used");
+  function approve(testEnv: Env, runId: string): Promise<string> {
+    return approveForkRun(testEnv, {
+      installationId: INSTALLATION,
+      runId,
+      headSha: HEAD_SHA,
+      approverGithubId: 7001,
+      approverLogin: LOGIN,
+      via: "slack",
+    });
+  }
+
+  it("dispatches one trigger for an approval and answers its reuse with already_used", async () => {
+    const runId = await gatedRunId();
+
+    expect(await approve(env, runId)).toBe("dispatched");
+    expect(await approve(env, runId)).toBe("already_used");
     expect(await runs()).toHaveLength(1);
+    expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(1);
+  });
+
+  it("keeps the approval unspent when the AgentDO /trigger fails, so approving again dispatches once", async () => {
+    const runId = await gatedRunId();
+    let failures = 1;
+    const failingOnce = {
+      idFromName: (name: string) => env.AGENT_DO.idFromName(name),
+      get: (id: DurableObjectId) => ({
+        fetch: (input: RequestInfo, init?: RequestInit) => {
+          if (String(input).endsWith("/trigger") && failures-- > 0) return Promise.resolve(new Response("boom", { status: 500 }));
+          return env.AGENT_DO.get(id).fetch(input, init);
+        },
+      }),
+    };
+    const flaky = { ...env, AGENT_DO: failingOnce } as unknown as Env;
+
+    await expect(approve(flaky, runId)).rejects.toMatchObject({ code: "agent_do_failed", status: 502 });
+    expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(0);
+    expect(await approve(flaky, runId)).toBe("dispatched");
+    expect(await approve(flaky, runId)).toBe("already_used");
     expect((await outbox(world.agent)).filter((f) => f.type === "trigger")).toHaveLength(1);
   });
 });
 
 describe("signed log URL replay", () => {
-  it("answers 410 log_expired once the URL is older than its TTL, while a fresh URL still serves the log", async () => {
+  it("answers the link-expired page once the URL is older than its TTL, while a fresh URL still serves the log", async () => {
     await clearTables();
     const tenant = await seedTenant(env, { installationId: 32, teamId: "T0LOGS" });
-    const stale = await signLogUrl(env, tenant.runId, tenant.job);
-    testClock.advance(LOG_URL_TTL_SECONDS * 1000 + 1);
+    const ref = { installationId: tenant.installationId, runId: tenant.runId, job: tenant.job };
+    const stale = await signLogUrl(env, ref, new Date(testClock.now()));
+    testClock.advance(LOG_URL_TTL_SEC * 1000 + 1);
 
     const expired = await send(new Request(stale));
-    expect(expired.status).toBe(410);
-    expect(await expired.json()).toEqual({ error: "log_expired" });
+    expect(expired.status).toBe(403);
+    expect(await expired.text()).toContain(escapeHtml(S.logViewer.linkExpired));
 
-    const fresh = await send(new Request(await signLogUrl(env, tenant.runId, tenant.job)));
+    const fresh = await send(new Request(await signLogUrl(env, ref, new Date(testClock.now()))));
     expect(fresh.status).toBe(200);
-    expect(await gunzip(await fresh.arrayBuffer())).toBe("tenant 32 secret log\n");
+    expect(await fresh.text()).toContain("tenant 32 secret log\n");
   });
 });

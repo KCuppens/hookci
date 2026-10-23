@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
@@ -33,7 +32,7 @@ func DetectMode(root string) Mode {
 }
 
 func detectMode(ctx context.Context, root string, r execx.Runner) Mode {
-	if m := Mode(compat.Getenv("CACHE_MODE")); m.valid() {
+	if m := Mode(os.Getenv(ModeEnv)); m.valid() {
 		return m
 	}
 	if runtime.GOOS != "linux" {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/store"
 	"github.com/KCuppens/hookci/agent/internal/systemd"
 )
 
@@ -23,15 +24,20 @@ const (
 	Pass Status = iota
 	Warn
 	Fail
+	// Skip is a check that does not apply to this host, such as a caddy
+	// check without a caddy route.
+	Skip
 )
 
-// String is "pass", "warn" or "fail".
+// String is "pass", "warn", "fail" or "skip".
 func (s Status) String() string {
 	switch s {
 	case Pass:
 		return "pass"
 	case Warn:
 		return "warn"
+	case Skip:
+		return "skip"
 	default:
 		return "fail"
 	}
@@ -66,7 +72,7 @@ type Env struct {
 	// StateRoot holds one state directory per installation id, as
 	// hookci connect lays it out (/var/lib/hookci/<installation_id>).
 	StateRoot string
-	// HubOrigin is the hub base URL, e.g. https://ci.webuno.io.
+	// HubOrigin is the hub base URL, e.g. https://ci.hookci.com.
 	HubOrigin string
 	HTTP      *http.Client
 	Clock     clock.Clock
@@ -78,6 +84,11 @@ type Env struct {
 	// DiskFree is the bytes available to unprivileged users on the file
 	// system holding path.
 	DiskFree func(path string) (uint64, error)
+	// Writable is nil when the doctor's user may create files in dir.
+	Writable func(dir string) error
+	// RepoConfigs is what the default-branch runs of the installation in
+	// stateDir saw each repository's .hookci.yml declare.
+	RepoConfigs func(ctx context.Context, stateDir string) ([]store.RepoConfig, error)
 }
 
 // Run runs checks in order and returns their results.
@@ -102,6 +113,7 @@ func Default() []Check {
 		gitCheck{},
 		diskSpaceCheck{},
 		hubReachableCheck{},
+		hubInfoCheck{},
 		hubTLSCheck{},
 		clockSkewCheck{},
 		wsUpgradeCheck{},

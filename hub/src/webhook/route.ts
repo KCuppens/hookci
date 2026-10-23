@@ -7,13 +7,17 @@ import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { gateForkRun } from "../forks/gate";
+import { isForkPr } from "../forks/policy";
 import type { HubTrigger } from "../github/normalize";
+import { fetchRepoConfig, readRepoTriggers, triggerConfigRef, triggerWanted } from "../policy/repo-config";
 import type { WaitUntil } from "../sinks";
 import { notifyOutcome } from "./outcome";
 
 export type RouteOutcome =
 	| { kind: "dispatched"; agentId: string }
 	| { kind: "gated"; agentId: string; reason: "fork_gated" | "fork_never" }
+	| { kind: "not_wanted" }
+	| { kind: "no_config" }
 	| { kind: "no_agent" }
 	| { kind: "suspended" }
 	| { kind: "deleted" }
@@ -25,9 +29,18 @@ export type Trust = "trusted" | "untrusted";
 /**
  * Body of the AgentDO `POST https://do/trigger`; the DO defaults attempt to 1.
  * runId releases that gated fork run instead of creating a new one;
- * approvedBy is the GitHub login that approved it.
+ * approvedBy is the GitHub login that approved it. triggerId is the id the
+ * deploy chain already recorded in deploy_triggers; retry sends the agent a
+ * `retry` event instead of the trigger's GitHub event.
  */
-export type TriggerRequest = HubTrigger & { attempt?: number; trust: Trust; runId?: string; approvedBy?: string };
+export type TriggerRequest = HubTrigger & {
+	attempt?: number;
+	trust: Trust;
+	runId?: string;
+	approvedBy?: string;
+	triggerId?: string;
+	retry?: boolean;
+};
 
 export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): Promise<RouteOutcome> {
 	const installation = await getInstallation(env.DB, trig.installationId);
@@ -38,7 +51,12 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		await notifyOutcome(env, trig, outcome, ctx);
 		return outcome;
 	}
-
+	// A repo opts in with a .hookci.yml: without one nothing runs and nothing is posted,
+	// so installing the app on every repo leaves the others alone. Like an Actions
+	// workflow's `on:`, the file then picks the events.
+	const config = await fetchRepoConfig(env, trig.installationId, trig.repo, triggerConfigRef(trig));
+	if (config === null) return { kind: "no_config" };
+	if (!triggerWanted(readRepoTriggers(config), trig)) return { kind: "not_wanted" };
 	const binding = await getBinding(tenantDb(env.DB, trig.installationId), trig.repoId, trig.target);
 	if (!binding) {
 		const outcome = { kind: "no_agent" } as const;
@@ -46,9 +64,9 @@ export async function routeTrigger(env: Env, trig: HubTrigger, ctx: WaitUntil): 
 		return outcome;
 	}
 
-	const gate = await gateForkRun(env, trig, binding.agent_id);
+	const gate = await gateForkRun(env, trig, binding.agent_id, config);
 	if (gate.gated) return { kind: "gated", agentId: binding.agent_id, reason: gate.reason };
-	const body: TriggerRequest = { ...trig, trust: "trusted" };
+	const body: TriggerRequest = { ...trig, trust: isForkPr(trig.pr) ? "untrusted" : "trusted" };
 	const stub = env.AGENT_DO.get(env.AGENT_DO.idFromName(binding.agent_id));
 	const res = await stub.fetch("https://do/trigger", {
 		method: "POST",

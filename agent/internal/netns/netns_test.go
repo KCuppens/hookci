@@ -14,7 +14,7 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/execx"
 )
 
-const noSuchNS = `Cannot remove namespace file "/run/netns/zc-01j9z3": No such file or directory`
+const noSuchNS = `Cannot remove namespace file "/run/netns/hci-01j9z3": No such file or directory`
 
 // fakePasta stands in for Manager.Start. It records the pasta command,
 // optionally writes the pid file, and returns a real "sleep 30" group so
@@ -75,16 +75,16 @@ func callLines(f *execx.Fake) []string {
 func TestNSName(t *testing.T) {
 	valid := regexp.MustCompile(`^[a-z0-9-]+$`)
 	got := NSName("01J9Z3")
-	if got != "zc-01j9z3" {
-		t.Errorf("NSName(01J9Z3) = %q, want zc-01j9z3", got)
+	if got != "hci-01j9z3" {
+		t.Errorf("NSName(01J9Z3) = %q, want hci-01j9z3", got)
 	}
-	if !strings.HasPrefix(got, "zc-") || !valid.MatchString(got) {
-		t.Errorf("NSName(01J9Z3) = %q, want zc- prefix and only [a-z0-9-]", got)
+	if !strings.HasPrefix(got, "hci-") || !valid.MatchString(got) {
+		t.Errorf("NSName(01J9Z3) = %q, want hci- prefix and only [a-z0-9-]", got)
 	}
 	if again := NSName("01J9Z3"); again != got {
 		t.Errorf("NSName not stable: %q then %q", got, again)
 	}
-	if got := NSName("Run_1.x:y/é"); !strings.HasPrefix(got, "zc-") || !valid.MatchString(got) {
+	if got := NSName("Run_1.x:y/é"); !strings.HasPrefix(got, "hci-") || !valid.MatchString(got) {
 		t.Errorf("NSName sanitizes to %q, want only [a-z0-9-]", got)
 	}
 
@@ -161,13 +161,13 @@ func TestAvailable(t *testing.T) {
 }
 
 func TestPastaArgv(t *testing.T) {
-	got := PastaArgv("/run/netns/zc-01j9z3", 41234, "/var/lib/hookci/runs/01j9z3/pasta.pid")
+	got := PastaArgv("/run/netns/hci-01j9z3", 41234, "/var/lib/hookci/runs/01j9z3/pasta.pid")
 	want := []string{
 		"pasta", "--foreground", "--quiet", "--runas", "0", "--no-map-gw",
 		"-t", "none", "-u", "none", "-U", "none",
 		"-T", "3128:41234",
 		"--pid", "/var/lib/hookci/runs/01j9z3/pasta.pid",
-		"--netns", "/run/netns/zc-01j9z3",
+		"--netns", "/run/netns/hci-01j9z3",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("PastaArgv =\n%q\nwant\n%q", got, want)
@@ -187,18 +187,18 @@ func TestSetupNetnsCommands(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Teardown(context.Background(), n) })
 
-	wantCalls := []string{"ip netns add zc-01j9z3", "ip -n zc-01j9z3 link set lo up"}
+	wantCalls := []string{"ip netns add hci-01j9z3", "ip -n hci-01j9z3 link set lo up"}
 	if got := callLines(fake); !slices.Equal(got, wantCalls) {
 		t.Errorf("ip calls = %q, want %q", got, wantCalls)
 	}
 	if len(pasta.cmds) != 1 {
 		t.Fatalf("pasta started %d times, want 1", len(pasta.cmds))
 	}
-	argv := PastaArgv("/run/netns/zc-01j9z3", 41234, pidFile)
+	argv := PastaArgv("/run/netns/hci-01j9z3", 41234, pidFile)
 	if c := pasta.cmds[0]; c.Name != argv[0] || !slices.Equal(c.Args, argv[1:]) {
 		t.Errorf("pasta cmd = %s %q, want %q", c.Name, c.Args, argv)
 	}
-	if n.Mode != ModeNetns || n.NSName != "zc-01j9z3" || n.NSPath != "/run/netns/zc-01j9z3" || n.HostProxyPort != 41234 {
+	if n.Mode != ModeNetns || n.NSName != "hci-01j9z3" || n.NSPath != "/run/netns/hci-01j9z3" || n.HostProxyPort != 41234 {
 		t.Errorf("Network = %+v", n)
 	}
 	if got, want := n.Env(), ProxyEnv(3128); !slices.Equal(got, want) {
@@ -218,7 +218,7 @@ func TestSetupLoUpFailureCleansUp(t *testing.T) {
 	if err == nil || n != nil {
 		t.Fatalf("Setup = %+v, %v; want error", n, err)
 	}
-	want := []string{"ip netns add zc-01j9z3", "ip -n zc-01j9z3 link set lo up", "ip netns delete zc-01j9z3"}
+	want := []string{"ip netns add hci-01j9z3", "ip -n hci-01j9z3 link set lo up", "ip netns delete hci-01j9z3"}
 	if got := callLines(fake); !slices.Equal(got, want) {
 		t.Errorf("ip calls = %q, want %q", got, want)
 	}
@@ -246,7 +246,7 @@ func TestSetupPastaNotReady(t *testing.T) {
 		t.Fatalf("pasta started %d times, want 1", len(pasta.groups))
 	}
 	waitTerminated(t, pasta.groups[0])
-	if !fake.Called("ip", "netns", "delete", "zc-01j9z3") {
+	if !fake.Called("ip", "netns", "delete", "hci-01j9z3") {
 		t.Errorf("namespace not deleted; calls %q", callLines(fake))
 	}
 }
@@ -264,7 +264,7 @@ func TestSetupPastaExitsEarly(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 3 || !strings.Contains(exitErr.Stderr, "bad option") {
 		t.Fatalf("Setup err = %v; want pasta's exit error (code 3, stderr)", err)
 	}
-	if !fake.Called("ip", "netns", "delete", "zc-01j9z3") {
+	if !fake.Called("ip", "netns", "delete", "hci-01j9z3") {
 		t.Errorf("namespace not deleted; calls %q", callLines(fake))
 	}
 }
@@ -333,7 +333,7 @@ func TestTeardownIdempotent(t *testing.T) {
 func TestRemoveNamespaceReportsOtherErrors(t *testing.T) {
 	fake := &execx.Fake{}
 	fake.On("ip", []string{"netns", "delete"}, execx.FakeResponse{Code: 1, Stderr: "Cannot remove namespace file: Device or resource busy"})
-	err := (&Manager{Runner: fake}).RemoveNamespace(context.Background(), "zc-01j9z3")
+	err := (&Manager{Runner: fake}).RemoveNamespace(context.Background(), "hci-01j9z3")
 	if err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Errorf("RemoveNamespace err = %v, want the busy error", err)
 	}
@@ -341,7 +341,7 @@ func TestRemoveNamespaceReportsOtherErrors(t *testing.T) {
 
 func TestListNamespaces(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"zc-b", "other", "zc-a"} {
+	for _, name := range []string{"hci-b", "other", "hci-a"} {
 		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -350,7 +350,7 @@ func TestListNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListNamespaces: %v", err)
 	}
-	if want := []string{"zc-a", "zc-b"}; !slices.Equal(got, want) {
+	if want := []string{"hci-a", "hci-b"}; !slices.Equal(got, want) {
 		t.Errorf("ListNamespaces = %q, want %q", got, want)
 	}
 

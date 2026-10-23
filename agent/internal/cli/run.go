@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/KCuppens/hookci/agent/internal/cache"
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/config"
 	"github.com/KCuppens/hookci/agent/internal/detect"
 	"github.com/KCuppens/hookci/agent/internal/executor"
@@ -149,6 +148,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	pump := &sink.Pump{
 		Store: db,
 		Sink:  sink.NewStdout(sink.StdoutOptions{Out: stdout, Color: colorEnabled(stdout), Clock: d.Clock, Verbose: g.Verbose}),
+		Warn:  func(err error) { fmt.Fprintf(stderr, "hookci: warning: print run progress: %v\n", err) },
 	}
 	pumpCtx, stopPump := context.WithCancel(context.WithoutCancel(ctx))
 	pumpErr := make(chan error, 1)
@@ -193,7 +193,8 @@ type host struct {
 // recovers what an earlier crashed process left behind. A code other than
 // ExitOK has been reported on stderr.
 func openHost(ctx context.Context, d Deps, stateDir string, stderr io.Writer) (*host, int) {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	// Job users must traverse missing parents created here, see executor.OpenTo.
+	if err := os.MkdirAll(stateDir, 0o711); err != nil {
 		fmt.Fprintf(stderr, "hookci: create state directory: %v\n", err)
 		return nil, ExitInternal
 	}
@@ -290,25 +291,21 @@ func driveRun(ctx context.Context, sched *scheduler.Scheduler, runID string) err
 	return err
 }
 
-// loadChecks loads <src>/.hookci.yml (or the legacy .zeroci.yml), or
-// detects the checks of src when it has neither. Config errors return
-// ExitUsage; finding no jobs returns ExitNoChecks.
+// loadChecks loads <src>/.hookci.yml, or detects the checks of src when it
+// has none. Config errors return ExitUsage; finding no jobs returns
+// ExitNoChecks.
 func loadChecks(src string, stderr io.Writer) (*config.ResolvedChecks, int) {
-	name := compat.ConfigName(src)
-	path := filepath.Join(src, name)
+	path := filepath.Join(src, ".hookci.yml")
 	var cfg *config.Config
 	switch _, err := os.Stat(path); {
 	case err == nil:
-		if name == compat.LegacyConfigFile {
-			fmt.Fprintln(stderr, compat.LegacyWarning)
-		}
 		loaded, diags, err := config.Load(path, config.ParseOptions{})
 		if err != nil {
-			fmt.Fprintf(stderr, "hookci: load %s: %v\n", name, err)
+			fmt.Fprintf(stderr, "hookci: load .hookci.yml: %v\n", err)
 			return nil, ExitUsage
 		}
 		if len(diags) > 0 {
-			fmt.Fprint(stderr, diags.Format(name))
+			fmt.Fprint(stderr, diags.Format(".hookci.yml"))
 		}
 		if diags.HasErrors() {
 			return nil, ExitUsage
@@ -369,17 +366,11 @@ func onlyJob(checks *config.ResolvedChecks, name string, stderr io.Writer) (*con
 // nextLocalAttempt numbers a new local run of repo at sha after the earlier
 // ones, which keeps the store's (repo, sha, event, env, attempt) key unique.
 func nextLocalAttempt(ctx context.Context, db *store.Store, repo, sha string) (int, error) {
-	runs, err := db.ListRuns(ctx, store.RunFilter{Repo: repo})
+	last, err := db.LastAttempt(ctx, repo, sha, "local", "")
 	if err != nil {
 		return 0, err
 	}
-	attempt := 1
-	for _, r := range runs {
-		if r.SHA == sha && r.Event == "local" && r.Env == "" && r.Attempt >= attempt {
-			attempt = r.Attempt + 1
-		}
-	}
-	return attempt, nil
+	return last + 1, nil
 }
 
 // checkedOut is the executor Source of a run cmdRun has already checked out.

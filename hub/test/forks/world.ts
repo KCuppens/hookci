@@ -22,7 +22,7 @@ export interface ForkWorld extends CommandWorld {
   agent: Agent;
   sink: RecordingSink;
   /** Files the contents endpoint serves, keyed as serveRepoFiles reads them; see POLICY_FILE. */
-  files: Record<string, string>;
+  files: Record<string, string | null>;
   /** Every ref the contents endpoint was asked for. */
   refs: string[];
   /** The pull request head the fake GitHub reports. */
@@ -35,7 +35,7 @@ export async function setUpForkWorld(): Promise<ForkWorld> {
   world.slack.respond("POST", /^\/actions\//, () => new Response("ok"));
   const agent = await seedAgent(INSTALLATION);
   await bind(tenantDb(env.DB, INSTALLATION), REPO.repo_id, "checks", agent.agentId);
-  const files: Record<string, string> = {};
+  const files: Record<string, string | null> = {};
   const refs = serveRepoFiles(world.gh, files);
   const pull = { headSha: HEAD_SHA };
   world.gh.respond("GET", "/repos/:owner/:repo/pulls/:n", () =>

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/detect"
 )
 
@@ -43,9 +42,8 @@ func runDetect(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitUsage
 	}
-	name := compat.ConfigName(dir)
-	if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-		fmt.Fprintf(stderr, "note: %s exists and takes precedence over detection\n", name)
+	if _, err := os.Stat(filepath.Join(dir, ".hookci.yml")); err == nil {
+		fmt.Fprintln(stderr, "note: .hookci.yml exists and takes precedence over detection")
 	}
 
 	var out []byte

@@ -1,32 +1,28 @@
 // PUT /v1/logs/:runId/:job: an agent uploads one job's gzipped log to R2.
-// GET /logs/:runId/:job?exp=&sig=: the signed link a Slack user opens.
+// Users read it through the signed links of routes/log-viewer.ts.
 
 import type { Context } from "hono";
-import { agentCredentialHash, getAgentByCredentialHash, hasAgentCredentialPrefix } from "../db/agents";
 import { getRunOwner, setJobLog } from "../db/runs";
 import { tenantDb } from "../db/tenant";
-import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { logKey } from "../logs/keys";
-import { logSigStatus } from "../logs/sign";
 import { logEvent } from "../observability";
-import { errorPage } from "../pages/error";
-import { QUOTAS } from "../quotas";
-import { wireHeader } from "../wire-headers";
+import { quotaLimit } from "../quotas";
+import { authenticateAgent } from "./agent-auth";
 
 type LogContext<Path extends string> = Context<{ Bindings: Env }, Path>;
 
 const TEXT = "text/plain; charset=utf-8";
 
-/** The request body, refused with 413 log_too_large as soon as it passes QUOTAS.logBytes. */
-async function readCapped(body: ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
+/** The request body, refused with 413 log_too_large as soon as it passes limit bytes. */
+async function readCapped(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 	let size = 0;
 	if (body) {
 		for await (const chunk of body) {
 			size += chunk.byteLength;
-			if (size > QUOTAS.logBytes) throw new HubError("log_too_large", 413);
+			if (size > limit) throw new HubError("log_too_large", 413);
 			chunks.push(chunk);
 		}
 	}
@@ -41,11 +37,7 @@ async function readCapped(body: ReadableStream<Uint8Array> | null): Promise<Uint
 
 export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<Response> {
 	const env = c.env;
-	const credential = c.req.header("authorization")?.match(/^Bearer (\S+)$/)?.[1];
-	if (!credential || !hasAgentCredentialPrefix(credential)) throw new HubError("auth_failed", 401);
-	const agent = await getAgentByCredentialHash(env.DB, await agentCredentialHash(credential));
-	if (!agent) throw new HubError("auth_failed", 401);
-	if (agent.revoked_at !== null) throw new HubError("revoked", 401);
+	const agent = await authenticateAgent(env, c.req.header("authorization"));
 
 	const runId = c.req.param("runId");
 	const job = c.req.param("job");
@@ -57,57 +49,19 @@ export async function uploadLog(c: LogContext<"/v1/logs/:runId/:job">): Promise<
 	}
 
 	if (c.req.header("content-encoding")?.toLowerCase() !== "gzip") throw new HubError("log_not_gzip", 415);
-	const declared = wireHeader(c.req.raw.headers, "log-bytes") ?? "";
+	const declared = c.req.header("x-hookci-log-bytes") ?? "";
 	if (!/^[0-9]{1,15}$/.test(declared)) throw new HubError("bad_log_bytes", 400);
 	const bytes = Number(declared);
-	const truncated = wireHeader(c.req.raw.headers, "log-truncated");
+	const truncated = c.req.header("x-hookci-log-truncated");
 	if (truncated !== "0" && truncated !== "1") throw new HubError("bad_log_truncated", 400);
 	const length = Number(c.req.header("content-length") ?? 0);
-	if (bytes > QUOTAS.logBytes || length > QUOTAS.logBytes) throw new HubError("log_too_large", 413);
+	const limit = quotaLimit(env, "logBytes");
+	if (bytes > limit || length > limit) throw new HubError("log_too_large", 413);
 
-	const body = await readCapped(c.req.raw.body);
+	const body = await readCapped(c.req.raw.body, limit);
 	await env.LOGS.put(key, body, { httpMetadata: { contentEncoding: "gzip", contentType: TEXT } });
 	await setJobLog(tenantDb(env.DB, agent.installation_id), runId, job, { key, bytes, truncated: truncated === "1" });
 	logEvent("log_uploaded", { installation_id: agent.installation_id, run_id: runId, job, bytes, gzip_bytes: body.byteLength });
 	return c.body(null, 204);
 }
 
-/**
- * A signed log link opened from Slack. A browser (Accept: text/html) that hits a refused link gets the HTML error
- * page; every other client keeps the JSON `{error}` answer.
- */
-export async function viewLog(c: LogContext<"/logs/:runId/:job">): Promise<Response> {
-	try {
-		return await serveLog(c);
-	} catch (err) {
-		if (err instanceof HubError && c.req.header("accept")?.includes("text/html")) return await errorPage(err.code, err.status);
-		throw err;
-	}
-}
-
-async function serveLog(c: LogContext<"/logs/:runId/:job">): Promise<Response> {
-	const env = c.env;
-	const runId = c.req.param("runId");
-	const job = c.req.param("job");
-	const now = (env.__TEST_CLOCK ?? systemClock).now();
-	const status = await logSigStatus(env, runId, job, Number(c.req.query("exp")), c.req.query("sig") ?? "", now);
-	if (status === "invalid") throw new HubError("log_sig_invalid", 403);
-	if (status === "expired") throw new HubError("log_expired", 410);
-
-	const owner = await getRunOwner(env.DB, runId);
-	const object = owner && (await env.LOGS.get(logKey(owner.installation_id, runId, job)));
-	if (!object) throw new HubError("log_not_found", 404);
-	return new Response(object.body, {
-		headers: {
-			"Content-Type": TEXT,
-			"Content-Encoding": "gzip",
-			"Cache-Control": "private, no-store",
-			"X-Robots-Tag": "noindex",
-			// The log holds output a fork pull request controls: never render it as a document on the hub origin.
-			"X-Content-Type-Options": "nosniff",
-			"Content-Security-Policy": "sandbox",
-			"Content-Disposition": "inline",
-		},
-		encodeBody: "manual",
-	});
-}

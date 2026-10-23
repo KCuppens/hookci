@@ -18,24 +18,44 @@ func detectPython(fsys fs.FS) (*partial, error) {
 		return nil, nil
 	}
 
-	p := &partial{ecosystem: "python"}
+	p := &partial{ecosystem: "python", jobs: map[string]config.Job{}}
+	var tools []string
+	if src := ruffSource(fsys, pyproject); src != "" {
+		tools = append(tools, "ruff")
+		if src != "pyproject.toml" {
+			p.sources = append(p.sources, src)
+		}
+	}
+	for _, dir := range []string{"tests", "test"} {
+		if isDir(fsys, dir) {
+			tools = append(tools, "pytest")
+			p.sources = append(p.sources, dir+"/")
+			break
+		}
+	}
+	if len(tools) == 0 {
+		return nil, nil
+	}
+
 	var setup config.SetupStep
 	var prefix string
+	install := " " + strings.Join(tools, " ")
 	switch {
 	case exists(fsys, "uv.lock"):
-		setup = config.SetupStep{Run: "uv sync --frozen", Cache: &config.SetupStepCache{Key: []string{"uv.lock"}, Paths: []string{".venv"}}}
+		setup = config.SetupStep{Run: "uv sync --frozen && uv pip install" + install, Cache: &config.SetupStepCache{Key: []string{"uv.lock"}, Paths: []string{".venv"}}}
 		prefix = "uv run "
 		p.notes = append(p.notes, "python: uv (uv.lock)")
 		p.sources = append(p.sources, "uv.lock")
 	case pyproject != nil:
-		setup = config.SetupStep{Run: "python -m venv .venv && .venv/bin/pip install -e .", Cache: &config.SetupStepCache{Key: []string{"pyproject.toml"}, Paths: []string{".venv"}}}
+		setup = config.SetupStep{Run: "python -m venv .venv && .venv/bin/pip install -e . && .venv/bin/pip install" + install, Cache: &config.SetupStepCache{Key: []string{"pyproject.toml"}, Paths: []string{".venv"}}}
 		prefix = ".venv/bin/"
 		p.notes = append(p.notes, "python: pip into .venv (pyproject.toml)")
 	default:
-		setup = config.SetupStep{Run: "python -m venv .venv && .venv/bin/pip install -r requirements.txt", Cache: &config.SetupStepCache{Key: []string{"requirements.txt"}, Paths: []string{".venv"}}}
+		setup = config.SetupStep{Run: "python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install" + install, Cache: &config.SetupStepCache{Key: []string{"requirements.txt"}, Paths: []string{".venv"}}}
 		prefix = ".venv/bin/"
 		p.notes = append(p.notes, "python: pip into .venv (requirements.txt)")
 	}
+	p.notes = append(p.notes, "python: setup installs"+install+" for the detected jobs")
 	p.setup = []config.SetupStep{setup}
 	if pyproject != nil {
 		p.sources = append(p.sources, "pyproject.toml")
@@ -43,20 +63,12 @@ func detectPython(fsys fs.FS) (*partial, error) {
 	if hasRequirements {
 		p.sources = append(p.sources, "requirements.txt")
 	}
-
-	p.jobs = map[string]config.Job{}
-	if src := ruffSource(fsys, pyproject); src != "" {
-		p.jobs["ruff"] = config.Job{Run: prefix + "ruff check ."}
-		if src != "pyproject.toml" {
-			p.sources = append(p.sources, src)
+	for _, tool := range tools {
+		run := prefix + tool
+		if tool == "ruff" {
+			run += " check ."
 		}
-	}
-	for _, dir := range []string{"tests", "test"} {
-		if isDir(fsys, dir) {
-			p.jobs["pytest"] = config.Job{Run: prefix + "pytest"}
-			p.sources = append(p.sources, dir+"/")
-			break
-		}
+		p.jobs[tool] = config.Job{Run: run}
 	}
 	return p, nil
 }

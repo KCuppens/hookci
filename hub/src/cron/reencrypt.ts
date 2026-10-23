@@ -1,9 +1,10 @@
-// Moves Slack bot tokens onto the current TOKEN_ENC_KEYS version after a key
-// rotation, a batch per cron tick. The old key stays in TOKEN_ENC_KEYS until a
-// pass finds nothing left to move.
+// Moves Slack bot tokens and sink config secrets onto the current
+// TOKEN_ENC_KEYS version after a key rotation, a batch per cron tick. The old
+// key stays in TOKEN_ENC_KEYS until a pass finds nothing left to move.
 
 import { decryptToken, encryptToken, parseEncKeys } from "../crypto";
 import { getCronState, setCronState } from "../db/cron-state";
+import { listStaleSinkSecrets, reencryptSinkSecret } from "../db/sinks";
 import type { Env } from "../env";
 import { logEvent, reportError } from "../observability";
 import { workspaceAad } from "../slack/tokens";
@@ -11,6 +12,8 @@ import { workspaceAad } from "../slack/tokens";
 const BATCH = 100;
 /** cron_state key: the team_id the last batch ended at, so a row that keeps failing cannot hold back the rows after it. */
 const CURSOR_KEY = "reencrypt_after";
+/** cron_state key: `<installation_id>:<id>` of the sink config the last batch ended at. */
+const SINK_CURSOR_KEY = "reencrypt_sinks_after";
 
 interface StaleToken {
 	team_id: string;
@@ -51,5 +54,30 @@ export async function reencryptTokens(env: Env, now: number, limit = BATCH): Pro
 		}
 	}
 	logEvent("reencrypt", { count });
+	return count;
+}
+
+/**
+ * reencryptTokens for sink config secrets: re-encrypts up to limit of them,
+ * walking (installation_id, id) order from where the last batch ended, and
+ * returns how many it moved.
+ */
+export async function reencryptSinkSecrets(env: Env, now: number, limit = BATCH): Promise<number> {
+	const keys = parseEncKeys(env.TOKEN_ENC_KEYS);
+	const cursor = (await getCronState(env.DB, SINK_CURSOR_KEY)) ?? "";
+	const sep = cursor.indexOf(":");
+	const after = sep < 0 ? { installationId: -1, id: "" } : { installationId: Number(cursor.slice(0, sep)), id: cursor.slice(sep + 1) };
+	const rows = await listStaleSinkSecrets(env.DB, keys.current, after, limit);
+	const last = rows.at(-1);
+	await setCronState(env.DB, SINK_CURSOR_KEY, rows.length < limit || !last ? "" : `${last.installationId}:${last.id}`, now);
+	let count = 0;
+	for (const row of rows) {
+		try {
+			if (await reencryptSinkSecret(env.DB, keys, row)) count++;
+		} catch (err) {
+			reportError(err, { task: "reencrypt_sinks", installation_id: row.installationId, sink_id: row.id });
+		}
+	}
+	logEvent("reencrypt_sinks", { count });
 	return count;
 }

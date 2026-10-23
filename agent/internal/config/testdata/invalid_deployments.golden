@@ -1,14 +1,24 @@
-invalid_deployments.yml:7: error: deployments.production.on.push.branch: a deployment must name the branch it deploys from
-  fix: add on: {push: {branch: main}}
-invalid_deployments.yml:11: error: deployments.production.health.url: health.url must use http, got "https"
-  fix: use http, for example http://127.0.0.1:8000/health
-invalid_deployments.yml:11: error: deployments.production.health.url: health.url must point at 127.0.0.1 or localhost, got "example.com"
-  fix: the check runs on the deploy host; point it at the local port, for example http://127.0.0.1:8000/health
-invalid_deployments.yml:11: error: deployments.production.health.url: health.url needs an explicit port
-  fix: add the port, for example http://127.0.0.1:8000/health
-invalid_deployments.yml:17: error: deployments.staging.health.url: health.url needs an explicit port
-  fix: add the port, for example http://127.0.0.1:8000/health
-invalid_deployments.yml:23: warning: deployments.preview.env_file: env_file "/etc/hookci/missing.env" does not exist on this machine
+invalid_deployments.yml:15: error: deployments.production.compose.marker: compose.marker ".active-color" must be an absolute path
+  fix: use a path that starts with /, for example /var/lib/hookci/production.color
+invalid_deployments.yml:18: error: deployments.production.route.file: route.file "routes/app.caddy" must be an absolute, clean path
+  fix: use a path that starts with / and has no . or .. parts, for example /etc/caddy/routes/production.caddy
+invalid_deployments.yml:20: error: deployments.production.health.url: must contain {port}
+  fix: add {port} to the health URL
+invalid_deployments.yml:23: error: deployments.production.verify.interval: interval 30s is longer than window 10s
+  fix: make verify.interval at most verify.window
+invalid_deployments.yml:25: error: deployments.staging.compose: required by strategy: compose-inplace
+  fix: add compose: {project: <project>, service: <service>}
+invalid_deployments.yml:25: error: deployments.staging.health: required by strategy: compose-inplace
+  fix: add health: {url: "http://127.0.0.1:{port}/health"}
+invalid_deployments.yml:29: error: deployments.staging.needs: cycle: production -> staging -> production
+  fix: remove one of these needs so the environments can deploy in order
+invalid_deployments.yml:29: error: deployments.staging.needs[1]: unknown environment "qa"
+  fix: known environments: preview, production, staging
+invalid_deployments.yml:30: error: deployments.staging.rollback: only used by strategy: script; compose-inplace rolls back by itself
+  fix: remove rollback
+invalid_deployments.yml:31: error: deployments.preview.run: required by strategy: script
+  fix: add run: <deploy command>
+invalid_deployments.yml:35: warning: deployments.preview.env_file: env_file "/etc/hookci/missing.env" does not exist on this machine
   fix: create it on the deploy host, owned by root with mode 0600
-invalid_deployments.yml:25: error: deployments.preview.health.url: {port} is only filled in by strategy: compose-bluegreen
-  fix: set strategy: compose-bluegreen, or use a fixed port
+invalid_deployments.yml:37: error: deployments.preview.health.url: {port} is only filled in by the compose strategies
+  fix: use a fixed port, or a compose strategy

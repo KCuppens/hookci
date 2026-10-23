@@ -8,20 +8,29 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KCuppens/hookci/agent/internal/agentconf"
+	"github.com/KCuppens/hookci/agent/internal/cache"
 	"github.com/KCuppens/hookci/agent/internal/clock"
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/config"
+	"github.com/KCuppens/hookci/agent/internal/control"
+	"github.com/KCuppens/hookci/agent/internal/deploy"
+	"github.com/KCuppens/hookci/agent/internal/deploy/trigger"
 	"github.com/KCuppens/hookci/agent/internal/executor"
+	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/gc"
 	"github.com/KCuppens/hookci/agent/internal/hubclient"
 	"github.com/KCuppens/hookci/agent/internal/hubtokens"
 	"github.com/KCuppens/hookci/agent/internal/ids"
+	"github.com/KCuppens/hookci/agent/internal/logtail"
 	"github.com/KCuppens/hookci/agent/internal/logupload"
 	"github.com/KCuppens/hookci/agent/internal/protocol"
 	"github.com/KCuppens/hookci/agent/internal/recovery"
@@ -45,8 +54,10 @@ const (
 const flushInterval = 100 * time.Millisecond
 
 // ExecutorFunc builds the runner of one checked-out run whose checks are
-// already resolved, held to policy.
-type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error)
+// already resolved, held to policy. cacheFallback is the branches, in
+// order, whose caches the run restores after its own (for a pull request,
+// instead of it): the pull request's base, then the repo's default branch.
+type ExecutorFunc func(co source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, cacheFallback []string) (scheduler.JobRunner, error)
 
 // Options configures a Daemon.
 type Options struct {
@@ -61,6 +72,22 @@ type Options struct {
 	Source  source.Source
 	JobUser executor.JobUser
 	Slots   int // job slots of a run; <= 0 means scheduler.DefaultSlots()
+	// Cache is the setup step cache the executor uses; GC evicts its
+	// entries. nil: GC leaves <state>/cache alone.
+	Cache *cache.Cache
+	// Deploys decides triggers that name an env; nil checks GitHub with
+	// hub-issued tokens and records accepted runs in the store.
+	Deploys DeployIntake
+	// DeployRunner runs deploy units and proxy reloads; nil: the OS.
+	DeployRunner execx.Runner
+	// DeployUser owns deploy checkouts; "" means deploy.DeployUser, the
+	// account deploy units run as.
+	DeployUser string
+	// HealthClient probes deploy health URLs; nil: the zero http.Client.
+	HealthClient *http.Client
+	// HubInfo reads the hub's /v1/info when the daemon starts; nil fetches
+	// it from the paired hub.
+	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
 }
 
 // Daemon runs the hub's triggers one at a time, in the order they arrive.
@@ -75,17 +102,35 @@ type Daemon struct {
 	tokens  *hubtokens.Broker
 	src     source.Source
 	logs    *logupload.Uploader
+	tail    *logtail.Tailer // live log tail of the log viewer
+	// selfHosted is whether the hub reported mode self_hosted, which lets
+	// a .hookci.yml without deployments declare trust: all.
+	selfHosted atomic.Bool
 
 	wake    chan struct{}
 	mu      sync.Mutex
 	queue   []*work // accepted, not started
 	current *work
+
+	deploys     DeployIntake
+	deployWake  chan struct{}
+	deployQ     []queuedDeploy    // guarded by mu
+	deploying   map[string]bool   // trigger ids queued, being decided or waiting to retry; guarded by mu
+	deploySched *deploy.Scheduler // runs accepted deploy runs
+	// deployRefs returns the GitHub client of a deploy run.
+	deployRefs func(run store.DeployRun) *trigger.GitHubRefChecker
+	// deployConfig loads the trusted .hookci.yml at a deploy run's sha.
+	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
+	collector    *gc.Collector // removes old deploy images and run dirs
 }
 
 // work is one accepted trigger.
 type work struct {
 	trig  protocol.Trigger
 	runID string
+	// retry: runID is the queued retry recovery stored for the trigger's
+	// interrupted run, so the run exists before the worker takes it.
+	retry bool
 
 	// Set when the worker takes it; guarded by Daemon.mu after that.
 	ctx         context.Context
@@ -104,7 +149,17 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
-	d := &Daemon{agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1)}
+	if o.HubInfo == nil {
+		hubURL := conf.HubURL
+		o.HubInfo = func(ctx context.Context) (hubclient.HubInfo, error) {
+			return hubclient.FetchInfo(ctx, http.DefaultClient, hubURL)
+		}
+	}
+	d := &Daemon{
+		agentID: conf.AgentID, st: st, exec: exec, o: o, clk: o.Clock, log: o.Logger, wake: make(chan struct{}, 1),
+		deploys: o.Deploys, deployWake: make(chan struct{}, 1), deploying: map[string]bool{},
+	}
+	d.selfHosted.Store(conf.HubMode == hubModeSelfHosted)
 	credential := conf.Credential
 	d.logs = &logupload.Uploader{HubURL: conf.HubURL, Token: func() string { return credential }}
 	d.client = hubclient.New(hubclient.Config{
@@ -117,10 +172,26 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		Clock:      o.Clock,
 	}, st, d, o.Logger)
 	d.tokens = hubtokens.New(d.client, o.Clock)
+	d.tail = logtail.NewTailer(filepath.Join(o.StateDir, "runs"), logupload.Redact, d.client.SendLog)
+	d.tail.Finished = d.jobFinished
 	d.src = o.Source
 	if d.src == nil {
 		d.src = &source.HubSource{Tokens: d.tokens.Request, WorkRoot: filepath.Join(o.StateDir, "work")}
 	}
+	github := &http.Client{Timeout: githubTimeout}
+	if d.deploys == nil {
+		d.deploys = &hubIntake{
+			base:   trigger.Intake{Store: st, Clock: o.Clock.Now, NewRunID: ids.NewRunID},
+			http:   github,
+			tokens: d.tokens.Request,
+		}
+	}
+	d.deployRefs = githubRefs("", github, d.tokens.Request)
+	d.deployConfig = githubConfig(d.deployRefs)
+	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger})
+	d.collector = newCollector(st, o, conf.AgentConfig)
+	d.deploySched.LoadDeployment = recordGCTargets(st, o, d.deploySched.LoadDeployment)
+	d.deploySched.PostRun = func(ctx context.Context, _ store.DeployRun) { d.collector.RunBestEffort(ctx) }
 	return d
 }
 
@@ -138,6 +209,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.recoverTriggers(ctx); err != nil {
 		return err
 	}
+	if err := d.recoverDeploys(ctx); err != nil {
+		return err
+	}
 	reset, err := d.st.BindAgent(ctx, d.agentID)
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
@@ -147,11 +221,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	wctx, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
+	// A control socket that cannot start only disables the CLI commands
+	// that use it; exiting would keep the unit down (RestartPreventExitStatus).
+	if ctl, err := control.Listen(d.o.StateDir, d.log); err != nil {
+		d.log.Error("control socket unavailable; hookci gc and retry will not reach this agent", "err", err)
+	} else {
+		ctl.Handle("gc", d.collector.HandleControl)
+		ctl.Handle(deploy.RetryOp, deploy.RetryControl(d.st, d.deploySched))
+		wg.Go(func() {
+			if err := ctl.Serve(wctx); err != nil {
+				d.log.Error("control socket stopped", "err", err)
+			}
+		})
+	}
+	wg.Go(func() { d.refreshHubMode(wctx) })
 	wg.Go(func() { d.worker(wctx) })
 	wg.Go(func() { d.flushLoop(wctx) })
+	wg.Go(func() { d.deployWorker(wctx) })
+	wg.Go(func() { d.deploySched.Run(wctx) })
+	wg.Go(func() { d.tail.Run(wctx) })
 	err = d.client.Run(ctx)
 	stop()
 	wg.Wait()
+	d.deploySched.Wait()
 	return err
 }
 
@@ -161,6 +253,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 	switch v := f.(type) {
 	case protocol.Trigger:
+		if v.Env != nil && *v.Env != "" {
+			d.queueDeploy(v)
+			return nil
+		}
 		return d.accept(ctx, v)
 	case protocol.Token:
 		d.tokens.Deliver(v)
@@ -168,6 +264,47 @@ func (d *Daemon) HandleFrame(ctx context.Context, f protocol.Frame) error {
 		d.interrupt(ctx, v)
 	}
 	return nil
+}
+
+// TokenRefused implements hubclient.TokenRefusals: the hub refused the
+// token for runID, a run or deploy trigger, so the requests waiting on it
+// fail now instead of timing out.
+func (d *Daemon) TokenRefused(runID, message string) bool {
+	return d.tokens.Refuse(runID, message)
+}
+
+// HandleLive implements hubclient.LiveHandler: the hub opens and closes live
+// log tails for its log viewer. A refused subscription leaves the viewer
+// without live lines; the uploaded log still shows once the job ends.
+func (d *Daemon) HandleLive(f protocol.Frame) {
+	switch v := f.(type) {
+	case protocol.LogSubscribe:
+		if err := d.tail.Subscribe(v.RunId, v.Job, int64(v.Offset)); err != nil {
+			d.log.Warn("log tail refused", "run", v.RunId, "job", v.Job, "err", err)
+		}
+	case protocol.LogUnsubscribe:
+		d.tail.Unsubscribe(v.RunId, v.Job)
+	}
+}
+
+// SessionEnded implements hubclient.LiveHandler: the live log tails were
+// opened on the session that ended.
+func (d *Daemon) SessionEnded() { d.tail.UnsubscribeAll() }
+
+// jobFinished reports whether job of runID has ended, so its log file is
+// complete. A job the store does not know will never write a log; one the
+// store cannot be asked about is taken as running until a later poll.
+func (d *Daemon) jobFinished(runID, job string) bool {
+	jobs, err := d.st.Jobs(context.Background(), runID)
+	if err != nil {
+		return false
+	}
+	for _, j := range jobs {
+		if j.Name == job {
+			return j.State.Terminal()
+		}
+	}
+	return true
 }
 
 // accept records t and queues it. A trigger already recorded is ignored:
@@ -206,7 +343,7 @@ func (d *Daemon) interrupt(ctx context.Context, it protocol.Interrupt) {
 		w := d.queue[i]
 		d.queue = slices.Delete(d.queue, i, i+1)
 		d.mu.Unlock()
-		d.endUnstarted(ctx, w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+		d.cancelUnstarted(ctx, w, reason)
 		return
 	}
 	w := d.current
@@ -300,9 +437,13 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 	defer co.Release()
 	discard := func() { _ = os.RemoveAll(dir.Root) }
 
-	p, err := resolvePlan(co)
-	if p.legacy {
-		d.log.Warn(compat.LegacyWarning, "trigger", t.TriggerId)
+	p, err := resolvePlan(co, config.ParseOptions{SelfHosted: d.selfHosted.Load()})
+	if err == nil && p.policy != nil && defaultBranchPush(t) {
+		// The hub forwards pushes of every branch; only the default
+		// branch's configuration is the one fork pull requests are judged by.
+		if err := d.st.SaveRepoConfig(bg, t.Repo, co.SHA, string(p.policy.Trust), p.policy.HasDeployments); err != nil {
+			d.log.Error("record repo config failed", "repo", t.Repo, "err", err)
+		}
 	}
 	switch {
 	case err != nil:
@@ -319,7 +460,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		return
 	}
 	policy := optionsForTrust(t.Trust)
-	inner, err := d.exec(co, p.checks, policy)
+	inner, err := d.exec(co, p.checks, policy, cacheFallback(t))
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
@@ -337,9 +478,8 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		d.stopped(ctx, w)
 		return
 	}
-	run := storeRun(t, w.runID, co.SHA)
-	run.Slack = p.slack
-	if err := d.st.CreateRun(bg, run, storeJobs(p.checks)); err != nil {
+	run, err := d.startRun(bg, w, co.SHA, p)
+	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
 		return
@@ -402,8 +542,54 @@ func (d *Daemon) stopped(ctx context.Context, w *work) bool {
 	d.mu.Lock()
 	reason := w.interrupted
 	d.mu.Unlock()
-	d.endUnstarted(context.WithoutCancel(ctx), w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+	d.cancelUnstarted(context.WithoutCancel(ctx), w, reason)
 	return true
+}
+
+// startRun returns the stored run of w checked out at sha: a retry's run
+// is already stored, any other is created from w's trigger and p.
+func (d *Daemon) startRun(ctx context.Context, w *work, sha string, p plan) (store.Run, error) {
+	if w.retry {
+		return d.st.GetRun(ctx, w.runID)
+	}
+	run := storeRun(w.trig, w.runID, sha)
+	run.Slack = p.slack
+	return run, d.st.CreateRun(ctx, run, storeJobs(p.checks))
+}
+
+// defaultBranchPush reports whether t is a push to the repo's default
+// branch. Retries carry no default branch, so they are never one.
+func defaultBranchPush(t protocol.Trigger) bool {
+	return t.Pr == nil && t.DefaultBranch != nil && t.Ref == "refs/heads/"+*t.DefaultBranch
+}
+
+// cacheFallback is the branches whose caches a run of t restores when its
+// own branch has none, in order: a pull request's base, then the default
+// branch. Retries carry neither, so they restore from their own branch only.
+func cacheFallback(t protocol.Trigger) []string {
+	var branches []string
+	if t.Pr != nil && t.Pr.BaseRef != nil {
+		branches = append(branches, *t.Pr.BaseRef)
+	}
+	if t.DefaultBranch != nil {
+		branches = append(branches, *t.DefaultBranch)
+	}
+	return branches
+}
+
+// cancelUnstarted reports w cancelled with reason before its run started.
+// A retry's run is already stored, so the store cancels it and reports that.
+func (d *Daemon) cancelUnstarted(ctx context.Context, w *work, reason string) {
+	if !w.retry {
+		d.endUnstarted(ctx, w.trig.TriggerId, w.runID, protocol.EventStateCancelled, reason)
+		return
+	}
+	if err := d.st.Transition(ctx, w.runID, []store.RunState{store.RunQueued}, store.RunCancelled, reason); err != nil {
+		d.log.Error("cancel retry run failed", "run", w.runID, "err", err)
+	}
+	if err := d.st.SetTriggerState(ctx, w.trig.TriggerId, store.TriggerDone); err != nil {
+		d.log.Error("record trigger state failed", "trigger", w.trig.TriggerId, "err", err)
+	}
 }
 
 // endUnstarted reports the end of a trigger whose run was never created.
@@ -420,9 +606,13 @@ func (d *Daemon) endUnstarted(ctx context.Context, triggerID, runID string, stat
 	}
 }
 
+// reject reports that w's trigger cannot run. The hub has already been told
+// a retry's run, so that run is cancelled with reason instead.
 func (d *Daemon) reject(ctx context.Context, w *work, reason string, cause error) {
 	d.log.Warn("trigger rejected", "trigger", w.trig.TriggerId, "reason", reason, "err", cause)
-	if err := d.st.RejectTrigger(ctx, w.trig.TriggerId, reason); err != nil {
+	if w.retry {
+		d.cancelUnstarted(ctx, w, reason)
+	} else if err := d.st.RejectTrigger(ctx, w.trig.TriggerId, reason); err != nil {
 		d.log.Error("record rejected trigger failed", "trigger", w.trig.TriggerId, "err", err)
 	}
 	d.client.Flush()
@@ -446,9 +636,10 @@ func (d *Daemon) reportConfig(ctx context.Context, runID string, diags config.Di
 }
 
 // recoverTriggers settles the triggers an earlier daemon accepted but did
-// not finish. recovery.Recover has already interrupted their running runs; a
-// run still queued is cancelled and a trigger without a run is reported
-// interrupted.
+// not finish. recovery.Recover has already interrupted their running runs
+// and pointed a trigger whose check it re-queued at the retry; that retry is
+// queued to run again. Any other run still queued is cancelled and a
+// trigger without a run is reported interrupted.
 func (d *Daemon) recoverTriggers(ctx context.Context) error {
 	open, err := d.st.ListTriggers(ctx, store.TriggerAccepted, store.TriggerRunning)
 	if err != nil {
@@ -462,6 +653,11 @@ func (d *Daemon) recoverTriggers(ctx context.Context) error {
 			continue
 		case err != nil:
 			return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
+		case run.State == store.RunQueued && run.RetryOf != nil:
+			d.mu.Lock()
+			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true})
+			d.mu.Unlock()
+			continue
 		case run.State == store.RunQueued:
 			if err := d.st.Transition(ctx, run.ID, []store.RunState{store.RunQueued}, store.RunCancelled, recovery.InterruptedReason); err != nil {
 				return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
@@ -509,6 +705,30 @@ func storeRun(t protocol.Trigger, runID, sha string) store.Run {
 		r.BaseSHA = *t.BaseSha
 	}
 	return r
+}
+
+// retryTrigger rebuilds the trigger of retry, a stored retry of a hub check.
+// The fields the run does not keep (the pull request's head details, the
+// hub sequence numbers) are not used to run it.
+func retryTrigger(retry store.Run) protocol.Trigger {
+	trust, _, _ := strings.Cut(retry.TrustDomain, ":")
+	t := protocol.Trigger{
+		TriggerId: retry.TriggerID,
+		Repo:      retry.Repo,
+		Sha:       retry.SHA,
+		Ref:       retry.Ref,
+		Event:     protocol.TriggerEvent(retry.Event),
+		Attempt:   retry.Attempt,
+		Trust:     protocol.TriggerTrust(trust),
+	}
+	if retry.PR != nil {
+		t.Pr = &protocol.TriggerPr{Number: *retry.PR}
+	}
+	if retry.BaseSHA != "" {
+		base := retry.BaseSHA
+		t.BaseSha = &base
+	}
+	return t
 }
 
 func storeJobs(checks *config.ResolvedChecks) []store.Job {

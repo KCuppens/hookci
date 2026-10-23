@@ -44,7 +44,8 @@ registerAction("home:add_agent", async ({ env, teamId, userId, value, triggerId 
 		if (err instanceof HubError && err.code === "pair_rate_limited") return ephemeral(S.slack.slowDown);
 		throw err;
 	}
-	await slackApi(env, teamId, "views.open", { trigger_id: triggerId, view: pairTokenModal(pair.token, `${env.HUB_ORIGIN}/install`, pair.expiresAt) });
+	const view = pairTokenModal(pair.token, `${env.HUB_ORIGIN}/install`, pair.expiresAt, env.LATEST_AGENT_VERSION);
+	await slackApi(env, teamId, "views.open", { trigger_id: triggerId, view });
 	return null;
 });
 

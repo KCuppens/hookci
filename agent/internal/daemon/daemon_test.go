@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,16 +130,17 @@ func (r *fakeRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (
 func (r *fakeRunner) FinishRun(context.Context, store.Run, store.RunState) error { return nil }
 
 type harness struct {
-	t        *testing.T
-	ctx      context.Context
-	st       *store.Store
-	d        *Daemon
-	runner   *fakeRunner
-	src      *fakeSource
-	mu       sync.Mutex
-	execs    [][]string           // job names of every ExecutorFunc call
-	policies []executor.RunPolicy // policy of every ExecutorFunc call
-	seq      int
+	t         *testing.T
+	ctx       context.Context
+	st        *store.Store
+	d         *Daemon
+	runner    *fakeRunner
+	src       *fakeSource
+	mu        sync.Mutex
+	execs     [][]string           // job names of every ExecutorFunc call
+	policies  []executor.RunPolicy // policy of every ExecutorFunc call
+	fallbacks [][]string           // cacheFallback of every ExecutorFunc call
+	seq       int
 }
 
 func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
@@ -147,6 +149,19 @@ func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
 
 // newHarnessAt is newHarness with the hub at hubURL, where job logs go.
 func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string) *harness {
+	return newHarnessWith(t, src, runner, hubURL, nil)
+}
+
+// newHarnessWith is newHarnessAt with deploy triggers decided by deploys.
+func newHarnessWith(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake) *harness {
+	return newHarnessMode(t, src, runner, hubURL, deploys, "", nil)
+}
+
+// newHarnessMode is newHarnessWith for an agent.json that stored hubMode;
+// the start-up refresh of the mode fails, so the stored mode holds. seed,
+// when set, fills the store before the daemon starts, as an earlier agent
+// left it.
+func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL string, deploys DeployIntake, hubMode string, seed func(*store.Store)) *harness {
 	t.Helper()
 	stateDir := t.TempDir()
 	runner.stateDir = stateDir
@@ -155,10 +170,13 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	if seed != nil {
+		seed(st)
+	}
 	src.started = make(chan struct{})
 	runner.running = make(chan string, 16)
 	h := &harness{t: t, st: st, src: src, runner: runner}
-	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy) (scheduler.JobRunner, error) {
+	exec := func(_ source.Checkout, checks *config.ResolvedChecks, policy executor.RunPolicy, cacheFallback []string) (scheduler.JobRunner, error) {
 		var names []string
 		for _, j := range checks.Jobs {
 			names = append(names, j.Name)
@@ -166,12 +184,16 @@ func newHarnessAt(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL stri
 		h.mu.Lock()
 		h.execs = append(h.execs, names)
 		h.policies = append(h.policies, policy)
+		h.fallbacks = append(h.fallbacks, cacheFallback)
 		h.mu.Unlock()
 		return runner, nil
 	}
-	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "zc_agent_x"}
+	conf := &agentconf.AgentConfig{HubURL: hubURL, AgentID: "agt_1", Credential: "hci_agent_x", HubMode: hubMode}
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2})
+	noHub := func(context.Context) (hubclient.HubInfo, error) {
+		return hubclient.HubInfo{}, errors.New("hub unreachable")
+	}
+	h.d = New(conf, st, exec, Options{StateDir: stateDir, Dialer: dialer, Source: src, Slots: 2, Deploys: deploys, DeployRunner: noDeployUnits(), HubInfo: noHub})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.ctx = ctx
@@ -197,16 +219,18 @@ func (h *harness) send(f protocol.Frame) {
 func (h *harness) trigger(id string, pr bool) protocol.Trigger {
 	h.seq++
 	seq := h.seq
+	defaultBranch := "main"
 	t := protocol.Trigger{
 		Attempt: 1, Event: protocol.TriggerEventPush, Ref: "refs/heads/main", Repo: "acme/app",
 		Sha: headSHA, TriggerId: id, Trust: protocol.TriggerTrustTrusted, Seq: &seq, HubSeq: seq,
+		DefaultBranch: &defaultBranch,
 	}
 	if pr {
-		base := baseSHA
+		base, baseRef := baseSHA, "develop"
 		t.Event = protocol.TriggerEventPullRequest
 		t.Ref = "refs/pull/7/head"
 		t.BaseSha = &base
-		t.Pr = &protocol.TriggerPr{HeadRef: "feature", HeadRepoFullName: "acme/app", Number: 7}
+		t.Pr = &protocol.TriggerPr{HeadRef: "feature", HeadRepoFullName: "acme/app", Number: 7, BaseRef: &baseRef}
 	}
 	return t
 }
@@ -335,6 +359,105 @@ func TestDaemonBaseConfigBootstrap(t *testing.T) {
 	}
 }
 
+// A push to the default branch records the fork policy its .hookci.yml
+// declares, even when the agent refuses that configuration; pushes to other
+// branches, pushes without a known default branch and pull requests record
+// nothing.
+func TestDaemonRecordsDefaultBranchPolicy(t *testing.T) {
+	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
+	tests := []struct {
+		name string
+		pr   bool
+		mut  func(*protocol.Trigger)
+		want []store.RepoConfig
+	}{
+		{"push", false, nil, []store.RepoConfig{{Repo: "acme/app", SHA: headSHA, Trust: "all"}}},
+		{"push to another branch", false, func(t *protocol.Trigger) { t.Ref = "refs/heads/feature" }, nil},
+		{"push without default branch", false, func(t *protocol.Trigger) { t.DefaultBranch = nil }, nil},
+		{"pull request", true, nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{})
+			trig := h.trigger("trg_1", tc.pr)
+			if tc.mut != nil {
+				tc.mut(&trig)
+			}
+			h.send(trig)
+			h.waitTrigger("trg_1", store.TriggerRejected)
+			got, err := store.ReadRepoConfigs(h.ctx, filepath.Join(h.d.o.StateDir, "agent.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range got {
+				if got[i].SeenAt.IsZero() {
+					t.Errorf("row %d has no seen_at", i)
+				}
+				got[i].SeenAt = time.Time{}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("repo configs = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// trust: all parses only for an agent of a self-hosted hub, and only
+// without deployments.
+func TestDaemonTrustAllNeedsSelfHostedHub(t *testing.T) {
+	trustAll := "version: 1\nchecks:\n  trust: all\n  jobs:\n    unit:\n      run: go test ./...\n"
+	for _, mode := range []string{"", "shared", "self_hosted"} {
+		t.Run("mode "+mode, func(t *testing.T) {
+			h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: trustAll}, Base: map[string]string{ConfigFile: trustAll}}, &fakeRunner{}, "https://hub.invalid", nil, mode, nil)
+			h.send(h.trigger("trg_1", false))
+			if mode == hubModeSelfHosted {
+				h.waitTrigger("trg_1", store.TriggerDone)
+				if !slices.Equal(h.runner.jobs, []string{"unit"}) {
+					t.Fatalf("jobs run = %v, want [unit]", h.runner.jobs)
+				}
+				return
+			}
+			h.waitTrigger("trg_1", store.TriggerRejected)
+			rej := h.frames("rejected")
+			if len(rej) != 1 || rej[0]["reason"] != ReasonConfigInvalid {
+				t.Fatalf("rejected frames = %v, want one config_invalid", rej)
+			}
+		})
+	}
+}
+
+// The daemon takes the hub's current mode at start; a failed refresh keeps
+// the mode agent.json stored.
+func TestDaemonRefreshHubMode(t *testing.T) {
+	tests := []struct {
+		name, stored string
+		info         hubclient.HubInfo
+		err          error
+		want         bool
+	}{
+		{"hub became self-hosted", "shared", hubclient.HubInfo{Mode: "self_hosted"}, nil, true},
+		{"hub became shared", "self_hosted", hubclient.HubInfo{Mode: "shared"}, nil, false},
+		{"refresh fails, self-hosted kept", "self_hosted", hubclient.HubInfo{}, errors.New("down"), true},
+		{"refresh fails, shared kept", "shared", hubclient.HubInfo{}, errors.New("down"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			info := func(context.Context) (hubclient.HubInfo, error) { return tc.info, tc.err }
+			d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", HubMode: tc.stored}, st, nil,
+				Options{StateDir: t.TempDir(), Source: &fakeSource{}, HubInfo: info})
+			d.refreshHubMode(context.Background())
+			if got := d.selfHosted.Load(); got != tc.want {
+				t.Fatalf("self-hosted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDaemonHeadConfigErrorsAnnotated(t *testing.T) {
 	h := newHarness(t, &fakeSource{
 		Head: map[string]string{ConfigFile: "version: 1\nchecks:\n  jobs:\n    unit:\n      needs: [nope]\n"},
@@ -439,6 +562,28 @@ func TestDaemonInterrupt(t *testing.T) {
 	}
 }
 
+// TestDaemonLogTailFinished: the live log tail ends a job's stream once the
+// store records the job terminal, or never knew it.
+func TestDaemonLogTailFinished(t *testing.T) {
+	h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{Block: true})
+	h.send(h.trigger("trg_1", false))
+	tr := h.waitTrigger("trg_1", store.TriggerRunning)
+	<-h.runner.running
+
+	if h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(running unit) = true")
+	}
+	if !h.d.jobFinished(tr.RunID, "nope") {
+		t.Error("jobFinished(unknown job) = false")
+	}
+	runID := tr.RunID
+	h.send(protocol.Interrupt{RunId: &runID, Reason: protocol.InterruptReasonSuperseded, Seq: new(9)})
+	h.waitTrigger("trg_1", store.TriggerDone)
+	if !h.d.jobFinished(tr.RunID, "unit") {
+		t.Error("jobFinished(cancelled unit) = false")
+	}
+}
+
 func TestDaemonInterruptDuringCheckout(t *testing.T) {
 	h := newHarness(t, &fakeSource{Block: true}, &fakeRunner{})
 	h.send(h.trigger("trg_1", false))
@@ -489,6 +634,55 @@ func TestDaemonRecoversUnstartedTrigger(t *testing.T) {
 	}
 }
 
+// A check the earlier agent was running when it died is re-queued by
+// recovery as a retry that takes over its trigger. The next agent runs that
+// retry to the end and finishes the trigger on it.
+func TestDaemonRunsRecoveredRetry(t *testing.T) {
+	var retry store.Run
+	seed := func(st *store.Store) {
+		ctx := context.Background()
+		run := store.Run{
+			ID: "run_old", Repo: "acme/app", SHA: headSHA, Ref: "refs/heads/main", Event: "push", Attempt: 1,
+			Kind: "check", TrustDomain: "trusted:acme/app", TriggerID: "trg_1",
+		}
+		if _, err := st.AcceptTrigger(ctx, "trg_1", run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateRun(ctx, run, []store.Job{{Name: "unit"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetTriggerState(ctx, "trg_1", store.TriggerRunning); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Transition(ctx, run.ID, []store.RunState{store.RunQueued}, store.RunRunning, ""); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if retry, err = st.InterruptRun(ctx, run.ID, "agent restarted", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newHarnessMode(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{}, "https://hub.invalid", nil, "", seed)
+
+	tr := h.waitTrigger("trg_1", store.TriggerDone)
+	if tr.RunID != retry.ID {
+		t.Fatalf("trigger run = %s, want the retry %s", tr.RunID, retry.ID)
+	}
+	got, err := h.st.GetRun(h.ctx, retry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.RunSuccess || got.Attempt != 2 {
+		t.Fatalf("retry = %s attempt %d, want success attempt 2", got.State, got.Attempt)
+	}
+	if !slices.Equal(h.runner.jobs, []string{"unit"}) || h.runCount() != 2 {
+		t.Fatalf("jobs run = %v, runs = %d; want [unit] and the retry beside the interrupted run", h.runner.jobs, h.runCount())
+	}
+	if len(h.policies) != 1 || !h.policies[0].AllowDeploy {
+		t.Fatalf("policies = %+v, want one trusted run", h.policies)
+	}
+}
+
 // A store left by a replaced agent holds frames and high-water marks of a hub
 // session the new agent's hub has never seen; the daemon drops them before
 // it dials.
@@ -512,8 +706,8 @@ func TestDaemonDropsReplacedAgentSession(t *testing.T) {
 	}
 
 	dialer := &idleDialer{dialed: make(chan struct{})}
-	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "zc_agent_x"}, st, nil,
-		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}})
+	d := New(&agentconf.AgentConfig{HubURL: "https://hub.invalid", AgentID: "agt_new", Credential: "hci_agent_x"}, st, nil,
+		Options{StateDir: stateDir, Dialer: dialer, Source: &fakeSource{}, DeployRunner: noDeployUnits()})
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
 	select {
@@ -598,7 +792,7 @@ func TestDaemonJobLogs(t *testing.T) {
 				t.Fatalf("hub saw %d log PUTs, want %d", len(calls), tc.wantPuts)
 			}
 			for _, c := range calls {
-				if c.path != "/v1/logs/"+runID+"/unit" || c.auth != "Bearer zc_agent_x" || c.body != "hello\n" {
+				if c.path != "/v1/logs/"+runID+"/unit" || c.auth != "Bearer hci_agent_x" || c.body != "hello\n" {
 					t.Errorf("log PUT = %+v", c)
 				}
 				if c.jobState != store.JobRunning {
@@ -616,6 +810,37 @@ func TestDaemonJobLogs(t *testing.T) {
 			}
 			if got := settled["logs"] == "local"; got != tc.wantLocal {
 				t.Errorf("success event logs = %v, want local %v", settled["logs"], tc.wantLocal)
+			}
+		})
+	}
+}
+
+// The executor restores caches from the run's own branch, then the branches
+// the trigger names: a pull request's base, then the default branch.
+func TestDaemonCacheFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pr   bool
+		mut  func(*protocol.Trigger)
+		want []string
+	}{
+		{"push", false, nil, []string{"main"}},
+		{"push to another branch", false, func(t *protocol.Trigger) { t.Ref = "refs/heads/feature/x" }, []string{"main"}},
+		{"pull request", true, nil, []string{"develop", "main"}},
+		{"no branches named", false, func(t *protocol.Trigger) { t.DefaultBranch = nil }, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}, Base: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{})
+			trig := h.trigger("trg_1", tc.pr)
+			if tc.mut != nil {
+				tc.mut(&trig)
+			}
+			h.send(trig)
+			h.waitTrigger("trg_1", store.TriggerDone)
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if len(h.fallbacks) != 1 || !slices.Equal(h.fallbacks[0], tc.want) {
+				t.Fatalf("cache fallbacks = %q, want [%q]", h.fallbacks, tc.want)
 			}
 		})
 	}

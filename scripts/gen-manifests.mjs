@@ -9,11 +9,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const manifests = join(dirname(fileURLToPath(import.meta.url)), "..", "hub", "manifests");
-const PROD_HOST = "https://ci.webuno.io";
+const PROD_HOST = "https://ci.hookci.com";
 
 const ENVIRONMENTS = {
 	dev: { host: "https://DEV-TUNNEL.example", name: "hookci-dev" },
-	staging: { host: "https://ci-staging.webuno.io", name: "hookci-staging" },
+	staging: { host: "https://ci-staging.hookci.com", name: "hookci-staging" },
 };
 
 // Each pattern must match in the production manifest, so a renamed key fails loudly instead of leaking production values.
@@ -35,7 +35,6 @@ function render(file, { host, name }) {
 					[/^  name: hookci$/gm, `  name: ${name}`],
 					[/^    display_name: hookci$/gm, `    display_name: ${name}`],
 					[/^    - command: \/hookci$/gm, `    - command: /${name}`],
-					[/^    - command: \/zeroci$/gm, `    - command: /${name.replace(/^hookci/, "zeroci")}`],
 				];
 	return replaceAll(text, file, [[new RegExp(PROD_HOST.replaceAll(".", "\\."), "g"), host], ...rules]);
 }

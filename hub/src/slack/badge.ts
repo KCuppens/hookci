@@ -2,6 +2,7 @@
 // progress or outcome. Shared by /hookci watch (test badge), /hookci status
 // and the Slack sink.
 
+import { logJob } from "../sinks/runview";
 import type { JobView, RunState, RunView } from "../sinks/types";
 import { S } from "../strings";
 import { type ContextBlock, context, type SectionBlock, section } from "./blocks";
@@ -100,7 +101,8 @@ function badgeText(run: RunView, test: boolean): string {
 			if (run.durationMs !== undefined) parts.push(formatDuration(run.durationMs));
 			const summary = outcomeSummary(run);
 			if (summary) parts.push(summary);
-			if (run.logUrl && !test) parts.push(`<${run.logUrl}|${S.badge.log}>`);
+			const logLink = logJob(run)?.logLink;
+			if (logLink && !test) parts.push(`<${logLink}|${S.badge.log}>`);
 			const text = parts.join(SEP);
 			return test ? `${text} ${S.badge.test}` : text;
 		}

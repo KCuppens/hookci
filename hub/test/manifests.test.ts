@@ -15,10 +15,11 @@ interface SlackManifest {
 }
 
 const slackApp = parse(slackYaml) as SlackManifest;
-const HOST = "https://ci.webuno.io";
+const HOST = "https://ci.hookci.com";
 
-// GitHub delivers these to every App whether or not the manifest subscribes to them.
-const ALWAYS_DELIVERED = ["installation", "github_app_authorization"];
+// GitHub delivers these to every App whether or not the manifest subscribes to them,
+// and rejects a manifest that lists them in default_events.
+const ALWAYS_DELIVERED = ["installation", "installation_repositories", "github_app_authorization"];
 
 describe("Slack App manifest", () => {
   it("asks for exactly SLACK_BOT_SCOPES and never chat:write.public", () => {
@@ -40,7 +41,7 @@ describe("Slack App manifest", () => {
   });
 
   it("declares the /hookci slash command", () => {
-    expect(slackApp.features.slash_commands.map((c) => c.command)).toEqual(["/hookci", "/zeroci"]);
+    expect(slackApp.features.slash_commands.map((c) => c.command)).toEqual(["/hookci"]);
   });
 });
 

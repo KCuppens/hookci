@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/KCuppens/hookci/agent/internal/compat"
 	"github.com/KCuppens/hookci/agent/internal/config"
 )
 
@@ -36,11 +35,9 @@ func runValidate(_ context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "hookci: validate takes at most one path")
 		return ExitUsage
 	}
-	path := compat.ConfigName(".")
+	path := ".hookci.yml"
 	if fs.NArg() == 1 {
 		path = fs.Arg(0)
-	} else if path == compat.LegacyConfigFile {
-		fmt.Fprintln(stderr, compat.LegacyWarning)
 	}
 
 	cfg, diags, err := config.Load(path, config.ParseOptions{SelfHosted: *selfHosted})

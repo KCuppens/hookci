@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://hookci.com/hookci.schema.json",
+  "$id": "https://ci.hookci.com/schema/hookci.schema.json",
   "title": "HookCIConfig",
   "description": "HookCI repository configuration (.hookci.yml).",
   "type": "object",
@@ -101,21 +101,21 @@
               "additionalProperties": false,
               "properties": {
                 "branches": {
-                  "description": "Branches whose pushes start a check run.",
+                  "description": "Branches whose pushes start a check run, as names or GitHub Actions style globs (* matches within one path segment, ** across segments). Unset: the repository's default branch. A branch a deployment's on.push names always runs checks.",
                   "type": "array",
                   "items": {
-                    "type": "string"
-                  },
-                  "default": ["main"]
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             }
           }
         },
         "trust": {
-          "description": "Whose pull requests run automatically: repository collaborators, only after approval, or everyone.",
+          "description": "Whose pull requests run automatically: repository collaborators, or everyone (fork pull requests included; only a self-hosted hub without deployments honors it).",
           "type": "string",
-          "enum": ["collaborators", "approve", "all"],
+          "enum": ["collaborators", "all"],
           "default": "collaborators"
         },
         "forks": {
@@ -287,97 +287,303 @@
       }
     },
     "Deployment": {
-      "description": "A deployment to one environment. Validated in M0, executed in M2.",
+      "description": "A deployment to one environment. The agent checks the strategy-dependent rules (required sections, {port}, absolute paths, durations, needs) after schema validation.",
       "type": "object",
       "additionalProperties": false,
+      "required": ["on", "strategy"],
       "properties": {
         "on": {
           "description": "Event that starts the deployment.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["push"],
           "properties": {
             "push": {
-              "description": "Deploy on pushes.",
+              "description": "Branch whose pushes deploy.",
+              "type": "string",
+              "minLength": 1
+            },
+            "after": {
+              "description": "What must pass before the deployment starts.",
+              "type": "string",
+              "enum": ["checks"],
+              "default": "checks"
+            }
+          }
+        },
+        "strategy": {
+          "description": "How the new version replaces the old one. compose-bluegreen starts the other color and switches the route, compose-inplace recreates the service, script runs the run command.",
+          "type": "string",
+          "enum": ["compose-bluegreen", "compose-inplace", "script"]
+        },
+        "compose": {
+          "description": "Docker Compose project to deploy. Required for the compose strategies.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project", "service"],
+          "properties": {
+            "project": {
+              "description": "Compose project name.",
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "description": "Compose file, relative to the repository root.",
+              "type": "string",
+              "minLength": 1,
+              "default": "docker-compose.yml"
+            },
+            "service": {
+              "description": "Service that serves the application.",
+              "type": "string",
+              "minLength": 1
+            },
+            "shared_network": {
+              "description": "External Docker network the service joins, for example the reverse proxy network.",
+              "type": "string",
+              "minLength": 1
+            },
+            "marker": {
+              "description": "Absolute path of the file that records the active color.",
+              "type": "string"
+            }
+          }
+        },
+        "migrate": {
+          "description": "Database migration run before the switch.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run"],
+          "properties": {
+            "run": {
+              "description": "Migration command, run in the new image.",
+              "type": "string",
+              "minLength": 1
+            },
+            "paths": {
+              "description": "Globs of migration files. When set, migrate.before runs only when a changed file since the last successful deploy matches one of them.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "before": {
+              "description": "Backup command run in a one-off container before the migration, with output_dir mounted at /backup. {env}, {sha7} and {ts} in run are replaced.",
               "type": "object",
               "additionalProperties": false,
+              "required": ["run"],
               "properties": {
-                "branch": {
-                  "description": "Branch whose pushes deploy.",
+                "run": {
+                  "description": "Backup command, run with sh -c.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "image": {
+                  "description": "Image the backup command runs in. Defaults to the freshly built app image.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "output_dir": {
+                  "description": "Absolute host directory the backup is written to, mounted at /backup.",
                   "type": "string"
+                },
+                "retain": {
+                  "description": "Number of recorded backups kept; older ones are deleted.",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "default": 10
                 }
               }
             }
           }
         },
-        "strategy": {
-          "description": "How the new version replaces the old one.",
-          "type": "string",
-          "enum": ["restart", "compose-bluegreen"]
-        },
-        "target": {
-          "description": "Where the application lives on the host.",
+        "route": {
+          "description": "Reverse proxy route switched between colors. Required for compose-bluegreen.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "file"],
           "properties": {
-            "path": {
-              "description": "Application directory.",
+            "kind": {
+              "description": "Reverse proxy.",
+              "type": "string",
+              "enum": ["caddy"]
+            },
+            "file": {
+              "description": "Absolute, clean path of the route file hookci writes. It must be inside one of the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink leading out of it.",
               "type": "string"
             },
-            "unit": {
-              "description": "systemd unit to restart.",
-              "type": "string"
+            "reload": {
+              "description": "Command that reloads the proxy after the route file changes. It runs as root, so it must be caddy reload [flags], /usr/bin/caddy reload [flags], /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload [flags] or systemctl reload caddy. It is split into words like a shell would, but no shell runs it.",
+              "type": "string",
+              "minLength": 1,
+              "default": "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile"
+            },
+            "upstream_host": {
+              "description": "Host the proxy reaches the service on.",
+              "type": "string",
+              "minLength": 1,
+              "default": "127.0.0.1"
             }
           }
         },
-        "build": {
-          "description": "Build command.",
-          "type": "string"
-        },
-        "migrate": {
-          "description": "Database migration command.",
-          "type": "string"
-        },
-        "env_file": {
-          "description": "Absolute path of the environment file on the host.",
-          "type": "string",
-          "pattern": "^/"
-        },
         "health": {
-          "description": "Health check run after the switch.",
+          "description": "Health check of the new version. Required for the compose strategies.",
           "type": "object",
           "additionalProperties": false,
+          "required": ["url"],
           "properties": {
             "url": {
-              "description": "Local URL to probe.",
+              "description": "Local URL to probe. The compose strategies fill in {port}, which the URL must contain.",
               "type": "string"
             },
-            "timeout": {
-              "description": "How long to wait for a healthy answer, with an s, m or h suffix.",
-              "type": "string",
-              "pattern": "^[0-9]+(s|m|h)$"
-            },
-            "expect_status": {
+            "expect": {
               "description": "Expected HTTP status code.",
               "type": "integer",
               "default": 200
+            },
+            "retries": {
+              "description": "Probes before the deployment counts as unhealthy.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600,
+              "default": 40
+            },
+            "interval": {
+              "description": "Time between probes, as a Go duration such as 2s or 500ms.",
+              "type": "string",
+              "default": "2s"
             }
           }
         },
-        "rollback": {
-          "description": "Roll back automatically or manually when the health check fails.",
-          "type": "string",
-          "enum": ["auto", "manual"],
-          "default": "auto"
+        "verify": {
+          "description": "Watch window after the switch, during which a failed probe rolls back.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "window": {
+              "description": "How long to watch, as a Go duration such as 60s.",
+              "type": "string",
+              "default": "60s"
+            },
+            "interval": {
+              "description": "Time between probes, as a Go duration. At most window.",
+              "type": "string",
+              "default": "5s"
+            }
+          }
         },
-        "approve": {
-          "description": "Require a human approval before deploying.",
-          "type": "boolean",
-          "default": false
+        "env_file": {
+          "description": "Absolute path of the environment file on the host.",
+          "type": "string"
+        },
+        "retain": {
+          "description": "What to keep for rollback.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "images": {
+              "description": "Number of images to keep, counting the running one.",
+              "type": "integer",
+              "minimum": 2,
+              "default": 5
+            }
+          }
+        },
+        "paths": {
+          "description": "Globs relative to the repository root. When set, a push deploys only if it changes a matching file.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "needs": {
+          "description": "Environments whose deployment of the same commit must succeed first.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          }
+        },
+        "run": {
+          "description": "Deploy command. Required for strategy: script. Each stdout line \"::hookci step <name>\" (name: lowercase letters, digits, \"_\", \".\" and \"-\", up to 40 characters) reports a progress step. A resumed deploy re-runs the command from the start.",
+          "type": "string",
+          "minLength": 1
+        },
+        "rollback": {
+          "description": "Command that restores the previous version. Optional, strategy: script only. Runs when run fails, with HOOKCI_FAILED_STEP set to the last step run reported.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AgentConfig": {
+      "title": "AgentConfig",
+      "description": "Settings of the agent host (agent.json), not part of .hookci.yml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gc": {
+          "description": "Disk cleanup limits.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "build_cache_max_bytes": {
+              "description": "Docker build cache size above which the agent prunes it, with docker builder prune. 0 (the default) never prunes the build cache. The prune acts on the host's whole default BuildKit cache, which every other project on the host shares, so leave 0 on a shared host.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "cache_max_bytes": {
+              "description": "Total size of the setup step caches under <state>/cache above which the agent removes the least recently used entries. Entries unused for 14 days are removed regardless.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 10737418240
+            },
+            "min_free_bytes": {
+              "description": "Free disk space a deploy needs. A deploy does not start while the docker root dir or the state dir has less free.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 5368709120
+            }
+          }
+        },
+        "deploy": {
+          "description": "Deploy settings.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "route_dirs": {
+              "description": "Directories a deployment's route.file may be in. Each is an absolute, clean path; the agent writes route files there as root.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "minItems": 1,
+              "default": ["/etc/caddy"]
+            }
+          }
+        },
+        "doctor": {
+          "description": "hookci doctor settings.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_caddy_tcp_admin": {
+              "description": "Report a Caddy admin API that answers on TCP as a warning instead of a failure.",
+              "type": "boolean",
+              "default": false
+            }
+          }
         }
       }
     },
     "protocol": {
-      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced.",
+      "description": "Agent to hub WebSocket protocol. Every frame is a JSON object with v and type. Frames sent through an outbox also carry seq, which the receiver acknowledges with ack; hello, ack and welcome are never sequenced, nor are the live log tail frames log_subscribe, log_unsubscribe and log, which only make sense on the connection that carries them.",
       "$defs": {
         "Envelope": {
           "description": "Fields shared by every frame.",
@@ -483,6 +689,11 @@
               "type": "string",
               "enum": ["pull_request", "push", "retry"]
             },
+            "env": {
+              "description": "Deployment environment, for deploy triggers.",
+              "type": "string",
+              "minLength": 1
+            },
             "pr": {
               "description": "Pull request details for pull_request events.",
               "type": "object",
@@ -504,8 +715,18 @@
                 "fork": {
                   "description": "The head repository is a fork.",
                   "type": "boolean"
+                },
+                "base_ref": {
+                  "description": "Base branch name.",
+                  "type": "string",
+                  "minLength": 1
                 }
               }
+            },
+            "default_branch": {
+              "description": "The repository's default branch name.",
+              "type": "string",
+              "minLength": 1
             },
             "base_sha": {
               "description": "Base commit of the pull request.",
@@ -880,10 +1101,10 @@
           }
         },
         "LogSubscribe": {
-          "description": "Hub asks the agent to stream a log.",
+          "description": "Hub asks the agent to stream a job's log from offset until the job ends. Never sequenced: a subscription lives as long as the connection.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["v", "type", "run_id"],
+          "required": ["v", "type", "run_id", "job", "offset"],
           "properties": {
             "v": {
               "description": "Protocol version.",
@@ -895,31 +1116,52 @@
               "type": "string",
               "const": "log_subscribe"
             },
-            "seq": {
-              "description": "Hub outbox sequence number, acknowledged by the agent with ack.",
+            "run_id": {
+              "description": "Agent run identifier.",
+              "type": "string"
+            },
+            "job": {
+              "description": "Job name.",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Byte offset in the job's log file to start from.",
               "type": "integer",
-              "minimum": 1
+              "minimum": 0
+            }
+          }
+        },
+        "LogUnsubscribe": {
+          "description": "Hub tells the agent to stop streaming a job's log. Never sequenced.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "type", "run_id", "job"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "type": {
+              "description": "Message type.",
+              "type": "string",
+              "const": "log_unsubscribe"
             },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
             },
             "job": {
-              "description": "Job name. Absent for the whole run.",
+              "description": "Job name.",
               "type": "string"
-            },
-            "from_offset": {
-              "description": "Byte offset to start from.",
-              "type": "integer",
-              "default": 0
             }
           }
         },
         "Log": {
-          "description": "A chunk of job log.",
+          "description": "A redacted chunk of a subscribed job log. Never sequenced.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["v", "type", "run_id", "job", "offset", "bytes"],
+          "required": ["v", "type", "run_id", "job", "offset", "bytes", "eof"],
           "properties": {
             "v": {
               "description": "Protocol version.",
@@ -931,11 +1173,6 @@
               "type": "string",
               "const": "log"
             },
-            "seq": {
-              "description": "Agent outbox sequence number, acknowledged by the hub with ack.",
-              "type": "integer",
-              "minimum": 1
-            },
             "run_id": {
               "description": "Agent run identifier.",
               "type": "string"
@@ -945,13 +1182,18 @@
               "type": "string"
             },
             "offset": {
-              "description": "Byte offset of the chunk in the log.",
-              "type": "integer"
+              "description": "Byte offset of the chunk in the job's log file.",
+              "type": "integer",
+              "minimum": 0
             },
             "bytes": {
               "description": "Log bytes, base64 encoded.",
               "type": "string",
               "contentEncoding": "base64"
+            },
+            "eof": {
+              "description": "The job has ended and every byte of its log was sent; the subscription is over.",
+              "type": "boolean"
             }
           }
         },
@@ -1091,9 +1333,93 @@
               "description": "Human-readable explanation.",
               "type": "string"
             },
+            "run_id": {
+              "description": "Run or trigger identifier of the token_request an auth_failed refuses. Absent when the hub refuses the agent credential itself.",
+              "type": "string"
+            },
             "upgrade_hint": {
               "description": "How to upgrade the agent, sent with protocol_unsupported.",
               "type": "string"
+            }
+          }
+        },
+        "RenderRequest": {
+          "description": "Body of POST /v1/render: an agent asks the hub to render a deploy badge for a dry-run preview. Not a WebSocket frame.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "kind", "repo", "env", "sha", "state"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "kind": {
+              "description": "What to render.",
+              "type": "string",
+              "const": "deploy_badge"
+            },
+            "repo": {
+              "description": "Repository as owner/name.",
+              "type": "string"
+            },
+            "env": {
+              "description": "Deployment environment.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,31}$"
+            },
+            "sha": {
+              "description": "Commit being deployed.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "state": {
+              "description": "Deploy state to render.",
+              "type": "string",
+              "enum": ["queued", "running", "rolling_back", "succeeded", "failed"]
+            },
+            "step": {
+              "description": "Current step name.",
+              "type": "string"
+            },
+            "step_index": {
+              "description": "Current step index, starting at 0.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "steps_total": {
+              "description": "Number of steps.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "duration_ms": {
+              "description": "Elapsed deploy time in milliseconds.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "RenderResponse": {
+          "description": "Answer to POST /v1/render: the Slack badge the hub would post.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["v", "text", "blocks"],
+          "properties": {
+            "v": {
+              "description": "Protocol version.",
+              "type": "integer",
+              "const": 1
+            },
+            "text": {
+              "description": "Badge text, the Slack message fallback.",
+              "type": "string"
+            },
+            "blocks": {
+              "description": "Slack Block Kit blocks.",
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
             }
           }
         },
@@ -1110,6 +1436,7 @@
             { "$ref": "#/$defs/protocol/$defs/TokenRequest" },
             { "$ref": "#/$defs/protocol/$defs/Token" },
             { "$ref": "#/$defs/protocol/$defs/LogSubscribe" },
+            { "$ref": "#/$defs/protocol/$defs/LogUnsubscribe" },
             { "$ref": "#/$defs/protocol/$defs/Log" },
             { "$ref": "#/$defs/protocol/$defs/Ack" },
             { "$ref": "#/$defs/protocol/$defs/Welcome" },

@@ -19,7 +19,7 @@ describe("timingSafeEqual", () => {
 });
 
 describe("redact", () => {
-  it.each(["ghs_", "ghp_", "gho_", "ghu_", "xoxb-", "xoxp-", "hc_pair_", "hc_agent_", "zc_pair_", "zc_agent_"])("masks %s tokens", (prefix) => {
+  it.each(["ghs_", "ghp_", "gho_", "ghu_", "xoxb-", "xoxp-", "hci_pair_", "hci_agent_"])("masks %s tokens", (prefix) => {
     const secret = `${prefix}Ab12_cd-34EF`;
     const out = redact(`Authorization: Bearer ${secret} (retry)`);
     expect(out).toBe(`Authorization: Bearer ${prefix}[redacted] (retry)`);
@@ -36,17 +36,17 @@ describe("redact", () => {
 
 describe("randomToken", () => {
   it("is the prefix plus 26 lowercase base32 characters for 16 bytes", () => {
-    const token = randomToken("zc_pair_");
-    expect(token).toMatch(/^zc_pair_[a-z2-7]{26}$/);
+    const token = randomToken("hci_pair_");
+    expect(token).toMatch(/^hci_pair_[a-z2-7]{26}$/);
   });
 
   it("encodes the requested number of bytes", () => {
-    expect(randomToken("zc_agent_", 32)).toMatch(/^zc_agent_[a-z2-7]{52}$/);
+    expect(randomToken("hci_agent_", 32)).toMatch(/^hci_agent_[a-z2-7]{52}$/);
     expect(randomToken("", 5)).toMatch(/^[a-z2-7]{8}$/);
   });
 
   it("does not repeat", () => {
-    expect(randomToken("zc_pair_")).not.toBe(randomToken("zc_pair_"));
+    expect(randomToken("hci_pair_")).not.toBe(randomToken("hci_pair_"));
   });
 });
 

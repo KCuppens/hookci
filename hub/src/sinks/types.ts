@@ -1,5 +1,7 @@
 // What sinks (GitHub checks, Slack, ...) receive about runs and agents.
 
+import type { TrustRefusal } from "../policy/trust";
+
 export type RunState =
 	| "received"
 	| "gated"
@@ -29,6 +31,8 @@ export interface JobView {
 	tail?: string[];
 	/** "local" when the repo keeps its logs on the agent: nothing is uploaded and the agent sends no tail. */
 	logs?: "local";
+	/** The stable log link (HUB_ORIGIN/runs/<run>/logs?job=<job>) once the agent uploaded the job's log. */
+	logLink?: string;
 }
 export interface RunView {
 	installationId: number;
@@ -46,6 +50,8 @@ export interface RunView {
 	target: string;
 	state: RunState;
 	reason?: PendingReason;
+	/** Why the base ref's `trust: all` was refused, on a gated fork run. */
+	trustRefused?: TrustRefusal;
 	commitTitle: string;
 	authorLogin: string;
 	authorEmail?: string;
@@ -54,7 +60,6 @@ export interface RunView {
 	startedAt?: number;
 	finishedAt?: number;
 	durationMs?: number;
-	logUrl?: string;
 	jobs: JobView[];
 	currentJob?: string;
 	/** The .hookci.yml notify.slack override: channel is a name without #; notify and alert fall back to the watch's. */

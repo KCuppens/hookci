@@ -1,8 +1,11 @@
 // The sinks that hear about run and agent changes, and the fan-out that calls
 // them without letting one slow or failing sink hold up the run lifecycle.
 
+import { listSinkConfigs } from "../db/sinks";
+import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { reportError } from "../observability";
+import { OutboxSink } from "./outbox-sink";
 import type { Sink } from "./types";
 
 /** What fanOut needs from a Worker's ExecutionContext (Hono's included) or a DurableObjectState. */
@@ -10,6 +13,8 @@ export type WaitUntil = Pick<ExecutionContext, "waitUntil">;
 
 /** The AgentDO a fan-out runs in, for sinks that keep state between calls; absent in the Worker. */
 export interface SinkHost {
+	/** The agent the AgentDO serves. */
+	agentId: string;
 	storage: DurableObjectStorage;
 	now(): number;
 }
@@ -37,6 +42,17 @@ export async function sinksFor(env: Env, installationId: number, host?: SinkHost
 		} catch (err) {
 			reportError(err, { sink: name, installation_id: installationId, op: "sink_factory" });
 		}
+	}
+	return sinks;
+}
+
+/** The sinks for a run of repo: those of sinksFor, then one OutboxSink per enabled sink config of the repo. */
+export async function sinksForRun(env: Env, installationId: number, repo: string, host?: SinkHost): Promise<Sink[]> {
+	const sinks = await sinksFor(env, installationId, host);
+	try {
+		for (const cfg of await listSinkConfigs(tenantDb(env.DB, installationId), repo)) sinks.push(new OutboxSink(env, installationId, cfg));
+	} catch (err) {
+		reportError(err, { installation_id: installationId, op: "sink_configs" });
 	}
 	return sinks;
 }

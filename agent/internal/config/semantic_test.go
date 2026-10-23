@@ -57,13 +57,16 @@ func TestNeedsCycle(t *testing.T) {
 
 const trustAll = "version: 1\nchecks:\n  trust: all\n  jobs:\n    test:\n      run: go test ./...\n"
 
-const trustAllWithDeploy = trustAll + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n"
+// scriptDeploy is a minimal valid deployments section.
+const scriptDeploy = "deployments:\n  production:\n    on:\n      push: main\n    strategy: script\n    run: ./deploy.sh\n"
+
+const trustAllWithDeploy = trustAll + scriptDeploy
 
 func TestTrustAllRefusedShared(t *testing.T) {
 	_, diags := parseString(t, trustAll, ParseOptions{})
 	d := findDiag(t, diags, "checks.trust")
 	if d.Message != "trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network" ||
-		d.Fix != "use trust: approve, or self-host the hub without deployments" || d.Line != 3 {
+		d.Fix != "use trust: collaborators, or self-host the hub without deployments" || d.Line != 3 {
 		t.Errorf("diagnostic = %+v", d)
 	}
 }
@@ -82,6 +85,30 @@ func TestTrustAllRefusedSelfHostedWithDeploy(t *testing.T) {
 	_, diags := parseString(t, trustAllWithDeploy, ParseOptions{SelfHosted: true})
 	if d := findDiag(t, diags, "checks.trust"); d.Severity != SeverityError {
 		t.Errorf("diagnostic = %+v, want an error", d)
+	}
+}
+
+func TestDeclaredPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want Policy
+		ok   bool
+	}{
+		{"trust all the semantic checks refuse", trustAllWithDeploy, Policy{Trust: ChecksTrustAll, HasDeployments: true}, true},
+		{"trust all without deployments", trustAll, Policy{Trust: ChecksTrustAll}, true},
+		{"default trust", oneJob, Policy{Trust: ChecksTrustCollaborators}, true},
+		{"no checks", "version: 1\n" + scriptDeploy, Policy{Trust: ChecksTrustCollaborators, HasDeployments: true}, true},
+		{"schema error", "version: 1\nchecks:\n  trust: approve\n", Policy{}, false},
+		{"invalid YAML", "version: [1\n", Policy{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := DeclaredPolicy([]byte(tc.data))
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("DeclaredPolicy = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 
@@ -116,55 +143,9 @@ func TestRedactInvalidRegex(t *testing.T) {
 	}
 }
 
-func deployment(strategy, url string) string {
-	s := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n"
-	if strategy != "" {
-		s += "    strategy: " + strategy + "\n"
-	}
-	return s + "    health:\n      url: " + url + "\n"
-}
-
-func TestHealthURLMustBeLocal(t *testing.T) {
-	for url, want := range map[string]string{
-		"http://example.com:8000/health":   "must point at 127.0.0.1 or localhost",
-		"http://10.0.0.5:8000/health":      "must point at 127.0.0.1 or localhost",
-		"https://127.0.0.1:8000/health":    "must use http",
-		"http://127.0.0.1/health":          "needs an explicit port",
-		"http://localhost:0/health":        "out of range",
-		"http://127.0.0.1:8000/{port}":     "may only stand for the port",
-		"127.0.0.1:8000/health":            "not a valid URL",
-		"http://127.0.0.1:8000/health":     "",
-		"http://localhost:8000/health?x=1": "",
-	} {
-		_, diags := parseString(t, deployment("restart", url), ParseOptions{})
-		if want == "" {
-			if len(diags) > 0 {
-				t.Errorf("%s: unexpected diagnostics:\n%s", url, diags.Format("test.yml"))
-			}
-			continue
-		}
-		if d := findDiag(t, diags, "deployments.production.health.url"); !strings.Contains(d.Message, want) {
-			t.Errorf("%s: message %q, want %q", url, d.Message, want)
-		}
-	}
-}
-
-func TestHealthPortPlaceholderOnlyBluegreen(t *testing.T) {
-	const url = "http://127.0.0.1:{port}/health"
-	if _, diags := parseString(t, deployment("compose-bluegreen", url), ParseOptions{}); len(diags) > 0 {
-		t.Errorf("compose-bluegreen: unexpected diagnostics:\n%s", diags.Format("test.yml"))
-	}
-	for _, strategy := range []string{"restart", ""} {
-		_, diags := parseString(t, deployment(strategy, url), ParseOptions{})
-		if d := findDiag(t, diags, "deployments.production.health.url"); !strings.Contains(d.Message, "only filled in by strategy: compose-bluegreen") {
-			t.Errorf("strategy %q: diagnostic = %+v", strategy, d)
-		}
-	}
-}
-
 func TestEnvFileWritableWarns(t *testing.T) {
 	const file = "/etc/hookci/production.env"
-	src := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n    env_file: " + file + "\n"
+	src := oneJob + scriptDeploy + "    env_file: " + file + "\n"
 	for _, tc := range []struct {
 		name string
 		info fs.FileInfo
@@ -172,8 +153,11 @@ func TestEnvFileWritableWarns(t *testing.T) {
 		want []string
 	}{
 		{"root 0600", fakeInfo{mode: 0o600, sys: &syscall.Stat_t{Uid: 0}}, nil, nil},
-		{"group writable", fakeInfo{mode: 0o620, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"writable by group or others (mode 0620)"}},
-		{"other writable", fakeInfo{mode: 0o602, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"writable by group or others"}},
+		{"root 0400", fakeInfo{mode: 0o400, sys: &syscall.Stat_t{Uid: 0}}, nil, nil},
+		{"group writable", fakeInfo{mode: 0o620, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0620), want 0600"}},
+		{"group readable", fakeInfo{mode: 0o640, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0640), want 0600"}},
+		{"other readable", fakeInfo{mode: 0o604, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access (mode 0604)"}},
+		{"other writable", fakeInfo{mode: 0o602, sys: &syscall.Stat_t{Uid: 0}}, nil, []string{"gives group or others access"}},
 		{"not root", fakeInfo{mode: 0o600, sys: &syscall.Stat_t{Uid: 1000}}, nil, []string{"owned by uid 1000, not root"}},
 		{"missing", nil, fs.ErrNotExist, []string{"does not exist on this machine"}},
 	} {
@@ -204,10 +188,51 @@ func TestEnvFileWritableWarns(t *testing.T) {
 }
 
 func TestEnvFileLookedUpInFS(t *testing.T) {
-	src := oneJob + "deployments:\n  production:\n    on:\n      push:\n        branch: main\n    env_file: /etc/app.env\n"
+	src := oneJob + scriptDeploy + "    env_file: /etc/app.env\n"
 	fsys := fstest.MapFS{"etc/app.env": {Mode: 0o666}}
 	_, diags := Parse([]byte(src), ParseOptions{FS: fsys})
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "writable by group or others (mode 0666)") {
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "gives group or others access (mode 0666)") {
 		t.Errorf("diagnostics:\n%s", diags.Format("test.yml"))
+	}
+}
+
+func TestCachePathsStayInside(t *testing.T) {
+	for p, ok := range map[string]bool{
+		".": false, "src/..": false, "~/../x": false, "/tmp": false, "../x": false,
+		"~": true, "~/.npm": true, "node_modules": true, "a/../b": true,
+	} {
+		src := "version: 1\nchecks:\n  setup:\n    - run: make\n      cache:\n        key: [go.sum]\n        paths: [" + strconv.Quote(p) + "]\n" + oneJob[len("version: 1\nchecks:\n"):]
+		_, diags := parseString(t, src, ParseOptions{})
+		bad := false
+		for _, d := range diags {
+			if d.Path == "checks.setup[0].cache.paths[0]" {
+				bad = true
+			}
+		}
+		if bad == ok {
+			t.Errorf("cache path %q: rejected = %v, want %v\n%s", p, bad, !ok, diags.Format("test.yml"))
+		}
+	}
+}
+
+func TestPostgresImageAllowList(t *testing.T) {
+	for image, ok := range map[string]bool{
+		"postgrest/postgrest:1": false, "postgres:16 ": false, "-x": false, "postgres": false,
+		"postgres.evil.example/x:1": false, "pgvector/pgvector": false, "evil/pgvector:pg16": false,
+		"pgvector/pgvector-evil:pg16": false, "ghcr.io/pgvector/pgvector:pg16": false,
+		"postgres:16-alpine": true, "docker.io/library/postgres:16": true,
+		"pgvector/pgvector:pg16": true, "docker.io/pgvector/pgvector:0.8.1-pg17": true,
+	} {
+		src := oneJob + "  services:\n    postgres:\n      image: " + strconv.Quote(image) + "\n"
+		_, diags := parseString(t, src, ParseOptions{})
+		bad := false
+		for _, d := range diags {
+			if d.Path == "checks.services.postgres.image" {
+				bad = true
+			}
+		}
+		if bad == ok {
+			t.Errorf("image %q: rejected = %v, want %v\n%s", image, bad, !ok, diags.Format("test.yml"))
+		}
 	}
 }

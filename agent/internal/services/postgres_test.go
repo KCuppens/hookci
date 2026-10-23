@@ -335,7 +335,11 @@ func TestStopReportsOtherErrors(t *testing.T) {
 func TestRejectBadImage(t *testing.T) {
 	fake := &execx.Fake{}
 	o := testOptions(t, fake)
-	for _, image := range []string{"postgres:16; rm -rf /", "Postgres:16", "--privileged"} {
+	for _, image := range []string{
+		"postgres:16; rm -rf /", "Postgres:16", "--privileged",
+		"postgres", "postgres.evil.example/x:1", "postgrest/postgrest:v12", "postgresx/miner:latest",
+		"ghcr.io/library/postgres:16", "postgres:16 ",
+	} {
 		o.Image = image
 		if _, err := StartPostgres(context.Background(), o); err == nil {
 			t.Errorf("image %q accepted", image)
@@ -343,5 +347,61 @@ func TestRejectBadImage(t *testing.T) {
 	}
 	if len(fake.Calls) != 0 {
 		t.Errorf("docker called for a bad image: %v", fake.Calls)
+	}
+}
+
+func TestAcceptAllowedImages(t *testing.T) {
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for _, image := range []string{"postgres:16", "library/postgres:16-alpine", "docker.io/library/postgres:17.2", "postgres" + digest, "postgres:16" + digest, "pgvector/pgvector:pg16"} {
+		fake := &execx.Fake{}
+		fake.On("docker", []string{"run"}, execx.FakeResponse{})
+		onFinalServer(fake)
+		fake.On("docker", []string{"exec"}, execx.FakeResponse{})
+		o := testOptions(t, fake)
+		o.Image = image
+		if _, err := StartPostgres(context.Background(), o); err != nil {
+			t.Errorf("image %q: %v", image, err)
+		}
+	}
+}
+
+// hangingExec blocks every docker exec until its context ends, like a
+// stalled daemon; other docker calls go to the fake.
+type hangingExec struct{ *execx.Fake }
+
+func (h hangingExec) Run(ctx context.Context, c execx.Cmd) error {
+	if len(c.Args) > 0 && c.Args[0] == "exec" {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return h.Fake.Run(ctx, c)
+}
+
+func TestStartPostgresTimeoutWhileExecHangs(t *testing.T) {
+	fake := &execx.Fake{}
+	fake.On("docker", []string{"run"}, execx.FakeResponse{})
+	fake.On("docker", []string{"logs"}, execx.FakeResponse{})
+	fake.On("docker", []string{"rm"}, execx.FakeResponse{})
+	o := PostgresOptions{
+		RunID: "01HX", RunDir: t.TempDir(), CPUs: 1, MemoryBytes: 1 << 30,
+		ReadyTimeout: 50 * time.Millisecond,
+		Docker:       Docker{Runner: hangingExec{fake}},
+	}
+	start := time.Now()
+	_, err := StartPostgres(context.Background(), o)
+	if !errors.Is(err, ErrNotReady) {
+		t.Fatalf("err = %v, want ErrNotReady", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("StartPostgres took %s with a 50ms ready timeout", d)
+	}
+}
+
+func TestBuildRunArgvDropsPrivileges(t *testing.T) {
+	argv := strings.Join(BuildRunArgv(PostgresOptions{RunID: "r1", RunDir: "/s/runs/r1", CPUs: 2, MemoryBytes: 4 << 30}), " ")
+	for _, want := range []string{"--pids-limit 512", "--security-opt no-new-privileges", "--cap-drop ALL"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv lacks %q: %s", want, argv)
+		}
 	}
 }

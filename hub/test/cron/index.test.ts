@@ -7,7 +7,7 @@ import { upsertRepos } from "../../src/db/repos";
 import { tenantDb } from "../../src/db/tenant";
 import type { Env } from "../../src/env";
 import { clearTables } from "../db/helpers";
-import { createFakeGitHub, serveBranchHeads, serveInstallationTokens } from "../fakes/github";
+import { createFakeGitHub, serveBranchHeads, serveInstallationTokens, serveRepoFiles } from "../fakes/github";
 import type { FakeService } from "../fakes/http";
 import { generateAppKey } from "../github/helpers";
 
@@ -23,6 +23,7 @@ let testEnv: Env;
 beforeEach(async () => {
   await clearTables();
   gh = createFakeGitHub();
+  serveRepoFiles(gh, {});
   triggeredRepos = [];
   const agents: Pick<DurableObjectNamespace, "idFromName" | "get"> = {
     idFromName: (name) => ({ name, toString: () => name, equals: (other) => other.toString() === name }),

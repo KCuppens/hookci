@@ -19,6 +19,9 @@ const TENANT_TABLES = [
   "fork_approvals",
   "pair_tokens",
   "daily_counters",
+  "sink_configs",
+  "sink_messages",
+  "sink_deliveries",
 ];
 const TENANT_REF = new RegExp(`\\b(?:FROM|JOIN|INTO|UPDATE)\\s+(${TENANT_TABLES.join("|")})\\b`, "i");
 

@@ -7,9 +7,9 @@ export type EndpointAuth =
   | "github_sig"
   /** Slack's v0 signature over the timestamp and body. */
   | "slack_sig"
-  /** An agent's `zc_agent_` credential, or a pair token on /v1/pair/redeem. */
+  /** An agent's `hci_agent_` credential, or a pair token on /v1/pair/redeem. */
   | "agent_bearer"
-  /** The exp and sig query parameters of a signed log URL. */
+  /** The i, r, j, exp, kid and sig query parameters of a signed log URL. */
   | "log_sig"
   /** A single-use OAuth state, or the browser state cookie it belongs to. */
   | "oauth_state"
@@ -24,13 +24,14 @@ export type EndpointAuth =
   | "public";
 
 export interface Endpoint {
-  method: "GET" | "POST" | "PUT";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   auth: EndpointAuth;
 }
 
 export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/healthz", auth: "public" },
+  { method: "GET", path: "/v1/info", auth: "public" },
   { method: "GET", path: "/install", auth: "public" },
   { method: "POST", path: "/github/webhook", auth: "github_sig" },
   { method: "GET", path: "/v1/agent/connect", auth: "agent_bearer" },
@@ -51,10 +52,23 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/privacy", auth: "public" },
   { method: "GET", path: "/terms", auth: "public" },
   { method: "GET", path: "/support", auth: "public" },
+  { method: "GET", path: "/security", auth: "public" },
   { method: "GET", path: "/status", auth: "public" },
   { method: "GET", path: "/assets/inter.woff2", auth: "public" },
   { method: "PUT", path: "/v1/logs/:runId/:job", auth: "agent_bearer" },
-  { method: "GET", path: "/logs/:runId/:job", auth: "log_sig" },
+  { method: "POST", path: "/v1/render", auth: "agent_bearer" },
+  { method: "GET", path: "/v1/agent/sinks", auth: "agent_bearer" },
+  { method: "POST", path: "/v1/agent/sinks", auth: "agent_bearer" },
+  { method: "DELETE", path: "/v1/agent/sinks/:id", auth: "agent_bearer" },
+  { method: "POST", path: "/v1/agent/sinks/:id/test", auth: "agent_bearer" },
+  { method: "GET", path: "/logs/view", auth: "log_sig" },
+  { method: "GET", path: "/logs/raw", auth: "log_sig" },
+  { method: "GET", path: "/logs/stream", auth: "log_sig" },
+  { method: "GET", path: "/logs/viewer.css", auth: "public" },
+  // The stable log link: a public repo's log opens for anyone; a private repo's needs the hci_session cookie, else it starts sign-in.
+  { method: "GET", path: "/runs/:runId/logs", auth: "public" },
+  { method: "GET", path: "/auth/github/callback", auth: "oauth_state" },
+  { method: "GET", path: "/logs/viewer.js", auth: "public" },
   { method: "GET", path: "/app", auth: "session" },
   { method: "GET", path: "/app/login", auth: "public" },
   { method: "GET", path: "/app/:installationId", auth: "session" },

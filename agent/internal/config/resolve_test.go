@@ -9,8 +9,8 @@ import (
 
 func TestEnvFilesCollected(t *testing.T) {
 	src := oneJob + "deployments:\n" +
-		"  staging:\n    on:\n      push:\n        branch: dev\n    env_file: /etc/b.env\n" +
-		"  production:\n    on:\n      push:\n        branch: main\n    env_file: /etc/a.env\n"
+		"  staging:\n    on:\n      push: dev\n    strategy: script\n    run: ./deploy.sh\n    env_file: /etc/b.env\n" +
+		"  production:\n    on:\n      push: main\n    strategy: script\n    run: ./deploy.sh\n    env_file: /etc/a.env\n"
 	fsys := fstest.MapFS{"etc/a.env": {Mode: 0o600}, "etc/b.env": {Mode: 0o600}}
 	cfg, _ := Parse([]byte(src), ParseOptions{FS: fsys})
 	if cfg == nil || cfg.Checks() == nil {

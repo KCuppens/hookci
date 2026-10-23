@@ -90,7 +90,7 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     repoId: n * 10 + 1,
     fullName: `org${n}/api`,
     agentId: `agt_${n}`,
-    credential: `zc_agent_agt_${n}`,
+    credential: `hci_agent_agt_${n}`,
     runId: `run_${n}`,
     job: "test",
     logKey: logKey(installationId, `run_${n}`, "test"),

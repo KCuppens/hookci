@@ -13,7 +13,7 @@ import type { TriggerRequest } from "../../src/webhook/route";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { type Agent, type AgentSocket, connect, seedAgent } from "../do/agent-socket";
-import { createFakeGitHub, serveInstallationTokens } from "../fakes/github";
+import { createFakeGitHub, serveInstallationTokens, serveRepoFiles } from "../fakes/github";
 import type { FakeService } from "../fakes/http";
 import { generateAppKey } from "../github/helpers";
 import deleted from "../fixtures/github/installation.deleted.json";
@@ -53,7 +53,7 @@ async function acceptedRun(agent: Agent, sock: AgentSocket, runId: string): Prom
     sha: "1".repeat(40),
     ref: "refs/heads/feature",
     event: "pull_request",
-    pr: { number: 7, headRef: "feature", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
+    pr: { number: 7, headRef: "feature", baseRef: "main", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
     authorLogin: "alice",
     commitTitle: "Add widget sizing",
     defaultBranch: "main",
@@ -82,6 +82,7 @@ beforeEach(async () => {
   await upsertInstallation(env.DB, { id: INSTALLATION, account_login: "acme", account_type: "Organization", account_id: INSTALLATION * 10, created_at: 1 });
   gh = createFakeGitHub();
   serveInstallationTokens(gh, testClock.now());
+  serveRepoFiles(gh, {});
   let checkRunId = 1;
   gh.respond("POST", "/repos/:owner/:repo/check-runs", () => Response.json({ id: checkRunId++ }, { status: 201 }));
   gh.respond("PATCH", "/repos/:owner/:repo/check-runs/:id", ({ params }) => Response.json({ id: Number(params.id) }));

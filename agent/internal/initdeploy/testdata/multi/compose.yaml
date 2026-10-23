@@ -1,0 +1,18 @@
+services:
+  web:
+    build: ./web
+    ports: ["3000:3000"]
+  worker:
+    build: .
+    command: npm run worker
+  api:
+    build:
+      context: ./api
+    ports:
+      - "8080:8080"
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+  docs:
+    build: ./docs
+    ports: []

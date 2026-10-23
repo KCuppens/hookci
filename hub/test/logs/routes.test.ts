@@ -1,9 +1,9 @@
+import { createExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { upsertInstallation } from "../../src/db/installations";
-import { LOG_URL_TTL_SECONDS, signLogUrl } from "../../src/logs/sign";
+import worker from "../../src/index";
 import { QUOTAS } from "../../src/quotas";
-import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { gunzip, gzip, seedAgent, seedRun } from "./helpers";
 
@@ -58,16 +58,6 @@ describe("PUT /v1/logs/:runId/:job", () => {
     expect(await jobLog()).toEqual({ log_key: KEY, log_bytes: LOG.length, log_truncated: 1 });
   });
 
-  it("accepts the legacy x-zeroci-log-* headers and an hc_agent_ credential", async () => {
-    const res = await exports.default.fetch(`https://hub.test/v1/logs/${RUN}/test`, {
-      method: "PUT",
-      headers: { authorization: `Bearer ${owner}`, "content-encoding": "gzip", "x-zeroci-log-bytes": String(LOG.length), "x-zeroci-log-truncated": "1" },
-      body: await gzip(LOG),
-    });
-    expect(res.status).toBe(204);
-    expect(await jobLog()).toEqual({ log_key: KEY, log_bytes: LOG.length, log_truncated: 1 });
-  });
-
   it("refuses an agent of another installation with 403 and stores nothing", async () => {
     const res = await put(stranger, await gzip(LOG));
     expect(res.status).toBe(403);
@@ -82,7 +72,7 @@ describe("PUT /v1/logs/:runId/:job", () => {
   });
 
   it("refuses a missing or unknown credential with 401", async () => {
-    expect((await put("zc_agent_nobody", await gzip(LOG))).status).toBe(401);
+    expect((await put("hci_agent_nobody", await gzip(LOG))).status).toBe(401);
     expect((await put("ghs_token", await gzip(LOG))).status).toBe(401);
   });
 
@@ -95,6 +85,17 @@ describe("PUT /v1/logs/:runId/:job", () => {
 
   it("refuses a declared size over the cap with 413 log_too_large", async () => {
     const res = await put(owner, await gzip(LOG), { "x-hookci-log-bytes": String(QUOTAS.logBytes + 1) });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "log_too_large" });
+  });
+
+  it("keeps the log size cap on a self-hosted hub", async () => {
+    const req = new Request(`https://hub.test/v1/logs/${RUN}/test`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${owner}`, "content-encoding": "gzip", "x-hookci-log-bytes": String(QUOTAS.logBytes + 1), "x-hookci-log-truncated": "0" },
+      body: await gzip(LOG),
+    });
+    const res = await worker.fetch(req, { ...env, HUB_MODE: "self_hosted" }, createExecutionContext());
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: "log_too_large" });
   });
@@ -125,55 +126,5 @@ describe("PUT /v1/logs/:runId/:job", () => {
     const res = await put(owner, await gzip(LOG), headers);
     expect(res.status).toBe(status);
     expect(await res.json()).toEqual({ error });
-  });
-});
-
-describe("GET /logs/:runId/:job", () => {
-  beforeEach(async () => {
-    await env.LOGS.put(KEY, await gzip(LOG));
-  });
-
-  it("serves the gzipped log to a signed link without caching or indexing", async () => {
-    const res = await exports.default.fetch(await signLogUrl(env, RUN, "test"), { encodeResponseBody: "manual" });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
-    expect(res.headers.get("content-encoding")).toBe("gzip");
-    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-    expect(res.headers.get("x-robots-tag")).toBe("noindex");
-    expect(await gunzip(await res.arrayBuffer())).toBe(LOG);
-  });
-
-  it("forbids sniffing and sandboxes the log, which holds output a fork pull request controls", async () => {
-    const res = await exports.default.fetch(await signLogUrl(env, RUN, "test"), { encodeResponseBody: "manual" });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("content-security-policy")).toBe("sandbox");
-    expect(res.headers.get("content-disposition")).toBe("inline");
-  });
-
-  it("answers 410 log_expired once the link is 15 minutes old", async () => {
-    const url = await signLogUrl(env, RUN, "test");
-    testClock.advance(LOG_URL_TTL_SECONDS * 1000);
-    const res = await exports.default.fetch(url);
-    expect(res.status).toBe(410);
-    expect(await res.json()).toEqual({ error: "log_expired" });
-  });
-
-  it("answers 403 log_sig_invalid to a changed signature or job", async () => {
-    const url = new URL(await signLogUrl(env, RUN, "test"));
-    const sig = url.searchParams.get("sig") ?? "";
-    const tampered = new URL(url);
-    tampered.searchParams.set("sig", `${sig.startsWith("A") ? "B" : "A"}${sig.slice(1)}`);
-    for (const target of [tampered.toString(), url.toString().replace("/test?", "/deploy?")]) {
-      const res = await exports.default.fetch(target);
-      expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({ error: "log_sig_invalid" });
-    }
-  });
-
-  it("answers 404 log_not_found when the job has no stored log", async () => {
-    const res = await exports.default.fetch(await signLogUrl(env, RUN, "lint"));
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "log_not_found" });
   });
 });

@@ -5,7 +5,7 @@ checks:
     pull_request: true
     push:
       branches: [main, release]
-  trust: approve
+  trust: collaborators
   forks: never
   limits:
     cpus: 4
@@ -40,27 +40,41 @@ checks:
 deployments:
   production:
     on:
-      push:
-        branch: main
+      push: main
+      after: checks
     strategy: compose-bluegreen
-    target:
-      path: /srv/app
-    build: docker compose build
-    migrate: docker compose run --rm web ./manage.py migrate
+    paths: ["src/**", "package-lock.json"]
+    needs: [staging]
+    compose:
+      project: app
+      file: deploy/compose.yml
+      service: web
+      shared_network: edge
+      marker: /var/lib/hookci/app.color
+    migrate:
+      run: ./manage.py migrate
+    route:
+      kind: caddy
+      file: /etc/caddy/routes/app.caddy
+      reload: caddy reload --config /etc/caddy/Caddyfile
+      upstream_host: 127.0.0.1
     env_file: /etc/hookci/production.env
     health:
       url: http://127.0.0.1:{port}/health
-      timeout: 60s
-      expect_status: 200
-    rollback: auto
-    approve: true
+      expect: 204
+      retries: 30
+      interval: 1s
+    verify:
+      window: 2m
+      interval: 10s
+    retain:
+      images: 3
   staging:
     on:
-      push:
-        branch: develop
-    strategy: restart
-    target:
-      unit: app-staging.service
+      push: develop
+    strategy: script
+    run: ./deploy.sh staging
+    rollback: ./rollback.sh staging
     health:
       url: http://localhost:8001/healthz
 notify:

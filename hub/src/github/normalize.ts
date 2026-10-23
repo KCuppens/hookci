@@ -12,7 +12,7 @@ export interface HubTrigger {
 	sha: string;
 	ref: string;
 	event: "pull_request" | "push";
-	pr?: { number: number; headRef: string; headRepoFullName: string; fork: boolean; authorLogin: string };
+	pr?: { number: number; headRef: string; baseRef: string; headRepoFullName: string; fork: boolean; authorLogin: string };
 	baseSha?: string;
 	authorLogin: string;
 	authorEmail?: string;
@@ -23,7 +23,6 @@ export interface HubTrigger {
 
 const PR_ACTIONS: Record<string, true> = { opened: true, synchronize: true, reopened: true, ready_for_review: true };
 const BRANCH_PREFIX = "refs/heads/";
-const ZERO_SHA = /^0+$/;
 
 type Json = Record<string, unknown>;
 
@@ -49,8 +48,8 @@ function int(v: unknown, path: string): number {
 /**
  * The trigger a webhook asks for, or null when the event starts no run:
  * pull_request actions other than opened, synchronize, reopened and
- * ready_for_review; branch deletions, tag pushes, pushes without commits and
- * pushes to branches other than the default branch.
+ * ready_for_review; branch deletions, tag pushes and pushes without commits.
+ * Which branches run is the repo's `.hookci.yml` call (policy/repo-config).
  */
 export function normalize(event: string, payload: unknown): HubTrigger | null {
 	if (event === "pull_request") return normalizePullRequest(record(payload, "payload"));
@@ -79,6 +78,7 @@ function normalizePullRequest(p: Json): HubTrigger | null {
 		pr: {
 			number,
 			headRef: text(head.ref, "pull_request.head.ref"),
+			baseRef: text(base.ref, "pull_request.base.ref"),
 			headRepoFullName,
 			fork: headRepoFullName !== baseRepoFullName,
 			authorLogin,
@@ -98,10 +98,8 @@ function normalizePush(p: Json): HubTrigger | null {
 	if (!Array.isArray(p.commits) || p.commits.length === 0) return null;
 	const repo = record(p.repository, "repository");
 	const defaultBranch = text(repo.default_branch, "repository.default_branch");
-	if (ref !== BRANCH_PREFIX + defaultBranch) return null;
 	const head = record(p.head_commit, "head_commit");
 	const author = record(head.author, "head_commit.author");
-	const before = text(p.before, "before");
 	return {
 		installationId: int(record(p.installation, "installation").id, "installation.id"),
 		repoId: int(repo.id, "repository.id"),
@@ -109,7 +107,6 @@ function normalizePush(p: Json): HubTrigger | null {
 		sha: text(p.after, "after"),
 		ref,
 		event: "push",
-		baseSha: ZERO_SHA.test(before) ? undefined : before,
 		authorLogin: typeof author.username === "string" && author.username !== "" ? author.username : text(record(p.sender, "sender").login, "sender.login"),
 		authorEmail: typeof author.email === "string" && author.email !== "" ? author.email : undefined,
 		commitTitle: text(head.message, "head_commit.message").split("\n", 1)[0] ?? "",

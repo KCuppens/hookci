@@ -35,38 +35,25 @@ func envValue(env []string, key string) (string, bool) {
 
 func TestBuildJobEnvExactKeys(t *testing.T) {
 	env := BuildJobEnv(pushInput())
-	want := []string{
-		"CI", "HOME",
-		"HOOKCI", "HOOKCI_EVENT", "HOOKCI_JOB", "HOOKCI_REF", "HOOKCI_RUN_ID", "HOOKCI_SHA",
-		"LANG", "PATH", "TMPDIR",
-		"ZEROCI", "ZEROCI_EVENT", "ZEROCI_JOB", "ZEROCI_REF", "ZEROCI_RUN_ID", "ZEROCI_SHA",
-	}
+	want := []string{"CI", "HOME", "HOOKCI", "HOOKCI_EVENT", "HOOKCI_JOB", "HOOKCI_REF", "HOOKCI_RUN_ID", "HOOKCI_SHA", "LANG", "PATH", "TMPDIR"}
 	if got := envKeys(env); !slices.Equal(got, want) {
 		t.Fatalf("keys = %v, want %v", got, want)
 	}
 	for key, want := range map[string]string{
-		"PATH":   JobPATH,
-		"HOME":   "/state/runs/01run/home",
-		"TMPDIR": "/state/runs/01run/tmp",
-		"LANG":   "C.UTF-8",
-		"CI":     "true",
+		"PATH":          JobPATH,
+		"HOME":          "/state/runs/01run/home",
+		"TMPDIR":        "/state/runs/01run/tmp",
+		"LANG":          "C.UTF-8",
+		"CI":            "true",
+		"HOOKCI":        "1",
+		"HOOKCI_RUN_ID": "01run",
+		"HOOKCI_JOB":    "lint",
+		"HOOKCI_SHA":    "abc123",
+		"HOOKCI_REF":    "refs/heads/main",
+		"HOOKCI_EVENT":  "push",
 	} {
 		if got, _ := envValue(env, key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
-		}
-	}
-	for _, prefix := range []string{"HOOKCI", "ZEROCI"} {
-		for key, want := range map[string]string{
-			prefix:             "1",
-			prefix + "_RUN_ID": "01run",
-			prefix + "_JOB":    "lint",
-			prefix + "_SHA":    "abc123",
-			prefix + "_REF":    "refs/heads/main",
-			prefix + "_EVENT":  "push",
-		} {
-			if got, _ := envValue(env, key); got != want {
-				t.Errorf("%s = %q, want %q", key, got, want)
-			}
 		}
 	}
 
@@ -82,19 +69,15 @@ func TestBuildJobEnvExactKeys(t *testing.T) {
 }
 
 func TestBuildJobEnvBaseSHAOnlyForPR(t *testing.T) {
-	for _, key := range []string{"HOOKCI_BASE_SHA", "ZEROCI_BASE_SHA"} {
-		if _, ok := envValue(BuildJobEnv(pushInput()), key); ok {
-			t.Fatalf("push run has %s", key)
-		}
+	if _, ok := envValue(BuildJobEnv(pushInput()), "HOOKCI_BASE_SHA"); ok {
+		t.Fatal("push run has HOOKCI_BASE_SHA")
 	}
 	in := pushInput()
 	pr := 7
 	in.Run.PR = &pr
 	in.Run.Event = "pull_request"
-	for _, key := range []string{"HOOKCI_BASE_SHA", "ZEROCI_BASE_SHA"} {
-		if got, ok := envValue(BuildJobEnv(in), key); !ok || got != "base1" {
-			t.Fatalf("%s = %q, %v; want base1", key, got, ok)
-		}
+	if got, ok := envValue(BuildJobEnv(in), "HOOKCI_BASE_SHA"); !ok || got != "base1" {
+		t.Fatalf("HOOKCI_BASE_SHA = %q, %v; want base1", got, ok)
 	}
 }
 

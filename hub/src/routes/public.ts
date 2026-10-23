@@ -1,9 +1,8 @@
-// The public legal, support and status pages GitHub and Slack link to from the app listings.
+// The public status page and the self-hosted font. The legal and support pages are served by well-known.ts.
 
 import { Hono } from "hono";
 import { INTER_WOFF2_BASE64 } from "../assets/inter";
 import type { Env } from "../env";
-import { privacyPage, supportPage, termsPage } from "../pages/legal";
 import { statusRoute } from "./status";
 
 let interBytes: Uint8Array | undefined;
@@ -20,9 +19,4 @@ function interFont(): Response {
 	});
 }
 
-export const publicRoutes = new Hono<{ Bindings: Env }>()
-	.get("/privacy", () => privacyPage())
-	.get("/terms", () => termsPage())
-	.get("/support", () => supportPage())
-	.get("/status", statusRoute)
-	.get("/assets/inter.woff2", () => interFont());
+export const publicRoutes = new Hono<{ Bindings: Env }>().get("/status", statusRoute).get("/assets/inter.woff2", () => interFont());

@@ -16,11 +16,6 @@ features:
       description: Watch repos, check status, retry runs and link your GitHub account.
       usage_hint: "watch|unwatch|status|retry|bind|me|help"
       should_escape: false
-    - command: /zeroci-dev
-      url: https://DEV-TUNNEL.example/slack/commands
-      description: Alias of /hookci, kept for installs that still use the old name.
-      usage_hint: "watch|unwatch|status|retry|bind|me|help"
-      should_escape: false
 oauth_config:
   redirect_urls:
     - https://DEV-TUNNEL.example/slack/oauth/callback

@@ -108,9 +108,11 @@ type Options struct {
 	Mirrors *source.Mirrors // shared clones of mirrored repos; nil: Source checks out everything
 	// Config loads the run's checks from its checked-out tree.
 	Config func(run store.Run, workdir string) (*config.ResolvedChecks, error)
-	// Protected reports whether the run's ref is a protected branch, which
-	// lets a trusted push run save caches. nil: no ref is protected.
-	Protected func(run store.Run) bool
+	// CacheFallback is the branches, in order, whose caches a run restores
+	// when its own branch has none; pull requests restore from these only.
+	// The daemon builds one Executor per run with that run's pull request
+	// base and the repo's default branch.
+	CacheFallback []string
 	// Policy is what the runs of this Executor may do; the daemon builds
 	// one Executor per run with the policy of that run's trust.
 	Policy        RunPolicy
@@ -336,8 +338,9 @@ func cacheDomain(run store.Run) string {
 }
 
 // startNetwork decides the network mode and starts the egress proxy and,
-// in netns mode, the namespace. Deny mode has no proxy: systemd's
-// IPAddressDeny blocks all egress.
+// in netns mode, the namespace. Deny mode has no proxy and no allow list:
+// systemd's IPAddressDeny blocks only host-local, private and reserved
+// ranges, so public egress stays open and no egress decision is logged.
 //
 // An untrusted trust domain or Policy.EgressProxyOnly makes the run proxy
 // only. Decide then requires a private namespace whose sole way out is the
@@ -411,18 +414,15 @@ func (e *Executor) startNetwork(ctx context.Context, rs *runState) error {
 // cachePath maps a setup cache path onto the run dir, the cache workdir:
 // "~" and "~/x" are under home/, anything else is under src/.
 func cachePath(p string) (string, error) {
-	base, rest := "src", p
-	switch {
-	case p == "~":
-		return "home", nil
-	case strings.HasPrefix(p, "~/"):
-		base, rest = "home", p[2:]
+	home, rel, err := config.SplitCachePath(p)
+	if err != nil {
+		return "", err
 	}
-	c := filepath.Clean(rest)
-	if !filepath.IsLocal(c) || c == "." {
-		return "", fmt.Errorf("cache path %q is not inside the %s directory", p, base)
+	base := "src"
+	if home {
+		base = "home"
 	}
-	return filepath.ToSlash(filepath.Join(base, c)), nil
+	return filepath.ToSlash(filepath.Join(base, rel)), nil
 }
 
 func cachePaths(ps []string) ([]string, error) {
@@ -439,14 +439,21 @@ func cachePaths(ps []string) ([]string, error) {
 
 // restoreCaches computes each setup step's cache key before setup runs, so
 // Save stores what this lockfile produced even if setup rewrites it, and
-// restores it. Cache errors are logged and never fail the run.
+// restores the first entry found along cacheScopes. A run saves under its own
+// branch unless a fallback branch's entry hit: that entry already holds what
+// the lockfile produced. Cache errors are logged and never fail the run.
 func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 	if e.o.Hooks.Cache == nil {
 		return
 	}
 	platform := runtime.GOOS + "-" + runtime.GOARCH
+	scopes, ownScope := cacheScopes(rs.run, e.o.CacheFallback)
 	for i, step := range rs.cfg.Setup {
 		if step.Cache == nil {
+			continue
+		}
+		if len(scopes) == 0 {
+			rs.logf("cache setup[%d]: no branch to restore from", i)
 			continue
 		}
 		keyFiles := make([]string, len(step.Cache.Key))
@@ -458,25 +465,54 @@ func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
 			rs.logf("cache setup[%d]: %v", i, err)
 			continue
 		}
-		k, err := cache.ComputeKey(cacheDomain(rs.run), platform, rs.dir.Root, keyFiles, paths)
+		k, err := cache.ComputeKey(cacheDomain(rs.run), scopes[0], platform, rs.dir.Root, keyFiles, paths)
 		if err != nil {
 			rs.logf("cache setup[%d]: key: %v", i, err)
 			continue
 		}
-		rs.cacheKeys = append(rs.cacheKeys, k)
-		hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, k, rs.dir.Root)
-		if cleanup != nil {
-			rs.cleanups = append(rs.cleanups, cleanup)
+		save := ownScope
+		for j, scope := range scopes {
+			lookup := k
+			if j > 0 {
+				lookup = k.InScope(scope)
+			}
+			hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, lookup, rs.dir.Root)
+			if cleanup != nil {
+				rs.cleanups = append(rs.cleanups, cleanup)
+			}
+			if err != nil {
+				rs.logf("cache setup[%d]: restore %s from %q: %v", i, lookup.Hash, scope, err)
+				break
+			}
+			if hit {
+				rs.logf("cache setup[%d]: hit %s from %q", i, lookup.Hash, scope)
+				save = save && j == 0
+				break
+			}
+			rs.logf("cache setup[%d]: miss %s in %q", i, lookup.Hash, scope)
 		}
-		switch {
-		case err != nil:
-			rs.logf("cache setup[%d]: restore %s: %v", i, k.Hash, err)
-		case hit:
-			rs.logf("cache setup[%d]: hit %s", i, k.Hash)
-		default:
-			rs.logf("cache setup[%d]: miss %s", i, k.Hash)
+		if save {
+			rs.cacheKeys = append(rs.cacheKeys, k)
 		}
 	}
+}
+
+// cacheScopes lists the branches whose caches run restores from, in order:
+// its own branch (Ref without refs/heads/) unless it is a pull request, then
+// fallback, skipping empty and repeated names. own reports whether the first
+// scope is the run's own branch. A run saves only under its own branch, so
+// pull requests, which have none, never save.
+func cacheScopes(run store.Run, fallback []string) (scopes []string, own bool) {
+	own = run.Event != "pull_request"
+	if own {
+		scopes = append(scopes, strings.TrimPrefix(run.Ref, "refs/heads/"))
+	}
+	for _, s := range fallback {
+		if s != "" && !slices.Contains(scopes, s) {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes, own
 }
 
 // startServices starts postgres when configured. Its socket dir is PG().
@@ -662,9 +698,6 @@ func (e *Executor) FinishRun(ctx context.Context, run store.Run, final store.Run
 
 	if final == store.RunSuccess && e.o.Hooks.Cache != nil && len(rs.cacheKeys) > 0 {
 		policy := cache.Policy{Kind: run.Kind, Event: run.Event, Trusted: rs.trusted}
-		if e.o.Protected != nil {
-			policy.Protected = e.o.Protected(run)
-		}
 		if cache.MaySave(policy) {
 			for _, k := range rs.cacheKeys {
 				err := e.o.Hooks.Cache.Save(ctx, k, policy, rs.dir.Root)

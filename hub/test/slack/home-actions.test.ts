@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { insertAgent } from "../../src/db/agents";
 import { upsertInstallation } from "../../src/db/installations";
 import { tenantDb } from "../../src/db/tenant";
@@ -90,10 +90,27 @@ describe("home:add_agent", () => {
     expect(opens.length).toBe(1);
     const body = opens[0]?.body as { trigger_id: string; view: string };
     expect(body.trigger_id).toBe("1.2.trig");
-    expect(body.view).toContain("hc_pair_");
+    expect(body.view).toContain("hci_pair_");
     expect(body.view).toContain(`curl -fsSL ${env.HUB_ORIGIN}/install | sh`);
-    expect(body.view).toContain("sudo hookci connect hc_pair_");
+    expect(body.view).toContain("sudo hookci connect hci_pair_");
     expect(await pairTokens()).toBe(1);
+  });
+
+  it("leaves out the install command while no agent release exists, linking to building the agent", async () => {
+    const saved = env.LATEST_AGENT_VERSION;
+    env.LATEST_AGENT_VERSION = "";
+    onTestFinished(() => {
+      env.LATEST_AGENT_VERSION = saved;
+    });
+    admins.add(LOGIN);
+    expect(await press("home:add_agent", String(INSTALLATION))).toBeNull();
+    const body = slackCalls(world, "views.open")[0]?.body;
+    expect(body).toMatchObject({ view: expect.any(String) });
+    // Checked just above: the fake parsed the form body and the view is a JSON string.
+    const { view } = body as { view: string };
+    expect(view).not.toContain("/install | sh");
+    expect(view).toContain(`<${S.pages.buildAgentUrl}|${S.pages.buildAgent}>`);
+    expect(view).toContain("sudo hookci connect hci_pair_");
   });
 
   it("refuses a non-admin without creating a token", async () => {

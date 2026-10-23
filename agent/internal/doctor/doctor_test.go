@@ -17,21 +17,25 @@ import (
 
 	"github.com/KCuppens/hookci/agent/internal/clock"
 	"github.com/KCuppens/hookci/agent/internal/execx"
+	"github.com/KCuppens/hookci/agent/internal/testutil"
 	"github.com/KCuppens/hookci/agent/internal/version"
 )
 
 var now = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 
-const agentJSON = `{"hub_url":"https://hub","agent_id":"agt_1","credential":"zc_agent_x","name":"b","installation_id":42}`
+const agentJSON = `{"hub_url":"https://hub","agent_id":"agt_1","credential":"hci_agent_x","name":"b","installation_id":42}`
 
-// fakeHub serves /healthz with a Date header dateOffset from now and
-// /v1/agent/connect the way the hub does: 426 without Upgrade, else 401.
+// fakeHub serves /healthz with a Date header dateOffset from now, /v1/info,
+// and /v1/agent/connect the way the hub does: 426 without Upgrade, else 401.
 func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Date", now.Add(dateOffset).Format(http.TimeFormat))
 		w.WriteHeader(healthStatus)
+	})
+	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"hookci-hub","version":"1.4.0","mode":"self_hosted","protocol_versions":[1,1],"github_app":{"slug":"acme-ci"},"slack":{"enabled":false}}`))
 	})
 	mux.HandleFunc("GET /v1/agent/connect", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -54,8 +58,8 @@ func fakeHub(t *testing.T, dateOffset time.Duration, healthStatus int, tls bool)
 
 func healthyFS() fstest.MapFS {
 	return fstest.MapFS{
-		"var/lib/hookci":               {Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}},
-		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o700},
+		"var/lib/hookci":               {Mode: fs.ModeDir | 0o711, Sys: &syscall.Stat_t{Uid: 0}},
+		"var/lib/hookci/42":            {Mode: fs.ModeDir | 0o711},
 		"var/lib/hookci/42/agent.json": {Data: []byte(agentJSON), Mode: 0o600},
 		"etc/passwd":                   {Data: []byte("root:x:0:0::/root:/bin/sh\nhookci-run:x:998:998::/nonexistent:/usr/sbin/nologin\n")},
 	}
@@ -106,7 +110,7 @@ func runOne(t *testing.T, c Check, env Env) Result {
 func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	srv := fakeHub(t, 0, http.StatusOK, true)
 	rs := Run(context.Background(), healthyEnv(srv), Default())
-	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "hookci_run_user", "git_present", "disk_space", "hub_reachable", "hub_tls", "clock_skew", "ws_upgrade"}
+	want := []string{"version", "systemd_unit", "state_dir_perms", "credential_present", "hookci_run_user", "git_present", "disk_space", "hub_reachable", "hub_info", "hub_tls", "clock_skew", "ws_upgrade"}
 	if len(rs) != len(want) {
 		t.Fatalf("got %d results, want %d", len(rs), len(want))
 	}
@@ -122,6 +126,17 @@ func TestDefaultAllPassOnHealthyHost(t *testing.T) {
 	if Render(&out, rs) {
 		t.Errorf("Render reported a failure:\n%s", out.String())
 	}
+}
+
+// The healthy host's table, with the test server's origin replaced by a
+// stable one.
+func TestRenderHealthyHostGolden(t *testing.T) {
+	srv := fakeHub(t, 0, http.StatusOK, true)
+	var out bytes.Buffer
+	if Render(&out, Run(context.Background(), healthyEnv(srv), Default())) {
+		t.Fatalf("Render reported a failure:\n%s", out.String())
+	}
+	testutil.Golden(t, "doctor_healthy", []byte(strings.ReplaceAll(out.String(), srv.URL, "https://hub.test")))
 }
 
 func TestChecksWarnOrFail(t *testing.T) {
@@ -145,13 +160,27 @@ func TestChecksWarnOrFail(t *testing.T) {
 			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755, Sys: &syscall.Stat_t{Uid: 0}}
 		}, Fail, "mode 0755"},
 		{"state dir owner", stateDirPermsCheck{}, func(e *Env) {
-			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 1000}}
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o711, Sys: &syscall.Stat_t{Uid: 1000}}
 		}, Fail, "uid 1000"},
+		// The executor refuses every job when the job user cannot reach its run dirs.
+		{"state dir unsearchable", stateDirPermsCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/hookci"] = &fstest.MapFile{Mode: fs.ModeDir | 0o700, Sys: &syscall.Stat_t{Uid: 0}}
+		}, Fail, "/var/lib/hookci (mode 0700) is not searchable by hookci-run (uid 998)"},
+		{"state dir ancestor unsearchable", stateDirPermsCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib"] = &fstest.MapFile{Mode: fs.ModeDir | 0o750, Sys: &syscall.Stat_t{Uid: 0}}
+		}, Fail, "/var/lib (mode 0750) is not searchable by hookci-run"},
 		{"state dir missing", stateDirPermsCheck{}, func(e *Env) { e.StateRoot = "/nope" }, Fail, "/nope"},
 		{"credential missing", credentialCheck{}, func(e *Env) { delete(e.FS.(fstest.MapFS), "var/lib/hookci/42/agent.json") }, Fail, "no agent.json"},
 		{"credential empty", credentialCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"] = &fstest.MapFile{Data: []byte(`{"agent_id":"agt_1","installation_id":42}`)}
 		}, Fail, "has no credential"},
+		// A broken agent.json is named, not skipped as an unpaired directory.
+		{"credential undecodable", credentialCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/hookci/42/agent.json: unexpected end of JSON input"},
+		{"unit undecodable agent.json", systemdUnitCheck{}, func(e *Env) {
+			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Data = []byte(`{"agent_id":`)
+		}, Fail, "/var/lib/hookci/42/agent.json: unexpected end of JSON input"},
 		{"credential readable by others", credentialCheck{}, func(e *Env) {
 			e.FS.(fstest.MapFS)["var/lib/hookci/42/agent.json"].Mode = 0o644
 		}, Fail, "/var/lib/hookci/42/agent.json has mode 0644, want 0600"},
@@ -170,6 +199,19 @@ func TestChecksWarnOrFail(t *testing.T) {
 			srv := fakeHub(t, 0, http.StatusServiceUnavailable, true)
 			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
 		}, Fail, "answered 503"},
+		{"hub info down", hubInfoCheck{}, func(e *Env) { e.HubOrigin = "https://127.0.0.1:1" }, Warn, "127.0.0.1:1"},
+		{"hub without info", hubInfoCheck{}, func(e *Env) {
+			srv := httptest.NewTLSServer(http.NotFoundHandler())
+			t.Cleanup(srv.Close)
+			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
+		}, Warn, "HTTP 404"},
+		{"not a hub", hubInfoCheck{}, func(e *Env) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"name":"gitea"}`))
+			}))
+			t.Cleanup(srv.Close)
+			e.HubOrigin, e.HTTP = srv.URL, srv.Client()
+		}, Warn, "not a hookci hub"},
 		{"hub down", hubReachableCheck{}, func(e *Env) { e.HubOrigin = "https://127.0.0.1:1" }, Fail, "127.0.0.1:1"},
 		{"tls untrusted", hubTLSCheck{}, func(e *Env) { e.HTTP = &http.Client{} }, Fail, "certificate"},
 		{"tls plain http", hubTLSCheck{}, func(e *Env) {
@@ -236,6 +278,7 @@ func TestRenderTable(t *testing.T) {
 		{ID: "git_present", Title: "git", Status: Pass, Detail: "git version 2.39.2"},
 		{ID: "disk_space", Title: "disk space", Status: Warn, Detail: "1.0 GiB free", Fix: "free space"},
 		{ID: "hub_reachable", Title: "hub reachable", Status: Fail, Detail: "refused", Fix: "check DNS"},
+		{ID: "deploy.caddy", Title: "caddy", Status: Skip, Detail: "no deployment routes through caddy"},
 	})
 	if !failed {
 		t.Error("Render = false with a failed check")
@@ -245,11 +288,12 @@ func TestRenderTable(t *testing.T) {
 		"warn    disk space     1.0 GiB free\n" +
 		"                       fix: free space\n" +
 		"fail    hub reachable  refused\n" +
-		"                       fix: check DNS\n"
+		"                       fix: check DNS\n" +
+		"skip    caddy          no deployment routes through caddy\n"
 	if out.String() != want {
 		t.Errorf("table =\n%s\nwant\n%s", out.String(), want)
 	}
-	if Render(&bytes.Buffer{}, []Result{{Status: Warn}}) {
-		t.Error("Render = true with only a warning")
+	if Render(&bytes.Buffer{}, []Result{{Status: Warn}, {Status: Skip}}) {
+		t.Error("Render = true with only a warning and a skip")
 	}
 }

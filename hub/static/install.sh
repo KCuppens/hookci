@@ -3,15 +3,17 @@
 # (hub __HUB_VERSION__).
 #
 #   curl -fsSL __HUB_ORIGIN__/install | sh
+#   curl -fsSL __HUB_ORIGIN__/install | sh -s -- <pair-token>
+#
+# With a pair token the installer also runs `hookci connect` to pair this
+# machine with the hub.
 #
 # Environment:
 #   HOOKCI_VERSION          release tag to install, "latest" (default) or vX.Y.Z
 #   HOOKCI_INSTALL_DRY_RUN  when set, print the privileged steps instead of running them
 #   HOOKCI_RELEASE_BASE     where release assets live (a file:// base is copied)
 #   HOOKCI_PREFIX           absolute install prefix, the binary goes to $HOOKCI_PREFIX/bin
-#
-# The ZEROCI_ spelling of VERSION, INSTALL_DRY_RUN, RELEASE_BASE and PREFIX
-# still works when the HOOKCI_ one is unset.
+#   HOOKCI_ALLOW_UNSIGNED   set to 1 to install without cosign, checking only the checksum
 set -eu
 
 # Releases are cut locally with goreleaser; SHA256SUMS is signed with the
@@ -19,10 +21,11 @@ set -eu
 HOOKCI_COSIGN_IDENTITY="kobecuppens@hotmail.com"
 HOOKCI_COSIGN_ISSUER="https://github.com/login/oauth"
 
-HOOKCI_VERSION="${HOOKCI_VERSION:-${ZEROCI_VERSION:-latest}}"
-HOOKCI_INSTALL_DRY_RUN="${HOOKCI_INSTALL_DRY_RUN:-${ZEROCI_INSTALL_DRY_RUN:-}}"
-HOOKCI_RELEASE_BASE="${HOOKCI_RELEASE_BASE:-${ZEROCI_RELEASE_BASE:-https://github.com/KCuppens/hookci/releases/download}}"
-HOOKCI_PREFIX="${HOOKCI_PREFIX:-${ZEROCI_PREFIX:-/usr/local}}"
+HOOKCI_VERSION="${HOOKCI_VERSION:-latest}"
+HOOKCI_INSTALL_DRY_RUN="${HOOKCI_INSTALL_DRY_RUN:-}"
+HOOKCI_ALLOW_UNSIGNED="${HOOKCI_ALLOW_UNSIGNED:-}"
+HOOKCI_RELEASE_BASE="${HOOKCI_RELEASE_BASE:-https://github.com/KCuppens/hookci/releases/download}"
+HOOKCI_PREFIX="${HOOKCI_PREFIX:-/usr/local}"
 HUB_ORIGIN="__HUB_ORIGIN__"
 
 die() {
@@ -36,18 +39,13 @@ run() { if [ -n "$HOOKCI_INSTALL_DRY_RUN" ]; then echo "+ $*"; else "$@"; fi; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# fetch URL DEST copies a file:// URL and downloads an https:// one. The
-# scheme check covers wget, whose --https-only binds only recursive downloads.
+# fetch URL DEST copies a file:// URL and downloads an https:// one with curl,
+# whose --proto '=https' also refuses a redirect to another scheme. wget has no
+# such switch for single downloads, so the installer needs curl.
 fetch() {
 	case $1 in
 	file://*) cp "${1#file://}" "$2" ;;
-	https://*)
-		if have curl; then
-			curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
-		else
-			wget -q -O "$2" "$1"
-		fi
-		;;
+	https://*) curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1" ;;
 	*) die 1 "refusing to download $1: not an https:// or file:// URL" ;;
 	esac
 }
@@ -72,12 +70,14 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/hookci agent --installation %i
 Restart=always
-# Exit 3 is a revoked agent, 4 is agent_too_old or another internal error
+# Exit 3 is a revoked agent or no usable agent.json, 4 is agent_too_old
 # (agent/internal/cli/exit.go); restarting cannot fix either.
 RestartPreventExitStatus=3 4
 RestartSec=5
 Slice=hookci.slice
 StateDirectory=hookci/%i
+Environment=HOOKCI_STATE_DIR=%S/hookci/%i
+Environment=HOME=/root
 NoNewPrivileges=no
 
 [Install]
@@ -89,6 +89,16 @@ EOF
 # The whole install runs from main, so a download cut off mid-transfer
 # defines functions but runs nothing.
 main() {
+	[ $# -le 1 ] || die 1 "usage: curl -fsSL $HUB_ORIGIN/install | sh -s -- [pair-token]"
+	token=${1:-}
+	case $token in
+	"" | hci_pair_?*) ;;
+	*) die 1 "the argument must be a pair token: hci_pair_ then letters, digits, _ or -" ;;
+	esac
+	case $token in
+	*[!A-Za-z0-9_-]*) die 1 "the argument must be a pair token: hci_pair_ then letters, digits, _ or -" ;;
+	esac
+
 	[ "$(uname -s)" = Linux ] || die 2 "unsupported OS $(uname -s): the agent runs on Linux"
 	machine="${HOOKCI_TEST_UNAME_M:-$(uname -m)}"
 	case $machine in
@@ -107,7 +117,7 @@ main() {
 	*[!A-Za-z0-9/._-]*) die 1 "HOOKCI_PREFIX may only contain letters, digits and / . _ -, got $HOOKCI_PREFIX" ;;
 	esac
 
-	have curl || have wget || die 1 "need curl or wget"
+	have curl || die 1 "need curl"
 	have tar || die 1 "need tar"
 	if have sha256sum; then
 		sha256() { sha256sum "$1" | cut -d' ' -f1; }
@@ -119,10 +129,13 @@ main() {
 
 	tag=$HOOKCI_VERSION
 	if [ "$tag" = latest ]; then
-		have curl || die 1 "resolving the latest release needs curl: set HOOKCI_VERSION=vX.Y.Z"
 		latest=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${HOOKCI_RELEASE_BASE%/download}/latest") ||
 			die 1 "cannot resolve the latest release"
 		tag=${latest##*/}
+		case $tag in
+		v*) ;;
+		*) die 1 "no published release found at ${HOOKCI_RELEASE_BASE%/download}/latest: set HOOKCI_VERSION=vX.Y.Z" ;;
+		esac
 	fi
 	case $tag in
 	v*) ;;
@@ -150,8 +163,12 @@ main() {
 			--bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
 			die 4 "signature verification failed for SHA256SUMS"
 		echo "Signature verified"
+	elif [ "$HOOKCI_ALLOW_UNSIGNED" = 1 ]; then
+		echo "cosign not found and HOOKCI_ALLOW_UNSIGNED=1: checksum verified, signature not verified" >&2
 	else
-		echo "cosign not found: checksum verified, signature not verified"
+		# The checksum comes from the same release as the binary, so only the
+		# signature shows who built it.
+		die 4 "cosign not found: install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify the release signature, or set HOOKCI_ALLOW_UNSIGNED=1 to install with only the checksum checked"
 	fi
 
 	tar -xzf "$tmp/$asset" -C "$tmp" hookci || die 1 "$asset has no hookci binary"
@@ -173,25 +190,31 @@ main() {
 	if ! id hookci-run >/dev/null 2>&1; then
 		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin hookci-run
 	fi
+	if ! id hookci-deploy >/dev/null 2>&1; then
+		run $sudo useradd --system --no-create-home --shell /usr/sbin/nologin hookci-deploy
+	fi
+	# Deploys run docker compose as hookci-deploy (hookci doctor check deploy.user).
+	if getent group docker >/dev/null 2>&1; then
+		run $sudo usermod -aG docker hookci-deploy
+	fi
 	run $sudo install -m 0644 -o root -g root "$tmp/hookci.slice" /etc/systemd/system/hookci.slice
 	run $sudo install -m 0644 -o root -g root "$tmp/agent.service" /etc/systemd/system/hookci-agent@.service
 	if [ -n "$HOOKCI_INSTALL_DRY_RUN" ]; then
 		cat "$tmp/agent.service"
 	fi
 	run $sudo mkdir -p /var/lib/hookci
-	run $sudo chmod 0700 /var/lib/hookci
+	run $sudo chmod 0711 /var/lib/hookci
 	run $sudo systemctl daemon-reload
 
-	# A ZeroCI install runs zeroci-agent@ units that execute "zeroci"; let
-	# that name run the new binary.
-	if have zeroci || [ -e "${HOOKCI_TEST_SYSTEMD_DIR:-/etc/systemd/system}/zeroci-agent@.service" ]; then
-		run $sudo ln -sf hookci "$HOOKCI_PREFIX/bin/zeroci"
-		echo "Found a ZeroCI install: linked $HOOKCI_PREFIX/bin/zeroci to hookci. Migration steps: https://github.com/KCuppens/hookci/blob/main/MIGRATING.md"
-	fi
-
 	echo
-	echo "Installed hookci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
-	echo "  sudo hookci connect <pair-token>"
+	if [ -n "$token" ]; then
+		echo "Installed hookci $tag. Pairing this machine with $HUB_ORIGIN"
+		run $sudo "$HOOKCI_PREFIX/bin/hookci" connect --hub "$HUB_ORIGIN" "$token" ||
+			die 1 "pairing failed: get a new pair token from Slack App Home ($HUB_ORIGIN) and run: sudo hookci connect --hub $HUB_ORIGIN <pair-token>"
+	else
+		echo "Installed hookci $tag. Next, pair this machine with the token from Slack App Home ($HUB_ORIGIN):"
+		echo "  sudo hookci connect --hub $HUB_ORIGIN <pair-token>"
+	fi
 }
 
 main "$@"

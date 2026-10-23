@@ -69,15 +69,15 @@ export interface Checks {
      */
     push?: {
       /**
-       * Branches whose pushes start a check run.
+       * Branches whose pushes start a check run, as names or GitHub Actions style globs (* matches within one path segment, ** across segments). Unset: the repository's default branch. A branch a deployment's on.push names always runs checks.
        */
       branches?: string[];
     };
   };
   /**
-   * Whose pull requests run automatically: repository collaborators, only after approval, or everyone.
+   * Whose pull requests run automatically: repository collaborators, or everyone (fork pull requests included; only a self-hosted hub without deployments honors it).
    */
-  trust?: "collaborators" | "approve" | "all";
+  trust?: "collaborators" | "all";
   /**
    * Fork pull requests: gated behind approval, or never run.
    */
@@ -209,75 +209,167 @@ export interface Limits1 {
   tasks?: number;
 }
 /**
- * A deployment to one environment. Validated in M0, executed in M2.
+ * A deployment to one environment. The agent checks the strategy-dependent rules (required sections, {port}, absolute paths, durations, needs) after schema validation.
  */
 export interface Deployment {
   /**
    * Event that starts the deployment.
    */
-  on?: {
+  on: {
     /**
-     * Deploy on pushes.
+     * Branch whose pushes deploy.
      */
-    push?: {
+    push: string;
+    /**
+     * What must pass before the deployment starts.
+     */
+    after?: "checks";
+  };
+  /**
+   * How the new version replaces the old one. compose-bluegreen starts the other color and switches the route, compose-inplace recreates the service, script runs the run command.
+   */
+  strategy: "compose-bluegreen" | "compose-inplace" | "script";
+  /**
+   * Docker Compose project to deploy. Required for the compose strategies.
+   */
+  compose?: {
+    /**
+     * Compose project name.
+     */
+    project: string;
+    /**
+     * Compose file, relative to the repository root.
+     */
+    file?: string;
+    /**
+     * Service that serves the application.
+     */
+    service: string;
+    /**
+     * External Docker network the service joins, for example the reverse proxy network.
+     */
+    shared_network?: string;
+    /**
+     * Absolute path of the file that records the active color.
+     */
+    marker?: string;
+  };
+  /**
+   * Database migration run before the switch.
+   */
+  migrate?: {
+    /**
+     * Migration command, run in the new image.
+     */
+    run: string;
+    /**
+     * Globs of migration files. When set, migrate.before runs only when a changed file since the last successful deploy matches one of them.
+     */
+    paths?: string[];
+    /**
+     * Backup command run in a one-off container before the migration, with output_dir mounted at /backup. {env}, {sha7} and {ts} in run are replaced.
+     */
+    before?: {
       /**
-       * Branch whose pushes deploy.
+       * Backup command, run with sh -c.
        */
-      branch?: string;
+      run: string;
+      /**
+       * Image the backup command runs in. Defaults to the freshly built app image.
+       */
+      image?: string;
+      /**
+       * Absolute host directory the backup is written to, mounted at /backup.
+       */
+      output_dir?: string;
+      /**
+       * Number of recorded backups kept; older ones are deleted.
+       */
+      retain?: number;
     };
   };
   /**
-   * How the new version replaces the old one.
+   * Reverse proxy route switched between colors. Required for compose-bluegreen.
    */
-  strategy?: "restart" | "compose-bluegreen";
-  /**
-   * Where the application lives on the host.
-   */
-  target?: {
+  route?: {
     /**
-     * Application directory.
+     * Reverse proxy.
      */
-    path?: string;
+    kind: "caddy";
     /**
-     * systemd unit to restart.
+     * Absolute, clean path of the route file hookci writes. It must be inside one of the agent's deploy.route_dirs (agent.json, default /etc/caddy), with no symlink leading out of it.
      */
-    unit?: string;
+    file: string;
+    /**
+     * Command that reloads the proxy after the route file changes. It runs as root, so it must be caddy reload [flags], /usr/bin/caddy reload [flags], /usr/local/bin/caddy reload [flags], docker exec <container> caddy reload [flags] or systemctl reload caddy. It is split into words like a shell would, but no shell runs it.
+     */
+    reload?: string;
+    /**
+     * Host the proxy reaches the service on.
+     */
+    upstream_host?: string;
   };
   /**
-   * Build command.
+   * Health check of the new version. Required for the compose strategies.
    */
-  build?: string;
+  health?: {
+    /**
+     * Local URL to probe. The compose strategies fill in {port}, which the URL must contain.
+     */
+    url: string;
+    /**
+     * Expected HTTP status code.
+     */
+    expect?: number;
+    /**
+     * Probes before the deployment counts as unhealthy.
+     */
+    retries?: number;
+    /**
+     * Time between probes, as a Go duration such as 2s or 500ms.
+     */
+    interval?: string;
+  };
   /**
-   * Database migration command.
+   * Watch window after the switch, during which a failed probe rolls back.
    */
-  migrate?: string;
+  verify?: {
+    /**
+     * How long to watch, as a Go duration such as 60s.
+     */
+    window?: string;
+    /**
+     * Time between probes, as a Go duration. At most window.
+     */
+    interval?: string;
+  };
   /**
    * Absolute path of the environment file on the host.
    */
   env_file?: string;
   /**
-   * Health check run after the switch.
+   * What to keep for rollback.
    */
-  health?: {
+  retain?: {
     /**
-     * Local URL to probe.
+     * Number of images to keep, counting the running one.
      */
-    url?: string;
-    /**
-     * How long to wait for a healthy answer, with an s, m or h suffix.
-     */
-    timeout?: string;
-    /**
-     * Expected HTTP status code.
-     */
-    expect_status?: number;
+    images?: number;
   };
   /**
-   * Roll back automatically or manually when the health check fails.
+   * Globs relative to the repository root. When set, a push deploys only if it changes a matching file.
    */
-  rollback?: "auto" | "manual";
+  paths?: string[];
   /**
-   * Require a human approval before deploying.
+   * Environments whose deployment of the same commit must succeed first.
    */
-  approve?: boolean;
+  needs?: string[];
+  /**
+   * Deploy command. Required for strategy: script. Each stdout line "::hookci step <name>" (name: lowercase letters, digits, "_", "." and "-", up to 40 characters) reports a progress step. A resumed deploy re-runs the command from the start.
+   */
+  run?: string;
+  /**
+   * Command that restores the previous version. Optional, strategy: script only. Runs when run fails, with HOOKCI_FAILED_STEP set to the last step run reported.
+   */
+  rollback?: string;
 }

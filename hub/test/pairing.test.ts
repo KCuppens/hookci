@@ -2,16 +2,18 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/crypto";
-import { agentCredentialHash } from "../src/db/agents";
-import { upsertInstallation } from "../src/db/installations";
+import { agentCredentialHash, revokeAgent as markRevoked } from "../src/db/agents";
+import { markSuspended, upsertInstallation } from "../src/db/installations";
 import { upsertRepos } from "../src/db/repos";
 import { tenantDb } from "../src/db/tenant";
 import { revokeAgent } from "../src/pairing/agents";
-import { PAIR_TOKEN_TTL_MS, type RedeemResult, createPairToken } from "../src/pairing/tokens";
+import { authenticateAgent } from "../src/routes/agent-auth";
+import { PAIR_TOKEN_TTL_MS, type RedeemResult, createPairToken, redeemPairToken } from "../src/pairing/tokens";
 import { type TriggerRequest, routeTrigger } from "../src/webhook/route";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { type Agent, AgentSocket, connect, connectRequest, seedAgent } from "./do/agent-socket";
+import { useFakeGitHub } from "./fakes/github";
 
 const INSTALLATION = 42;
 const ADMIN = 7;
@@ -67,7 +69,7 @@ describe("pairing", () => {
     const body = await res.json<RedeemResult>();
     expect(body).toEqual({
       agent_id: expect.stringMatching(/^agt_[0-9a-z]{26}$/),
-      credential: expect.stringMatching(/^hc_agent_[a-z2-7]+$/),
+      credential: expect.stringMatching(/^hci_agent_[a-z2-7]+$/),
       installation_id: INSTALLATION,
       hub_ws_url: `${env.HUB_ORIGIN.replace(/^http/, "ws")}/v1/agent/connect`,
       name: "builder",
@@ -94,22 +96,6 @@ describe("pairing", () => {
     expect(await env.DB.prepare("SELECT token_hash FROM pair_tokens").first("token_hash")).toBe(await sha256Hex(token));
 
     expect((await connectRequest(body.credential)).status).toBe(101);
-  });
-
-  it("still redeems a zc_pair_ token issued before the rename, and the new credential connects", async () => {
-    const token = "zc_pair_legacytoken0123456789";
-    await env.DB.prepare("INSERT INTO pair_tokens (installation_id, token_hash, created_by_github_id, replaces_agent_id, expires_at, used_at) VALUES (?1, ?2, ?3, NULL, ?4, NULL)")
-      .bind(INSTALLATION, await sha256Hex(token), ADMIN, testClock.now() + PAIR_TOKEN_TTL_MS)
-      .run();
-    const paired = await pair(token);
-    expect(paired.credential).toMatch(/^hc_agent_/);
-    await connect(agentOf(paired));
-  });
-
-  it("connects with a zc_agent_ credential issued before the rename", async () => {
-    const agent = await seedAgent(INSTALLATION);
-    expect(agent.credential.startsWith("zc_agent_")).toBe(true);
-    await connect(agent);
   });
 
   it("token is single use", async () => {
@@ -142,7 +128,7 @@ describe("pairing", () => {
     await pair(used);
     const expired = await newToken();
     testClock.advance(PAIR_TOKEN_TTL_MS);
-    const responses = await Promise.all([redeemRequest("zc_pair_doesnotexist"), redeemRequest(used), redeemRequest(expired)]);
+    const responses = await Promise.all([redeemRequest("hci_pair_doesnotexist"), redeemRequest(used), redeemRequest(expired)]);
     const bodies = await Promise.all(responses.map((r) => r.text()));
     expect(responses.map((r) => r.status)).toEqual([400, 400, 400]);
     expect(bodies).toEqual(Array(3).fill('{"error":"invalid_pair_token"}'));
@@ -165,14 +151,45 @@ describe("pairing", () => {
     expect(n).toBe(10);
   });
 
+  it("a token refused for agent_limit redeems once an agent is removed", async () => {
+    const seeded = [];
+    for (let i = 0; i < 10; i++) seeded.push(await seedAgent(INSTALLATION));
+    const token = await newToken();
+    expect((await redeemRequest(token)).status).toBe(409);
+    await markRevoked(tenantDb(env.DB, INSTALLATION), seeded[0]!.agentId, testClock.now());
+    expect(await pair(token)).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+    expect((await redeemRequest(token)).status).toBe(400);
+  });
+
+  it("a token refused while the installation is suspended redeems once it is unsuspended", async () => {
+    const token = await newToken();
+    await markSuspended(env.DB, INSTALLATION, 1);
+    const refused = await redeemRequest(token);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "suspended" });
+    await markSuspended(env.DB, INSTALLATION, null);
+    expect(await pair(token)).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+  });
+
   it("pair token issuance rate limit", async () => {
     for (let i = 0; i < 10; i++) await newToken();
     await expect(newToken()).rejects.toMatchObject({ code: "pair_rate_limited", status: 429 });
     testClock.advance(60 * 60_000);
-    await expect(newToken()).resolves.toMatch(/^hc_pair_/);
+    await expect(newToken()).resolves.toMatch(/^hci_pair_/);
   });
 
-  it("re-pair rotates credential and interrupts runs", async () => {
+  it("a self-hosted hub pairs an eleventh agent and issues an eleventh pair token in the hour", async () => {
+    const selfHosted = { ...env, HUB_MODE: "self_hosted" };
+    for (let i = 0; i < 10; i++) await seedAgent(INSTALLATION);
+    for (let i = 0; i < 10; i++) await newToken();
+    const { token } = await createPairToken(selfHosted, { installationId: INSTALLATION, createdByGithubId: ADMIN });
+    const input = { pair_token: token, name: "builder", hostname: "builder.local", agent_version: "1.4.0", os: "linux", arch: "amd64" };
+    expect(await redeemPairToken(selfHosted, input, "203.0.113.9")).toMatchObject({ agent_id: expect.stringMatching(/^agt_/) });
+    const { n } = (await env.DB.prepare("SELECT count(*) AS n FROM agents").first<{ n: number }>())!;
+    expect(n).toBe(11);
+  });
+
+  it("re-pair keeps the old credential until the new one connects, then interrupts runs and drops it", async () => {
     const paired = await pair();
     const agent = agentOf(paired);
     const sock = await connect(agent);
@@ -198,11 +215,18 @@ describe("pairing", () => {
     const { trigger_id } = await trig.json<{ trigger_id: string }>();
     expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id });
     expect(await sock.request({ type: "accepted", trigger_id, run_id: "run_a" })).toEqual([]);
+    const runState = () => env.DB.prepare("SELECT state FROM runs WHERE run_id = 'run_a'").first<string>("state");
+    const accepted = await runState();
 
     const repaired = await pair(await newToken(agent.agentId));
     expect(repaired.agent_id).toBe(agent.agentId);
     expect(repaired.credential).not.toBe(agent.credential);
 
+    // Until the agent uses the new credential, a lost redeem response cannot lock it out.
+    expect(await authenticateAgent(env, `Bearer ${agent.credential}`)).toMatchObject({ agent_id: agent.agentId });
+    expect(await runState()).toBe(accepted);
+
+    expect((await connectRequest(repaired.credential)).status).toBe(101);
     expect(await sock.next()).toMatchObject({ type: "interrupt", run_id: "run_a", reason: "repair" });
     expect(await sock.closed).toMatchObject({ code: 4000 });
     const old = await connectRequest(agent.credential);
@@ -226,6 +250,7 @@ describe("pairing", () => {
     const reconnect = await connectRequest(paired.credential);
     expect(reconnect.status).toBe(401);
 
+    const github = await useFakeGitHub(env);
     const ctx = createExecutionContext();
     const outcome = await routeTrigger(
       env,
@@ -243,12 +268,12 @@ describe("pairing", () => {
       },
       ctx,
     );
-    await waitOnExecutionContext(ctx);
+    await waitOnExecutionContext(ctx).finally(github.restore);
     expect(outcome).toEqual({ kind: "no_agent" });
   });
 
   it("redeem per-IP limit", async () => {
-    for (let i = 0; i < 20; i++) expect((await redeemRequest(`zc_pair_guess${i}`, "198.51.100.4")).status).toBe(400);
+    for (let i = 0; i < 20; i++) expect((await redeemRequest(`hci_pair_guess${i}`, "198.51.100.4")).status).toBe(400);
     const limited = await redeemRequest(await newToken(), "198.51.100.4");
     expect(limited.status).toBe(429);
     expect((await redeemRequest(await newToken(), "198.51.100.5")).status).toBe(200);

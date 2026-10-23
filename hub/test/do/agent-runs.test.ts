@@ -3,9 +3,11 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bind } from "../../src/db/bindings";
 import { upsertInstallation } from "../../src/db/installations";
-import { updateRunState } from "../../src/db/runs";
+import { insertRun, updateRunState } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
+import { upsertDeployRender } from "../../src/deploy/render";
 import { pruneFinished, TRIGGER_RETENTION_MS } from "../../src/do/agent-runs";
+import { QUOTAS } from "../../src/quotas";
 import { registerSinkFactory } from "../../src/sinks";
 import type { Sink } from "../../src/sinks/types";
 import { S } from "../../src/strings";
@@ -13,6 +15,7 @@ import type { TriggerRequest } from "../../src/webhook/route";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
 import { createFakeGitHub } from "../fakes/github";
+import type { FakeService } from "../fakes/http";
 import { generateAppKey } from "../github/helpers";
 import { type RecordingSink, recordSink, type SinkCall } from "../sinks/recording";
 import { type Agent, type AgentSocket, connect, seedAgent } from "./agent-socket";
@@ -30,7 +33,7 @@ const PR_TRIGGER: TriggerRequest = {
   sha: SHA_1,
   ref: "refs/heads/feature",
   event: "pull_request",
-  pr: { number: 7, headRef: "feature", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
+  pr: { number: 7, headRef: "feature", baseRef: "main", headRepoFullName: "acme/widgets", fork: false, authorLogin: "alice" },
   baseSha: "0".repeat(39) + "1",
   authorLogin: "alice",
   commitTitle: "Add widget sizing",
@@ -201,6 +204,23 @@ describe("AgentDO run lifecycle", () => {
     expect(await triggerState(agent, unaccepted)).toBe("superseded");
   });
 
+  it("a retry of an older commit does not supersede a newer waiting deploy", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const a = await trigger(agent, DEPLOY_TRIGGER);
+    const b = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_2 });
+    expect(await triggerState(agent, a)).toBe("superseded");
+
+    const retry = await trigger(agent, { ...DEPLOY_TRIGGER, attempt: 2 });
+    expect((await outbox(agent)).map((f) => f.trigger_id)).toEqual([b, retry]);
+    expect(await triggerState(agent, b)).toBe("sent");
+    expect(await run(b)).toMatchObject({ state: "queued" });
+
+    // A newer push still replaces the waiting retry.
+    const c = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_3 });
+    expect((await outbox(agent)).map((f) => f.trigger_id)).toEqual([c]);
+    expect(await triggerState(agent, retry)).toBe("superseded");
+  });
+
   it("daily cap", async () => {
     const day = new Date(testClock.now()).toISOString().slice(0, 10);
     await env.DB.prepare("INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, ?2, 500)").bind(INSTALLATION, day).run();
@@ -210,6 +230,22 @@ describe("AgentDO run lifecycle", () => {
     expect(await run(triggerId)).toMatchObject({ state: "pending", reason: "daily_cap" });
     expect(await outbox(agent)).toEqual([]);
     expect(runUpdates(sink.calls)).toEqual([{ triggerId, runId: undefined, state: "pending", reason: "daily_cap" }]);
+    expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(501);
+  });
+
+  it("a self-hosted hub has no daily cap", async () => {
+    const day = new Date(testClock.now()).toISOString().slice(0, 10);
+    await env.DB.prepare("INSERT INTO daily_counters (installation_id, day, runs) VALUES (?1, ?2, 500)").bind(INSTALLATION, day).run();
+    const agent = await seedAgent(INSTALLATION);
+    const saved = env.HUB_MODE;
+    env.HUB_MODE = "self_hosted";
+    cleanups.push(() => {
+      env.HUB_MODE = saved;
+    });
+    const triggerId = await trigger(agent);
+
+    expect(await run(triggerId)).toMatchObject({ state: "queued", reason: null });
+    expect(await outbox(agent)).toEqual([expect.objectContaining({ type: "trigger", trigger_id: triggerId })]);
     expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(501);
   });
 
@@ -336,9 +372,143 @@ describe("AgentDO run lifecycle", () => {
     await acceptedRun(agent, sock, "run_a");
 
     const sent = await sock.request({ type: "token_request", run_id: "run_a", purpose: "fetch" });
-    expect(sent).toEqual([{ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", message: S.runNotBound }]);
+    expect(sent).toEqual([{ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: "run_a", message: S.runNotBound }]);
     expect(sock.ws.readyState).toBe(WebSocket.OPEN);
     expect(gh.calls).toEqual([]);
+  });
+
+  /** Serves installation token mints from a fake GitHub for this test. */
+  async function fakeTokenMint(): Promise<FakeService> {
+    const gh = createFakeGitHub();
+    gh.respond("POST", "/app/installations/:id/access_tokens", () =>
+      Response.json({ token: "ghs_fetch", expires_at: "2030-01-01T00:00:00Z" }, { status: 201 }),
+    );
+    const saved = { fetcher: env.__TEST_FETCHER, key: env.GITHUB_APP_PRIVATE_KEY };
+    env.__TEST_FETCHER = gh.fetcher;
+    env.GITHUB_APP_PRIVATE_KEY = (await generateAppKey()).pem;
+    cleanups.push(() => {
+      env.__TEST_FETCHER = saved.fetcher;
+      env.GITHUB_APP_PRIVATE_KEY = saved.key;
+    });
+    return gh;
+  }
+
+  /** tenant_denied events logged through the console.log spy. */
+  function denials(spy: { mock: { calls: unknown[][] } }): Row[] {
+    return spy.mock.calls.flatMap(([line]) => {
+      if (typeof line !== "string" || !line.startsWith("{")) return [];
+      const entry = JSON.parse(line) as Row;
+      return entry.event === "tenant_denied" ? [entry] : [];
+    });
+  }
+
+  it("token_request by trigger id serves a sent deploy trigger until it is answered", async () => {
+    const gh = await fakeTokenMint();
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const triggerId = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId, env: "staging" });
+
+    // The agent checks GitHub before it answers, so it has no run id yet.
+    const sent = await sock.request({ type: "token_request", run_id: triggerId, purpose: "fetch" });
+    expect(sent).toEqual([
+      { v: 1, type: "token", seq: expect.any(Number), run_id: triggerId, token: "ghs_fetch", exp: Math.floor(Date.parse("2030-01-01T00:00:00Z") / 1000) },
+    ]);
+    expect(gh.calls).toEqual([
+      {
+        method: "POST",
+        url: `https://api.github.com/app/installations/${INSTALLATION}/access_tokens`,
+        body: { repository_ids: [REPO], permissions: { contents: "read" } },
+      },
+    ]);
+
+    // Once answered the trigger is finished: the same request gets today's refusal.
+    expect(await sock.request({ type: "rejected", trigger_id: triggerId, reason: "deployments.staging: untrusted trigger cannot deploy" })).toEqual([]);
+    expect(await triggerState(agent, triggerId)).toBe("rejected");
+    const log = vi.spyOn(console, "log");
+    expect(await sock.request({ type: "token_request", run_id: triggerId, purpose: "fetch" })).toEqual([
+      { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: triggerId, message: S.runNotBound },
+    ]);
+    expect(denials(log)).toEqual([expect.objectContaining({ agent_id: agent.agentId, run_id: triggerId, reason: "run_not_bound" })]);
+    expect(gh.calls).toHaveLength(1);
+  });
+
+  it("token_request by trigger id serves a deploy trigger superseded before its ack until it is answered", async () => {
+    const gh = await fakeTokenMint();
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const older = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: older });
+
+    // A newer deploy replaces it before the agent's ack lands, while the agent may already be checking it.
+    const newer = await trigger(agent, { ...DEPLOY_TRIGGER, sha: SHA_2 });
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: newer });
+    expect(await triggerState(agent, older)).toBe("superseded");
+    const tokenRequest = { type: "token_request", run_id: older, purpose: "fetch" };
+    expect(await sock.request(tokenRequest)).toEqual([
+      { v: 1, type: "token", seq: expect.any(Number), run_id: older, token: "ghs_fetch", exp: Math.floor(Date.parse("2030-01-01T00:00:00Z") / 1000) },
+    ]);
+
+    // Still only for the bound agent.
+    const refused = { v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: older, message: S.runNotBound };
+    const log = vi.spyOn(console, "log");
+    const other = await seedAgent(INSTALLATION);
+    const otherSock = await online(other);
+    expect(await otherSock.request(tokenRequest)).toEqual([refused]);
+    otherSock.ws.close();
+
+    // Once accepted it has a run id, which the agent asks by; the trigger id is refused.
+    expect(await sock.request({ type: "accepted", trigger_id: older, run_id: "run_old" })).toEqual([
+      { v: 1, type: "interrupt", seq: expect.any(Number), run_id: "run_old", reason: "superseded" },
+    ]);
+    expect(await sock.request(tokenRequest)).toEqual([refused]);
+    expect(await sock.request({ ...tokenRequest, run_id: "run_old" })).toEqual([expect.objectContaining({ type: "token", run_id: "run_old" })]);
+
+    expect(denials(log)).toEqual([
+      expect.objectContaining({ agent_id: other.agentId, run_id: older, reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: agent.agentId, run_id: older, reason: "run_not_bound" }),
+    ]);
+    expect(gh.calls).toHaveLength(2);
+  });
+
+  it("token_request by trigger id is refused to other agents and for unknown or checks triggers", async () => {
+    const gh = await fakeTokenMint();
+    const owner = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", owner.agentId);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "checks", owner.agentId);
+    const ownerSock = await online(owner);
+    const deployId = await trigger(owner, DEPLOY_TRIGGER);
+    expect(await ownerSock.next()).toMatchObject({ type: "trigger", trigger_id: deployId });
+    const checksId = await trigger(owner);
+    expect(await ownerSock.next()).toMatchObject({ type: "trigger", trigger_id: checksId });
+
+    const OTHER_INSTALLATION = INSTALLATION + 1;
+    await upsertInstallation(env.DB, { id: OTHER_INSTALLATION, account_login: "evil", account_type: "Organization", account_id: OTHER_INSTALLATION * 10, created_at: 1 });
+    const sameTenant = await seedAgent(INSTALLATION);
+    const otherTenant = await seedAgent(OTHER_INSTALLATION);
+    const refused = (runId: string) => ({ v: 1, type: "error", seq: expect.any(Number), code: "auth_failed", run_id: runId, message: S.runNotBound });
+
+    const log = vi.spyOn(console, "log");
+    for (const agent of [sameTenant, otherTenant]) {
+      const sock = await online(agent);
+      expect(await sock.request({ type: "token_request", run_id: deployId, purpose: "fetch" })).toEqual([refused(deployId)]);
+      expect(sock.ws.readyState).toBe(WebSocket.OPEN);
+      sock.ws.close();
+    }
+    for (const runId of ["trg_unknown", checksId]) {
+      expect(await ownerSock.request({ type: "token_request", run_id: runId, purpose: "fetch" })).toEqual([refused(runId)]);
+    }
+
+    expect(denials(log)).toEqual([
+      expect.objectContaining({ installation_id: INSTALLATION, agent_id: sameTenant.agentId, run_id: deployId, reason: "run_not_bound" }),
+      expect.objectContaining({ installation_id: OTHER_INSTALLATION, agent_id: otherTenant.agentId, run_id: deployId, reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: owner.agentId, run_id: "trg_unknown", reason: "run_not_bound" }),
+      expect.objectContaining({ agent_id: owner.agentId, run_id: checksId, reason: "run_not_bound" }),
+    ]);
+    expect(gh.calls).toEqual([]);
+    expect(await triggerState(owner, deployId)).toBe("sent");
   });
 
   it("offline 10 minutes marks pending runs agent_offline", async () => {
@@ -513,16 +683,17 @@ describe("AgentDO run lifecycle", () => {
   });
 
   it("gives the daily run back when recording the run fails", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const day = new Date(testClock.now()).toISOString().slice(0, 10);
     const agent = await seedAgent(INSTALLATION);
     await env.DB.prepare("CREATE TRIGGER fail_run_insert BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'd1 down'); END").run();
     try {
-      await expect(postTrigger(agent)).rejects.toThrow("d1 down");
+      expect(await postTrigger(agent)).toMatchObject({ status: 500 });
     } finally {
       await env.DB.prepare("DROP TRIGGER fail_run_insert").run();
     }
     expect(await env.DB.prepare("SELECT runs FROM daily_counters WHERE installation_id = ?1 AND day = ?2").bind(INSTALLATION, day).first("runs")).toBe(0);
+    expect(reported(errors)).toContainEqual(expect.objectContaining({ route: "/trigger", error: expect.objectContaining({ message: expect.stringContaining("d1 down") }) }));
   });
 
   it("prunes finished triggers and stored tails past retention", async () => {
@@ -557,5 +728,118 @@ describe("AgentDO run lifecycle", () => {
       tails: (await dob.state.storage.list({ prefix: "slack:tail:" })).size,
     }));
     expect(left).toEqual({ outbox: 0, triggers: 0, tails: 0 });
+  });
+
+  it("an accepted frame naming another agent's run is acked and leaves that run as it was", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const owner = await seedAgent(INSTALLATION);
+    const ownerSock = await online(owner);
+    const ownerTrigger = await acceptedRun(owner, ownerSock, "run_a");
+    const before = await run("run_a");
+
+    const intruder = await seedAgent(INSTALLATION);
+    const sock = await online(intruder);
+    const triggerId = await trigger(intruder, { repoId: 1002, repo: "acme/gadgets", sha: SHA_2 });
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId });
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_a" })).toEqual([]);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: 7 })).toEqual([]);
+
+    expect(await run("run_a")).toEqual(before);
+    expect(before).toMatchObject({ trigger_id: ownerTrigger, agent_id: owner.agentId, state: "queued" });
+    // The intruder still owns nothing it can report on, and its socket stays open for its own run.
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", state: "success", duration_ms: 1 });
+    expect(await run("run_a")).toEqual(before);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_b" })).toEqual([]);
+    expect(await run("run_b")).toMatchObject({ trigger_id: triggerId, agent_id: intruder.agentId, repo_id: 1002 });
+  });
+
+  it("an accepted deploy naming another installation's run leaves that installation's deploy rows as they were", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const OTHER = 43;
+    const other = tenantDb(env.DB, OTHER);
+    await upsertInstallation(env.DB, { id: OTHER, account_login: "other", account_type: "Organization", account_id: OTHER * 10, created_at: 1 });
+    await insertRun(other, {
+      run_id: "run_other",
+      repo_id: 9001,
+      sha: SHA_3,
+      ref: "refs/heads/main",
+      event: "push",
+      pr_number: null,
+      env: "staging",
+      attempt: 1,
+      trigger_id: "trg_other",
+      agent_id: "agt_other",
+      state: "success",
+      reason: null,
+      author_login: null,
+      commit_title: null,
+      started_at: 1,
+      finished_at: 2,
+      duration_ms: 1,
+      log_key: null,
+    });
+    await env.DB.prepare(
+      `INSERT INTO deploy_triggers (installation_id, repo, sha, env, attempt, event, ref, trigger_id, agent_id, run_id, status, created_at, updated_at)
+      VALUES (?1, 'other/app', ?2, 'staging', 1, 'push', 'refs/heads/main', 'trg_other', 'agt_other', 'run_other', 'accepted', 1, 1)`,
+    )
+      .bind(OTHER, SHA_3)
+      .run();
+    await upsertDeployRender(other, {
+      run_id: "run_other",
+      repo: "other/app",
+      env: "staging",
+      sha: SHA_3,
+      slack_channel: "C0OTHER",
+      slack_ts: "1.1",
+      check_run_id: 77,
+      state: "succeeded",
+      step: null,
+      step_index: null,
+      steps_total: null,
+      rolled_back: 0,
+      started_at: 1,
+      updated_at: 2,
+    });
+    const deployRows = async () => [
+      (await env.DB.prepare("SELECT * FROM deploy_renders WHERE installation_id = ?1").bind(OTHER).all()).results,
+      (await env.DB.prepare("SELECT * FROM deploy_triggers WHERE installation_id = ?1").bind(OTHER).all()).results,
+      await run("run_other"),
+    ];
+    const before = await deployRows();
+
+    const agent = await seedAgent(INSTALLATION);
+    await bind(tenantDb(env.DB, INSTALLATION), REPO, "deploy:staging", agent.agentId);
+    const sock = await online(agent);
+    const triggerId = await trigger(agent, DEPLOY_TRIGGER);
+    expect(await sock.next()).toMatchObject({ type: "trigger", trigger_id: triggerId });
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_other" })).toEqual([]);
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_other", state: "failed", duration_ms: 1 });
+
+    expect(await deployRows()).toEqual(before);
+    expect(await sock.request({ type: "accepted", trigger_id: triggerId, run_id: "run_mine" })).toEqual([]);
+    expect(await run("run_mine")).toMatchObject({ installation_id: INSTALLATION, trigger_id: triggerId });
+  });
+
+  it("caps the jobs of a run at QUOTAS.jobsPerRun", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    const jobs = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ name: `${prefix}${i}`, needs: [] }));
+    const count = async () => (await env.DB.prepare("SELECT count(*) AS n FROM jobs WHERE run_id = 'run_a'").first<number>("n")) ?? 0;
+
+    expect(await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(QUOTAS.jobsPerRun + 1, "j") })).toEqual([]);
+    expect(await count()).toBe(0);
+
+    await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(QUOTAS.jobsPerRun - 1, "j") });
+    expect(await sock.request({ type: "job_planned", run_id: "run_a", jobs: jobs(2, "extra") })).toEqual([]);
+    expect(await count()).toBe(QUOTAS.jobsPerRun - 1);
+
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", job: "last", state: "running" });
+    expect(await count()).toBe(QUOTAS.jobsPerRun);
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", job: "over", state: "running" });
+    expect(await count()).toBe(QUOTAS.jobsPerRun);
+    expect(await env.DB.prepare("SELECT 1 FROM jobs WHERE run_id = 'run_a' AND name = 'over'").first()).toBeNull();
   });
 });

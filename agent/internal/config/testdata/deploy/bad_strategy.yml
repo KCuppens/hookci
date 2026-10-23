@@ -1,0 +1,10 @@
+version: 1
+checks:
+  jobs:
+    test:
+      run: pnpm turbo run test
+deployments:
+  production:
+    on: { push: main }
+    strategy: kubernetes
+    run: kubectl apply -f deploy.yml

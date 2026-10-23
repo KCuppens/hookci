@@ -1,6 +1,7 @@
-// Package scheduler decides which setup or job runs when. It owns the global
-// slot pool, the per-env deploy locks and the supersede rules, and drives run
-// and job state through the store. It never executes anything itself: an
+// Package scheduler drives one run's setup and jobs through the slot pool and
+// the store, and supersedes older queued runs left in the store. Callers make
+// one Scheduler per run; one daemon worker runs one trigger at a time and the
+// hub interrupts superseded runs. It never executes anything itself: an
 // injected JobRunner does the work.
 package scheduler
 
@@ -11,14 +12,13 @@ import (
 	"log/slog"
 	"runtime"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
 // JobRunner executes one unit of work (setup or a job). It MUST return when
-// ctx is cancelled; the scheduler cancels ctx on supersede, cancel and Close.
+// ctx is cancelled; the scheduler cancels ctx on cancel and Close.
 type JobRunner interface {
 	// RunSetup runs the run's setup steps (checkout, caches, services, setup[]). It occupies one slot.
 	RunSetup(ctx context.Context, run store.Run) error
@@ -65,9 +65,6 @@ type runState struct {
 	run   store.Run
 	jobs  map[string]store.Job
 	graph *Graph
-	key   string // SupersedeKey
-	lock  string // EnvLockKey
-	seq   uint64 // submission order
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -77,8 +74,8 @@ type runState struct {
 	running   int // setup or jobs in flight
 	failedJob string
 
-	// stopState is set when the run must end early: failed (supersede,
-	// setup failure), cancelled (Cancel) or interrupted (Close). Queued jobs
+	// stopState is set when the run must end early: failed (setup failure),
+	// cancelled (Cancel) or interrupted (Close). Queued jobs
 	// then become stopJobs and stopReason is recorded on the run.
 	stopState  store.RunState
 	stopReason string
@@ -123,12 +120,10 @@ type Scheduler struct {
 	mu       sync.Mutex
 	closed   bool
 	free     int
-	inflight int // worker goroutines not yet reported back
-	seq      uint64
+	inflight int                  // worker goroutines not yet reported back
 	runs     map[string]*runState // submitted and not yet finished
 	queue    []*runState          // submitted, not started, in submission order
 	active   []*runState          // started and not finishing, in start order
-	envLocks map[string]string    // EnvLockKey -> run ID
 	idle     chan struct{}
 }
 
@@ -159,15 +154,14 @@ func New(st *store.Store, runner JobRunner, opts Options) *Scheduler {
 		loopDone: make(chan struct{}),
 		free:     slots,
 		runs:     make(map[string]*runState),
-		envLocks: make(map[string]string),
 	}
 	go s.loop()
 	return s
 }
 
 // Submit enqueues a run that already exists in the store in state queued with
-// its jobs planned. It applies the supersede rules before enqueueing and
-// returns the run IDs it superseded or cancelled.
+// its jobs planned. It first supersedes older queued runs in the store that
+// the run replaces and returns their IDs.
 func (s *Scheduler) Submit(ctx context.Context, runID string) (superseded []string, err error) {
 	run, err := s.st.GetRun(ctx, runID)
 	if err != nil {
@@ -198,8 +192,7 @@ func (s *Scheduler) Submit(ctx context.Context, runID string) (superseded []stri
 	if _, dup := s.runs[runID]; dup {
 		return nil, fmt.Errorf("scheduler: submit %s: already submitted", runID)
 	}
-	key := SupersedeKey(run)
-	superseded, err = s.supersede(wctx, run, key, queued)
+	superseded, err = s.supersede(wctx, run, queued)
 	if err != nil {
 		return superseded, err
 	}
@@ -209,14 +202,10 @@ func (s *Scheduler) Submit(ctx context.Context, runID string) (superseded []stri
 		byName[j.Name] = j
 	}
 	rctx, cancel := context.WithCancel(s.base)
-	s.seq++
 	rs := &runState{
 		run:    run,
 		jobs:   byName,
 		graph:  g,
-		key:    key,
-		lock:   EnvLockKey(run),
-		seq:    s.seq,
 		ctx:    rctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
@@ -227,32 +216,13 @@ func (s *Scheduler) Submit(ctx context.Context, runID string) (superseded []stri
 	return superseded, nil
 }
 
-// supersede applies rules 4 to 7 for a new run with key. Queued runs this
-// scheduler holds are older by submission order; queued runs only in the
-// store are older by CreatedAt (then ID). Running PR checks are stopped;
-// running pushes and deploys are left alone. The same SHA never supersedes.
-func (s *Scheduler) supersede(ctx context.Context, run store.Run, key string, stored []store.Run) ([]string, error) {
+// supersede marks queued runs in the store that run replaces superseded:
+// same SupersedeKey, another SHA, created before run (then lower ID). Runs
+// this scheduler holds are left alone.
+func (s *Scheduler) supersede(ctx context.Context, run store.Run, stored []store.Run) ([]string, error) {
 	reason := "superseded by " + shortSHA(run.SHA)
+	key := SupersedeKey(run)
 	var out []string
-	for _, old := range slices.Clone(s.queue) {
-		if old.key != key || old.run.SHA == run.SHA {
-			continue
-		}
-		if err := s.st.Supersede(ctx, old.run.ID, reason); err != nil {
-			return out, fmt.Errorf("scheduler: supersede %s: %w", old.run.ID, err)
-		}
-		s.forget(old, store.RunSuperseded, nil)
-		out = append(out, old.run.ID)
-	}
-	if strings.HasPrefix(key, "pr:") {
-		for _, old := range slices.Clone(s.active) {
-			if old.key != key || old.run.SHA == run.SHA || old.stopState != "" {
-				continue
-			}
-			s.stop(old, store.RunFailed, reason, store.JobSkipped)
-			out = append(out, old.run.ID)
-		}
-	}
 	// ListRuns is newest first; supersede oldest first.
 	for i := len(stored) - 1; i >= 0; i-- {
 		old := stored[i]
@@ -443,27 +413,23 @@ func (s *Scheduler) loop() {
 	}
 }
 
-// dispatch fills free slots: deploy jobs, deploy setups, check jobs, check
-// setups, in that order.
+// dispatch fills free slots: ready jobs of started runs first, then the
+// setup of the first queued run.
 func (s *Scheduler) dispatch() {
 	for !s.closed && s.free > 0 {
-		if rs, job := s.nextJob(true); rs != nil {
+		if rs, job := s.nextJob(); rs != nil {
 			s.startJob(rs, job)
-		} else if rs := s.nextSetup(true); rs != nil {
-			s.startSetup(rs)
-		} else if rs, job := s.nextJob(false); rs != nil {
-			s.startJob(rs, job)
-		} else if rs := s.nextSetup(false); rs != nil {
-			s.startSetup(rs)
+		} else if len(s.queue) > 0 {
+			s.startSetup(s.queue[0])
 		} else {
 			return
 		}
 	}
 }
 
-func (s *Scheduler) nextJob(deploy bool) (*runState, string) {
+func (s *Scheduler) nextJob() (*runState, string) {
 	for _, rs := range s.active {
-		if (rs.run.Kind == kindDeploy) != deploy || !rs.setupDone || rs.stopState != "" {
+		if !rs.setupDone || rs.stopState != "" {
 			continue
 		}
 		if ready := rs.graph.Ready(); len(ready) > 0 {
@@ -471,23 +437,6 @@ func (s *Scheduler) nextJob(deploy bool) (*runState, string) {
 		}
 	}
 	return nil, ""
-}
-
-func (s *Scheduler) nextSetup(deploy bool) *runState {
-	var best *runState
-	for _, rs := range s.queue {
-		if (rs.run.Kind == kindDeploy) != deploy {
-			continue
-		}
-		if _, held := s.envLocks[rs.lock]; rs.lock != "" && held {
-			continue
-		}
-		if best == nil || rs.run.CreatedAt.Before(best.run.CreatedAt) ||
-			(rs.run.CreatedAt.Equal(best.run.CreatedAt) && rs.seq < best.seq) {
-			best = rs
-		}
-	}
-	return best
 }
 
 func (s *Scheduler) startSetup(rs *runState) {
@@ -502,9 +451,6 @@ func (s *Scheduler) startSetup(rs *runState) {
 	s.active = append(s.active, rs)
 	rs.started = true
 	rs.run.State = store.RunRunning
-	if rs.lock != "" {
-		s.envLocks[rs.lock] = id
-	}
 	s.free--
 	s.inflight++
 	rs.running++
@@ -657,17 +603,12 @@ func (s *Scheduler) finish(rs *runState) {
 	}()
 }
 
-// settleRun moves a torn-down run to the terminal state finish chose and
-// releases its env lock.
+// settleRun moves a torn-down run to the terminal state finish chose.
 func (s *Scheduler) settleRun(rs *runState) {
-	id := rs.run.ID
-	if err := s.st.Transition(context.Background(), id, []store.RunState{store.RunRunning}, rs.run.State, rs.run.Reason); err != nil {
+	if err := s.st.Transition(context.Background(), rs.run.ID, []store.RunState{store.RunRunning}, rs.run.State, rs.run.Reason); err != nil {
 		s.writeFailed(rs, "", err)
 	}
 	rs.final = rs.run.State
-	if rs.lock != "" && s.envLocks[rs.lock] == id {
-		delete(s.envLocks, rs.lock)
-	}
 }
 
 // forget drops a run that never started and wakes its waiters.

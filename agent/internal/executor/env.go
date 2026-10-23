@@ -33,20 +33,15 @@ func BuildJobEnv(in EnvInput) []string {
 		"TMPDIR=" + in.Dir.Tmp(),
 		"LANG=C.UTF-8",
 		"CI=true",
+		"HOOKCI=1",
+		"HOOKCI_RUN_ID=" + in.Run.ID,
+		"HOOKCI_JOB=" + in.Job,
+		"HOOKCI_SHA=" + in.Run.SHA,
+		"HOOKCI_REF=" + in.Run.Ref,
+		"HOOKCI_EVENT=" + in.Run.Event,
 	}
-	// Both families are exported so scripts written for ZeroCI keep working.
-	for _, prefix := range []string{"HOOKCI", "ZEROCI"} {
-		env = append(env,
-			prefix+"=1",
-			prefix+"_RUN_ID="+in.Run.ID,
-			prefix+"_JOB="+in.Job,
-			prefix+"_SHA="+in.Run.SHA,
-			prefix+"_REF="+in.Run.Ref,
-			prefix+"_EVENT="+in.Run.Event,
-		)
-		if in.Run.PR != nil {
-			env = append(env, prefix+"_BASE_SHA="+in.Run.BaseSHA)
-		}
+	if in.Run.PR != nil {
+		env = append(env, "HOOKCI_BASE_SHA="+in.Run.BaseSHA)
 	}
 	env = append(env, in.ProxyEnv...)
 	env = append(env, in.ServiceEnv...)

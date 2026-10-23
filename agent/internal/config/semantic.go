@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"regexp/syntax"
+	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -28,11 +26,12 @@ func checkSemantics(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnost
 		diags = append(diags, checkNeeds(c.Jobs, li)...)
 		diags = append(diags, checkCommands(c, li)...)
 		diags = append(diags, checkCachePaths(c.Setup, li)...)
+		diags = append(diags, checkPostgresImage(c.Services, li)...)
 		diags = append(diags, checkLimits(c, li)...)
 	}
 	diags = append(diags, checkTrust(cfg, opts, li)...)
 	diags = append(diags, checkRedact(cfg.Redact, li)...)
-	diags = append(diags, checkDeployments(cfg.Deployments, opts, li)...)
+	diags = append(diags, checkDeployments(cfg, opts, li)...)
 	return diags
 }
 
@@ -67,26 +66,53 @@ func checkNeeds(jobs ChecksJobs, li lineIndex) Diagnostics {
 			}
 		}
 	}
-	return append(diags, checkCycles(jobs, names, li)...)
+	return append(diags, checkCycles(jobs, li)...)
 }
 
-// checkCycles walks the needs graph depth first; every back edge closes one
-// cycle, reported starting from its alphabetically first job.
-func checkCycles(jobs ChecksJobs, names []string, li lineIndex) Diagnostics {
+// checkCycles reports every cycle in the needs between jobs once, on the
+// need of its alphabetically first job that points at the next one.
+func checkCycles(jobs ChecksJobs, li lineIndex) Diagnostics {
+	graph := make(map[string][]string, len(jobs))
+	for name, job := range jobs {
+		graph[name] = job.Needs
+	}
+	var diags Diagnostics
+	for _, found := range needsCycles(graph) {
+		cycle := rotateToSmallest(found)
+		first, next := cycle[0], cycle[1%len(cycle)]
+		p := "checks.jobs." + first + ".needs"
+		for i, need := range jobs[first].Needs {
+			if need == next {
+				p = joinIndex(p, i)
+				break
+			}
+		}
+		diags = append(diags, li.errorf(p, "remove one of these needs so the jobs can run in order",
+			"cycle: %s -> %s", strings.Join(cycle, " -> "), first))
+	}
+	return diags
+}
+
+// needsCycles walks a needs graph depth first in name order. Every back edge
+// closes one cycle, returned from the node the edge points at to the node
+// whose need closes it; each node needs the next and the last needs the
+// first. Needs on unknown nodes or on the node itself are skipped; callers
+// report those separately.
+func needsCycles(graph map[string][]string) [][]string {
 	const (
 		unvisited = iota
 		onStack
 		done
 	)
-	state := make(map[string]int, len(jobs))
+	state := make(map[string]int, len(graph))
 	var stack []string
-	var diags Diagnostics
+	var cycles [][]string
 	var visit func(name string)
 	visit = func(name string) {
 		state[name] = onStack
 		stack = append(stack, name)
-		for _, need := range jobs[name].Needs {
-			if _, ok := jobs[need]; !ok || need == name {
+		for _, need := range graph[name] {
+			if _, ok := graph[need]; !ok || need == name {
 				continue
 			}
 			switch state[need] {
@@ -97,40 +123,29 @@ func checkCycles(jobs ChecksJobs, names []string, li lineIndex) Diagnostics {
 				for stack[i] != need {
 					i--
 				}
-				diags = append(diags, cycleDiagnostic(jobs, stack[i:], li))
+				cycles = append(cycles, slices.Clone(stack[i:]))
 			}
 		}
 		stack = stack[:len(stack)-1]
 		state[name] = done
 	}
-	for _, name := range names {
+	for _, name := range sortedKeys(graph) {
 		if state[name] == unvisited {
 			visit(name)
 		}
 	}
-	return diags
+	return cycles
 }
 
-// cycleDiagnostic reports cycle, where each job needs the next and the last
-// needs the first.
-func cycleDiagnostic(jobs ChecksJobs, cycle []string, li lineIndex) Diagnostic {
+// rotateToSmallest returns a copy of cycle starting at its smallest name.
+func rotateToSmallest(cycle []string) []string {
 	start := 0
 	for i, name := range cycle {
 		if name < cycle[start] {
 			start = i
 		}
 	}
-	ordered := append(append([]string(nil), cycle[start:]...), cycle[:start]...)
-	first, next := ordered[0], ordered[1%len(ordered)]
-	p := "checks.jobs." + first + ".needs"
-	for i, need := range jobs[first].Needs {
-		if need == next {
-			p = joinIndex(p, i)
-			break
-		}
-	}
-	return li.errorf(p, "remove one of these needs so the jobs can run in order",
-		"cycle: %s -> %s", strings.Join(ordered, " -> "), first)
+	return append(append([]string(nil), cycle[start:]...), cycle[:start]...)
 }
 
 // checkCommands rejects setup steps and jobs whose run is only whitespace.
@@ -157,15 +172,23 @@ func checkCachePaths(setup []SetupStep, li lineIndex) Diagnostics {
 			continue
 		}
 		for j, p := range step.Cache.Paths {
-			clean := filepath.Clean(p)
-			if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+			if _, _, err := SplitCachePath(p); err != nil {
 				diags = append(diags, li.errorf(joinIndex(joinIndex("checks.setup", i)+".cache.paths", j),
-					"use a path inside the repository, for example node_modules",
-					"cache path %s must be relative to the repository root and stay inside it", quote(p)))
+					"use a path inside the repository, for example node_modules, or under ~/", "%v", err))
 			}
 		}
 	}
 	return diags
+}
+
+// checkPostgresImage accepts only the official postgres image or
+// pgvector/pgvector, with a tag or digest; the agent pulls and runs it.
+func checkPostgresImage(s *ChecksServices, li lineIndex) Diagnostics {
+	if s == nil || s.Postgres == nil || s.Postgres.Image == "" || ValidPostgresImage(s.Postgres.Image) {
+		return nil
+	}
+	return Diagnostics{li.errorf("checks.services.postgres.image", "use the official image or pgvector/pgvector with a tag, for example postgres:16-alpine",
+		"image %s is not the official postgres image or pgvector/pgvector with a tag or digest", quote(s.Postgres.Image))}
 }
 
 // checkLimits rejects memory sizes and durations that match the schema
@@ -179,8 +202,8 @@ func checkLimits(c *Checks, li lineIndex) Diagnostics {
 		if _, err := ParseMemory(l.Memory); err != nil {
 			diags = append(diags, li.errorf(base+".memory", "use a size such as 4G or 512M", "%v", err))
 		}
-		if _, err := ParseDuration(l.Timeout); err != nil {
-			diags = append(diags, li.errorf(base+".timeout", "use a duration such as 90s, 10m or 1h", "%v", err))
+		if _, err := ParseDuration(base+".timeout", l.Timeout); err != nil {
+			diags = append(diags, validationDiagnostic(err.(ValidationError), li))
 		}
 	}
 	limits("checks.limits", c.Limits)
@@ -188,8 +211,8 @@ func checkLimits(c *Checks, li lineIndex) Diagnostics {
 		job := c.Jobs[name]
 		limits("checks.jobs."+name+".limits", job.Limits)
 		if job.Timeout != nil {
-			if _, err := ParseDuration(*job.Timeout); err != nil {
-				diags = append(diags, li.errorf("checks.jobs."+name+".timeout", "use a duration such as 90s, 10m or 1h", "%v", err))
+			if _, err := ParseDuration("checks.jobs."+name+".timeout", *job.Timeout); err != nil {
+				diags = append(diags, validationDiagnostic(err.(ValidationError), li))
 			}
 		}
 	}
@@ -205,7 +228,7 @@ func checkTrust(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics 
 	if opts.SelfHosted && len(cfg.Deployments) == 0 {
 		return nil
 	}
-	return Diagnostics{li.errorf("checks.trust", "use trust: approve, or self-host the hub without deployments",
+	return Diagnostics{li.errorf("checks.trust", "use trust: collaborators, or self-host the hub without deployments",
 		"trust: all is refused on the shared hub; it runs untrusted fork code with your runner's network")}
 }
 
@@ -227,36 +250,34 @@ func checkRedact(patterns []string, li lineIndex) Diagnostics {
 	return diags
 }
 
-// checkDeployments checks each deployment's trigger, env_file and health
-// URL.
-func checkDeployments(deps HookCIConfigDeployments, opts ParseOptions, li lineIndex) Diagnostics {
+// checkDeployments reports every ValidateDeployments problem, and warns about
+// env_file permissions on this machine.
+func checkDeployments(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnostics {
 	var diags Diagnostics
-	for _, env := range sortedKeys(deps) {
-		d := deps[env]
-		base := "deployments." + env
-		if d.On == nil || d.On.Push == nil || d.On.Push.Branch == nil || *d.On.Push.Branch == "" {
-			diags = append(diags, li.errorf(base+".on.push.branch", "add on: {push: {branch: main}}",
-				"a deployment must name the branch it deploys from"))
-		}
-		if d.EnvFile != nil {
-			diags = append(diags, checkEnvFile(*d.EnvFile, base+".env_file", opts, li)...)
-		}
-		if d.Health != nil {
-			if d.Health.Url != nil {
-				diags = append(diags, checkHealthURL(*d.Health.Url, d.Strategy, base+".health.url", li)...)
-			}
-			if d.Health.Timeout != nil {
-				if _, err := ParseDuration(*d.Health.Timeout); err != nil {
-					diags = append(diags, li.errorf(base+".health.timeout", "use a duration such as 90s, 10m or 1h", "%v", err))
-				}
-			}
+	for _, e := range ValidateDeployments(cfg) {
+		diags = append(diags, validationDiagnostic(e, li))
+	}
+	for _, env := range sortedKeys(cfg.Deployments) {
+		if f := cfg.Deployments[env].EnvFile; f != nil && path.IsAbs(*f) {
+			diags = append(diags, checkEnvFile(*f, "deployments."+env+".env_file", opts, li)...)
 		}
 	}
 	return diags
 }
 
+// validationDiagnostic turns a ValidationError into an error Diagnostic on
+// the line of its path.
+func validationDiagnostic(e ValidationError, li lineIndex) Diagnostic {
+	return li.errorf(e.Path, e.Fix, "%s", e.Msg)
+}
+
+// EnvFilePermOK reports whether perm, the permission bits of an env_file,
+// gives group and others no access, as a trusted deploy requires: 0600 or
+// stricter.
+func EnvFilePermOK(perm fs.FileMode) bool { return perm&0o077 == 0 }
+
 // checkEnvFile warns when the env_file is missing, not owned by root, or
-// writable by group or others. The schema already requires an absolute path.
+// open to group or others. file is an absolute path.
 func checkEnvFile(file, p string, opts ParseOptions, li lineIndex) Diagnostics {
 	stat := opts.Stat
 	if stat == nil {
@@ -285,48 +306,9 @@ func checkEnvFile(file, p string, opts ParseOptions, li lineIndex) Diagnostics {
 		diags = append(diags, li.warnf(p, "chown root:root "+file,
 			"env_file %s is owned by uid %d, not root", quote(file), st.Uid))
 	}
-	if perm := fi.Mode().Perm(); perm&0o022 != 0 {
-		diags = append(diags, li.warnf(p, "chmod go-w "+file,
-			"env_file %s is writable by group or others (mode %04o)", quote(file), perm))
-	}
-	return diags
-}
-
-// checkHealthURL requires a plain-http URL on 127.0.0.1 or localhost with an
-// explicit port. The {port} placeholder may stand for the port only with
-// strategy: compose-bluegreen, which fills it in per color.
-func checkHealthURL(raw string, strategy *DeploymentStrategy, p string, li lineIndex) Diagnostics {
-	const example = "for example http://127.0.0.1:8000/health"
-	placeholder := strings.Contains(raw, "{port}")
-	u, err := url.Parse(strings.ReplaceAll(raw, "{port}", "1"))
-	if err != nil || u.Host == "" {
-		return Diagnostics{li.errorf(p, "use a full URL, "+example, "health.url %s is not a valid URL", quote(raw))}
-	}
-	var diags Diagnostics
-	if u.Scheme != "http" {
-		diags = append(diags, li.errorf(p, "use http, "+example,
-			"health.url must use http, got %s", quote(u.Scheme)))
-	}
-	if host := u.Hostname(); host != "127.0.0.1" && host != "localhost" {
-		diags = append(diags, li.errorf(p, "the check runs on the deploy host; point it at the local port, "+example,
-			"health.url must point at 127.0.0.1 or localhost, got %s", quote(host)))
-	}
-	port := u.Port()
-	switch {
-	case port == "":
-		diags = append(diags, li.errorf(p, "add the port, "+example, "health.url needs an explicit port"))
-	case placeholder:
-		if strings.Count(raw, "{port}") != 1 || !strings.Contains(raw, ":{port}") || port != "1" {
-			diags = append(diags, li.errorf(p, "use {port} only as the port, for example http://127.0.0.1:{port}/health",
-				"{port} may only stand for the port"))
-		} else if strategy == nil || *strategy != DeploymentStrategyComposeBluegreen {
-			diags = append(diags, li.errorf(p, "set strategy: compose-bluegreen, or use a fixed port",
-				"{port} is only filled in by strategy: compose-bluegreen"))
-		}
-	default:
-		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-			diags = append(diags, li.errorf(p, "use a port between 1 and 65535", "port %s is out of range 1 to 65535", quote(port)))
-		}
+	if perm := fi.Mode().Perm(); !EnvFilePermOK(perm) {
+		diags = append(diags, li.warnf(p, "chmod 600 "+file,
+			"env_file %s gives group or others access (mode %04o), want 0600", quote(file), perm))
 	}
 	return diags
 }

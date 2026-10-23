@@ -1,0 +1,20 @@
+version: 1
+checks:
+  jobs:
+    vet:
+      run: cd app && go vet ./...
+deployments:
+  staging:
+    on: { push: main, after: checks }
+    strategy: compose-bluegreen
+    compose:
+      project: compose-app
+      service: web
+      file: compose.yaml
+    route:
+      kind: caddy
+      file: /etc/caddy/routes/compose-app-staging.caddy
+      reload: "caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile"
+    health: { url: "http://127.0.0.1:{port}/healthz", expect: 200, retries: 15, interval: 1s }
+    verify: { window: 20s, interval: 2s }
+    retain: { images: 3 }

@@ -38,17 +38,16 @@ const scratchDir = ".hookci-cache"
 
 // Policy decides whether a run may write cache entries.
 type Policy struct {
-	Kind      string // "check" | "deploy"
-	Event     string // "push" | "pull_request" | "local"
-	Protected bool   // ref matches protected_branches
-	Trusted   bool   // run.TrustDomain has the "trusted:" prefix
+	Kind    string // "check" | "deploy"
+	Event   string // "push" | "pull_request" | "local"
+	Trusted bool   // run.TrustDomain has the "trusted:" prefix
 }
 
 // MaySave reports whether a run under p may write a cache entry: local runs,
-// and check runs of trusted pushes to protected branches. PRs, deploys and
-// untrusted runs only read.
+// and check runs of trusted pushes to any branch. PRs, deploys and untrusted
+// runs only read.
 func MaySave(p Policy) bool {
-	return p.Event == "local" || (p.Kind == "check" && p.Event == "push" && p.Protected && p.Trusted)
+	return p.Event == "local" || (p.Kind == "check" && p.Event == "push" && p.Trusted)
 }
 
 // Options configures New.
@@ -72,6 +71,7 @@ type Cache struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex // per entry, keyed by its path under root
+	inUse map[string]int         // per entry: restores whose cleanup has not finished
 }
 
 // meta is the meta.json of an entry.
@@ -102,7 +102,7 @@ func New(opts Options) (*Cache, error) {
 	if err := os.MkdirAll(filepath.Join(root, ".tmp"), 0o700); err != nil {
 		return nil, fmt.Errorf("cache: create tmp: %w", err)
 	}
-	c := &Cache{root: root, mode: opts.Mode, runner: opts.Runner, log: opts.Logger, chown: opts.Chown, locks: map[string]*sync.Mutex{}}
+	c := &Cache{root: root, mode: opts.Mode, runner: opts.Runner, log: opts.Logger, chown: opts.Chown, locks: map[string]*sync.Mutex{}, inUse: map[string]int{}}
 	if c.runner == nil {
 		c.runner = execx.OS{}
 	}
@@ -124,7 +124,7 @@ func New(opts Options) (*Cache, error) {
 // Mode reports how Restore materializes entries.
 func (c *Cache) Mode() Mode { return c.mode }
 
-// lock serializes Save and Restore on one entry and returns the unlock.
+// lock serializes Save, Restore and Remove on one entry and returns the unlock.
 func (c *Cache) lock(rel string) func() {
 	c.mu.Lock()
 	m, ok := c.locks[rel]
@@ -140,8 +140,11 @@ func (c *Cache) lock(rel string) func() {
 // Restore materializes the entry for k into workdir. A miss returns
 // (false, no-op cleanup, nil). The returned cleanup unmounts overlays and
 // removes scratch dirs; it is idempotent. Restore never writes into the
-// entry. A target that already holds data is left alone; on error everything
-// this call created is removed again.
+// entry; it only sets the entry dir's mtime, its last use for eviction, and
+// marks the entry in use until cleanup has unmounted everything. A target
+// that already holds data is left alone; on error everything this call
+// created is removed again, and the returned cleanup retries any unmount that
+// failed while doing so.
 func (c *Cache) Restore(ctx context.Context, k Key, workdir string) (hit bool, cleanup func() error, err error) {
 	noop := func() error { return nil }
 	rel, err := k.entryRel()
@@ -162,13 +165,20 @@ func (c *Cache) Restore(ctx context.Context, k Key, workdir string) (hit bool, c
 	if m.Key.Hash != k.Hash {
 		return false, noop, fmt.Errorf("cache: entry %s holds key %s", entry, m.Key.Hash)
 	}
-	r := &restore{c: c, ctx: context.WithoutCancel(ctx), workdir: workdir}
+	now := time.Now()
+	if err := os.Chtimes(entry, now, now); err != nil {
+		c.log.Warn("cache: record last use", "entry", rel, "err", err)
+	}
+	c.mu.Lock()
+	c.inUse[rel]++
+	c.mu.Unlock()
+	r := &restore{c: c, ctx: context.WithoutCancel(ctx), workdir: workdir, rel: rel, held: true}
 	for i, p := range k.Paths {
 		if slices.Contains(m.Absent, p) {
 			continue
 		}
 		if err := r.path(ctx, filepath.Join(entry, "p"+strconv.Itoa(i)), p, i); err != nil {
-			return false, noop, errors.Join(err, r.undo())
+			return false, r.cleanup, errors.Join(err, r.undo())
 		}
 	}
 	c.log.Info("cache restored", "trust_domain", k.TrustDomain, "hash", k.Hash, "mode", c.mode)
@@ -180,8 +190,10 @@ type restore struct {
 	c       *Cache
 	ctx     context.Context // for cleanup, detached from the caller's cancel
 	workdir string
+	rel     string // entry under the cache root
 
 	mu      sync.Mutex
+	held    bool     // counted in c.inUse
 	created []string // targets this call created
 	mounts  []string // overlay targets still mounted, relative to workdir
 	scratch string   // <workdir>/.hookci-cache once created
@@ -263,6 +275,14 @@ func (r *restore) cleanup() error {
 			return err
 		}
 		r.mounts = r.mounts[:len(r.mounts)-1]
+	}
+	if r.held {
+		r.held = false
+		r.c.mu.Lock()
+		if r.c.inUse[r.rel]--; r.c.inUse[r.rel] <= 0 {
+			delete(r.c.inUse, r.rel)
+		}
+		r.c.mu.Unlock()
 	}
 	if r.scratch != "" {
 		if err := os.RemoveAll(r.scratch); err != nil {

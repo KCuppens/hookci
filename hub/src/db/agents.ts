@@ -10,6 +10,8 @@ export interface AgentRow {
 	os: string | null;
 	arch: string | null;
 	credential_hash: string;
+	/** The credential a re-pair issued; it replaces credential_hash when the agent first authenticates with it. */
+	next_credential_hash: string | null;
 	protocol_version: number | null;
 	agent_version: string | null;
 	/** The operating system the agent reported in hello, like "Ubuntu 22.04" or "macOS 14.5"; null until it does. */
@@ -26,15 +28,9 @@ export type NewAgent = Pick<
 	"agent_id" | "name" | "hostname" | "os" | "arch" | "credential_hash" | "agent_version" | "paired_by_github_id" | "paired_at"
 >;
 
-export const AGENT_CREDENTIAL_PREFIX = "hc_agent_";
-const LEGACY_AGENT_CREDENTIAL_PREFIX = "zc_agent_";
+export const AGENT_CREDENTIAL_PREFIX = "hci_agent_";
 
-/** Whether credential has a prefix the hub mints or minted before the rename. */
-export function hasAgentCredentialPrefix(credential: string): boolean {
-	return credential.startsWith(AGENT_CREDENTIAL_PREFIX) || credential.startsWith(LEGACY_AGENT_CREDENTIAL_PREFIX);
-}
-
-/** The credential_hash of an agent credential: sha256 hex of the whole `hc_agent_` (or legacy `zc_agent_`) string. */
+/** The credential_hash of an agent credential: sha256 hex of the whole `hci_agent_` string. */
 export function agentCredentialHash(credential: string): Promise<string> {
 	return sha256Hex(credential);
 }
@@ -69,14 +65,30 @@ export async function getAgentById(db: D1Database, agentId: string): Promise<Age
 	return db.prepare("SELECT * FROM agents WHERE agent_id = ?1").bind(agentId).first<AgentRow>();
 }
 
-/** Replaces a non-revoked agent's credential hash; false when there is no such agent. */
-export async function setCredentialHash(t: TenantDb, agentId: string, hash: string): Promise<boolean> {
+/** Stores a re-pair's credential hash on a non-revoked agent beside its current one; false when there is no such agent. */
+export async function setNextCredentialHash(t: TenantDb, agentId: string, hash: string): Promise<boolean> {
 	const res = await t.run(
-		"UPDATE agents SET credential_hash = ?3 WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL",
+		"UPDATE agents SET next_credential_hash = ?3 WHERE installation_id = ?1 AND agent_id = ?2 AND revoked_at IS NULL",
 		agentId,
 		hash,
 	);
 	return res.meta.changes > 0;
+}
+
+/** The non-revoked agent whose re-pair issued the credential with hash, across all installations. */
+export async function getAgentByNextCredentialHash(db: D1Database, hash: string): Promise<AgentRow | null> {
+	return db.prepare("SELECT * FROM agents WHERE next_credential_hash = ?1 AND revoked_at IS NULL").bind(hash).first<AgentRow>();
+}
+
+/**
+ * Makes the re-pair credential with hash the agent's only one, so the old
+ * credential stops working; null when no non-revoked agent holds it next.
+ */
+export async function promoteNextCredential(db: D1Database, hash: string): Promise<AgentRow | null> {
+	return db
+		.prepare("UPDATE agents SET credential_hash = next_credential_hash, next_credential_hash = NULL WHERE next_credential_hash = ?1 AND revoked_at IS NULL RETURNING *")
+		.bind(hash)
+		.first<AgentRow>();
 }
 
 export async function listAgents(t: TenantDb): Promise<AgentRow[]> {

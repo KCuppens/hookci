@@ -1,0 +1,695 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+func testDeployRun(id, env, state string) DeployRun {
+	return DeployRun{
+		RunID: id, Repo: "acme/web", Env: env, SHA: "sha-" + id, Ref: "refs/heads/main",
+		Strategy: "compose-bluegreen", State: state, CreatedAt: t0,
+	}
+}
+
+func TestMigration_DeployTablesExist(t *testing.T) {
+	s := openTestStore(t)
+	for _, table := range []string{"deploy_runs", "deploy_steps", "deploy_state", "port_allocations", "env_locks", "deploy_gc_targets"} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {
+			t.Fatalf("inspect %s: %v", table, err)
+		}
+		if n != 1 {
+			t.Errorf("table %s missing", table)
+		}
+	}
+}
+
+func TestAllocatePort_IdempotentAndUnique(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	blue, err := s.AllocatePort(ctx, "acme/web", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatalf("AllocatePort(blue): %v", err)
+	}
+	if blue != DefaultPortLo {
+		t.Errorf("first port = %d, want lowest %d", blue, DefaultPortLo)
+	}
+	again, err := s.AllocatePort(ctx, "acme/web", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil || again != blue {
+		t.Errorf("AllocatePort(blue) again = %d, %v; want %d", again, err, blue)
+	}
+	green, err := s.AllocatePort(ctx, "acme/web", "prod", "green", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatalf("AllocatePort(green): %v", err)
+	}
+	if green == blue {
+		t.Errorf("green and blue share port %d", green)
+	}
+
+	tests := []struct {
+		name, env, color string
+		lo, hi           int
+		want             int
+		wantErr          string
+	}{
+		{name: "fills a 2-port range", env: "staging", color: "blue", lo: 21000, hi: 21001, want: 21000},
+		{name: "second color takes the other port", env: "staging", color: "green", lo: 21000, hi: 21001, want: 21001},
+		{name: "existing color in a full range", env: "staging", color: "blue", lo: 21000, hi: 21001, want: 21000},
+		{name: "full range", env: "preview", color: "blue", lo: 21000, hi: 21001, wantErr: "21000-21001"},
+		{name: "skips ports held by other envs", env: "preview", color: "blue", lo: 20000, hi: 20002, want: 20002},
+		{name: "inverted range", env: "qa", color: "blue", lo: 21001, hi: 21000, wantErr: "invalid port range 21001-21000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.AllocatePort(ctx, "acme/web", tt.env, tt.color, tt.lo, tt.hi)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("port = %d, %v; want %d", got, err, tt.want)
+			}
+		})
+	}
+	if _, err := s.AllocatePort(ctx, "acme/api", "prod", "blue", 21000, 21001); !errors.Is(err, ErrPortsExhausted) {
+		t.Errorf("exhausted err = %v, want ErrPortsExhausted", err)
+	}
+}
+
+func TestGetPortAllocation_ReadsWithoutAllocating(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if _, err := s.GetPortAllocation(ctx, "acme/web", "prod", "blue"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPortAllocation before allocation: err = %v, want ErrNotFound", err)
+	}
+	if n := countPortAllocations(t, s); n != 0 {
+		t.Fatalf("lookup inserted %d port_allocations rows", n)
+	}
+	want, err := s.AllocatePort(ctx, "acme/web", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetPortAllocation(ctx, "acme/web", "prod", "blue")
+	if err != nil || got != want {
+		t.Errorf("GetPortAllocation = %d, %v; want %d", got, err, want)
+	}
+	if _, err := s.GetPortAllocation(ctx, "acme/web", "prod", "green"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetPortAllocation(green): err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestNextFreePort_MatchesAllocateWithoutInserting(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	first, err := s.NextFreePort(ctx)
+	if err != nil || first != DefaultPortLo {
+		t.Fatalf("NextFreePort on empty table = %d, %v; want %d", first, err, DefaultPortLo)
+	}
+	for _, color := range []string{"blue", "green"} {
+		if _, err := s.AllocatePort(ctx, "acme/web", "prod", color, DefaultPortLo, DefaultPortHi); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next, err := s.NextFreePort(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.NextFreePort(ctx); err != nil || again != next {
+		t.Errorf("NextFreePort again = %d, %v; want unchanged %d", again, err, next)
+	}
+	if n := countPortAllocations(t, s); n != 2 {
+		t.Errorf("port_allocations rows = %d, want 2", n)
+	}
+	allocated, err := s.AllocatePort(ctx, "acme/api", "prod", "blue", DefaultPortLo, DefaultPortHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != allocated {
+		t.Errorf("NextFreePort = %d, AllocatePort then gave %d", next, allocated)
+	}
+}
+
+func countPortAllocations(t *testing.T, s *Store) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM port_allocations`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestEnvLock_Exclusive(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	assertHolder := func(want string) {
+		t.Helper()
+		got, held, err := s.EnvLockHolder(ctx, "acme/web", "prod")
+		if err != nil {
+			t.Fatalf("EnvLockHolder: %v", err)
+		}
+		if held != (want != "") || got != want {
+			t.Errorf("holder = %q held=%v, want %q", got, held, want)
+		}
+	}
+
+	assertHolder("")
+	if ok, err := s.TryAcquireEnvLock(ctx, "acme/web", "prod", "r1", t0); err != nil || !ok {
+		t.Fatalf("first acquire = %v, %v; want true", ok, err)
+	}
+	if ok, err := s.TryAcquireEnvLock(ctx, "acme/web", "prod", "r2", t0); err != nil || ok {
+		t.Errorf("second acquire = %v, %v; want false", ok, err)
+	}
+	if ok, err := s.TryAcquireEnvLock(ctx, "acme/web", "staging", "r3", t0); err != nil || !ok {
+		t.Errorf("acquire other env = %v, %v; want true", ok, err)
+	}
+	if err := s.ReleaseEnvLock(ctx, "acme/web", "prod", "r2"); err != nil {
+		t.Fatalf("release by non-holder: %v", err)
+	}
+	assertHolder("r1")
+	if err := s.ReleaseEnvLock(ctx, "acme/web", "prod", "r1"); err != nil {
+		t.Fatalf("release by holder: %v", err)
+	}
+	assertHolder("")
+	if ok, err := s.TryAcquireEnvLock(ctx, "acme/web", "prod", "r2", t0); err != nil || !ok {
+		t.Errorf("acquire after release = %v, %v; want true", ok, err)
+	}
+	assertHolder("r2")
+}
+
+func TestSteps_BeginBeforeFinish(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agent.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.BeginStep(ctx, "r1", 0, "build", map[string]string{"image": "web:abc1234"}, t0); err != nil {
+		t.Fatalf("BeginStep(0): %v", err)
+	}
+	if err := s.FinishStep(ctx, "r1", 0, StepDone, map[string]string{"image": "web:abc1234"}, t0.Add(time.Second)); err != nil {
+		t.Fatalf("FinishStep(0): %v", err)
+	}
+	if err := s.BeginStep(ctx, "r1", 1, "prepare", map[string]string{"color": "green", "port": "20001"}, t0.Add(2*time.Second)); err != nil {
+		t.Fatalf("BeginStep(1): %v", err)
+	}
+	if err := s.Close(); err != nil { // simulated crash while step 1 runs
+		t.Fatalf("Close: %v", err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	steps, err := s.ListSteps(ctx, "r1")
+	if err != nil {
+		t.Fatalf("ListSteps: %v", err)
+	}
+	want := []DeployStep{
+		{RunID: "r1", Index: 0, Name: "build", Status: StepDone, Outputs: map[string]string{"image": "web:abc1234"},
+			StartedAt: t0.Truncate(time.Millisecond), FinishedAt: t0.Add(time.Second).Truncate(time.Millisecond)},
+		{RunID: "r1", Index: 1, Name: "prepare", Status: StepRunning, Outputs: map[string]string{"color": "green", "port": "20001"},
+			StartedAt: t0.Add(2 * time.Second).Truncate(time.Millisecond)},
+	}
+	if !slices.EqualFunc(steps, want, stepEqual) {
+		t.Errorf("steps after reopen = %+v, want %+v", steps, want)
+	}
+
+	if err := s.BeginStep(ctx, "r1", 1, "prepare", nil, t0.Add(3*time.Second)); err != nil {
+		t.Fatalf("BeginStep(1) on resume: %v", err)
+	}
+	if err := s.FinishStep(ctx, "r1", 1, StepFailed, nil, t0.Add(4*time.Second)); err != nil {
+		t.Fatalf("FinishStep(1): %v", err)
+	}
+	steps, err = s.ListSteps(ctx, "r1")
+	if err != nil {
+		t.Fatalf("ListSteps: %v", err)
+	}
+	if got := steps[1]; got.Status != StepFailed || got.Outputs == nil || len(got.Outputs) != 0 ||
+		!got.StartedAt.Equal(t0.Add(3*time.Second).Truncate(time.Millisecond)) {
+		t.Errorf("resumed step = %+v, want failed with empty outputs started at +3s", got)
+	}
+	if err := s.FinishStep(ctx, "r1", 7, StepDone, nil, t0); !errors.Is(err, ErrNotFound) {
+		t.Errorf("FinishStep on unbegun step err = %v, want ErrNotFound", err)
+	}
+	if err := s.FinishStep(ctx, "r1", 0, StepRunning, nil, t0); err == nil {
+		t.Error("FinishStep with status running succeeded")
+	}
+}
+
+func stepEqual(a, b DeployStep) bool {
+	return a.RunID == b.RunID && a.Index == b.Index && a.Name == b.Name && a.Status == b.Status &&
+		maps.Equal(a.Outputs, b.Outputs) && a.StartedAt.Equal(b.StartedAt) && a.FinishedAt.Equal(b.FinishedAt)
+}
+
+func TestListDeployRunsInStates(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for i, st := range []string{DeployQueued, DeployRunning, DeployVerifying, DeployRollingBack, DeploySuccess, DeployFailed, DeployInterrupted} {
+		r := testDeployRun("r"+string(rune('0'+i)), "prod", st)
+		r.CreatedAt = t0.Add(time.Duration(i) * time.Second)
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		states []string
+		want   []string
+	}{
+		{name: "active", states: []string{DeployRunning, DeployVerifying, DeployRollingBack}, want: []string{"r1", "r2", "r3"}},
+		{name: "single", states: []string{DeployQueued}, want: []string{"r0"}},
+		{name: "terminal", states: []string{DeployInterrupted, DeployFailed}, want: []string{"r5", "r6"}},
+		{name: "no match", states: []string{DeploySuperseded}, want: nil},
+		{name: "no states", states: nil, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runs, err := s.ListDeployRunsInStates(ctx, tt.states...)
+			if err != nil {
+				t.Fatalf("ListDeployRunsInStates: %v", err)
+			}
+			var got []string
+			for _, r := range runs {
+				if !slices.Contains(tt.states, r.State) {
+					t.Errorf("run %s in state %s returned", r.RunID, r.State)
+				}
+				got = append(got, r.RunID)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("runs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeployRun_RoundTripAndStateTimes(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	in := testDeployRun("r1", "prod", DeployQueued)
+	in.Attempt = 2
+	in.PrevColor, in.TargetColor = "blue", "green"
+	in.RetryOfState = DeployInterrupted
+	if err := s.InsertDeployRun(ctx, in); err != nil {
+		t.Fatalf("InsertDeployRun: %v", err)
+	}
+	if err := s.InsertDeployRun(ctx, testDeployRun("r2", "prod", "Bogus")); err == nil {
+		t.Error("InsertDeployRun with unknown state succeeded")
+	}
+
+	got, err := s.GetDeployRun(ctx, "r1")
+	if err != nil {
+		t.Fatalf("GetDeployRun: %v", err)
+	}
+	in.CreatedAt = in.CreatedAt.Truncate(time.Millisecond)
+	in.QueuedAt = in.CreatedAt
+	if got != in {
+		t.Errorf("GetDeployRun = %+v, want %+v", got, in)
+	}
+
+	start, end := t0.Add(time.Minute).Truncate(time.Millisecond), t0.Add(2*time.Minute).Truncate(time.Millisecond)
+	if err := s.SetDeployRunState(ctx, "r1", DeployRunning, "", start); err != nil {
+		t.Fatalf("SetDeployRunState(Running): %v", err)
+	}
+	if err := s.SetDeployRunState(ctx, "r1", DeployFailed, "deployments.prod: step health failed: timeout", end); err != nil {
+		t.Fatalf("SetDeployRunState(Failed): %v", err)
+	}
+	got, err = s.GetDeployRun(ctx, "r1")
+	if err != nil {
+		t.Fatalf("GetDeployRun: %v", err)
+	}
+	if got.State != DeployFailed || got.Error != "deployments.prod: step health failed: timeout" ||
+		!got.StartedAt.Equal(start) || !got.FinishedAt.Equal(end) {
+		t.Errorf("after Failed = %+v", got)
+	}
+
+	if err := s.SetDeployRunState(ctx, "r1", DeployQueued, "", end); err != nil {
+		t.Fatalf("SetDeployRunState(Queued): %v", err)
+	}
+	got, _ = s.GetDeployRun(ctx, "r1")
+	if got.Error != "" || !got.FinishedAt.IsZero() || !got.StartedAt.Equal(start) {
+		t.Errorf("after requeue = %+v, want error and finished_at cleared", got)
+	}
+
+	if _, err := s.GetDeployRun(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetDeployRun(missing) err = %v, want ErrNotFound", err)
+	}
+	if err := s.SetDeployRunState(ctx, "missing", DeployRunning, "", start); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetDeployRunState(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestIncrementDeployAttempt(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.InsertDeployRun(ctx, testDeployRun("r1", "prod", DeployInterrupted)); err != nil {
+		t.Fatalf("InsertDeployRun: %v", err)
+	}
+	for want := 2; want <= 3; want++ {
+		got, err := s.IncrementDeployAttempt(ctx, "r1")
+		if err != nil || got != want {
+			t.Fatalf("IncrementDeployAttempt = %d, %v; want %d", got, err, want)
+		}
+	}
+	if run, _ := s.GetDeployRun(ctx, "r1"); run.Attempt != 3 || run.State != DeployInterrupted {
+		t.Errorf("after two increments = attempt %d state %s, want 3 %s", run.Attempt, run.State, DeployInterrupted)
+	}
+	if _, err := s.IncrementDeployAttempt(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("IncrementDeployAttempt(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMarkRetryRequested(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.InsertDeployRun(ctx, testDeployRun("r1", "prod", DeployQueued)); err != nil {
+		t.Fatalf("InsertDeployRun: %v", err)
+	}
+	if err := s.SetDeployRunState(ctx, "r1", DeployFailed, "deployments.prod: step health failed: timeout", t0); err != nil {
+		t.Fatalf("SetDeployRunState(Failed): %v", err)
+	}
+	if err := s.MarkRetryRequested(ctx, "r1", DeployFailed); err != nil {
+		t.Fatalf("MarkRetryRequested: %v", err)
+	}
+	got, err := s.GetDeployRun(ctx, "r1")
+	if err != nil {
+		t.Fatalf("GetDeployRun: %v", err)
+	}
+	if got.State != DeployQueued || got.RetryOfState != DeployFailed || got.Error != "" || got.Attempt != 2 || !got.FinishedAt.IsZero() {
+		t.Errorf("after MarkRetryRequested = %+v, want Queued retry of Failed, attempt 2, error and finished_at cleared", got)
+	}
+	if !got.QueuedAt.After(got.CreatedAt) {
+		t.Errorf("QueuedAt after MarkRetryRequested = %v, want later than CreatedAt %v", got.QueuedAt, got.CreatedAt)
+	}
+	if err := s.MarkRetryRequested(ctx, "r1", DeployFailed); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkRetryRequested on a Queued run err = %v, want ErrNotFound", err)
+	}
+	if got, _ := s.GetDeployRun(ctx, "r1"); got.Attempt != 2 {
+		t.Errorf("attempt after refused retry = %d, want 2", got.Attempt)
+	}
+	if err := s.MarkRetryRequested(ctx, "missing", DeployFailed); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkRetryRequested(missing) err = %v, want ErrNotFound", err)
+	}
+
+	if err := s.ClearRetryOf(ctx, "r1"); err != nil {
+		t.Fatalf("ClearRetryOf: %v", err)
+	}
+	if got, _ := s.GetDeployRun(ctx, "r1"); got.RetryOfState != "" || got.State != DeployQueued {
+		t.Errorf("after ClearRetryOf = %+v, want Queued with no retry_of_state", got)
+	}
+	if err := s.ClearRetryOf(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClearRetryOf(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestResetSteps(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, id := range []string{"r1", "r2"} {
+		if err := s.InsertDeployRun(ctx, testDeployRun(id, "prod", DeployFailed)); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", id, err)
+		}
+		for i := range 2 {
+			if err := s.BeginStep(ctx, id, i, fmt.Sprintf("step%d", i), nil, t0); err != nil {
+				t.Fatalf("BeginStep(%s, %d): %v", id, i, err)
+			}
+		}
+	}
+	if err := s.ResetSteps(ctx, "r1"); err != nil {
+		t.Fatalf("ResetSteps: %v", err)
+	}
+	if steps, err := s.ListSteps(ctx, "r1"); err != nil || len(steps) != 0 {
+		t.Errorf("r1 steps after reset = %v, %v; want none", steps, err)
+	}
+	if steps, err := s.ListSteps(ctx, "r2"); err != nil || len(steps) != 2 {
+		t.Errorf("r2 steps = %d, %v; want 2 untouched", len(steps), err)
+	}
+}
+
+func TestFindDeployRun(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	older := testDeployRun("r1", "prod", DeployFailed)
+	older.SHA, older.Attempt = "abc", 1
+	newer := older
+	newer.RunID, newer.State, newer.CreatedAt = "r2", DeployQueued, t0.Add(time.Minute)
+	other := older
+	other.RunID, other.Env = "r3", "staging"
+	for _, r := range []DeployRun{older, newer, other} {
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	for _, tc := range []struct {
+		name, repo, env, sha string
+		attempt              int
+		want                 string // run id; "" means ErrNotFound
+	}{
+		{name: "exact match picks the newest", repo: "acme/web", env: "prod", sha: "abc", attempt: 1, want: "r2"},
+		{name: "other env", repo: "acme/web", env: "staging", sha: "abc", attempt: 1, want: "r3"},
+		{name: "different attempt", repo: "acme/web", env: "prod", sha: "abc", attempt: 2},
+		{name: "different sha", repo: "acme/web", env: "prod", sha: "def", attempt: 1},
+		{name: "different repo", repo: "acme/api", env: "prod", sha: "abc", attempt: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.FindDeployRun(ctx, tc.repo, tc.env, tc.sha, tc.attempt)
+			if tc.want == "" {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("FindDeployRun = %+v, %v; want ErrNotFound", got, err)
+				}
+				return
+			}
+			if err != nil || got.RunID != tc.want {
+				t.Fatalf("FindDeployRun = %q, %v; want %q", got.RunID, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLatestDeployRunFor(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	first := testDeployRun("r1", "prod", DeployFailed)
+	first.SHA = "abc"
+	retried := first
+	retried.RunID, retried.Attempt, retried.State = "r2", 2, DeployQueued
+	sameAttemptLater := retried
+	sameAttemptLater.RunID, sameAttemptLater.CreatedAt = "r3", t0.Add(time.Minute)
+	staging := first
+	staging.RunID, staging.Env = "r4", "staging"
+	for _, r := range []DeployRun{first, retried, sameAttemptLater, staging} {
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	for _, tc := range []struct {
+		name, repo, env, sha string
+		want                 string // run id; "" means ErrNotFound
+	}{
+		{name: "highest attempt, oldest of it", repo: "acme/web", env: "prod", sha: "abc", want: "r2"},
+		{name: "other env", repo: "acme/web", env: "staging", sha: "abc", want: "r4"},
+		{name: "different sha", repo: "acme/web", env: "prod", sha: "def"},
+		{name: "different repo", repo: "acme/api", env: "prod", sha: "abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.LatestDeployRunFor(ctx, tc.repo, tc.env, tc.sha)
+			if tc.want == "" {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("LatestDeployRunFor = %+v, %v; want ErrNotFound", got, err)
+				}
+				return
+			}
+			if err != nil || got.RunID != tc.want {
+				t.Fatalf("LatestDeployRunFor = %q, %v; want %q", got.RunID, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestListQueuedDeployRuns(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for i, r := range []DeployRun{
+		testDeployRun("late", "prod", DeployQueued),
+		testDeployRun("busy", "prod", DeployRunning),
+		testDeployRun("early", "staging", DeployQueued),
+		testDeployRun("done", "prod", DeploySuccess),
+	} {
+		r.CreatedAt = t0.Add(time.Duration(3-i) * time.Second)
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", r.RunID, err)
+		}
+	}
+	runs, err := s.ListQueuedDeployRuns(ctx)
+	if err != nil {
+		t.Fatalf("ListQueuedDeployRuns: %v", err)
+	}
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.RunID)
+	}
+	if want := []string{"early", "late"}; !slices.Equal(got, want) {
+		t.Errorf("ListQueuedDeployRuns = %v, want %v", got, want)
+	}
+}
+
+func TestListTerminalDeployRunsBefore(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	cutoff := t0.Add(time.Hour)
+	for _, tc := range []struct {
+		id, state string
+		finished  time.Time
+	}{
+		{"ok-old", DeploySuccess, t0.Add(2 * time.Minute)},
+		{"failed-old", DeployFailed, t0.Add(time.Minute)},
+		{"interrupted-old", DeployInterrupted, t0.Add(3 * time.Minute)},
+		{"superseded-old", DeploySuperseded, t0.Add(4 * time.Minute)},
+		{"ok-new", DeploySuccess, cutoff.Add(time.Minute)},
+		{"ok-at-cutoff", DeploySuccess, cutoff},
+		{"running", DeployRunning, time.Time{}},
+		{"queued", DeployQueued, time.Time{}},
+	} {
+		r := testDeployRun(tc.id, "prod", tc.state)
+		r.FinishedAt = tc.finished
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", tc.id, err)
+		}
+	}
+	runs, err := s.ListTerminalDeployRunsBefore(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ListTerminalDeployRunsBefore: %v", err)
+	}
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.RunID)
+	}
+	if want := []string{"failed-old", "ok-old", "interrupted-old", "superseded-old"}; !slices.Equal(got, want) {
+		t.Errorf("ListTerminalDeployRunsBefore = %v, want %v", got, want)
+	}
+}
+
+func TestLastSucceededRuns(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, tc := range []struct {
+		id, env, state string
+		finished       time.Duration
+	}{
+		{"first", "prod", DeploySuccess, time.Minute},
+		{"second", "prod", DeploySuccess, 2 * time.Minute},
+		{"failed", "prod", DeployFailed, 3 * time.Minute},
+		{"third", "prod", DeploySuccess, 4 * time.Minute},
+		{"staging", "staging", DeploySuccess, 5 * time.Minute},
+	} {
+		r := testDeployRun(tc.id, tc.env, tc.state)
+		r.FinishedAt = t0.Add(tc.finished)
+		if err := s.InsertDeployRun(ctx, r); err != nil {
+			t.Fatalf("InsertDeployRun(%s): %v", tc.id, err)
+		}
+	}
+	for _, tc := range []struct {
+		env  string
+		n    int
+		want []string
+	}{
+		{"prod", 2, []string{"third", "second"}},
+		{"prod", 5, []string{"third", "second", "first"}},
+		{"staging", 2, []string{"staging"}},
+		{"dev", 2, nil},
+		{"prod", 0, nil},
+	} {
+		runs, err := s.LastSucceededRuns(ctx, "acme/web", tc.env, tc.n)
+		if err != nil {
+			t.Fatalf("LastSucceededRuns(%s, %d): %v", tc.env, tc.n, err)
+		}
+		var got []string
+		for _, r := range runs {
+			got = append(got, r.RunID)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("LastSucceededRuns(%s, %d) = %v, want %v", tc.env, tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestGCTargets_Upsert(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	for _, tg := range []GCTarget{
+		{Repo: "acme/web", Env: "prod", Project: "web", RetainImages: 5, UpdatedAt: t0},
+		{Repo: "acme/api", Env: "prod", Project: "api", RetainImages: 3, UpdatedAt: t0},
+		{Repo: "acme/web", Env: "prod", Project: "web2", RetainImages: 4, UpdatedAt: t0.Add(time.Minute)},
+	} {
+		if err := s.SetGCTarget(ctx, tg); err != nil {
+			t.Fatalf("SetGCTarget(%+v): %v", tg, err)
+		}
+	}
+	got, err := s.ListGCTargets(ctx)
+	if err != nil {
+		t.Fatalf("ListGCTargets: %v", err)
+	}
+	want := []GCTarget{
+		{Repo: "acme/api", Env: "prod", Project: "api", RetainImages: 3, UpdatedAt: t0},
+		{Repo: "acme/web", Env: "prod", Project: "web2", RetainImages: 4, UpdatedAt: t0.Add(time.Minute)},
+	}
+	if !slices.EqualFunc(got, want, func(a, b GCTarget) bool {
+		return a.Repo == b.Repo && a.Env == b.Env && a.Project == b.Project && a.RetainImages == b.RetainImages && a.UpdatedAt.Equal(b.UpdatedAt)
+	}) {
+		t.Errorf("ListGCTargets = %+v, want %+v", got, want)
+	}
+}
+
+func TestDeployState_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "agent.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, ok, err := s.GetDeployState(ctx, "acme/web", "prod"); err != nil || ok {
+		t.Fatalf("GetDeployState before set = %v, %v; want not found", ok, err)
+	}
+
+	first := DeployState{Repo: "acme/web", Env: "prod", ActiveColor: "blue", LastSuccessSHA: "sha1", LastSuccessRun: "r1",
+		UpdatedAt: t0.Truncate(time.Millisecond)}
+	second := DeployState{Repo: "acme/web", Env: "prod", ActiveColor: "green", LastSuccessSHA: "sha2", LastSuccessRun: "r2",
+		UpdatedAt: t0.Add(time.Hour).Truncate(time.Millisecond)}
+	for _, st := range []DeployState{first, second} {
+		if err := s.SetDeployState(ctx, st); err != nil {
+			t.Fatalf("SetDeployState: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	got, ok, err := s.GetDeployState(ctx, "acme/web", "prod")
+	if err != nil || !ok {
+		t.Fatalf("GetDeployState = %v, %v", ok, err)
+	}
+	if got != second {
+		t.Errorf("GetDeployState = %+v, want %+v", got, second)
+	}
+	if _, ok, _ := s.GetDeployState(ctx, "acme/web", "staging"); ok {
+		t.Error("staging state found, want none")
+	}
+}

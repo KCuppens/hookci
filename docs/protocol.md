@@ -31,4 +31,4 @@ An agent sends `annotations` frames with the file annotations it parsed from a j
 
 - **Old agent, new hub.** The agent sends no `os_release`; the hub shows none. Annotations frames are unchanged and stored.
 - **New agent, old hub.** The hello carries an extra `os_release` property. The hub only checks the frame version, the type and the required keys, so it ignores the property and the connection works. The schema marks `Hello` with `additionalProperties: false`, but only the schema tests and tools that validate against it enforce that; neither side of the protocol validates incoming frames against the schema at run time. An old hub that does validate (a third party implementation) would reject the hello, so such an implementation must be updated before the agent is.
-- **Migrations.** `0012_annotations.sql` creates the `annotations` table and `0017_agent_os_release.sql` adds `agents.os_release`. Apply them before the new hub code runs.
+- **Migrations.** `0023_annotations.sql` creates the `annotations` table and `0028_agent_os_release.sql` adds `agents.os_release`. Apply them before the new hub code runs.

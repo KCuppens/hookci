@@ -1,5 +1,6 @@
 // Package logupload sends a finished job's log to the hub: redacted, capped at
-// MaxBytes, gzipped and PUT to /v1/logs/<run>/<job> with the agent credential.
+// MaxBytes of log and of gzip, gzipped and PUT to /v1/logs/<run>/<job> with
+// the agent credential.
 package logupload
 
 import (
@@ -17,8 +18,13 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/redact"
 )
 
-// DefaultMaxBytes is the hub's log cap (QUOTAS.logBytes).
+// DefaultMaxBytes is the hub's log cap (QUOTAS.logBytes). The hub applies it
+// to both the declared log size and the gzipped body.
 const DefaultMaxBytes = 10 << 20
+
+// gzipHeadroom is the room left under the cap for the truncation marker,
+// a deflate flush and the gzip trailer.
+const gzipHeadroom = 4 << 10
 
 // TruncationMarker ends a log cut at the cap.
 const TruncationMarker = "\n[hookci: log truncated at 10 MB]\n"
@@ -33,10 +39,22 @@ var backoffs = [retries]time.Duration{time.Second, 2 * time.Second, 4 * time.Sec
 // catches anything written around it.
 var redactor, _ = redact.New(nil, nil)
 
+// Redact masks a run of whole log lines the way Upload does, so the live
+// log tail shows what the uploaded log will. A trailing partial line is
+// masked on its own, as at the end of an upload.
+func Redact(b []byte) []byte {
+	var out bytes.Buffer
+	w := redactor.Writer(&out)
+	// A bytes.Buffer never fails a write.
+	_, _ = w.Write(b)
+	_ = w.Close()
+	return out.Bytes()
+}
+
 // Uploader PUTs job logs to the hub.
 type Uploader struct {
-	HubURL   string        // e.g. https://ci.webuno.io
-	Token    func() string // agent credential, zc_agent_...
+	HubURL   string        // e.g. https://ci.hookci.com
+	Token    func() string // agent credential, hci_agent_...
 	HTTP     *http.Client  // nil: http.DefaultClient
 	MaxBytes int64         // <= 0: DefaultMaxBytes
 
@@ -79,7 +97,9 @@ func (u *Uploader) Upload(ctx context.Context, runID, job string, r io.Reader) (
 	}
 }
 
-// encode returns the gzipped, redacted and capped log.
+// encode returns the gzipped, redacted and capped log. Both the log and its
+// gzip stay within the limit, so an incompressible log is cut before the
+// gzip outgrows it.
 func (u *Uploader) encode(r io.Reader) ([]byte, Result, error) {
 	limit := u.MaxBytes
 	if limit <= 0 {
@@ -87,7 +107,7 @@ func (u *Uploader) encode(r io.Reader) ([]byte, Result, error) {
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	cw := &capWriter{dst: gz, left: limit}
+	cw := &capWriter{gz: gz, out: &buf, left: limit, room: limit - gzipHeadroom}
 	rw := redactor.Writer(cw)
 	_, err := io.Copy(rw, r)
 	if err == nil {
@@ -161,26 +181,46 @@ func logURL(hubURL, runID, job string) (string, error) {
 
 var errCapped = errors.New("logupload: log cap reached")
 
-// capWriter passes at most left bytes to dst, then fails with errCapped.
+// capWriter passes at most left bytes to gz and keeps gz's output in out
+// within room bytes, then fails with errCapped.
 type capWriter struct {
-	dst    io.Writer
-	left   int64
-	capped bool
+	gz      *gzip.Writer
+	out     *bytes.Buffer // gz's output
+	left    int64         // log bytes still allowed
+	room    int64         // gzip bytes allowed in out
+	pending int64         // log bytes written to gz since its last flush
+	capped  bool
 }
 
 func (w *capWriter) Write(p []byte) (int, error) {
-	if int64(len(p)) <= w.left {
-		n, err := w.dst.Write(p)
-		w.left -= int64(n)
-		return n, err
+	n := min(int64(len(p)), w.left)
+	if w.worst(w.pending+n) > w.room {
+		// Flush so out holds everything written, then take only what is
+		// sure to fit even if it does not compress.
+		if err := w.gz.Flush(); err != nil {
+			return 0, err
+		}
+		w.pending = 0
+		n = min(n, max(0, (w.room-int64(w.out.Len())-13)*16384/16389))
 	}
-	n, err := w.dst.Write(p[:w.left])
-	w.left -= int64(n)
+	written, err := w.gz.Write(p[:n])
+	w.left -= int64(written)
+	w.pending += int64(written)
 	if err != nil {
-		return n, err
+		return written, err
 	}
-	w.capped = true
-	return n, errCapped
+	if written < len(p) {
+		w.capped = true
+		return written, errCapped
+	}
+	return written, nil
+}
+
+// worst bounds the size of out once k more unflushed log bytes are
+// compressed: deflate falls back to stored blocks, 5 bytes of header per
+// 16 KiB block, as zlib's deflateBound counts.
+func (w *capWriter) worst(k int64) int64 {
+	return int64(w.out.Len()) + k + k>>12 + k>>14 + 13
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
