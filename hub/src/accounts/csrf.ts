@@ -1,6 +1,8 @@
 // CSRF defence for the account forms, in two layers:
 // - Origin: a POST whose Origin is not the hub's own is refused; with no Origin
-//   header, a Sec-Fetch-Site of cross-site is refused.
+//   header, a Sec-Fetch-Site of cross-site is refused. Browsers send
+//   "Origin: null" for form posts from our Referrer-Policy: no-referrer pages,
+//   so a null Origin passes only with Sec-Fetch-Site: same-origin.
 // - Token: a double-submit pair. The browser holds a random value in the
 //   __Host-hookci_csrf cookie; the form carries HMAC(STATE_SIGNING_KEY,
 //   "csrf." + cookie). A page on another site can neither read the cookie nor
@@ -28,11 +30,13 @@ export async function csrfForForm(env: Env, cookieHeader: string | null): Promis
 	return { token: await tokenFor(env, fresh), cookie: setCookie(CSRF_COOKIE, fresh, CSRF_TTL_S) };
 }
 
-/** True when the request comes from the hub's own origin: Origin matches, or is absent and the browser did not say cross-site. */
+/** True when the request comes from the hub's own origin: Origin matches; or Origin is null and the browser says same-origin; or it is absent and the browser did not say cross-site. */
 export function sameOrigin(env: Env, request: Request): boolean {
 	const origin = request.headers.get("origin");
+	const site = request.headers.get("sec-fetch-site");
+	if (origin === "null") return site === "same-origin";
 	if (origin !== null) return origin === new URL(env.HUB_ORIGIN).origin;
-	return request.headers.get("sec-fetch-site") !== "cross-site";
+	return site !== "cross-site";
 }
 
 /** True when the submitted token is the one the browser's csrf cookie calls for. */
