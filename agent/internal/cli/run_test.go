@@ -194,7 +194,7 @@ func TestRunNoConfigDetects(t *testing.T) {
 		run.TrustDomain != "trusted:local/app" || run.Repo != "local/app" || len(run.SHA) != 40 {
 		t.Errorf("run = %+v", run)
 	}
-	if got, want := jobNamesOf(t, db, run.ID), []string{"lint", "test"}; !reflect.DeepEqual(got, want) {
+	if got, want := jobNamesOf(t, db, run.ID), []string{"setup", "lint", "test"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("jobs = %q, want %q", got, want)
 	}
 }
@@ -252,7 +252,7 @@ func TestRunSingleJobWithNeeds(t *testing.T) {
 		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	db := openState(t, d)
-	if got, want := jobNamesOf(t, db, onlyRun(t, db).ID), []string{"build", "gen", "test"}; !reflect.DeepEqual(got, want) {
+	if got, want := jobNamesOf(t, db, onlyRun(t, db).ID), []string{"setup", "build", "gen", "test"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("jobs = %q, want %q", got, want)
 	}
 }
@@ -375,9 +375,9 @@ func TestRunSIGINTCancels(t *testing.T) {
 // blockingRunner holds each unit until its run is cancelled.
 type blockingRunner struct{}
 
-func (blockingRunner) RunSetup(ctx context.Context, _ store.Run) error {
+func (blockingRunner) RunSetup(ctx context.Context, _ store.Run) (scheduler.JobOutcome, error) {
 	<-ctx.Done()
-	return ctx.Err()
+	return scheduler.JobOutcome{}, ctx.Err()
 }
 
 func (blockingRunner) RunJob(ctx context.Context, _ store.Run, _ store.Job) (scheduler.JobOutcome, error) {

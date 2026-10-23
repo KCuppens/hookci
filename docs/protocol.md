@@ -1,6 +1,6 @@
 # Agent protocol notes
 
-The agent and the hub talk over a WebSocket with the frames defined in `schema/hookci.schema.json`. This page covers two optional additions. Both follow the same rule: a new field is optional, an agent that does not send it keeps working, and a hub that does not know it ignores it.
+The agent and the hub talk over a WebSocket with the frames defined in `schema/hookci.schema.json`. This page covers three additions. All follow the same rule: a new field is optional, an agent that does not send it keeps working, and a hub that does not know it ignores it.
 
 ## `os_release` in hello
 
@@ -27,8 +27,21 @@ An agent sends `annotations` frames with the file annotations it parsed from a j
 - **Retention.** Rows are deleted with their run: by the retention purge after 14 days and when an installation is deleted.
 - **Fields.** The frame's `line` becomes both `start_line` and `end_line`. `column` is not stored. `title` is optional.
 
+## The `setup` job
+
+The agent reports a run's setup (checkout, config, network, cache restore, Postgres and the `setup` steps) as a job named `setup`, with no new frame type and no schema change.
+
+- **Planned first.** `job_planned` lists `setup` before the config's jobs, and every job that had no `needs` now needs `setup`. The hub stores jobs in the order planned, so the run page shows setup first.
+- **States.** `job` events with `job: "setup"` move it through `queued`, `running`, then `success`, `failed` or `cancelled`, with `duration_ms`. While it runs, events carry `step`, `step_index` and `steps_total`; the hub shows them inside the row. A `failed` event carries a `reason` and a `tail`. The agent uploads `logs/setup.log` for the job, or sends `logs: "local"` when it cannot.
+- **Gating.** No other job starts until setup succeeds. When setup fails, every other job is `skipped` with the reason `needs setup failed` and the run ends `failed` with the reason `setup failed: <error>`.
+- **Checks and counts.** The hub treats `setup` as any job: a check run `hookci/setup`, a row in the Slack and Telegram job counts, and one of the "Jobs N of M" on the run page. It counts against the 200 jobs a run may have. The configuration card's "N jobs detected" does not count it.
+- **Reserved name.** A config cannot define a job named `setup`.
+- **Runs without it.** A retry of a run planned by an older agent has no `setup` job. For it the agent keeps sending run-level `running` events with `step`, `step_index` and `steps_total`, and the hub keeps showing the "Setting up" banner. The hub shows that banner only when the run has no `setup` job.
+
 ## Compatibility
 
 - **Old agent, new hub.** The agent sends no `os_release`; the hub shows none. Annotations frames are unchanged and stored.
 - **New agent, old hub.** The hello carries an extra `os_release` property. The hub only checks the frame version, the type and the required keys, so it ignores the property and the connection works. The schema marks `Hello` with `additionalProperties: false`, but only the schema tests and tools that validate against it enforce that; neither side of the protocol validates incoming frames against the schema at run time. An old hub that does validate (a third party implementation) would reject the hello, so such an implementation must be updated before the agent is.
 - **Migrations.** `0023_annotations.sql` creates the `annotations` table and `0028_agent_os_release.sql` adds `agents.os_release`. Apply them before the new hub code runs.
+- **Setup job, new agent and old hub.** The hub sees one more job named `setup` and job-scoped step events, both of which it already handles. `protocol_version` stays 1: no frame or field changed. An old hub shows no banner for such a run, and counts the setup job in its job totals.
+- **Setup job, old agent and new hub.** No `setup` job is planned, so the hub shows the run-level banner as before.

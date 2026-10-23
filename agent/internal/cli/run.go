@@ -104,6 +104,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 	for _, j := range checks.Jobs {
 		jobs = append(jobs, store.Job{Name: j.Name, Needs: j.Needs})
 	}
+	jobs = store.WithSetup(jobs)
 	run := store.Run{
 		ID:          runID,
 		Repo:        co.Repo,

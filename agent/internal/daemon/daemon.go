@@ -810,10 +810,11 @@ func retryTrigger(retry store.Run) protocol.Trigger {
 	return t
 }
 
+// storeJobs plans checks' jobs behind the setup job.
 func storeJobs(checks *config.ResolvedChecks) []store.Job {
 	jobs := make([]store.Job, 0, len(checks.Jobs))
 	for _, j := range checks.Jobs {
 		jobs = append(jobs, store.Job{Name: j.Name, Needs: j.Needs})
 	}
-	return jobs
+	return store.WithSetup(jobs)
 }

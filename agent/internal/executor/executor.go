@@ -57,8 +57,8 @@ type redactedError struct {
 func (e *redactedError) Error() string   { return e.msg }
 func (e *redactedError) Unwrap() []error { return e.causes }
 
-// setupJob is the log name of the setup phase: logs/setup.log.
-const setupJob = "setup"
+// setupJob is the setup phase's job name and log name: logs/setup.log.
+const setupJob = store.SetupJob
 
 // defaultBackstopGrace is added to a job's timeout for the context deadline
 // that catches a backend whose own timeout did not fire.
@@ -158,6 +158,9 @@ type runState struct {
 
 	stageN     int // setup stages started so far
 	stageTotal int // stages in all once the config is read; 0 before
+
+	setupPlanned bool     // the run has a setup job, so stage events are its step events
+	setupTail    []string // last lines of the failing setup step's output
 }
 
 // New checks o and fills its defaults.
@@ -224,8 +227,9 @@ func (e *Executor) state(runID string) (*runState, error) {
 // RunSetup checks the run out, loads its config, builds the redactor,
 // network and egress proxy, restores caches, starts postgres and runs the
 // setup steps. Every error wraps ErrSetupFailed, is redacted and is written
-// to logs/setup.log; whatever was started is released by FinishRun.
-func (e *Executor) RunSetup(ctx context.Context, run store.Run) error {
+// to logs/setup.log; whatever was started is released by FinishRun. The
+// outcome of a failed setup carries the tail of that log for the setup job.
+func (e *Executor) RunSetup(ctx context.Context, run store.Run) (scheduler.JobOutcome, error) {
 	rs := &runState{
 		run:     run,
 		trusted: strings.HasPrefix(run.TrustDomain, "trusted:"),
@@ -235,14 +239,38 @@ func (e *Executor) RunSetup(ctx context.Context, run store.Run) error {
 	if _, dup := e.runs[run.ID]; dup {
 		e.mu.Unlock()
 		err := fmt.Errorf("run %s is already set up", run.ID)
-		return &redactedError{msg: err.Error(), causes: []error{ErrSetupFailed, err}}
+		return scheduler.JobOutcome{}, &redactedError{msg: err.Error(), causes: []error{ErrSetupFailed, err}}
 	}
 	e.runs[run.ID] = rs
 	e.mu.Unlock()
 
+	rs.setupPlanned = e.hasSetupJob(ctx, run.ID)
 	if err := e.setup(ctx, rs); err != nil {
 		rs.logf("setup failed: %v", err)
-		return &redactedError{msg: rs.redact(err.Error()), causes: []error{ErrSetupFailed, err}}
+		return scheduler.JobOutcome{Tail: rs.failureTail()}, &redactedError{msg: rs.redact(err.Error()), causes: []error{ErrSetupFailed, err}}
+	}
+	return scheduler.JobOutcome{}, nil
+}
+
+// hasSetupJob reports whether run was planned with a setup job. A store that
+// cannot say counts as no.
+func (e *Executor) hasSetupJob(ctx context.Context, runID string) bool {
+	jobs, err := e.o.Store.Jobs(ctx, runID)
+	if err != nil {
+		e.o.Logger.Warn("executor: list jobs", "run", runID, "err", err)
+		return false
+	}
+	return slices.ContainsFunc(jobs, func(j store.Job) bool { return j.Name == setupJob })
+}
+
+// failureTail is the output the hub shows for a failed setup: the failing
+// setup step's, else the executor's own lines of logs/setup.log.
+func (rs *runState) failureTail() []string {
+	switch {
+	case len(rs.setupTail) > 0:
+		return rs.setupTail
+	case rs.setupLog != nil:
+		return rs.setupLog.Tail()
 	}
 	return nil
 }
@@ -326,7 +354,7 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 func (e *Executor) stage(ctx context.Context, rs *runState, name string, run func() error) error {
 	idx := rs.stageN
 	rs.stageN++
-	if err := e.appendSetupStage(ctx, rs.run.ID, name, idx, rs.stageTotal); err != nil {
+	if err := e.appendSetupStage(ctx, rs, name, idx, rs.stageTotal); err != nil {
 		rs.logf("report stage %q: %v", name, err)
 	}
 	start := e.o.Clock()
@@ -607,6 +635,7 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 			return nil
 		})
 		if err != nil {
+			rs.setupTail = pipe.Tail()
 			return err
 		}
 	}

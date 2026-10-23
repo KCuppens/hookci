@@ -351,6 +351,72 @@ describe("AgentDO run lifecycle", () => {
     expect(await run("run_a")).toMatchObject({ state: "success", setup_step: null, setup_step_index: null, setup_steps_total: null });
   });
 
+  it("records the setup job like any job: planned first, step progress on its own row, terminal state with its duration", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    await sock.request({
+      type: "job_planned",
+      run_id: "run_a",
+      jobs: [
+        { name: "setup", needs: [] },
+        { name: "build", needs: ["setup"] },
+      ],
+    });
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", state: "running" });
+    const started = (await run("run_a"))?.started_at;
+    const updates = runUpdates(sink.calls).length;
+
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", job: "setup", state: "running" });
+    await sock.request({ type: "event", agent_seq: 3, run_id: "run_a", job: "setup", state: "running", step: "Restoring caches", step_index: 3, steps_total: 6 });
+    const setupRow = env.DB.prepare("SELECT state, step, step_index, steps_total, duration_ms FROM jobs WHERE run_id = 'run_a' AND name = 'setup'");
+    expect(await setupRow.first()).toEqual({ state: "running", step: "Restoring caches", step_index: 3, steps_total: 6, duration_ms: null });
+    // Job-scoped progress belongs to the setup row, not to the run's setup_step columns, and does not restart the run.
+    expect(await run("run_a")).toMatchObject({ state: "running", started_at: started, setup_step: null });
+    expect(runUpdates(sink.calls)).toHaveLength(updates);
+
+    await sock.request({ type: "event", agent_seq: 4, run_id: "run_a", job: "setup", state: "success", duration_ms: 4200 });
+    expect(await setupRow.first()).toMatchObject({ state: "success", duration_ms: 4200 });
+    expect(sink.calls).toContainEqual({
+      op: "onJobUpdate",
+      run: expect.objectContaining({ runId: "run_a" }),
+      job: expect.objectContaining({ name: "setup", state: "success", durationMs: 4200 }),
+    });
+    const order = await env.DB.prepare("SELECT name FROM jobs WHERE run_id = 'run_a' ORDER BY rowid").all();
+    expect(order.results).toEqual([{ name: "setup" }, { name: "build" }]);
+  });
+
+  it("a failed setup job reaches the sinks with its reason and tail, and the run fails with it", async () => {
+    const agent = await seedAgent(INSTALLATION);
+    const sock = await online(agent);
+    await acceptedRun(agent, sock, "run_a");
+    await sock.request({
+      type: "job_planned",
+      run_id: "run_a",
+      jobs: [
+        { name: "setup", needs: [] },
+        { name: "build", needs: ["setup"] },
+      ],
+    });
+    await sock.request({ type: "event", agent_seq: 1, run_id: "run_a", state: "running" });
+    await sock.request({ type: "event", agent_seq: 2, run_id: "run_a", job: "setup", state: "running" });
+    await sock.request({ type: "event", agent_seq: 3, run_id: "run_a", job: "setup", state: "failed", duration_ms: 900, reason: "setup failed: npm ci exited 1", tail: ["npm ERR!"] });
+    await sock.request({ type: "event", agent_seq: 4, run_id: "run_a", job: "build", state: "skipped", reason: "needs setup failed" });
+    await sock.request({ type: "event", agent_seq: 5, run_id: "run_a", state: "failed", duration_ms: 1000, reason: "setup failed: npm ci exited 1" });
+
+    expect(sink.calls).toContainEqual({
+      op: "onJobUpdate",
+      run: expect.objectContaining({ runId: "run_a" }),
+      job: expect.objectContaining({ name: "setup", state: "failed", reason: "setup failed: npm ci exited 1", tail: ["npm ERR!"] }),
+    });
+    expect(await run("run_a")).toMatchObject({ state: "failed", reason: "setup failed: npm ci exited 1" });
+    const jobs = await env.DB.prepare("SELECT name, state FROM jobs WHERE run_id = 'run_a' ORDER BY rowid").all();
+    expect(jobs.results).toEqual([
+      { name: "setup", state: "failed" },
+      { name: "build", state: "skipped" },
+    ]);
+  });
+
   it("token_request for bound repo returns token", async () => {
     const gh = createFakeGitHub();
     gh.respond("POST", "/app/installations/:id/access_tokens", () =>

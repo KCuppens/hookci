@@ -240,3 +240,63 @@ describe("run page action forms with email accounts off", () => {
     expect(await res.text()).not.toContain('method="post"');
   });
 });
+
+interface SetupRow {
+  state: string;
+  step?: string;
+  index?: number;
+  total?: number;
+  duration?: number | null;
+}
+
+/** A run whose first job is `setup` and whose other jobs follow in the given states. */
+async function setupRun(runId: string, run: Parameters<typeof seedRun>[5], setup: SetupRow, others: Record<string, string>): Promise<void> {
+  await seedRun(ACME, acme.repoId, runId, acme.agentId, "setup", run);
+  const t = tenantDb(env.DB, ACME);
+  await upsertJob(t, { run_id: runId, name: "setup", state: setup.state, step: setup.step ?? null, step_index: setup.index ?? null, steps_total: setup.total ?? null, duration_ms: setup.duration ?? null });
+  for (const [name, state] of Object.entries(others)) {
+    await upsertJob(t, { run_id: runId, name, state, step: null, step_index: null, steps_total: null, duration_ms: null });
+  }
+}
+
+describe("run page setup job", () => {
+  it("lists setup first with its step progress in the row, drops the banner, counts it and keeps it out of the detected jobs", async () => {
+    await setupRun("run_setupjob", { state: "running", finished_at: null, duration_ms: null }, { state: "running", step: "Restoring caches", index: 3, total: 6 }, { lint: "queued", test: "queued" });
+    await env.DB.prepare("UPDATE runs SET setup_step = 'Restoring caches', setup_step_index = 3, setup_steps_total = 6 WHERE run_id = 'run_setupjob'").run();
+    await configJob(ACME, "run_setupjob", "success");
+    const html = await (await page(ACME, "run_setupjob")).text();
+
+    expect(html.indexOf("<b>setup</b>")).toBeGreaterThan(-1);
+    expect(html.indexOf("<b>setup</b>")).toBeLessThan(html.indexOf("<b>lint</b>"));
+    expect(html.indexOf("<b>lint</b>")).toBeLessThan(html.indexOf("<b>test</b>"));
+    expect(html).toContain(escapeHtml(T.step(4, 6)));
+    expect(html).toContain("Restoring caches");
+    expect(html).not.toContain("Setting up");
+    expect(html).toContain(escapeHtml(T.jobsCount(0, 3)));
+    expect(html).toContain(escapeHtml(T.configJobs(2)));
+  });
+
+  it("counts a finished setup as a completed job and shows its duration", async () => {
+    await setupRun("run_setupdone", { state: "running", finished_at: null, duration_ms: null }, { state: "success", duration: 4000 }, { lint: "running" });
+    const html = await (await page(ACME, "run_setupdone")).text();
+    expect(html).toContain(escapeHtml(T.jobsCount(1, 2)));
+    expect(html).toContain(">4s<");
+  });
+
+  it("shows a failed setup as the failing job with the later jobs skipped", async () => {
+    await setupRun("run_setupfail", { state: "failed", reason: "setup failed: npm ci exited 1" }, { state: "failed", step: "Setup step 1: npm ci", index: 5, total: 6, duration: 9000 }, { lint: "skipped", test: "skipped" });
+    const html = await (await page(ACME, "run_setupfail")).text();
+    expect(html).toContain(escapeHtml(T.jobsCount(3, 3)));
+    expect(html).toContain("Failed");
+    expect(html).toContain(escapeHtml(T.step(6, 6)));
+    expect(html.indexOf("<b>setup</b>")).toBeLessThan(html.indexOf("<b>lint</b>"));
+  });
+
+  it("keeps the setup banner for a run from an agent that reports no setup job", async () => {
+    await seedRun(ACME, acme.repoId, "run_legacy", acme.agentId, "build", { state: "running", finished_at: null, duration_ms: null });
+    await env.DB.prepare("UPDATE runs SET setup_step = 'Restoring caches', setup_step_index = 3, setup_steps_total = 6 WHERE run_id = 'run_legacy'").run();
+    await env.DB.prepare("UPDATE jobs SET state = 'queued' WHERE run_id = 'run_legacy'").run();
+    const html = await (await page(ACME, "run_legacy")).text();
+    expect(html).toContain(escapeHtml(T.setupStage("Restoring caches", 3, 6)));
+  });
+});

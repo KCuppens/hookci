@@ -13,23 +13,24 @@ import (
 // stageNameRunes caps a setup command in a stage name.
 const stageNameRunes = 60
 
-// appendSetupStage writes a run-level step event: the run is running, in the
-// named setup stage. No job is named, so the hub reads it as setup progress
-// and not as a run state change. total is left out while it is 0.
-func (e *Executor) appendSetupStage(ctx context.Context, runID, name string, idx, total int) error {
+// appendSetupStage writes a step event for the setup phase. With a setup job
+// planned it is that job's step event, and the job stays running. Without
+// one (a run planned before setup became a job) the event names no job and
+// the run is running, which the hub reads as setup progress and not as a
+// run state change. total is left out while it is 0.
+func (e *Executor) appendSetupStage(ctx context.Context, rs *runState, name string, idx, total int) error {
 	var stepsTotal *int
 	if total > 0 {
 		stepsTotal = &total
 	}
+	ev := protocol.Event{RunId: rs.run.ID, State: protocol.EventState(store.RunRunning), Step: &name, StepIndex: &idx, StepsTotal: stepsTotal}
+	if rs.setupPlanned {
+		job := setupJob
+		ev.Job = &job
+	}
 	_, err := e.o.Store.AppendSeqFrame(ctx, store.KindEvent, func(seq int) any {
-		return protocol.Event{
-			AgentSeq:   seq,
-			RunId:      runID,
-			State:      protocol.EventState(store.RunRunning),
-			Step:       &name,
-			StepIndex:  &idx,
-			StepsTotal: stepsTotal,
-		}
+		ev.AgentSeq = seq
+		return ev
 	})
 	return err
 }

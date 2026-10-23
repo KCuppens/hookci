@@ -23,7 +23,9 @@ import (
 // ctx is cancelled; the scheduler cancels ctx on cancel and Close.
 type JobRunner interface {
 	// RunSetup runs the run's setup steps (checkout, caches, services, setup[]). It occupies one slot.
-	RunSetup(ctx context.Context, run store.Run) error
+	// Only Tail and LogsLocal of the outcome are read, and Tail only with an error: they
+	// describe the setup job's log. Without a setup job in the run they are ignored.
+	RunSetup(ctx context.Context, run store.Run) (JobOutcome, error)
 	// RunJob runs one job and returns its terminal state (success|failed|cancelled) and exit code.
 	RunJob(ctx context.Context, run store.Run, job store.Job) (JobOutcome, error)
 	// FinishRun is called exactly once after the last job settles, for teardown (services, netns, proxy).
@@ -497,13 +499,30 @@ func (s *Scheduler) startSetup(rs *runState, grant *capacity.Grant) {
 	s.active = append(s.active, rs)
 	rs.started = true
 	rs.run.State = store.RunRunning
+	_, planned := rs.jobs[store.SetupJob]
+	if planned {
+		err := s.st.TransitionJob(context.Background(), id, store.SetupJob, []store.JobState{store.JobQueued}, store.JobRunning, store.JobUpdate{})
+		if err != nil {
+			s.release(grant)
+			s.writeFailed(rs, store.SetupJob, err)
+			s.stop(rs, store.RunFailed, "scheduler: "+err.Error(), store.JobSkipped)
+			return
+		}
+		rs.graph.MarkRunning(store.SetupJob)
+	}
 	s.free--
 	s.inflight++
 	rs.running++
 	run := rs.run
+	start := s.clock.Now()
 	go func() {
-		err := s.runner.RunSetup(rs.ctx, run)
-		s.results <- result{rs: rs, kind: workSetup, grant: grant, err: err}
+		out, err := s.runner.RunSetup(rs.ctx, run)
+		dur := s.clock.Now().Sub(start).Milliseconds()
+		r := result{rs: rs, kind: workSetup, grant: grant, dur: dur, out: out, err: err}
+		if planned {
+			r.job = store.SetupJob
+		}
+		s.results <- r
 	}()
 }
 
@@ -545,6 +564,15 @@ func (s *Scheduler) apply(r result) {
 		s.free++
 		s.release(r.grant)
 		rs.running--
+		if r.job != "" {
+			// The setup job settles first, so a failure skips the jobs behind it.
+			if r.err == nil {
+				r.out = JobOutcome{State: store.JobSuccess, LogsLocal: r.out.LogsLocal}
+			} else {
+				r.out = JobOutcome{State: store.JobFailed, ExitCode: 1, Tail: r.out.Tail, LogsLocal: r.out.LogsLocal}
+			}
+			s.settleJob(rs, r)
+		}
 		switch {
 		case r.err != nil && rs.stopState == "":
 			s.stop(rs, store.RunFailed, "setup failed: "+r.err.Error(), store.JobSkipped)

@@ -39,6 +39,19 @@ func (r *logRunner) RunJob(ctx context.Context, run store.Run, job store.Job) (s
 	return out, err
 }
 
+// RunSetup treats the setup log like a job's: uploaded when setup ends, or
+// left on the agent with `logs: local`. Teardown lines FinishRun appends
+// later stay on the agent.
+func (r *logRunner) RunSetup(ctx context.Context, run store.Run) (scheduler.JobOutcome, error) {
+	out, err := r.JobRunner.RunSetup(ctx, run)
+	if r.local {
+		out.LogsLocal = true
+		return out, err
+	}
+	r.upload(context.WithoutCancel(ctx), run.ID, store.SetupJob)
+	return out, err
+}
+
 // upload sends the job's log file. A failed upload is logged and never
 // fails the job; a job that wrote no log has nothing to send.
 func (r *logRunner) upload(ctx context.Context, runID, job string) {

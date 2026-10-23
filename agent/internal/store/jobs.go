@@ -27,6 +27,27 @@ type Job struct {
 	Reason     string     `json:"reason"`
 }
 
+// SetupJob is the name of the job that stands for a run's setup phase
+// (checkout, config, network, caches, services, setup[] steps). Its log is
+// logs/setup.log. config rejects a user job of this name.
+const SetupJob = "setup"
+
+// WithSetup plans the setup job in front of jobs and makes every job without
+// needs wait for it. A job with needs reaches setup through them, so the
+// graph needs nothing more to hold every job back until setup succeeded.
+// jobs is not modified.
+func WithSetup(jobs []Job) []Job {
+	out := make([]Job, 0, len(jobs)+1)
+	out = append(out, Job{Name: SetupJob})
+	for _, j := range jobs {
+		if len(j.Needs) == 0 {
+			j.Needs = []string{SetupJob}
+		}
+		out = append(out, j)
+	}
+	return out
+}
+
 // JobUpdate carries the columns and event fields TransitionJob records.
 // ExitCode, DurationMS, Unit and Reason are stored when set. Tail is sent
 // only on failure, trimmed to its last 40 lines. Step is sent when set, and

@@ -143,8 +143,9 @@ func runNodeApp(t *testing.T, repo string, slots int) []interval {
 	if code := cli.MainWithDeps(args, &stdout, &stderr, hermeticDeps(t, repo)); code != cli.ExitOK {
 		t.Fatalf("hookci run = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, cli.ExitOK, &stdout, &stderr)
 	}
-	if !strings.Contains(stdout.String(), "success (3 jobs") {
-		t.Errorf("stdout lacks the success summary of 3 jobs:\n%s", &stdout)
+	// The setup job is a row of the run, so it counts next to the 3 configured jobs.
+	if !strings.Contains(stdout.String(), "success (4 jobs") {
+		t.Errorf("stdout lacks the success summary of 4 jobs (setup + 3):\n%s", &stdout)
 	}
 	runs, err := os.ReadDir(filepath.Join(state, "runs"))
 	if err != nil {

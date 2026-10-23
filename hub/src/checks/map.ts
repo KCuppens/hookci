@@ -24,6 +24,9 @@ export type JobCheckState = { status: "queued" | "in_progress" } | { status: "co
 /** The job the agent validates `.hookci.yml` under; it never counts toward the aggregate. */
 export const CONFIG_JOB = "_config";
 
+/** The job that stands for the run's setup phase (checkout, config, caches, services, setup steps). It is an ordinary job row, check run and count. */
+export const SETUP_JOB = "setup";
+
 /** GitHub accepts at most this many annotations per check run request. */
 export const ANNOTATIONS_PER_REQUEST = 50;
 
