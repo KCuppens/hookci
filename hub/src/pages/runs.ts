@@ -468,6 +468,5 @@ export function runsListPage(v: RunsView): Promise<Response> {
 		icons: PAGE_ICONS,
 		script: PAGE_SCRIPT,
 		avatars: true,
-		forms: v.chrome !== undefined,
 	});
 }

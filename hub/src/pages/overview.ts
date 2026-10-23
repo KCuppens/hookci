@@ -400,6 +400,5 @@ export function overviewPage(v: OverviewView): Promise<Response> {
 		css: CSS,
 		icons: OVERVIEW_ICONS,
 		script: PAGE_SCRIPT,
-		forms: v.chrome !== undefined,
 	});
 }
