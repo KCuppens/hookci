@@ -29,6 +29,7 @@ interface PostOptions {
   installationId?: number;
   session?: string | null;
   origin?: string | null;
+  fetchSite?: string;
   csrf?: "valid" | "wrong" | "none";
 }
 
@@ -38,6 +39,7 @@ async function post(runId: string, action: string, options: PostOptions = {}): P
   const cookies = [options.session === undefined ? await sessionFor([INSTALLATION]) : options.session, cookie?.split(";")[0] ?? null].filter((c) => c !== null);
   const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", cookie: cookies.join("; ") };
   if (options.origin !== null) headers.origin = options.origin ?? env.HUB_ORIGIN;
+  if (options.fetchSite !== undefined) headers["sec-fetch-site"] = options.fetchSite;
   const csrf = options.csrf ?? "valid";
   const body = csrf === "none" ? "" : new URLSearchParams({ csrf: csrf === "valid" ? token : `${token}x` }).toString();
   return exports.default.fetch(`${ORIGIN}/app/${options.installationId ?? INSTALLATION}/runs/${runId}/${action}`, { method: "POST", headers, body, redirect: "manual" });
@@ -114,6 +116,13 @@ describe("POST /app/:installationId/runs/:runId/cancel", () => {
     expect(await again.text()).toContain(escapeHtml(S.runActions.notCancellable));
   });
 
+  it("accepts the Origin: null a browser sends from the no-referrer run page when the fetch is same-origin", async () => {
+    const { run_id: runId } = await onlyRun();
+    const res = await post(String(runId), "cancel", { origin: "null", fetchSite: "same-origin" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(location(String(runId), "cancelled"));
+  });
+
   it("cancels a run whose agent never took it and is offline, so the approval can no longer start it", async () => {
     const { run_id: runId } = await onlyRun();
     expect((await post(String(runId), "approve")).status).toBe(303);
@@ -188,6 +197,11 @@ describe("refusals", () => {
   it.each(["approve", "cancel", "retry"])("%s from another origin is refused", async (action) => {
     const { run_id: runId } = await onlyRun();
     await untouched(await post(String(runId), action, { origin: "https://evil.test" }), 403);
+  });
+
+  it.each(["cross-site", "same-site", "none"])("cancel with Origin: null and Sec-Fetch-Site %s is refused", async (site) => {
+    const { run_id: runId } = await onlyRun();
+    await untouched(await post(String(runId), "cancel", { origin: "null", fetchSite: site }), 403);
   });
 
   it.each(["approve", "cancel", "retry"])("%s of an unknown run is not found", async (action) => {
