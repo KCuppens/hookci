@@ -546,6 +546,47 @@ func TestOverlayRestoreMounts(t *testing.T) {
 	}
 }
 
+// A run restores one entry per cached setup step into the same workdir; each
+// overlay restore needs its own scratch dir.
+func TestOverlayRestoresShareWorkdir(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("overlay is linux only")
+	}
+	fake := &execx.Fake{}
+	fake.On("mount", nil, execx.FakeResponse{})
+	fake.On("umount", nil, execx.FakeResponse{})
+	c := newCache(t, ModeOverlay, fake)
+	src := newWorkdir(t, map[string]string{"node_modules/x.js": "x", "other/y.js": "y"})
+	ka := mustKey(t, trustedApp, src, "node_modules")
+	kb := mustKey(t, trustedApp, src, "other")
+	for _, k := range []Key{ka, kb} {
+		if err := c.Save(context.Background(), k, pushPolicy, src); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dst := newWorkdir(t, nil)
+	cleanA := mustRestore(t, c, ka, dst)
+	cleanB := mustRestore(t, c, kb, dst)
+	if n := len(fake.Calls); n != 2 {
+		t.Fatalf("mount calls = %v, want 2", fake.Calls)
+	}
+	if err := cleanA(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, ".hookci-cache-1")); err != nil {
+		t.Errorf("second restore's scratch removed by first cleanup: %v", err)
+	}
+	if err := cleanB(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".hookci-cache", ".hookci-cache-1"} {
+		if _, err := os.Lstat(filepath.Join(dst, p)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s left after cleanup: %v", p, err)
+		}
+	}
+}
+
 func TestOverlayRestoreFailureUndoes(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("overlay is linux only")

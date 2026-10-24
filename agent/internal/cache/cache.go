@@ -228,15 +228,27 @@ func (r *restore) path(ctx context.Context, src, rel string, i int) error {
 }
 
 // overlay mounts lower at target with a fresh upper/work pair under
-// <workdir>/.hookci-cache/<i>/.
+// <scratch>/<i>/. Each restore of a workdir owns its own scratch dir, since a
+// run restores one entry per cached setup step into the same workdir.
 func (r *restore) overlay(ctx context.Context, lower, target, rel string, i int, lowerInfo fs.FileInfo) error {
 	if r.scratch == "" {
-		s := filepath.Join(r.workdir, scratchDir)
-		// Mkdir fails on anything already there, a symlink included.
-		if err := os.Mkdir(s, 0o700); err != nil {
-			return fmt.Errorf("cache: overlay scratch: %w", err)
+		// Mkdir fails on anything already there, a symlink included, and
+		// is atomic, so the first free name is ours alone.
+		for n := 0; ; n++ {
+			s := filepath.Join(r.workdir, scratchDir)
+			if n > 0 {
+				s += "-" + strconv.Itoa(n)
+			}
+			err := os.Mkdir(s, 0o700)
+			if errors.Is(err, fs.ErrExist) && n < 64 {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("cache: overlay scratch: %w", err)
+			}
+			r.scratch = s
+			break
 		}
-		r.scratch = s
 	}
 	base := filepath.Join(r.scratch, strconv.Itoa(i))
 	upper, work := filepath.Join(base, "upper"), filepath.Join(base, "work")
