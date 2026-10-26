@@ -361,7 +361,7 @@ function ssoButton(href: string, glyph: "google" | "github", label: string, arro
 
 function ssoBlock(f: FormState, arrow: boolean): string {
 	const google = f.googleEnabled ? ssoButton("/account/google/start", "google", D.continueGoogle, arrow) : "";
-	return `<div class="sso">${google}${ssoButton("/app/login", "github", D.continueGithub, arrow)}</div>`;
+	return `<div class="sso">${google}${ssoButton("/login", "github", D.continueGithub, arrow)}</div>`;
 }
 
 const backLink = (): string => `<div class="back"><a href="/account/login">${icon("back")}${e(D.forgot.back)}</a></div>`;
@@ -510,7 +510,7 @@ export function settingsPage(v: SettingsView, init: PageInit = {}): Promise<Resp
 			: "";
 	const signOut = `<form method="post" action="/account/logout">${csrfInput(v.csrf)}<button class="btn ghost" type="submit">${e(T.signOut)}</button></form>`;
 	const remove = `<a class="btn ghost" href="/account/delete">${e(T.delete)}</a>`;
-	const back = `<div class="back one"><a href="/app">${icon("back")}${e(T.toRuns)}</a></div>`;
+	const back = `<div class="back one"><a href="/">${icon("back")}${e(T.toRuns)}</a></div>`;
 	const card = `<section class="card">${stack()}<h1 class="ttl">${e(T.title)}</h1><p class="sub">${e(T.subtitle)}</p>${rows}${connect}${signOut}${remove}${back}${footer()}</section>`;
 	return respond(T.title, "center", card, false, init);
 }

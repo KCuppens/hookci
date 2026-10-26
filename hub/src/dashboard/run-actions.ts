@@ -32,12 +32,12 @@ export function availableRunActions(run: Pick<RunRow, "state" | "reason" | "pr_n
 
 /** The path the form of action posts to. */
 export function runActionPath(installationId: number, runId: string, action: RunAction): string {
-	return `/app/${installationId}/runs/${encodeURIComponent(runId)}/${action}`;
+	return `/${installationId}/runs/${encodeURIComponent(runId)}/${action}`;
 }
 
 /** The redirect target after an action: the run page with `?notice=<key>`. */
 export function runNoticePath(installationId: number, runId: string, notice: RunNotice): string {
-	return `/app/${installationId}/runs/${encodeURIComponent(runId)}?notice=${notice}`;
+	return `/${installationId}/runs/${encodeURIComponent(runId)}?notice=${notice}`;
 }
 
 /** The notice text for the request's `?notice=` value, or null when it is absent or not one of ours. */

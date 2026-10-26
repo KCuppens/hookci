@@ -279,7 +279,7 @@ function appHeader(v: Viewer): string {
 			? ""
 			: `<form method="post" action="/account/logout"><input type="hidden" name="csrf" value="${e(v.chrome.csrf)}"><button type="submit">${e(D.signOut)}</button></form>`;
 	return (
-		`<header class="app"><div class="in">${brandLink("/app", false)}${tabs}` +
+		`<header class="app"><div class="in">${brandLink("/", false)}${tabs}` +
 		`<div class="rt"><a class="dc" href="${e(S.site.docsUrl)}" rel="noopener noreferrer">${e(D.docs)}</a>${userControls(v, signOut)}</div>${appMenu(v, tabLinks, signOut)}</div></header>`
 	);
 }
@@ -334,7 +334,7 @@ export function dashboardPage(title: string, bodyHtml: string, init: PageInit & 
 export function signInPage(): Promise<Response> {
 	return dashboardPage(
 		D.signInTitle,
-		`<section class="card signin"><h1>${e(D.signInTitle)}</h1><p>${e(D.signInIntro)}</p><a class="ob dk" href="/app/login">${icon("github", "gh")}${e(D.signInButton)}</a></section>`,
+		`<section class="card signin"><h1>${e(D.signInTitle)}</h1><p>${e(D.signInIntro)}</p><a class="ob dk" href="/login">${icon("github", "gh")}${e(D.signInButton)}</a></section>`,
 	);
 }
 
@@ -349,7 +349,7 @@ export function noInstallationPage(cookies: string[] = [], chrome?: DashboardChr
 export function notFoundPage(): Promise<Response> {
 	return dashboardPage(
 		D.notFoundTitle,
-		`<section class="card signin"><h1>${e(D.notFoundTitle)}</h1><p>${e(D.notFoundBody)}</p><a class="ob" href="/app">${e(D.signInAgain)}</a></section>`,
+		`<section class="card signin"><h1>${e(D.notFoundTitle)}</h1><p>${e(D.notFoundBody)}</p><a class="ob" href="/">${e(D.signInAgain)}</a></section>`,
 		{ status: 404 },
 	);
 }
@@ -545,13 +545,13 @@ export function runHref(base: string, run: RunListRow): string {
 
 export function accountNav(accounts: readonly InstallationRow[], currentId: number): string {
 	if (accounts.length < 2) return "";
-	const items = accounts.map((a) => `<li>${a.id === currentId ? `<strong>${e(a.account_login)}</strong>` : `<a href="/app/${a.id}">${e(a.account_login)}</a>`}</li>`);
+	const items = accounts.map((a) => `<li>${a.id === currentId ? `<strong>${e(a.account_login)}</strong>` : `<a href="/${a.id}">${e(a.account_login)}</a>`}</li>`);
 	return `<ul class="accts" aria-label="${e(D.accounts)}">${items.join("")}</ul>`;
 }
 
 /** The viewer of an installation's page: who is signed in, the installation's URL base and the active tab. */
 export function viewerOf(v: { login: string; chrome?: DashboardChrome; account: InstallationRow }, tab: AppTab | null): Viewer {
-	return { who: v.login, base: `/app/${v.account.id}`, tab, ...(v.chrome ? { chrome: v.chrome } : {}) };
+	return { who: v.login, base: `/${v.account.id}`, tab, ...(v.chrome ? { chrome: v.chrome } : {}) };
 }
 
 export function initOf(v: { cookies?: string[] }): PageInit {

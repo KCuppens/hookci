@@ -31,7 +31,7 @@ describe("GET /healthz", () => {
 
 describe("unknown routes", () => {
   it("return 404 JSON", async () => {
-    const res = await exports.default.fetch("https://hub.test/nope");
+    const res = await exports.default.fetch("https://hub.test/v1/nope");
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "not_found" });
   });

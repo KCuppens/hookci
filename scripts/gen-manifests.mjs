@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const manifests = join(dirname(fileURLToPath(import.meta.url)), "..", "hub", "manifests");
-const PROD_HOST = "https://ci.hookci.com";
+const PROD_HOST = "https://app.hookci.com";
 
 const ENVIRONMENTS = {
 	dev: { host: "https://DEV-TUNNEL.example", name: "hookci-dev" },

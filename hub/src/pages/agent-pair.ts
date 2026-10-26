@@ -272,7 +272,7 @@ function troubleCard(v: PairView): string {
 }
 
 export function pairPage(v: PairView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const crumbs = `<nav class="bc" aria-label="${e(S.agents.detail.breadcrumb)}"><a href="${base}/agents" aria-label="${e(P.back)}">${icon("pback")}</a><a href="${base}/agents">${e(S.agents.detail.breadcrumb)}</a>${icon("pbc")}<span class="cur" aria-current="page">${e(P.breadcrumb)}</span></nav>`;
 	const head = `<div class="ph"><div><h1>${e(P.title)}</h1><p class="sub">${e(P.subtitle)}</p></div><a class="gb" href="${e(S.site.docsUrl)}" rel="noopener noreferrer">${icon("pguide")}${e(P.guide)}</a></div>`;
 	const left = Math.max(0, v.expiresAt - v.now);
@@ -294,6 +294,6 @@ export function pairPage(v: PairView): Promise<Response> {
 
 /** A refusal of the pair route: the message and a way back to the agents list. */
 export function pairRefusal(installationId: number, title: string, message: string, status: number): Response {
-	const back = `/app/${installationId}/agents`;
+	const back = `/${installationId}/agents`;
 	return page(title, `<p>${e(message)}</p>\n<p><a href="${e(back)}">${e(P.back)}</a></p>`, { status });
 }

@@ -17,11 +17,11 @@ afterEach(() => {
 describe("error page variants", () => {
   it.each([
     ["oauth_state_invalid", "t-red", "/start", S.errorPage.actions.restart],
-    ["github_no_access", "t-coral", "/app/login", S.errorPage.actions.signIn],
-    ["log_expired", "t-blue", "/app", S.errorPage.actions.dashboard],
-    ["log_sig_invalid", "t-red", "/app", S.errorPage.actions.dashboard],
-    ["log_not_found", "t-slate", "/app", S.errorPage.actions.dashboard],
-    ["rate_limited", "t-amber", "/app", S.errorPage.actions.dashboard],
+    ["github_no_access", "t-coral", "/login", S.errorPage.actions.signIn],
+    ["log_expired", "t-blue", "/", S.errorPage.actions.dashboard],
+    ["log_sig_invalid", "t-red", "/", S.errorPage.actions.dashboard],
+    ["log_not_found", "t-slate", "/", S.errorPage.actions.dashboard],
+    ["rate_limited", "t-amber", "/", S.errorPage.actions.dashboard],
   ] as const)("renders %s with its tone, copy and action", async (code, tone, href, label) => {
     const { res, html } = await page(code);
     expect(res.status).toBe(400);

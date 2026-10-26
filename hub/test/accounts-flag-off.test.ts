@@ -71,18 +71,18 @@ describe.each([
   });
 
   it("keeps the GitHub-only sign-in page on /app", async () => {
-    const res = await request("GET", "/app");
+    const res = await request("GET", "/");
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('href="/app/login"');
+    expect(html).toContain('href="/login"');
     expect(html).not.toContain("/account/");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<script");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
-  it("keeps GET /app/login on GitHub", async () => {
-    const res = await request("GET", "/app/login");
+  it("keeps GET /login on GitHub", async () => {
+    const res = await request("GET", "/login");
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toContain("https://github.com/login/oauth/authorize");
   });

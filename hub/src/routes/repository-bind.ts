@@ -1,4 +1,4 @@
-// GET and POST /app/:installationId/repositories/bind: the form behind the
+// GET and POST /:installationId/repositories/bind: the form behind the
 // Repositories tab's "Bind repositories" button. Access is the tab's (the
 // session covers the installation) plus what `/hookci bind` asks for: admin
 // access to every selected repository on GitHub. The form carries a csrf

@@ -421,7 +421,7 @@ function sortSelect(v: RunsView): string {
 }
 
 export function runsListPage(v: RunsView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const active = FILTER_KEYS.some((k) => v.filters[k] !== "");
 	const reset = active ? `<a class="ob" href="${base}/runs${v.filters.sort === "oldest" ? "?sort=oldest" : ""}">${e(L.reset)}</a>` : "";
 	const controls = `<div class="rc">${reset}<span class="live" data-live hidden><i></i>${e(L.live)}</span>${sortSelect(v)}</div>`;

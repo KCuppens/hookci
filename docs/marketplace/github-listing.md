@@ -12,7 +12,7 @@ Pending decisions:
 - Q6 (publisher): the listing is published by the GitHub organization
   `{{PUBLISHER_ORG}}`, which must pass publisher verification first.
 
-URLs below use the manifest host `https://ci.hookci.com`. If the domain
+URLs below use the manifest host `https://app.hookci.com`. If the domain
 changes, change the manifest and these URLs in the same commit.
 
 ## Listing name
@@ -92,9 +92,9 @@ commands in `.hookci.yml`.
 
 | Field | URL |
 | --- | --- |
-| Customer support (required) | https://ci.hookci.com/support |
-| Privacy policy (required) | https://ci.hookci.com/privacy |
-| Terms of service | https://ci.hookci.com/terms |
+| Customer support (required) | https://app.hookci.com/support |
+| Privacy policy (required) | https://app.hookci.com/privacy |
+| Terms of service | https://app.hookci.com/terms |
 | Documentation | https://github.com/KCuppens/hookci#readme |
 | Status | {{STATUS_PAGE_URL}} |
 

@@ -151,7 +151,7 @@ describe("Google callback", () => {
   it("refuses a GitHub flow state on the Google callback", async () => {
     useGoogle(PROFILE);
     const browser = new Browser();
-    const gh = await browser.fetch("/app/login");
+    const gh = await browser.fetch("/login");
     const githubState = new URL(gh.headers.get("location") ?? "https://x.test/").searchParams.get("state") ?? "";
     const res = await callback(browser, { code: "auth-code", state: githubState });
     expect(res.status).toBe(400);

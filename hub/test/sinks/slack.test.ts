@@ -178,7 +178,7 @@ describe("SlackSink", () => {
     expect(await updateRunState(t, "run_1", "success")).toBe(true);
     await setJobLog(t, "run_1", "test", { key: `logs/${INSTALLATION}/run_1/test.log.gz`, bytes: 10, truncated: false });
     const view = await loadRunView(env, INSTALLATION, { runId: "run_1" });
-    expect(view?.runLink).toBe(`${env.HUB_ORIGIN}/app/${INSTALLATION}/runs/run_1`);
+    expect(view?.runLink).toBe(`${env.HUB_ORIGIN}/${INSTALLATION}/runs/run_1`);
     expect(view?.jobs).toEqual([expect.objectContaining({ name: "test", logLink: stableLogLink(env, "run_1", "test") })]);
     await slackSinkFactory(env, INSTALLATION).onRunUpdate(view!);
     await drain();

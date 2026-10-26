@@ -218,6 +218,6 @@ describe("reconcileDefaultBranches", () => {
     expect(await reconcileDefaultBranches(testEnv, NOW)).toEqual({ checked: 1, synthesized: 1 });
     expect(branchLookups()).toEqual([1]);
     expect(doCalls.map((c) => c.body.installationId)).toEqual([INSTALLATION]);
-    expect(gh.calls.filter((c) => /\/app\/installations\/(43|44)\//.test(c.url))).toEqual([]);
+    expect(gh.calls.filter((c) => /\/installations\/(43|44)\//.test(c.url))).toEqual([]);
   });
 });

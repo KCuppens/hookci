@@ -445,7 +445,7 @@ function setupBanner(v: RunDetailView, jobs: JobLogRow[]): string {
 }
 
 function jobsCard(v: RunDetailView): string {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const jobs = workJobs(v);
 	const done = jobs.filter((j) => DONE[j.state] === true).length;
 	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id, v.now)).join("")}</div>`;
@@ -549,7 +549,7 @@ function configCard(v: RunDetailView): string {
 }
 
 function logsCard(v: RunDetailView): string {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const withLog = workJobs(v).filter((j) => j.log_key !== null);
 	const head = `<div class="ch"><h2>${e(T.runLogs)}</h2></div>`;
 	if (withLog.length === 0) {
@@ -616,7 +616,7 @@ function swap(name: string, v: RunDetailView, html: string): string {
 
 export function runPage(v: RunDetailView): Promise<Response> {
 	const { run } = v;
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const commitUrl = run.repo_name === null ? null : D.githubCommitUrl(run.repo_name, run.sha);
 	const main =
 		`<div class="bc"><a href="${base}/runs">${icon("back")}${e(T.breadcrumb)}</a>${icon("chev")}<b>${e(T.run(String(run.run_number)))}</b></div>` +

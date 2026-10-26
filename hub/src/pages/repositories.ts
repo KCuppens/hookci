@@ -385,7 +385,7 @@ function emptyCard(v: RepositoriesView): string {
 }
 
 function tableCard(v: RepositoriesView): string {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const c = T.cols;
 	const head =
 		`<th class="ck" data-label="${e(T.selectAll)}"><input type="checkbox" data-all hidden aria-label="${e(T.selectAll)}"></th><th>${e(c.repo)}${icon("sort", "up")}</th><th>${e(c.branch)}</th><th>${e(c.agent)}</th>` +
@@ -396,7 +396,7 @@ function tableCard(v: RepositoriesView): string {
 }
 
 export function repositoriesPage(v: RepositoriesView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const url = D.settingsPage.githubInstallationUrl(v.account.account_type, v.account.account_login, v.account.id);
 	const bind = v.any ? `<button type="submit" class="ob bl" form="repo-pick">${icon("link")}${e(T.bind)}</button>` : "";
 	const controls =
@@ -432,7 +432,7 @@ export interface BindView {
 
 export function bindPage(v: BindView): Promise<Response> {
 	const B = T.bindPage;
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const ready = v.repos.length > 0 && v.agents.length > 0;
 	const repos = v.repos.map(
 		(r) => `<label class="ck2"><input type="checkbox" name="r${r.repo_id}" value="1"${v.selected.has(r.repo_id) ? " checked" : ""}>${e(r.full_name)}</label>`,

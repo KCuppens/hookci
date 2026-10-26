@@ -117,7 +117,7 @@ const CSS = `
 
 /** The install landing page; installUrl is the GitHub App install link carrying the OAuth state. */
 export async function startPage(installUrl: string, stateCookie: string) {
-	const signIn = `<a class="pill" href="/app">${e(S.site.navSignIn)}</a>`;
+	const signIn = `<a class="pill" href="/">${e(S.site.navSignIn)}</a>`;
 	const steps = [
 		{ glyph: GH_TILE, title: T.stepOneTitle, body: T.stepOneBody },
 		{ glyph: TERMINAL, title: T.stepTwoTitle, body: T.stepTwoBody },

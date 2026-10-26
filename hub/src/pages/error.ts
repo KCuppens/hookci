@@ -100,8 +100,8 @@ const SCRIPT = `(function(){var b=document.getElementById("rq-copy"),t=document.
 
 function action(kind: Action): string {
 	if (kind === "restart") return `<a class="btn" href="/start">${icon("github", "gh")}<span>${e(T.actions.restart)}</span></a>`;
-	if (kind === "signIn") return `<a class="btn" href="/app/login">${icon("github", "gh")}<span>${e(T.actions.signIn)}</span></a>`;
-	return `<a class="btn ghost" href="/app">${e(T.actions.dashboard)}</a>`;
+	if (kind === "signIn") return `<a class="btn" href="/login">${icon("github", "gh")}<span>${e(T.actions.signIn)}</span></a>`;
+	return `<a class="btn ghost" href="/">${e(T.actions.dashboard)}</a>`;
 }
 
 /**

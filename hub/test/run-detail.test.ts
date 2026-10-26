@@ -40,7 +40,7 @@ afterEach(() => {
 async function page(installationId: number, runId: string, sessionIds = [installationId]): Promise<Response> {
   const setCookie = await issueSession(env, { installationIds: sessionIds, githubUserId: 7001, githubLogin: "octocat" }, testClock.now());
   const cookie = setCookie.split(";")[0] ?? "";
-  return exports.default.fetch(`${ORIGIN}/app/${installationId}/runs/${runId}`, { headers: { cookie, "cf-connecting-ip": "198.51.100.7" }, redirect: "manual" });
+  return exports.default.fetch(`${ORIGIN}/${installationId}/runs/${runId}`, { headers: { cookie, "cf-connecting-ip": "198.51.100.7" }, redirect: "manual" });
 }
 
 async function configJob(installationId: number, runId: string, state: string): Promise<void> {
@@ -239,7 +239,7 @@ describe("run page action forms with email accounts off", () => {
     await seedRun(ACME, acme.repoId, "run_live", acme.agentId, "build", { state: "running", finished_at: null, duration_ms: null });
     const res = await page(ACME, "run_live");
     expect(res.headers.get("content-security-policy")).toContain("form-action 'self'");
-    expect(await res.text()).toContain(`action="/app/${ACME}/runs/run_live/cancel"`);
+    expect(await res.text()).toContain(`action="/${ACME}/runs/run_live/cancel"`);
   });
 
   it("keeps forms locked down on a run that offers no action", async () => {

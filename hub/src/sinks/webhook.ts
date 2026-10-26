@@ -127,6 +127,9 @@ function privateIPv6(groups: number[]): boolean {
 	return zeroPrefix && f === 0xffff && privateIPv4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
 }
 
+/** The host the hub answered on before app.hookci.com; it still reaches this Worker, so a webhook to it is a webhook to the hub. */
+const LEGACY_HUB_HOST = "ci.hookci.com";
+
 /** Whether raw is an https URL a webhook may be sent to; hubHost is the hub's own host, which is refused. */
 export function validateWebhookUrl(raw: string, hubHost: string): WebhookUrlCheck {
 	let url: URL;
@@ -150,7 +153,7 @@ export function validateWebhookUrl(raw: string, hubHost: string): WebhookUrlChec
 		const v4 = parseIPv4(host);
 		if (v4 && privateIPv4(v4)) return { ok: false, code: "private_host" };
 	}
-	if (host === hubHost.toLowerCase().replace(/\.$/, "")) return { ok: false, code: "self" };
+	if (host === hubHost.toLowerCase().replace(/\.$/, "") || host === LEGACY_HUB_HOST) return { ok: false, code: "self" };
 	return { ok: true, url };
 }
 

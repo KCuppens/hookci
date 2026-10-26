@@ -435,7 +435,7 @@ function sections(): string {
 }
 
 export function agentDetailPage(v: AgentDetailView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const crumb = `<div class="bc"><a href="${e(`${base}/agents`)}">${icon("back")}${e(D.breadcrumb)}</a>${icon("chev")}<b>${e(v.agent.name)}</b></div>`;
 	const notice = v.notice === null ? "" : `<p class="nt" role="status">${e(v.notice)}</p>`;
 	const main = `${crumb}${notice}${summary(v, base)}${sections()}${bindingsCard(v, base)}${runsCard(v, base)}${capacityCard(v.agent, v.now, v.csrf, base)}${maintenanceCard(v)}`;

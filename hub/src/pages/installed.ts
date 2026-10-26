@@ -167,7 +167,7 @@ const SCRIPT = `(function(){if(navigator.clipboard)document.querySelectorAll("[d
 var m=document.querySelector("[data-status]");if(!m)return;var u=m.getAttribute("data-status");var a=document.querySelector('[data-step="agent"]');var s=document.querySelector('[data-step="slack"]');if(!a||!s)return;
 var t=setInterval(function(){fetch(u,{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){if(!d)return;if(d.agents_online>0)a.classList.add("done");if(d.slack_linked)s.classList.add("done");if(d.agents_online>0&&d.slack_linked)clearInterval(t)}).catch(function(){})},3000)})();`;
 
-const ACCOUNT = `<a class="acct" href="/app" aria-label="${e(T.account)}">${icon("account")}</a>`;
+const ACCOUNT = `<a class="acct" href="/" aria-label="${e(T.account)}">${icon("account")}</a>`;
 
 /** GitHub's settings page for the installation: where repositories are granted and removed. */
 function manageUrl(v: InstalledView) {

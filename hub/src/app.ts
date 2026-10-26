@@ -49,13 +49,16 @@ export function handleError(err: Error, c: Context<AppEnv>): Response {
 
 export const app = new Hono<AppEnv>();
 
+/** The dashboard (`/`, `/login`, `/<installationId>/...`) and the account pages: the paths where a session is in play. */
+const DASHBOARD_PATH = /^\/(?:$|login$|account(?:\/|$)|\d+(?:\/|$))/;
+
 /** Background polls repeat without anyone using the page, so they must not keep a session alive. */
-const POLL_PATH = /^\/app\/\d+\/(?:runs\/newer|agents\/pair\/status)$/;
+const POLL_PATH = /^\/\d+\/(?:runs\/newer|agents\/pair\/status)$/;
 
 /** Keeps an active person signed in: any dashboard or account request with a valid session restarts its idle window. */
 app.use("*", async (c, next) => {
 	await next();
-	if (!c.req.path.startsWith("/app") && !c.req.path.startsWith("/account")) return;
+	if (!DASHBOARD_PATH.test(c.req.path)) return;
 	if (POLL_PATH.test(c.req.path)) return;
 	if (c.res.headers.getSetCookie().some((v) => v.startsWith(`${SESSION_COOKIE}=`))) return;
 	const renewed = await renewSession(c.env, c.req.header("cookie"), (c.env.__TEST_CLOCK ?? systemClock).now());
@@ -102,31 +105,38 @@ app.get("/logs/viewer.css", viewerStylesheet);
 app.get("/runs/:runId/logs", logLinks);
 app.get("/auth/github/callback", authGithubCallback);
 app.get("/logs/viewer.js", viewerScript);
-app.get("/app", dashboardHome);
-app.get("/app/login", dashboardLogin);
-app.get("/app/:installationId", dashboardOverview);
-app.get("/app/:installationId/runs", dashboardRunsList);
-app.get("/app/:installationId/runs/newer", dashboardRunsNewer);
-app.get("/app/:installationId/runs/:runId", dashboardRun);
-app.get("/app/:installationId/runs/:runId/logs/:job", dashboardLog);
-app.get("/app/:installationId/runs/:runId/logs/:job/view", dashboardLogView);
-app.get("/app/:installationId/runs/:runId/logs/:job/download", dashboardLogDownload);
-app.get("/app/:installationId/agents", dashboardAgents);
-app.get("/app/:installationId/agents/pair/status", pairStatus);
-app.post("/app/:installationId/agents/pair", pairAgent);
-app.get("/app/:installationId/agents/:agentId", dashboardAgent);
-app.post("/app/:installationId/agents/:agentId/revoke", revokeAgentForm);
-app.post("/app/:installationId/agents/:agentId/budget", setAgentBudgetForm);
-app.post("/app/:installationId/agents/:agentId/bindings/unbind", unbindAgentForm);
-app.get("/app/:installationId/repositories", dashboardRepositories);
-app.get("/app/:installationId/settings", dashboardSettings);
-app.post("/app/:installationId/tokens", createApiTokenForm);
-app.post("/app/:installationId/tokens/:tokenId/revoke", revokeApiTokenForm);
-app.get("/app/:installationId/repositories/bind", bindForm);
-app.post("/app/:installationId/repositories/bind", bindSubmit);
-app.post("/app/:installationId/runs/:runId/approve", runApprove);
-app.post("/app/:installationId/runs/:runId/cancel", runCancel);
-app.post("/app/:installationId/runs/:runId/retry", runRetry);
+/** The dashboard used to live under /app on the ci host; a browser with an old link or bookmark lands on the same page at HUB_ORIGIN. */
+const legacyDashboard = (c: Context<AppEnv>): Response => {
+	const rest = c.req.path.slice("/app".length);
+	return c.redirect(`${c.env.HUB_ORIGIN}${rest === "" ? "/" : rest}${new URL(c.req.url).search}`, 308);
+};
+app.get("/app", legacyDashboard);
+app.get("/app/*", legacyDashboard);
+app.get("/", dashboardHome);
+app.get("/login", dashboardLogin);
+app.get("/:installationId", dashboardOverview);
+app.get("/:installationId/runs", dashboardRunsList);
+app.get("/:installationId/runs/newer", dashboardRunsNewer);
+app.get("/:installationId/runs/:runId", dashboardRun);
+app.get("/:installationId/runs/:runId/logs/:job", dashboardLog);
+app.get("/:installationId/runs/:runId/logs/:job/view", dashboardLogView);
+app.get("/:installationId/runs/:runId/logs/:job/download", dashboardLogDownload);
+app.get("/:installationId/agents", dashboardAgents);
+app.get("/:installationId/agents/pair/status", pairStatus);
+app.post("/:installationId/agents/pair", pairAgent);
+app.get("/:installationId/agents/:agentId", dashboardAgent);
+app.post("/:installationId/agents/:agentId/revoke", revokeAgentForm);
+app.post("/:installationId/agents/:agentId/budget", setAgentBudgetForm);
+app.post("/:installationId/agents/:agentId/bindings/unbind", unbindAgentForm);
+app.get("/:installationId/repositories", dashboardRepositories);
+app.get("/:installationId/settings", dashboardSettings);
+app.post("/:installationId/tokens", createApiTokenForm);
+app.post("/:installationId/tokens/:tokenId/revoke", revokeApiTokenForm);
+app.get("/:installationId/repositories/bind", bindForm);
+app.post("/:installationId/repositories/bind", bindSubmit);
+app.post("/:installationId/runs/:runId/approve", runApprove);
+app.post("/:installationId/runs/:runId/cancel", runCancel);
+app.post("/:installationId/runs/:runId/retry", runRetry);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(handleError);

@@ -6,7 +6,7 @@ bot scopes table against `oauth_config.scopes.bot` in the manifest, so edit
 this file and the manifest together.
 
 Pending decision: Q4 (when to list, assumed after M1). URLs below use the
-manifest host `https://ci.hookci.com`.
+manifest host `https://app.hookci.com`.
 
 ## App name
 
@@ -80,7 +80,7 @@ user's role on the linked GitHub repository or organization.
 ## Data handling
 
 Answers for the security and compliance section of the submission. The full
-text is the privacy policy at https://ci.hookci.com/privacy.
+text is the privacy policy at https://app.hookci.com/privacy.
 
 - What is stored: workspace and channel IDs, the encrypted bot token, watch
   settings, the GitHub login linked with `/hookci me`, run results and job
@@ -133,6 +133,6 @@ landing page.
 | Field | URL |
 | --- | --- |
 | Landing page | https://github.com/KCuppens/hookci#readme |
-| Support | https://ci.hookci.com/support (email support@hookci.com, no account needed) |
-| Privacy policy | https://ci.hookci.com/privacy |
-| Terms of service | https://ci.hookci.com/terms |
+| Support | https://app.hookci.com/support (email support@hookci.com, no account needed) |
+| Privacy policy | https://app.hookci.com/privacy |
+| Terms of service | https://app.hookci.com/terms |

@@ -22,7 +22,7 @@ describe("runs traced icons", () => {
 describe("state pills", () => {
   it("reference an icon that exists for every state", () => {
     for (const state of STATES) {
-      const html = runPill(state, "/app/1/runs/r");
+      const html = runPill(state, "/1/runs/r");
       const id = /<use href="#i-([^"]+)"/.exec(html)?.[1] ?? "";
       expect(id, state).toBeTruthy();
       expect(PILL_ICONS[id], `${state} -> ${id}`).toBeTruthy();

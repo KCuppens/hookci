@@ -91,10 +91,10 @@ describe("what an account session may see", () => {
   it("sees nothing after signing in with a password, and is sent to connect GitHub", async () => {
     await registerVerified(mailer, ALICE);
     const browser = await signIn(ALICE, "203.0.113.30");
-    const home = await browser.fetch("/app");
+    const home = await browser.fetch("/");
     expect(home.status).toBe(303);
     expect(home.headers.get("location")).toBe("/account/connect-github");
-    for (const id of [ACME, UMBRELLA]) expect((await browser.fetch(`/app/${id}`)).status).toBe(404);
+    for (const id of [ACME, UMBRELLA]) expect((await browser.fetch(`/${id}`)).status).toBe(404);
 
     const session = await readAnySession(env, browser.cookieHeader, testClock.now());
     expect(session?.installationIds).toEqual([]);
@@ -108,13 +108,13 @@ describe("what an account session may see", () => {
     const browser = await signIn(ALICE, "203.0.113.31");
     const done = await connectGithub(browser);
     expect(done.status).toBe(303);
-    expect(done.headers.get("location")).toBe("/app");
+    expect(done.headers.get("location")).toBe("/");
 
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(200);
     // Installed on the hub, but GitHub did not list it for this person.
-    expect((await browser.fetch(`/app/${UMBRELLA}`)).status).toBe(404);
+    expect((await browser.fetch(`/${UMBRELLA}`)).status).toBe(404);
     // Listed by GitHub, but not installed on the hub.
-    expect((await browser.fetch(`/app/${STRANGER}`)).status).toBe(404);
+    expect((await browser.fetch(`/${STRANGER}`)).status).toBe(404);
 
     const session = await readAnySession(env, browser.cookieHeader, testClock.now());
     expect(session?.installationIds).toEqual([ACME]);
@@ -134,10 +134,10 @@ describe("what an account session may see", () => {
     const bob = await signIn(BOB, "203.0.113.33");
     await connectGithub(bob);
 
-    expect((await alice.fetch(`/app/${ACME}`)).status).toBe(200);
-    expect((await alice.fetch(`/app/${UMBRELLA}`)).status).toBe(404);
-    expect((await bob.fetch(`/app/${UMBRELLA}`)).status).toBe(200);
-    expect((await bob.fetch(`/app/${ACME}`)).status).toBe(404);
+    expect((await alice.fetch(`/${ACME}`)).status).toBe(200);
+    expect((await alice.fetch(`/${UMBRELLA}`)).status).toBe(404);
+    expect((await bob.fetch(`/${UMBRELLA}`)).status).toBe(200);
+    expect((await bob.fetch(`/${ACME}`)).status).toBe(404);
   });
 
   it("re-asks GitHub at every sign-in, so revoked access disappears", async () => {
@@ -145,15 +145,15 @@ describe("what an account session may see", () => {
     await registerVerified(mailer, ALICE);
     const first = await signIn(ALICE, "203.0.113.34");
     await connectGithub(first);
-    expect((await first.fetch(`/app/${UMBRELLA}`)).status).toBe(200);
+    expect((await first.fetch(`/${UMBRELLA}`)).status).toBe(200);
 
     userInstallations = [installation(ACME, "org42")];
     const second = await signIn(ALICE, "203.0.113.35");
     // Already linked: Connect GitHub goes straight to GitHub without a form.
     expect((await second.fetch("/account/connect-github")).status).toBe(303);
     await connectGithub(second);
-    expect((await second.fetch(`/app/${ACME}`)).status).toBe(200);
-    expect((await second.fetch(`/app/${UMBRELLA}`)).status).toBe(404);
+    expect((await second.fetch(`/${ACME}`)).status).toBe(200);
+    expect((await second.fetch(`/${UMBRELLA}`)).status).toBe(404);
   });
 
   it("keeps the account signed in when GitHub lists no hub installation, with no access", async () => {
@@ -163,7 +163,7 @@ describe("what an account session may see", () => {
     const done = await connectGithub(browser);
     expect(done.status).toBe(200);
     expect(await done.text()).toContain(S.dashboard.noInstallationTitle);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(404);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(404);
     expect((await accountRow(ALICE))?.github_user_id).toBe(7001);
   });
 
@@ -176,7 +176,7 @@ describe("what an account session may see", () => {
     const res = await connectGithub(bob);
     expect(res.status).toBe(409);
     expect(await res.text()).toContain(S.account.connect.conflictTitle);
-    expect((await bob.fetch(`/app/${ACME}`)).status).toBe(404);
+    expect((await bob.fetch(`/${ACME}`)).status).toBe(404);
     expect((await accountRow(BOB))?.github_user_id).toBeNull();
     expect((await accountRow(ALICE))?.github_user_id).toBe(7001);
   });
@@ -189,7 +189,7 @@ describe("what an account session may see", () => {
     const again = await signIn(ALICE, "203.0.113.40");
     const res = await connectGithub(again);
     expect(res.status).toBe(409);
-    expect((await again.fetch(`/app/${UMBRELLA}`)).status).toBe(404);
+    expect((await again.fetch(`/${UMBRELLA}`)).status).toBe(404);
     expect((await accountRow(ALICE))?.github_user_id).toBe(7001);
   });
 
@@ -231,7 +231,7 @@ describe("what an account session may see", () => {
     const value = alice.cookie(SESSION_COOKIE) ?? "";
     const parts = value.split(".");
     const forged = [...parts.slice(0, -2), bobId, parts.at(-1)].join(".");
-    const res = await new Browser("203.0.113.45").fetch(`/app/${ACME}`, { headers: { cookie: `${SESSION_COOKIE}=${forged}` } });
+    const res = await new Browser("203.0.113.45").fetch(`/${ACME}`, { headers: { cookie: `${SESSION_COOKIE}=${forged}` } });
     expect(res.status).toBe(404);
   });
 
@@ -239,13 +239,13 @@ describe("what an account session may see", () => {
     await registerVerified(mailer, ALICE);
     const browser = await signIn(ALICE, "203.0.113.46");
     await connectGithub(browser);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(200);
     testClock.advance(11 * 3600_000);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(200);
     testClock.advance(11 * 3600_000);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(200);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(200);
     testClock.advance(13 * 3600_000);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(404);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(404);
   });
 
   it("does not count a background poll as activity", async () => {
@@ -253,10 +253,10 @@ describe("what an account session may see", () => {
     const browser = await signIn(ALICE, "203.0.113.48");
     await connectGithub(browser);
     testClock.advance(11 * 3600_000);
-    const poll = await browser.fetch(`/app/${ACME}/runs/newer`);
+    const poll = await browser.fetch(`/${ACME}/runs/newer`);
     expect(poll.headers.getSetCookie().some((v) => v.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
     testClock.advance(2 * 3600_000);
-    expect((await browser.fetch(`/app/${ACME}`)).status).toBe(404);
+    expect((await browser.fetch(`/${ACME}`)).status).toBe(404);
   });
 
   it("sends an unauthenticated visit to Connect GitHub back to the sign-in page", async () => {
@@ -278,19 +278,19 @@ describe("what an account session may see", () => {
 
 describe("GET /app with accounts on", () => {
   it("shows the account sign-in page, still offering GitHub", async () => {
-    const res = await new Browser().fetch("/app");
+    const res = await new Browser().fetch("/");
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('name="csrf"');
     expect(html).toContain('action="/account/login"');
-    expect(html).toContain('href="/app/login"');
+    expect(html).toContain('href="/login"');
   });
 
   it("shows the old GitHub-only page when accounts are off", async () => {
     env.ACCOUNTS_ENABLED = "false";
-    const res = await new Browser().fetch("/app");
+    const res = await new Browser().fetch("/");
     const html = await res.text();
-    expect(html).toContain('href="/app/login"');
+    expect(html).toContain('href="/login"');
     expect(html).not.toContain("/account/");
     expect(html).not.toContain("<script");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");

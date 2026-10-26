@@ -31,7 +31,7 @@ const (
 	skewFail          = 300 * time.Second
 	minFreeBytes      = 2 << 30
 	certExpiryWarning = 14 * 24 * time.Hour
-	reinstallFix      = "rerun the installer: curl -fsSL https://ci.hookci.com/install | sh"
+	reinstallFix      = "rerun the installer: curl -fsSL https://app.hookci.com/install | sh"
 	connectFix        = "pair this host: sudo hookci connect <pair-token>"
 )
 

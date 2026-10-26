@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	defaultHubURL      = "https://ci.hookci.com"
+	defaultHubURL      = "https://app.hookci.com"
 	defaultStateRoot   = "/var/lib/hookci"
 	redeemTimeout      = 30 * time.Second
 	handshakeTimeout   = 15 * time.Second

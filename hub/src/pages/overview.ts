@@ -370,7 +370,7 @@ function setupCard(v: OverviewView, base: string): string {
 }
 
 export function overviewPage(v: OverviewView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const main =
 		`${accountNav(v.accounts, v.account.id)}<div class="ph"><div><h1>${e(O.title)}</h1><p class="sub">${e(O.subtitle)}</p></div>${rangeForm(v, base)}</div>` +
 		`<div class="stack-gap">${attentionPanel(v, base)}${statCards(v)}${recentRuns(v, base)}${agentsCard(v, base)}${setupCard(v, base)}</div>`;

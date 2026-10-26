@@ -73,7 +73,7 @@ type Env struct {
 	// StateRoot holds one state directory per installation id, as
 	// hookci connect lays it out (/var/lib/hookci/<installation_id>).
 	StateRoot string
-	// HubOrigin is the hub base URL, e.g. https://ci.hookci.com.
+	// HubOrigin is the hub base URL, e.g. https://app.hookci.com.
 	HubOrigin string
 	HTTP      *http.Client
 	Clock     clock.Clock

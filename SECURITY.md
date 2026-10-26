@@ -24,7 +24,7 @@ We follow coordinated disclosure with a 90-day window. We publish an advisory on
 
 ## Scope
 
-The hosted hub at `ci.hookci.com` and its GitHub and Slack Apps, the `hookci` agent, and the installer served at `/install`. In particular:
+The hosted hub at `app.hookci.com` and its GitHub and Slack Apps, the `hookci` agent, and the installer served at `/install`. In particular:
 
 - Agent sandbox escape: a job reaching the host, other jobs or other repositories beyond what its isolation allows.
 - Cross-tenant hub access: one installation reading or affecting another installation's data or agents.

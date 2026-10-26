@@ -395,7 +395,7 @@ function strip(v: RunLogsView, base: string): string {
 
 export function runLogsPage(v: RunLogsView): Promise<Response> {
 	const { run } = v;
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const permalink = logPath(base, run.run_id, v.job.name, "/view");
 	const commitUrl = run.repo_name === null ? null : D.githubCommitUrl(run.repo_name, run.sha);
 	const github = commitUrl === null ? "" : `<a class="bt" href="${e(commitUrl)}" rel="noopener noreferrer">${icon("out")}${e(T.openInGithub)}</a>`;

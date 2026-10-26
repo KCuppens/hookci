@@ -11,10 +11,10 @@ This kit assumes the listings go out after M1 ships (pending decision Q4).
 - [ ] `node scripts/check-marketplace.mjs` passes, so the listing copy matches
       the production manifests.
 - [ ] Legal pages are live and final, with no `DRAFT` marker and no
-      `{{OPERATOR}}` placeholder: https://ci.hookci.com/privacy,
-      https://ci.hookci.com/terms and https://ci.hookci.com/support load without
+      `{{OPERATOR}}` placeholder: https://app.hookci.com/privacy,
+      https://app.hookci.com/terms and https://app.hookci.com/support load without
       signing in.
-- [ ] https://ci.hookci.com/.well-known/security.txt is live, with a contact
+- [ ] https://app.hookci.com/.well-known/security.txt is live, with a contact
       address and an `Expires` date in the future.
 - [ ] `{{STATUS_PAGE_URL}}` is replaced with a real value in the docs and the
       listing copy.

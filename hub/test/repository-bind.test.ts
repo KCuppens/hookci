@@ -13,7 +13,7 @@ import { seedAgent } from "./do/agent-socket";
 
 const ORIGIN = "https://hub.test";
 const B = S.dashboard.reposPage.bindPage;
-const PATH = `/app/${INSTALLATION}/repositories/bind`;
+const PATH = `/${INSTALLATION}/repositories/bind`;
 
 let world: CommandWorld;
 let agentId: string;
@@ -46,14 +46,14 @@ async function post(options: PostOptions = {}): Promise<Response> {
   const csrf = options.csrf ?? "valid";
   const fields = { [`r${REPO.repo_id}`]: "1", kind: "checks", agent_id: agentId, ...options.fields };
   const body = new URLSearchParams(csrf === "none" ? {} : { csrf: csrf === "valid" ? token : `${token}x`, ...fields });
-  return exports.default.fetch(`${ORIGIN}/app/${options.installationId ?? INSTALLATION}/repositories/bind`, { method: "POST", headers, body: body.toString(), redirect: "manual" });
+  return exports.default.fetch(`${ORIGIN}/${options.installationId ?? INSTALLATION}/repositories/bind`, { method: "POST", headers, body: body.toString(), redirect: "manual" });
 }
 
 async function bound(target: "checks" | `deploy:${string}`): Promise<string | null> {
   return (await getBinding(tenantDb(env.DB, INSTALLATION), REPO.repo_id, target))?.agent_id ?? null;
 }
 
-describe("GET /app/:installationId/repositories/bind", () => {
+describe("GET /:installationId/repositories/bind", () => {
   it("shows the form with the repositories, the active agents and the picked repository ticked", async () => {
     await revokeAgent(tenantDb(env.DB, INSTALLATION), (await seedAgent(INSTALLATION)).agentId, 5);
     const res = await exports.default.fetch(`${ORIGIN}${PATH}?repo=${REPO.repo_id}`, { headers: { cookie: await sessionFor([INSTALLATION]) } });
@@ -68,7 +68,7 @@ describe("GET /app/:installationId/repositories/bind", () => {
 
   it("answers 404 without a session and for an installation the session does not cover", async () => {
     expect((await exports.default.fetch(`${ORIGIN}${PATH}`)).status).toBe(404);
-    const res = await exports.default.fetch(`${ORIGIN}/app/${OTHER_INSTALLATION}/repositories/bind`, { headers: { cookie: await sessionFor([INSTALLATION]) } });
+    const res = await exports.default.fetch(`${ORIGIN}/${OTHER_INSTALLATION}/repositories/bind`, { headers: { cookie: await sessionFor([INSTALLATION]) } });
     expect(res.status).toBe(404);
   });
 
@@ -78,7 +78,7 @@ describe("GET /app/:installationId/repositories/bind", () => {
   });
 });
 
-describe("POST /app/:installationId/repositories/bind", () => {
+describe("POST /:installationId/repositories/bind", () => {
   it("binds checks for a repository admin and redirects with the notice", async () => {
     const res = await post();
     expect(res.status).toBe(303);

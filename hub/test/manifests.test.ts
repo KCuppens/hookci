@@ -15,7 +15,7 @@ interface SlackManifest {
 }
 
 const slackApp = parse(slackYaml) as SlackManifest;
-const HOST = "https://ci.hookci.com";
+const HOST = "https://app.hookci.com";
 
 // GitHub delivers these to every App whether or not the manifest subscribes to them,
 // and rejects a manifest that lists them in default_events.

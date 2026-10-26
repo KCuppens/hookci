@@ -59,7 +59,7 @@ async function post(path: string, options: PostOptions = {}): Promise<Response> 
   const csrf = options.csrf ?? "valid";
   const fields: Record<string, string> = csrf === "none" ? {} : { csrf: csrf === "valid" ? token : `${token}x` };
   const body = new URLSearchParams({ ...fields, ...options.fields }).toString();
-  return exports.default.fetch(`${ORIGIN}/app/${options.installationId ?? ACME}${path}`, { method: "POST", headers, body, redirect: "manual" });
+  return exports.default.fetch(`${ORIGIN}/${options.installationId ?? ACME}${path}`, { method: "POST", headers, body, redirect: "manual" });
 }
 
 async function bindingCount(installationId: number): Promise<number> {
@@ -72,10 +72,10 @@ function lines(log: MockInstance): string {
   return log.mock.calls.map((c) => String(c[0])).join("\n");
 }
 
-describe("GET /app/:installationId/agents/:agentId", () => {
+describe("GET /:installationId/agents/:agentId", () => {
   it("shows the agent, its bindings with a bound date, its runs and the maintenance commands", async () => {
     await bind(tenantDb(env.DB, ACME), acme.repoId, "deploy:staging", acme.agentId, Date.UTC(2026, 7, 12));
-    const res = await get(`/app/${ACME}/agents/${acme.agentId}`);
+    const res = await get(`/${ACME}/agents/${acme.agentId}`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain(`<h1>${acme.agentId}</h1>`);
@@ -87,23 +87,23 @@ describe("GET /app/:installationId/agents/:agentId", () => {
     expect(html).toContain(acme.runId);
     expect(html).toContain(D.maintenance.title);
     expect(html).toContain(D.maintenance.upgradeCommand);
-    expect(html).toContain(`action="/app/${ACME}/agents/${acme.agentId}/revoke"`);
-    expect(html).toContain(`action="/app/${ACME}/agents/${acme.agentId}/bindings/unbind"`);
+    expect(html).toContain(`action="/${ACME}/agents/${acme.agentId}/revoke"`);
+    expect(html).toContain(`action="/${ACME}/agents/${acme.agentId}/bindings/unbind"`);
   });
 
   it("shows the OS release in the platform cell, falling back to the raw os", async () => {
     await env.DB.prepare("UPDATE agents SET os = ?2, os_release = ?3 WHERE installation_id = ?1").bind(ACME, "linux", "Ubuntu 22.04").run();
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain("Ubuntu 22.04");
     await env.DB.prepare("UPDATE agents SET os = ?2, os_release = NULL WHERE installation_id = ?1").bind(ACME, "linux").run();
-    const plain = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const plain = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(plain).not.toContain("Ubuntu 22.04");
     expect(plain).toContain("linux");
   });
 
   it("escapes the stored name and hostname", async () => {
     await env.DB.prepare("UPDATE agents SET name = '<script>alert(1)</script>', hostname = '<b>host</b>' WHERE installation_id = ?1").bind(ACME).run();
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain("&lt;b&gt;host&lt;/b&gt;");
     expect(html).not.toContain("<script>alert(1)");
@@ -111,7 +111,7 @@ describe("GET /app/:installationId/agents/:agentId", () => {
   });
 
   it("answers 404 for another installation's agent, a missing one, and an installation the session does not cover", async () => {
-    for (const path of [`/app/${ACME}/agents/${umbrella.agentId}`, `/app/${ACME}/agents/agt_nope`, `/app/${UMBRELLA}/agents/${umbrella.agentId}`]) {
+    for (const path of [`/${ACME}/agents/${umbrella.agentId}`, `/${ACME}/agents/agt_nope`, `/${UMBRELLA}/agents/${umbrella.agentId}`]) {
       const res = await get(path);
       expect(res.status).toBe(404);
       expect(await res.text()).toContain(S.dashboard.notFoundTitle);
@@ -120,26 +120,26 @@ describe("GET /app/:installationId/agents/:agentId", () => {
 
   it("shows a revoked agent with no revoke or unbind forms", async () => {
     await post(`/agents/${acme.agentId}/revoke`);
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain(S.agents.status.revoked);
     expect(html).not.toContain("/revoke\"");
     expect(html).not.toContain("/bindings/unbind");
   });
 
   it("shows a notice only from the known ones", async () => {
-    const known = await (await get(`/app/${ACME}/agents/${acme.agentId}?notice=unbound`)).text();
+    const known = await (await get(`/${ACME}/agents/${acme.agentId}?notice=unbound`)).text();
     expect(known).toContain(S.agents.notices.unbound);
-    const unknown = await (await get(`/app/${ACME}/agents/${acme.agentId}?notice=%3Cb%3Ex`)).text();
+    const unknown = await (await get(`/${ACME}/agents/${acme.agentId}?notice=%3Cb%3Ex`)).text();
     expect(unknown).not.toContain("<b>x");
   });
 });
 
-describe("POST /app/:installationId/agents/:agentId/revoke", () => {
+describe("POST /:installationId/agents/:agentId/revoke", () => {
   it("revokes the agent, drops its bindings, logs it, and returns to the agent page", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const res = await post(`/agents/${acme.agentId}/revoke`);
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=revoked`);
+    expect(res.headers.get("location")).toBe(`/${ACME}/agents/${acme.agentId}?notice=revoked`);
     const row = await env.DB.prepare("SELECT status, revoked_at FROM agents WHERE installation_id = ?1 AND agent_id = ?2").bind(ACME, acme.agentId).first<{ status: string; revoked_at: number | null }>();
     expect(row?.status).toBe("revoked");
     expect(row?.revoked_at).not.toBeNull();
@@ -190,13 +190,13 @@ describe("POST /app/:installationId/agents/:agentId/revoke", () => {
   });
 });
 
-describe("POST /app/:installationId/agents/:agentId/bindings/unbind", () => {
+describe("POST /:installationId/agents/:agentId/bindings/unbind", () => {
   it("removes one binding, logs it, and returns to the agent page", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await bind(tenantDb(env.DB, ACME), acme.repoId, "deploy:staging", acme.agentId);
     const res = await post(`/agents/${acme.agentId}/bindings/unbind`, { fields: { repo_id: String(acme.repoId), target: "deploy:staging" } });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=unbound`);
+    expect(res.headers.get("location")).toBe(`/${ACME}/agents/${acme.agentId}?notice=unbound`);
     const left = await env.DB.prepare("SELECT target FROM repo_bindings WHERE installation_id = ?1").bind(ACME).all<{ target: string }>();
     expect(left.results.map((r) => r.target)).toEqual(["checks"]);
     expect(lines(log)).toContain("repo_unbind");
@@ -263,7 +263,7 @@ async function budgetRow(agentId: string): Promise<BudgetRow | null> {
 
 describe("the Capacity card", () => {
   it("says the capacity is unavailable for an agent that never reported it, with no budget form", async () => {
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain(S.agents.capacity.unavailable);
     expect(html).not.toContain(`/agents/${acme.agentId}/budget"`);
   });
@@ -272,13 +272,13 @@ describe("the Capacity card", () => {
     await env.DB.prepare("UPDATE agents SET last_capacity = ?2, last_capacity_at = ?3 WHERE installation_id = ?1")
       .bind(ACME, JSON.stringify(sanitizeCapacity(capacityFrame({ backing_off: true }))), 1_000)
       .run();
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain(S.agents.capacity.hostValue("16", "32 GiB"));
     expect(html).toContain(S.agents.capacity.cpuUse("5", "8"));
     expect(html).toContain(S.agents.capacity.memoryUse("4 GiB", "16 GiB"));
     expect(html).toContain(">unit</td><td>main</td>");
-    expect(html).toContain(`action="/app/${ACME}/agents/${acme.agentId}/budget"`);
-    const list = await (await get(`/app/${ACME}/agents`)).text();
+    expect(html).toContain(`action="/${ACME}/agents/${acme.agentId}/budget"`);
+    const list = await (await get(`/${ACME}/agents`)).text();
     expect(list).toContain(S.agents.capacity.chip("5", "8", "4", "16 GiB"));
   });
 
@@ -286,20 +286,20 @@ describe("the Capacity card", () => {
     await env.DB.prepare("UPDATE agents SET last_capacity = ?2, last_capacity_at = ?3 WHERE installation_id = ?1")
       .bind(ACME, JSON.stringify(sanitizeCapacity(capacityFrame({ budget_memory_bytes: 0 }))), 1_000)
       .run();
-    const html = await (await get(`/app/${ACME}/agents/${acme.agentId}`)).text();
+    const html = await (await get(`/${ACME}/agents/${acme.agentId}`)).text();
     expect(html).toContain(S.agents.capacity.hostValue("8", S.agents.capacity.noMemoryBudget));
     expect(html).toContain(S.agents.capacity.memoryUse("4 GiB", null));
-    const list = await (await get(`/app/${ACME}/agents`)).text();
+    const list = await (await get(`/${ACME}/agents`)).text();
     expect(list).toContain(S.agents.capacity.chip("5", "8", "4", null));
   });
 });
 
-describe("POST /app/:installationId/agents/:agentId/budget", () => {
+describe("POST /:installationId/agents/:agentId/budget", () => {
   it("stores the override, logs it and returns to the agent page", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const res = await post(`/agents/${acme.agentId}/budget`, { fields: { cpus: "6", memory_gib: "12" } });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=budgetSaved`);
+    expect(res.headers.get("location")).toBe(`/${ACME}/agents/${acme.agentId}?notice=budgetSaved`);
     expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: 6, budget_memory_bytes: 12 * 1024 ** 3 });
     expect(lines(log)).toContain("agent_budget");
   });
@@ -307,7 +307,7 @@ describe("POST /app/:installationId/agents/:agentId/budget", () => {
   it("clears it on reset and on blank fields", async () => {
     await post(`/agents/${acme.agentId}/budget`, { fields: { cpus: "6", memory_gib: "12" } });
     const res = await post(`/agents/${acme.agentId}/budget`, { fields: { action: "reset", cpus: "6" } });
-    expect(res.headers.get("location")).toBe(`/app/${ACME}/agents/${acme.agentId}?notice=budgetReset`);
+    expect(res.headers.get("location")).toBe(`/${ACME}/agents/${acme.agentId}?notice=budgetReset`);
     expect(await budgetRow(acme.agentId)).toEqual({ budget_cpus: null, budget_memory_bytes: null });
   });
 

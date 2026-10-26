@@ -58,7 +58,7 @@ async function pair(options: PostOptions = {}): Promise<Response> {
   const csrf = options.csrf ?? "valid";
   const fields: Record<string, string> = csrf === "none" ? {} : { csrf: csrf === "valid" ? token : `${token}x` };
   const body = new URLSearchParams({ ...fields, ...options.fields }).toString();
-  return exports.default.fetch(`${ORIGIN}/app/${options.installationId ?? ACME}/agents/pair`, { method: "POST", headers, body, redirect: "manual" });
+  return exports.default.fetch(`${ORIGIN}/${options.installationId ?? ACME}/agents/pair`, { method: "POST", headers, body, redirect: "manual" });
 }
 
 async function tokenCount(installationId: number): Promise<number> {
@@ -74,46 +74,46 @@ async function addAgent(installationId: number, agentId: string, status = "offli
     .run();
 }
 
-describe("GET /app/:installationId/agents", () => {
+describe("GET /:installationId/agents", () => {
   it("lists each agent with its hostname, platform, version, protocol and a link to it", async () => {
-    const res = await get(`/app/${ACME}/agents`);
+    const res = await get(`/${ACME}/agents`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain(A.title);
     expect(html).toContain(`${acme.agentId}.local`);
     expect(html).toContain("0.1.0");
-    expect(html).toContain(`href="/app/${ACME}/agents/${acme.agentId}"`);
-    expect(html).toContain(`action="/app/${ACME}/agents/pair"`);
+    expect(html).toContain(`href="/${ACME}/agents/${acme.agentId}"`);
+    expect(html).toContain(`action="/${ACME}/agents/pair"`);
     expect(html).toContain(A.status.offline);
   });
 
   it("marks a revoked agent and offers no upgrade for it", async () => {
     await addAgent(ACME, "agt_gone", "revoked", Date.UTC(2026, 8, 3));
-    const html = await (await get(`/app/${ACME}/agents`)).text();
+    const html = await (await get(`/${ACME}/agents`)).text();
     expect(html).toContain(A.status.revoked);
     expect(html).toContain("Sep 3, 2026");
   });
 
   it("shows the OS release in the Platform column, and falls back to the raw os without one", async () => {
     await env.DB.prepare("UPDATE agents SET os = ?2, os_release = ?3 WHERE installation_id = ?1").bind(ACME, "linux", "Ubuntu 22.04").run();
-    const html = await (await get(`/app/${ACME}/agents`)).text();
+    const html = await (await get(`/${ACME}/agents`)).text();
     expect(html).toContain("Ubuntu 22.04");
     await env.DB.prepare("UPDATE agents SET os = ?2, os_release = NULL WHERE installation_id = ?1").bind(ACME, "linux").run();
-    const plain = await (await get(`/app/${ACME}/agents`)).text();
+    const plain = await (await get(`/${ACME}/agents`)).text();
     expect(plain).not.toContain("Ubuntu 22.04");
     expect(plain).toMatch(/class="pf"[^>]*><span>linux<\/span>/);
   });
 
   it("keeps the row menu on a revoked agent", async () => {
     await addAgent(ACME, "agt_gone", "revoked", Date.UTC(2026, 8, 3));
-    const html = await (await get(`/app/${ACME}/agents`)).text();
+    const html = await (await get(`/${ACME}/agents`)).text();
     const row = html.slice(html.indexOf("agt_gone"));
     expect(row).toContain('<details class="mnu">');
   });
 
   it("escapes every stored value", async () => {
     await env.DB.prepare("UPDATE agents SET name = '<script>alert(1)</script>', hostname = '<b>host</b>' WHERE installation_id = ?1").bind(ACME).run();
-    const html = await (await get(`/app/${ACME}/agents`)).text();
+    const html = await (await get(`/${ACME}/agents`)).text();
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain("&lt;b&gt;host&lt;/b&gt;");
     expect(html).not.toContain("<script>alert(1)");
@@ -122,32 +122,32 @@ describe("GET /app/:installationId/agents", () => {
 
   it("shows the install command, and no table, for an installation without agents", async () => {
     await upsertInstallation(env.DB, { id: BARE, account_login: "bare", account_type: "User", account_id: 440, created_at: 1 });
-    const html = await (await get(`/app/${BARE}/agents`, [BARE])).text();
+    const html = await (await get(`/${BARE}/agents`, [BARE])).text();
     expect(html).toContain(A.empty.title);
     expect(html).toContain(env.HUB_ORIGIN);
     expect(html).not.toContain("<table");
   });
 
   it("does not show another installation's agents", async () => {
-    const html = await (await get(`/app/${ACME}/agents`, [ACME, UMBRELLA])).text();
+    const html = await (await get(`/${ACME}/agents`, [ACME, UMBRELLA])).text();
     expect(html).not.toContain(umbrella.agentId);
   });
 
   it("answers the same 404 page for an installation the session does not cover", async () => {
-    const res = await get(`/app/${UMBRELLA}/agents`);
+    const res = await get(`/${UMBRELLA}/agents`);
     expect(res.status).toBe(404);
     expect(await res.text()).toContain(S.dashboard.notFoundTitle);
   });
 
   it("shows a notice only from the known ones", async () => {
-    const known = await (await get(`/app/${ACME}/agents?notice=revoked`)).text();
+    const known = await (await get(`/${ACME}/agents?notice=revoked`)).text();
     expect(known).toContain(A.notices.revoked);
-    const unknown = await (await get(`/app/${ACME}/agents?notice=%3Cb%3Ex`)).text();
+    const unknown = await (await get(`/${ACME}/agents?notice=%3Cb%3Ex`)).text();
     expect(unknown).not.toContain("<b>x");
   });
 });
 
-describe("POST /app/:installationId/agents/pair", () => {
+describe("POST /:installationId/agents/pair", () => {
   it("shows an administrator a fresh token once, in a page that is never cached", async () => {
     const before = await tokenCount(ACME);
     const res = await pair();
@@ -248,9 +248,9 @@ describe("POST /app/:installationId/agents/pair", () => {
   });
 });
 
-describe("GET /app/:installationId/agents/pair/status", () => {
+describe("GET /:installationId/agents/pair/status", () => {
   const status = async (after: number, ids = [ACME], installationId = ACME) => {
-    const res = await exports.default.fetch(`${ORIGIN}/app/${installationId}/agents/pair/status?after=${after}`, { headers: { cookie: await sessionFor(ids) } });
+    const res = await exports.default.fetch(`${ORIGIN}/${installationId}/agents/pair/status?after=${after}`, { headers: { cookie: await sessionFor(ids) } });
     return { res, body: res.status === 200 ? await res.json<{ paired: boolean }>() : null };
   };
 

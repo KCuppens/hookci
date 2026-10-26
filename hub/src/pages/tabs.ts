@@ -134,7 +134,7 @@ function sessionCard(v: SettingsView): string {
 
 function tokenRow(v: SettingsView, t: ApiTokenRow): string {
 	const A = S.apiTokens;
-	const base = `/app/${v.account.id}/tokens`;
+	const base = `/${v.account.id}/tokens`;
 	const status =
 		t.revoked_at === null
 			? `<form method="post" action="${e(`${base}/${encodeURIComponent(t.token_id)}/revoke`)}" data-confirm="${e(A.revokeConfirm)}"><input type="hidden" name="csrf" value="${e(v.csrf)}"><button class="bt dg" type="submit">${e(A.revoke)}</button></form>`
@@ -147,7 +147,7 @@ function tokensCard(v: SettingsView): string {
 	const A = S.apiTokens;
 	const rows = v.tokens.length === 0 ? `<p class="empty">${e(A.none)}</p>` : v.tokens.map((t) => tokenRow(v, t)).join("");
 	const form =
-		`<form class="cf" method="post" action="${e(`/app/${v.account.id}/tokens`)}"><input type="hidden" name="csrf" value="${e(v.csrf)}">` +
+		`<form class="cf" method="post" action="${e(`/${v.account.id}/tokens`)}"><input type="hidden" name="csrf" value="${e(v.csrf)}">` +
 		`<label>${e(A.createLabel)}<input name="name" maxlength="100" placeholder="${e(A.createPlaceholder)}" autocomplete="off" required></label>` +
 		`<button class="bt" type="submit">${e(A.create)}</button></form>`;
 	return `<section class="card"><div class="ch"><h2>${e(A.title)}</h2></div><p class="sub">${e(A.subtitle)}</p>${rows}${form}</section>`;

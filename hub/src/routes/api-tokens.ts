@@ -1,4 +1,4 @@
-// POST /app/:installationId/tokens and its /revoke: the Settings tab's API
+// POST /:installationId/tokens and its /revoke: the Settings tab's API
 // token card. Session-gated like the Settings page itself (scopeOf), with
 // the same same-origin csrf form as the run actions. A created token is
 // shown once, in a plain no-store page; it is never stored or shown again.
@@ -20,13 +20,13 @@ const T = S.apiTokens;
 const NAME_MAX = 100;
 
 function refusal(installationId: number, message: string, status: number): Response {
-	const back = `/app/${installationId}/settings`;
+	const back = `/${installationId}/settings`;
 	return page(T.conflictTitle, `<p>${escapeHtml(message)}</p>\n<p><a href="${escapeHtml(back)}">${escapeHtml(T.backToSettings)}</a></p>`, { status });
 }
 
 /** The one-time reveal page: the raw token, shown once, never persisted anywhere else. Cache-Control: no-store (page()'s default). */
 function revealPage(installationId: number, name: string, token: string): Response {
-	const back = `/app/${installationId}/settings`;
+	const back = `/${installationId}/settings`;
 	const body =
 		`<p>${escapeHtml(T.revealWarning)}</p>` +
 		`<p><code>${escapeHtml(token)}</code></p>` +
@@ -59,5 +59,5 @@ export async function revokeApiTokenForm(c: AppContext): Promise<Response> {
 	const now = (c.env.__TEST_CLOCK ?? systemClock).now();
 	const revoked = await revokeApiToken(t, tokenId, now);
 	if (revoked) logEvent("api_token_revoked", { installation_id: account.id, actor: session.githubUserId, token_id: tokenId });
-	return new Response(null, { status: 303, headers: { location: `/app/${account.id}/settings`, "cache-control": "no-store" } });
+	return new Response(null, { status: 303, headers: { location: `/${account.id}/settings`, "cache-control": "no-store" } });
 }

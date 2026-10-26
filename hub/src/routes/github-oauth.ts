@@ -1,6 +1,6 @@
 // GET /github/oauth/callback: GitHub sends the browser here after an install
 // or permissions update (user authorization during install is on), and after
-// the dashboard sign-in (/app/login), which uses the same callback because the
+// the dashboard sign-in (/login), which uses the same callback because the
 // GitHub App's callback URLs are fixed. A code is
 // used only under a state of ours; GitHub's own stateless install redirect is
 // sent back to user authorization under a fresh state, so a link carrying
@@ -63,7 +63,7 @@ async function finishDashboardLogin(
 		clock.now(),
 	);
 	if (live.length === 0) return noInstallationPage([CLEAR_STATE_COOKIE, session]);
-	const headers = new Headers({ Location: "/app", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+	const headers = new Headers({ Location: "/", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
 	headers.append("Set-Cookie", CLEAR_STATE_COOKIE);
 	headers.append("Set-Cookie", session);
 	return new Response(null, { status: 303, headers });

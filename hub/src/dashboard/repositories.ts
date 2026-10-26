@@ -65,11 +65,11 @@ export function repositoriesPath(installationId: number, search: string, filter:
 	if (search !== "") query.set("q", search);
 	if (filter !== "all") query.set("filter", filter);
 	const qs = query.toString();
-	return `/app/${installationId}/repositories${qs === "" ? "" : `?${qs}`}`;
+	return `/${installationId}/repositories${qs === "" ? "" : `?${qs}`}`;
 }
 
 export function bindPath(installationId: number): string {
-	return `/app/${installationId}/repositories/bind`;
+	return `/${installationId}/repositories/bind`;
 }
 
 /** The notice text for the request's `?notice=` value, or null when it is absent or not one of ours. */

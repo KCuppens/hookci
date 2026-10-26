@@ -6,13 +6,14 @@ name = "hookci-hub"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat", "enable_request_signal"]
-routes = [{ pattern = "ci.hookci.com", custom_domain = true }]
+# ci.hookci.com is the host before app.hookci.com: installed agents, webhooks and Slack still call it. Drop it once they moved.
+routes = [{ pattern = "app.hookci.com", custom_domain = true }, { pattern = "ci.hookci.com", custom_domain = true }]
 # The hub is served from its own domain; keep the default workers.dev URLs off.
 workers_dev = false
 preview_urls = false
 
 [vars]
-HUB_ORIGIN = "https://ci.hookci.com"
+HUB_ORIGIN = "https://app.hookci.com"
 HUB_VERSION = "dev"
 # security.txt Contact (mailto: or https:).
 SECURITY_CONTACT = "mailto:security@hookci.com"

@@ -236,7 +236,7 @@ async function forgedSession(tenant: Tenant): Promise<string> {
 function sessionRequest(path: string, tenant: Tenant, cookie: string | null): Request {
   const headers = new Headers();
   if (cookie !== null) headers.set("cookie", cookie);
-  const target = path.startsWith("/app")
+  const target = path === "/" || path.startsWith("/:installationId")
     ? path.replace(":installationId", String(tenant.installationId)).replace(":runId", tenant.runId).replace(":job", tenant.job)
     : `${path}?installation_id=${tenant.installationId}`;
   return new Request(`${ORIGIN}${target}`, { headers });
@@ -246,20 +246,20 @@ const SESSION_REFUSALS: Record<string, Expected> = {
   "/start": { status: 403, page: "github_no_access" },
   "/start/status": { status: 404, json: "not_found" },
   "/slack/install": { status: 403, slackStartPage: true },
-  "/app": { status: 200, dashboard: "signInTitle" },
-  "/app/:installationId": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs/newer": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs/:runId/logs/:job/view": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/runs/:runId/logs/:job/download": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/agents": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/agents/pair/status": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/agents/:agentId": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/repositories": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/repositories/bind": { status: 404, dashboard: "notFoundTitle" },
-  "/app/:installationId/settings": { status: 404, dashboard: "notFoundTitle" },
+  "/": { status: 200, dashboard: "signInTitle" },
+  "/:installationId": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/newer": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/:runId/logs/:job/view": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/:runId/logs/:job/download": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/agents": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/agents/pair/status": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/agents/:agentId": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/repositories": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/repositories/bind": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/settings": { status: 404, dashboard: "notFoundTitle" },
   "/account/connect-github": { status: 303, redirect: "/account/login" },
   "/account/settings": { status: 303, redirect: "/account/login" },
   "/account/delete": { status: 303, redirect: "/account/login" },

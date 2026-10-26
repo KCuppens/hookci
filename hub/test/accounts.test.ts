@@ -486,7 +486,7 @@ describe("page headers", () => {
     expect(html).toContain('href="https://github.com/KCuppens/hookci"');
     expect(html).toContain('href="/account/register"');
     expect(html).toContain('href="/account/forgot-password"');
-    expect(html).toContain('href="/app/login"');
+    expect(html).toContain('href="/login"');
   });
 
   it("hides the Google button when Google is not configured", async () => {

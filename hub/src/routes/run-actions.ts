@@ -1,4 +1,4 @@
-// POST /app/:installationId/runs/:runId/{approve,cancel,retry}: the buttons on
+// POST /:installationId/runs/:runId/{approve,cancel,retry}: the buttons on
 // the dashboard's run page. Access is the run page's (the session covers the
 // installation, the run belongs to it) plus what the Slack buttons ask for:
 // write access to the repository on GitHub. The form carries a csrf token and
@@ -28,7 +28,7 @@ const APPROVE_CONFLICT = { stale: S.forks.staleApproval, already_used: S.forks.a
 const UNAVAILABLE: Record<RunAction, string> = { approve: S.forks.notGated, cancel: S.runActions.notCancellable, retry: S.runActions.notRetryable };
 
 function conflict(installationId: number, runId: string, message: string, status = 409): Response {
-	const back = `/app/${installationId}/runs/${encodeURIComponent(runId)}`;
+	const back = `/${installationId}/runs/${encodeURIComponent(runId)}`;
 	return page(S.runActions.conflictTitle, `<p>${escapeHtml(message)}</p>\n<p><a href="${escapeHtml(back)}">${escapeHtml(S.runActions.backToRun)}</a></p>`, { status });
 }
 

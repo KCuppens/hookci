@@ -78,7 +78,7 @@ async function adminForm(c: AppContext, reason: string): Promise<{ scope: Scope;
 }
 
 function back(installationId: number, agentId: string, notice: string): Response {
-	const location = `/app/${installationId}/agents/${encodeURIComponent(agentId)}?notice=${notice}`;
+	const location = `/${installationId}/agents/${encodeURIComponent(agentId)}?notice=${notice}`;
 	return new Response(null, { status: 303, headers: { location, "cache-control": "no-store" } });
 }
 

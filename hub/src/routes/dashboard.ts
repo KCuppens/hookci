@@ -1,4 +1,4 @@
-// The read-only dashboard: GET /app, /app/login, /app/:installationId, its
+// The read-only dashboard: GET /, /login, /:installationId, its
 // runs and their logs. The session cookie says which installations the user
 // can see; anything it does not cover answers the same 404 page as a page that
 // does not exist, so ids cannot be probed. Every lookup is scoped to the
@@ -96,7 +96,7 @@ export async function dashboardHome(c: AppContext): Promise<Response> {
 		const { chrome, cookies } = await dashboardChrome(c, session);
 		return noInstallationPage(cookies, chrome);
 	}
-	return new Response(null, { status: 303, headers: { Location: `/app/${first}`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+	return new Response(null, { status: 303, headers: { Location: `/${first}`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
 
 export async function dashboardLogin(c: AppContext): Promise<Response> {

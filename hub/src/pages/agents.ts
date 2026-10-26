@@ -277,7 +277,7 @@ function countText(v: AgentsView): string {
 }
 
 export function agentsPage(v: AgentsView): Promise<Response> {
-	const base = `/app/${v.account.id}`;
+	const base = `/${v.account.id}`;
 	const head = `<div class="ph"><div><h1>${e(A.title)}</h1><p class="sub">${e(A.subtitle)}</p></div><div class="ac">${countText(v)}${pairForm(v, base)}</div></div>`;
 	const notice = v.notice === null ? "" : `<p class="nt" role="status">${e(v.notice)}</p>`;
 	const main = `${accountNav(v.accounts, v.account.id)}${head}${notice}${v.agents.length === 0 ? emptyCard(v) : agentTable(v, base)}`;

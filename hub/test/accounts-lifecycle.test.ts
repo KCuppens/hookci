@@ -110,7 +110,7 @@ describe("sign out", () => {
     const browser = await signInWithPassword(ALICE);
     const res = await browser.submit("/account/settings", "/account/logout", {});
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/app");
+    expect(res.headers.get("location")).toBe("/");
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("set-cookie")).toMatch(/^__Host-hookci_session=; .*Max-Age=0/);
     expect(browser.cookie(SESSION_COOKIE)).toBeUndefined();
@@ -146,7 +146,7 @@ describe("sign out", () => {
   it("is a button in the dashboard header, which the dashboard CSP allows to post to this origin", async () => {
     const accountId = await registerVerified(mailer, ALICE);
     const browser = await dashboardBrowser(accountId);
-    const page = await browser.fetch(`/app/${ACME}`);
+    const page = await browser.fetch(`/${ACME}`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
     const html = await page.text();
@@ -154,17 +154,17 @@ describe("sign out", () => {
     expect(html).toContain(`>${S.dashboard.signOut}<`);
     expect(html).toContain('href="/account/settings"');
 
-    const res = await browser.submit(`/app/${ACME}`, "/account/logout", {});
+    const res = await browser.submit(`/${ACME}`, "/account/logout", {});
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/app");
+    expect(res.headers.get("location")).toBe("/");
     expect(browser.cookie(SESSION_COOKIE)).toBeUndefined();
-    const home = await browser.fetch("/app");
+    const home = await browser.fetch("/");
     expect(await home.text()).toContain(S.account.login.title);
   });
 
   it("offers a plain GitHub session only the sign out button, not settings", async () => {
     const browser = await dashboardBrowser();
-    const html = await (await browser.fetch(`/app/${ACME}`)).text();
+    const html = await (await browser.fetch(`/${ACME}`)).text();
     expect(html).toContain('action="/account/logout"');
     expect(html).not.toContain("/account/settings");
   });
@@ -172,7 +172,7 @@ describe("sign out", () => {
   it("shows no header controls when accounts are off, and still lets the range form submit", async () => {
     env.ACCOUNTS_ENABLED = "false";
     const browser = await dashboardBrowser();
-    const page = await browser.fetch(`/app/${ACME}`);
+    const page = await browser.fetch(`/${ACME}`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
     const html = await page.text();

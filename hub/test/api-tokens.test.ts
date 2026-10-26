@@ -60,9 +60,9 @@ function extractRevealedToken(html: string): string {
 	return /<code>([^<]+)<\/code>/.exec(html)?.[1] ?? "";
 }
 
-describe("POST /app/:installationId/tokens", () => {
+describe("POST /:installationId/tokens", () => {
 	it("creates a token and shows it once, with a no-store header", async () => {
-		const res = await post(`/app/${ACME}/tokens`, { body: { name: "Claude Code" } });
+		const res = await post(`/${ACME}/tokens`, { body: { name: "Claude Code" } });
 		expect(res.status).toBe(201);
 		expect(res.headers.get("cache-control")).toContain("no-store");
 		const html = await res.text();
@@ -80,28 +80,28 @@ describe("POST /app/:installationId/tokens", () => {
 	});
 
 	it("rejects a blank name without creating a row", async () => {
-		const res = await post(`/app/${ACME}/tokens`, { body: { name: "   " } });
+		const res = await post(`/${ACME}/tokens`, { body: { name: "   " } });
 		expect(res.status).toBe(400);
 		expect(await res.text()).toContain(A.nameRequired);
 		expect(await listApiTokens(tenantDb(env.DB, ACME))).toHaveLength(1);
 	});
 
 	it("trims the name", async () => {
-		await post(`/app/${ACME}/tokens`, { body: { name: "  spaced  " } });
+		await post(`/${ACME}/tokens`, { body: { name: "  spaced  " } });
 		const rows = await listApiTokens(tenantDb(env.DB, ACME));
 		expect(rows[0]?.name).toBe("spaced");
 	});
 
 	describe("refusals", () => {
 		it("404s without a session, and for an installation the session does not cover", async () => {
-			expect((await post(`/app/${ACME}/tokens`, { session: null, body: { name: "x" } })).status).toBe(404);
+			expect((await post(`/${ACME}/tokens`, { session: null, body: { name: "x" } })).status).toBe(404);
 			const other = await sessionFor([OTHER]);
-			expect((await post(`/app/${ACME}/tokens`, { session: other, body: { name: "x" } })).status).toBe(404);
+			expect((await post(`/${ACME}/tokens`, { session: other, body: { name: "x" } })).status).toBe(404);
 		});
 
 		it("403s with no csrf field, a wrong csrf field, or a cross-origin request", async () => {
 			for (const options of [{ csrf: "none" as const }, { csrf: "wrong" as const }, { origin: "https://evil.example" }]) {
-				const res = await post(`/app/${ACME}/tokens`, { ...options, body: { name: "x" } });
+				const res = await post(`/${ACME}/tokens`, { ...options, body: { name: "x" } });
 				expect(res.status).toBe(403);
 				expect(await res.text()).toContain(A.csrf);
 			}
@@ -110,16 +110,16 @@ describe("POST /app/:installationId/tokens", () => {
 	});
 });
 
-describe("POST /app/:installationId/tokens/:tokenId/revoke", () => {
+describe("POST /:installationId/tokens/:tokenId/revoke", () => {
 	it("revokes a token and redirects back to settings; the token stops authenticating", async () => {
-		const created = await post(`/app/${ACME}/tokens`, { body: { name: "to revoke" } });
+		const created = await post(`/${ACME}/tokens`, { body: { name: "to revoke" } });
 		const token = extractRevealedToken(await created.text());
 		const rows = await listApiTokens(tenantDb(env.DB, ACME));
 		const tokenId = rows[0]?.token_id ?? "";
 
-		const res = await post(`/app/${ACME}/tokens/${tokenId}/revoke`);
+		const res = await post(`/${ACME}/tokens/${tokenId}/revoke`);
 		expect(res.status).toBe(303);
-		expect(res.headers.get("location")).toBe(`/app/${ACME}/settings`);
+		expect(res.headers.get("location")).toBe(`/${ACME}/settings`);
 
 		const after = await listApiTokens(tenantDb(env.DB, ACME));
 		expect(after[0]?.revoked_at).not.toBeNull();
@@ -127,28 +127,28 @@ describe("POST /app/:installationId/tokens/:tokenId/revoke", () => {
 	});
 
 	it("never touches another installation's token", async () => {
-		await post(`/app/${ACME}/tokens`, { body: { name: "acme token" } });
+		await post(`/${ACME}/tokens`, { body: { name: "acme token" } });
 		const tokenId = (await listApiTokens(tenantDb(env.DB, ACME)))[0]?.token_id ?? "";
 		const otherSession = await sessionFor([OTHER]);
-		expect((await post(`/app/${OTHER}/tokens/${tokenId}/revoke`, { session: otherSession })).status).toBe(303);
+		expect((await post(`/${OTHER}/tokens/${tokenId}/revoke`, { session: otherSession })).status).toBe(303);
 		expect((await listApiTokens(tenantDb(env.DB, ACME)))[0]?.revoked_at).toBeNull();
 	});
 
 	it("404s without a session covering the installation, and 403s on a bad csrf", async () => {
-		expect((await post(`/app/${ACME}/tokens/abc/revoke`, { session: null })).status).toBe(404);
-		expect((await post(`/app/${ACME}/tokens/abc/revoke`, { csrf: "wrong" })).status).toBe(403);
+		expect((await post(`/${ACME}/tokens/abc/revoke`, { session: null })).status).toBe(404);
+		expect((await post(`/${ACME}/tokens/abc/revoke`, { csrf: "wrong" })).status).toBe(403);
 	});
 });
 
 describe("the Settings tab's token card", () => {
 	async function settingsPage(): Promise<string> {
-		const res = await get(`/app/${ACME}/settings`, await sessionFor([ACME]));
+		const res = await get(`/${ACME}/settings`, await sessionFor([ACME]));
 		expect(res.status).toBe(200);
 		return res.text();
 	}
 
 	it("lists a created token's name and id, but never its hash or raw value", async () => {
-		const created = await post(`/app/${ACME}/tokens`, { body: { name: "Listed Token" } });
+		const created = await post(`/${ACME}/tokens`, { body: { name: "Listed Token" } });
 		const token = extractRevealedToken(await created.text());
 		const row = (await listApiTokens(tenantDb(env.DB, ACME)))[0];
 		expect(row).toBeDefined();
@@ -164,9 +164,9 @@ describe("the Settings tab's token card", () => {
 		await env.DB.prepare("DELETE FROM api_tokens WHERE installation_id = ?1").bind(ACME).run();
 		expect(await settingsPage()).toContain(A.none);
 
-		await post(`/app/${ACME}/tokens`, { body: { name: "to mark" } });
+		await post(`/${ACME}/tokens`, { body: { name: "to mark" } });
 		const tokenId = (await listApiTokens(tenantDb(env.DB, ACME)))[0]?.token_id ?? "";
-		await post(`/app/${ACME}/tokens/${tokenId}/revoke`);
+		await post(`/${ACME}/tokens/${tokenId}/revoke`);
 		const settings = await settingsPage();
 		expect(settings).toContain("to mark");
 		expect(settings).toContain(A.revoked);

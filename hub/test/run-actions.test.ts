@@ -42,7 +42,7 @@ async function post(runId: string, action: string, options: PostOptions = {}): P
   if (options.fetchSite !== undefined) headers["sec-fetch-site"] = options.fetchSite;
   const csrf = options.csrf ?? "valid";
   const body = csrf === "none" ? "" : new URLSearchParams({ csrf: csrf === "valid" ? token : `${token}x` }).toString();
-  return exports.default.fetch(`${ORIGIN}/app/${options.installationId ?? INSTALLATION}/runs/${runId}/${action}`, { method: "POST", headers, body, redirect: "manual" });
+  return exports.default.fetch(`${ORIGIN}/${options.installationId ?? INSTALLATION}/runs/${runId}/${action}`, { method: "POST", headers, body, redirect: "manual" });
 }
 
 async function onlyRun(): Promise<Row> {
@@ -56,7 +56,7 @@ async function triggerFrames(): Promise<Row[]> {
 }
 
 function location(runId: string, notice: string): string {
-  return `/app/${INSTALLATION}/runs/${runId}?notice=${notice}`;
+  return `/${INSTALLATION}/runs/${runId}?notice=${notice}`;
 }
 
 describe("availableRunActions", () => {
@@ -77,7 +77,7 @@ describe("availableRunActions", () => {
   });
 });
 
-describe("POST /app/:installationId/runs/:runId/approve", () => {
+describe("POST /:installationId/runs/:runId/approve", () => {
   it("lets a writer approve once, dispatching one untrusted trigger, then refuses a repeat with 409", async () => {
     const { run_id: runId } = await onlyRun();
     const res = await post(String(runId), "approve");
@@ -102,7 +102,7 @@ describe("POST /app/:installationId/runs/:runId/approve", () => {
   });
 });
 
-describe("POST /app/:installationId/runs/:runId/cancel", () => {
+describe("POST /:installationId/runs/:runId/cancel", () => {
   it("cancels a run waiting for approval and then refuses a second cancel with 409", async () => {
     const { run_id: runId } = await onlyRun();
     const res = await post(String(runId), "cancel");
@@ -133,7 +133,7 @@ describe("POST /app/:installationId/runs/:runId/cancel", () => {
   });
 });
 
-describe("POST /app/:installationId/runs/:runId/retry", () => {
+describe("POST /:installationId/runs/:runId/retry", () => {
   it("refuses to retry a run that has not finished", async () => {
     const { run_id: runId } = await onlyRun();
     const res = await post(String(runId), "retry");

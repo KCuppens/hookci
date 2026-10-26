@@ -85,7 +85,7 @@ describe("Slack messages", () => {
   });
 
   it("links the run page in the run message, the alert and the deploy failure", () => {
-    const runLink = "https://hub.test/app/42/runs/run_1";
+    const runLink = "https://hub.test/42/runs/run_1";
     const run = runView({ state: "failed", runLink, jobs: [{ name: "test", state: "failed", logLink: "https://hub.test/runs/run_1/logs?job=test" }] });
     expect(blockTexts(renderRunMessage(run, { notify: "normal" }).blocks).join("\n")).toContain(`<${runLink}|run>`);
     expect(blockTexts(renderAlert(run, run.jobs[0]!, ["boom"], null, "https://logs.test/1").blocks).join("\n")).toContain(`https://logs.test/1|log> · <${runLink}|run>`);

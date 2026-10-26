@@ -56,7 +56,7 @@ function get(path: string, cookie?: string): Promise<Response> {
   return exports.default.fetch(`${ORIGIN}${path}`, { headers, redirect: "manual" });
 }
 
-const view = (runId: string, job: string, installation = ACME): string => `/app/${installation}/runs/${runId}/logs/${job}/view`;
+const view = (runId: string, job: string, installation = ACME): string => `/${installation}/runs/${runId}/logs/${job}/view`;
 
 /** Seeds a run with one job whose log is text, stored where the job row points. */
 async function seedLog(runId: string, job: string, text: string): Promise<void> {
@@ -154,7 +154,7 @@ describe("readLogHead", () => {
   });
 });
 
-describe("GET /app/:installationId/runs/:runId/logs/:job/view", () => {
+describe("GET /:installationId/runs/:runId/logs/:job/view", () => {
   it("shows the log with a numbered, linkable line each and a download link", async () => {
     await seedLog("run_view", "build", "first line\nsecond line\n");
     const res = await get(view("run_view", "build"), await sessionFor([ACME]));
@@ -169,8 +169,8 @@ describe("GET /app/:installationId/runs/:runId/logs/:job/view", () => {
     expect(html).toContain('href="#L2"');
     expect(html).toContain(escapeHtml(L.lines(2)));
     expect(html).toMatch(/>Run #\d+<\/a>/);
-    expect(html).toContain(`href="/app/${ACME}/runs/run_view/logs/build/download"`);
-    expect(html).toContain(`data-raw="/app/${ACME}/runs/run_view/logs/build"`);
+    expect(html).toContain(`href="/${ACME}/runs/run_view/logs/build/download"`);
+    expect(html).toContain(`data-raw="/${ACME}/runs/run_view/logs/build"`);
     expect(html).not.toContain("<script>alert");
   });
 
@@ -213,7 +213,7 @@ describe("GET /app/:installationId/runs/:runId/logs/:job/view", () => {
   it("serves the raw log with its timestamps untouched", async () => {
     const raw = "2026-05-05T14:32:01.123Z npm ci\n";
     await seedLog("run_raw_ts", "build", raw);
-    const res = await get(`/app/${ACME}/runs/run_raw_ts/logs/build`, await sessionFor([ACME]));
+    const res = await get(`/${ACME}/runs/run_raw_ts/logs/build`, await sessionFor([ACME]));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(raw);
   });
@@ -290,9 +290,9 @@ describe("GET /app/:installationId/runs/:runId/logs/:job/view", () => {
   });
 });
 
-describe("GET /app/:installationId/runs/:runId/logs/:job/download", () => {
+describe("GET /:installationId/runs/:runId/logs/:job/download", () => {
   it("serves the log as an attachment of inert text", async () => {
-    const res = await get(`/app/${ACME}/runs/${acme.runId}/logs/${acme.job}/download`, await sessionFor([ACME]));
+    const res = await get(`/${ACME}/runs/${acme.runId}/logs/${acme.job}/download`, await sessionFor([ACME]));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${acme.job}.log"`);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
@@ -303,7 +303,7 @@ describe("GET /app/:installationId/runs/:runId/logs/:job/download", () => {
   });
 
   it("keeps the raw route inline", async () => {
-    const res = await get(`/app/${ACME}/runs/${acme.runId}/logs/${acme.job}`, await sessionFor([ACME]));
+    const res = await get(`/${ACME}/runs/${acme.runId}/logs/${acme.job}`, await sessionFor([ACME]));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toBe("inline");
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
@@ -312,7 +312,7 @@ describe("GET /app/:installationId/runs/:runId/logs/:job/download", () => {
 
   it("answers 404 for another installation's log, under either installation", async () => {
     const cookie = await sessionFor([ACME]);
-    for (const path of [`/app/${UMBRELLA}/runs/${umbrella.runId}/logs/${umbrella.job}/download`, `/app/${ACME}/runs/${umbrella.runId}/logs/${umbrella.job}/download`]) {
+    for (const path of [`/${UMBRELLA}/runs/${umbrella.runId}/logs/${umbrella.job}/download`, `/${ACME}/runs/${umbrella.runId}/logs/${umbrella.job}/download`]) {
       const res = await get(path, cookie);
       expect(res.status).toBe(404);
       expect(await res.text()).not.toContain("secret log");

@@ -302,7 +302,7 @@ accountRoutes.post("/logout", async (c) => {
 	if (!form) return renderLogin(c, { status: 403, error: E.csrf });
 	return new Response(null, {
 		status: 303,
-		headers: { Location: "/app", "Set-Cookie": CLEAR_SESSION_COOKIE, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+		headers: { Location: "/", "Set-Cookie": CLEAR_SESSION_COOKIE, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
 	});
 });
 
