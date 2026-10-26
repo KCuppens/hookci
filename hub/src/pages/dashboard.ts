@@ -451,7 +451,38 @@ const wire = (root) => {
       navigator.clipboard.writeText(v.startsWith("/") ? location.origin + v : v).then(() => { b.dataset.done = "1"; });
     });
   }
+  for (const el of root.querySelectorAll("[data-ms]")) el._t0 = Date.now();
+  for (const p of root.querySelectorAll("pre[data-tail]:not([data-on])")) {
+    p.dataset.on = "1";
+    let buf = "";
+    const clean = (line) => line.replace(/^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z /, "").replace(/\\x1b\\[[0-?]*[ -\\/]*[@-~]/g, "");
+    const put = (text) => {
+      const hold = p.scrollTop + p.clientHeight >= p.scrollHeight - 24;
+      p.append(text);
+      while (p.childNodes.length > 2000) p.firstChild.remove();
+      if (hold) p.scrollTop = p.scrollHeight;
+    };
+    const es = new EventSource(p.dataset.tail);
+    p._es = es;
+    es.addEventListener("log", (ev) => {
+      const lines = (buf + JSON.parse(ev.data).text).split("\\n");
+      buf = lines.pop();
+      if (lines.length > 0) put(lines.map(clean).join("\\n") + "\\n");
+    });
+    const end = () => { es.close(); if (buf) put(clean(buf)); buf = ""; };
+    for (const n of ["eof", "offline", "error"]) es.addEventListener(n, end);
+  }
 };
+const fmt = (ms) => {
+  const s = Math.round(ms / 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + pad(s % 60) + "s";
+  return Math.floor(s / 3600) + "h " + pad(Math.floor((s % 3600) / 60)) + "m";
+};
+setInterval(() => {
+  for (const el of document.querySelectorAll("[data-ms]")) el.textContent = fmt(Number(el.dataset.ms) + Date.now() - (el._t0 || Date.now()));
+}, 1000);
 for (const form of document.querySelectorAll("form[data-auto]")) form.addEventListener("change", () => form.requestSubmit());
 wire(document);
 for (const n of document.querySelectorAll("[data-newer]")) {
@@ -496,10 +527,19 @@ if (targets.length > 0) {
       if (holds(el)) continue;
       const scrolls = [...el.querySelectorAll(".scroll")].map((s) => s.scrollLeft);
       const key = (d, i) => (d.querySelector(":scope > summary b") ? d.querySelector(":scope > summary b").textContent : "#" + i);
-      const opened = new Set([...el.querySelectorAll("details")].filter((d) => d.open).map(key));
+      const opened = new Map([...el.querySelectorAll("details")].map((d, i) => [key(d, i), d.open]));
+      const tails = new Map([...el.querySelectorAll("pre[data-tail]")].map((p) => [p.dataset.tail, [p, p.scrollTop]]));
       const checks = [...el.querySelectorAll("input[type=checkbox]")].map((c) => c.checked);
       el.replaceChildren(...fresh.childNodes);
-      el.querySelectorAll("details").forEach((d, i) => { if (opened.has(key(d, i))) d.open = true; });
+      el.querySelectorAll("details").forEach((d, i) => { if (opened.has(key(d, i))) d.open = opened.get(key(d, i)); });
+      el.querySelectorAll("pre[data-tail]").forEach((p) => {
+        const kept = tails.get(p.dataset.tail);
+        if (kept === undefined) return;
+        p.replaceWith(kept[0]);
+        kept[0].scrollTop = kept[1];
+        tails.delete(p.dataset.tail);
+      });
+      for (const [old] of tails.values()) if (old._es) old._es.close();
       el.querySelectorAll("input[type=checkbox]").forEach((c, i) => { if (i < checks.length) c.checked = checks[i]; });
       el.querySelectorAll(".scroll").forEach((s, i) => { s.scrollLeft = scrolls[i] || 0; });
       wire(el);

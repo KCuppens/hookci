@@ -135,6 +135,8 @@ body.detail{background:#f8f9fa}
 .detail .jr2 .nm b{flex:none;margin-right:23px;font-size:16px;font-weight:600;overflow-wrap:anywhere}
 .detail .jr2 .nm .st.wait{margin-left:5px}
 .detail .jr2 .d{display:block;margin-top:4px;color:#6a7490;font-size:13px;letter-spacing:-.01em}
+.detail .lg{margin:4px 6px 12px 46px;padding:10px 12px;max-height:340px;overflow:auto;background:#0f1424;color:#d6dcf0;border-radius:8px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.detail .lg:empty::before{content:attr(data-wait);color:#7c86a6}
 .detail .jr2 .d .sep{margin:0 7px;font-style:normal}
 .detail .jr2 .st{position:relative;top:-1px;height:25px;padding:0 10px;border-radius:10px;background:#eef0f4;font-size:12px;letter-spacing:-.02em;font-weight:500}
 .detail .jr2 .st.wait{background:#fef0d6}
@@ -404,7 +406,7 @@ function logHref(base: string, runId: string, job: string): string {
 	return `${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job)}/view`;
 }
 
-function jobRow(job: JobLogRow, base: string, runId: string, now: number): string {
+function jobRow(job: JobLogRow, base: string, runId: string, now: number, runStartedAt: number | null): string {
 	// step_index counts from 0; an index past the total came from an older agent that numbered sub-steps, so it says nothing about position.
 	const position = job.step_index === null ? 1 : job.step_index + 1;
 	const stepLine = job.steps_total === null || position > job.steps_total ? null : T.step(position, job.steps_total);
@@ -414,6 +416,11 @@ function jobRow(job: JobLogRow, base: string, runId: string, now: number): strin
 		running && job.step !== null && job.step !== "" && job.step_started_at != null && job.step_started_at <= now
 			? T.stepFor(durationText(now - job.step_started_at))
 			: null;
+	const startedAt = job.started_at ?? runStartedAt;
+	const elapsed = running && job.duration_ms === null && startedAt !== null && startedAt <= now ? now - startedAt : null;
+	const duration =
+		elapsed !== null ? `<span class="du" data-ms="${elapsed}">${e(durationText(elapsed))}</span>` : `<span class="du">${job.duration_ms === null ? dash() : e(durationText(job.duration_ms))}</span>`;
+	const tail = running ? `<pre class="lg" data-tail="${e(`${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job.name)}/stream`)}" data-wait="${e(D.liveWait)}"></pre>` : "";
 	const detail = [stepLine, stepName, stepFor].filter((x): x is string => x !== null);
 	const href = logHref(base, runId, job.name);
 	const log =
@@ -426,9 +433,9 @@ function jobRow(job: JobLogRow, base: string, runId: string, now: number): strin
 		job.log_key !== null && job.log_truncated === 1 ? D.logTruncated(QUOTAS.logBytes / 1_048_576) : null,
 	].filter((x): x is string => x !== null);
 	return (
-		`<details><summary class="jr2">${jobMark(job.state)}<div class="tx"><div class="nm"><b>${e(job.name)}</b>${badge(job.state)}</div>` +
+		`<details${running ? " open" : ""}><summary class="jr2">${jobMark(job.state)}<div class="tx"><div class="nm"><b>${e(job.name)}</b>${badge(job.state)}</div>` +
 		`${detail.length === 0 ? "" : `<span class="d">${detail.map(e).join('<i class="sep">\u00b7</i>')}</span>`}</div>` +
-		`<span class="du">${job.duration_ms === null ? dash() : e(durationText(job.duration_ms))}</span>${log}${icon("chevd", "cv")}</summary><p class="jmore">${e(more.join(" \u00b7 "))}</p></details>`
+		`${duration}${log}${icon("chevd", "cv")}</summary><p class="jmore">${e(more.join(" \u00b7 "))}</p>${tail}</details>`
 	);
 }
 
@@ -448,7 +455,7 @@ function jobsCard(v: RunDetailView): string {
 	const base = `/${v.account.id}`;
 	const jobs = workJobs(v);
 	const done = jobs.filter((j) => DONE[j.state] === true).length;
-	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id, v.now)).join("")}</div>`;
+	const list = jobs.length === 0 ? `<p class="empty muted">${e(D.noJobs)}</p>` : `<div class="jlist">${jobs.map((j) => jobRow(j, base, v.run.run_id, v.now, v.run.started_at)).join("")}</div>`;
 	return `<section class="card"><div class="ch"><h2>${e(T.jobs)}</h2><span class="cnt2">${e(T.jobsCount(done, jobs.length))}</span></div>${setupBanner(v, jobs)}${list}</section>`;
 }
 
@@ -632,6 +639,7 @@ export function runPage(v: RunDetailView): Promise<Response> {
 		css: CSS,
 		icons: ICONS,
 		script: PAGE_SCRIPT,
+		connect: true,
 		avatars: true,
 		forms: v.chrome !== undefined || v.actions.approve || v.actions.cancel || v.actions.retry,
 	});

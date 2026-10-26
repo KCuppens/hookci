@@ -14,7 +14,7 @@ import { dashboardAgent, revokeAgentForm, setAgentBudgetForm, unbindAgentForm } 
 import { dashboardAgents, pairAgent, pairStatus } from "./routes/agents";
 import { createApiTokenForm, revokeApiTokenForm } from "./routes/api-tokens";
 import { dashboardHome, dashboardLogin, dashboardOverview, dashboardRun, dashboardRunsList, dashboardRunsNewer } from "./routes/dashboard";
-import { dashboardLog, dashboardLogDownload, dashboardLogView } from "./routes/dashboard-logs";
+import { dashboardLog, dashboardLogDownload, dashboardLogStream, dashboardLogView } from "./routes/dashboard-logs";
 import { dashboardRepositories, dashboardSettings } from "./routes/dashboard-tabs";
 import { exportData } from "./routes/export";
 import { githubLinkCallback, githubLinkConfirm, githubLinkStart } from "./routes/github-link";
@@ -120,6 +120,7 @@ app.get("/:installationId/runs/newer", dashboardRunsNewer);
 app.get("/:installationId/runs/:runId", dashboardRun);
 app.get("/:installationId/runs/:runId/logs/:job", dashboardLog);
 app.get("/:installationId/runs/:runId/logs/:job/view", dashboardLogView);
+app.get("/:installationId/runs/:runId/logs/:job/stream", dashboardLogStream);
 app.get("/:installationId/runs/:runId/logs/:job/download", dashboardLogDownload);
 app.get("/:installationId/agents", dashboardAgents);
 app.get("/:installationId/agents/pair/status", pairStatus);

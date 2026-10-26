@@ -156,21 +156,23 @@ export async function rawLog(c: ViewerContext): Promise<Response> {
 	});
 }
 
-/** GET /logs/stream: the job's live log, proxied from its agent's AgentDO, which caps it at 60 minutes and sends keepalives. */
-export async function streamLog(c: ViewerContext): Promise<Response> {
-	const opened = await openRun(c);
-	if (opened instanceof Response) return opened;
-	const { ref, run } = opened;
+/** A running job's live log as server-sent events, proxied from its agent's AgentDO, which caps it at 60 minutes and sends keepalives. 409 once the run has finished. */
+export async function liveTail(env: Env, run: RunRow, runId: string, job: string, signal: AbortSignal): Promise<Response> {
 	if (TERMINAL_STATES.has(run.state)) return Response.json({ error: "run_finished" }, { status: 409, headers: HEADERS });
 	const headers = { ...HEADERS, ...SSE_HEADERS };
 	if (!run.agent_id) return new Response(offlineStream(), { headers });
 
-	const agent = c.env.AGENT_DO.get(c.env.AGENT_DO.idFromName(run.agent_id));
-	const tail = await agent.fetch(`https://do/tail?${new URLSearchParams({ run_id: ref.runId, job: ref.job, offset: "0" })}`, {
-		signal: c.req.raw.signal,
-	});
+	const agent = env.AGENT_DO.get(env.AGENT_DO.idFromName(run.agent_id));
+	const tail = await agent.fetch(`https://do/tail?${new URLSearchParams({ run_id: runId, job, offset: "0" })}`, { signal });
 	if (!tail.ok || !tail.body) throw new HubError("agent_tail_failed", 502, `AgentDO /tail answered ${tail.status}`);
 	return new Response(tail.body, { headers });
+}
+
+/** GET /logs/stream: the signed link's job, live. */
+export async function streamLog(c: ViewerContext): Promise<Response> {
+	const opened = await openRun(c);
+	if (opened instanceof Response) return opened;
+	return liveTail(c.env, opened.run, opened.ref.runId, opened.ref.job, c.req.raw.signal);
 }
 
 export function viewerScript(): Response {

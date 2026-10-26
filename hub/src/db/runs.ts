@@ -54,6 +54,8 @@ export interface JobRow {
 	duration_ms: number | null;
 	/** Epoch ms the current step began; the hub sets it when the step changes. */
 	step_started_at?: number | null;
+	/** Epoch ms the job first left the queue; null until then, and for jobs recorded before the column existed. */
+	started_at?: number | null;
 }
 
 export type NewRun = Omit<
@@ -269,9 +271,10 @@ export async function cancelOpenRuns(t: TenantDb, at: number): Promise<void> {
  */
 export async function upsertJob(t: TenantDb, job: JobRow, at: number = Date.now()): Promise<boolean> {
 	const res = await t.run(
-		`INSERT INTO jobs (run_id, name, state, step, step_index, steps_total, duration_ms, step_started_at)
-		SELECT run_id, ?3, ?4, ?5, ?6, ?7, ?8, CASE WHEN ?5 IS NULL THEN NULL ELSE ?9 END FROM runs WHERE installation_id = ?1 AND run_id = ?2
+		`INSERT INTO jobs (run_id, name, state, step, step_index, steps_total, duration_ms, step_started_at, started_at)
+		SELECT run_id, ?3, ?4, ?5, ?6, ?7, ?8, CASE WHEN ?5 IS NULL THEN NULL ELSE ?9 END, CASE WHEN ?4 IN ('received', 'pending', 'queued', 'gated') THEN NULL ELSE ?9 END FROM runs WHERE installation_id = ?1 AND run_id = ?2
 		ON CONFLICT (run_id, name) DO UPDATE SET state = excluded.state,
+			started_at = CASE WHEN jobs.started_at IS NULL AND excluded.state NOT IN ('received', 'pending', 'queued', 'gated') THEN ?9 ELSE jobs.started_at END,
 			step_started_at = CASE WHEN excluded.step IS NOT NULL AND excluded.step IS NOT jobs.step THEN ?9 ELSE jobs.step_started_at END,
 			step = coalesce(excluded.step, step), step_index = coalesce(excluded.step_index, step_index),
 			steps_total = coalesce(excluded.steps_total, steps_total), duration_ms = coalesce(excluded.duration_ms, duration_ms)`,

@@ -481,6 +481,7 @@ export const S = {
 		noJobs: "No jobs yet.",
 		viewLog: "View log",
 		noLogYet: "Not uploaded yet",
+		liveWait: "Waiting for output...",
 		logTruncated: (mib: number) => `Truncated: only the first ${mib} MiB of this log was kept.`,
 		unknownRepo: "Unknown repository",
 		none: "-",

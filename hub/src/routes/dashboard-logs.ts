@@ -3,7 +3,7 @@
 // output a fork pull request controls: the raw and download routes serve it as inert text and the viewer escapes every line.
 
 import type { Context } from "hono";
-import { getJobOfRun, getRunListRow, type JobLogRow, listJobsOfRun } from "../db/runs";
+import { getJobOfRun, getRun, getRunListRow, type JobLogRow, listJobsOfRun } from "../db/runs";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
 import { type LogLine, readLogHead, renderLines, VIEW_BYTES } from "../logs/render";
@@ -12,6 +12,7 @@ import { notFoundPage } from "../pages/dashboard";
 import { type LogState, runLogsPage } from "../pages/run-logs";
 import { dashboardChrome } from "./account";
 import { type Scope, scopeOf } from "./dashboard";
+import { liveTail } from "./log-viewer";
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -99,4 +100,15 @@ export async function dashboardLogView(c: AppContext): Promise<Response> {
 		...shown,
 		...(await dashboardChrome(c, scope.session)),
 	});
+}
+
+/** The job's live log as server-sent events for the run page's inline tail; the session must cover the installation and the job must be the run's. */
+export async function dashboardLogStream(c: AppContext): Promise<Response> {
+	const scope = await scopeOf(c);
+	if (!scope) return notFoundPage();
+	const runId = c.req.param("runId") ?? "";
+	const run = await getRun(scope.t, runId);
+	const job = run ? await getJobOfRun(scope.t, runId, c.req.param("job") ?? "") : null;
+	if (!run || !job) return notFoundPage();
+	return liveTail(c.env, run, runId, job.name, c.req.raw.signal);
 }

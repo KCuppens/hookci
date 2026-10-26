@@ -81,6 +81,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/:installationId/runs/:runId", auth: "session" },
   { method: "GET", path: "/:installationId/runs/:runId/logs/:job", auth: "session" },
   { method: "GET", path: "/:installationId/runs/:runId/logs/:job/view", auth: "session" },
+  { method: "GET", path: "/:installationId/runs/:runId/logs/:job/stream", auth: "session" },
   { method: "GET", path: "/:installationId/runs/:runId/logs/:job/download", auth: "session" },
   { method: "GET", path: "/:installationId/agents", auth: "session" },
   { method: "GET", path: "/:installationId/agents/pair/status", auth: "session" },
