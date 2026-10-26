@@ -119,6 +119,7 @@ app.get("/:installationId/runs", dashboardRunsList);
 app.get("/:installationId/runs/newer", dashboardRunsNewer);
 app.get("/:installationId/runs/:runId", dashboardRun);
 app.get("/:installationId/runs/:runId/logs/:job", dashboardLog);
+app.get("/:installationId/runs/:runId/logs/:job/raw", dashboardLog);
 app.get("/:installationId/runs/:runId/logs/:job/view", dashboardLogView);
 app.get("/:installationId/runs/:runId/logs/:job/stream", dashboardLogStream);
 app.get("/:installationId/runs/:runId/logs/:job/download", dashboardLogDownload);

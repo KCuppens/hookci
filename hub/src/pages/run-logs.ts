@@ -148,6 +148,10 @@ body.logs{background:#fafafa}
 .logs .g0{background:#484f58}.logs .g1{background:#8e1519}.logs .g2{background:#196c2e}.logs .g3{background:#7d5e00}.logs .g4{background:#0c2d6b}.logs .g5{background:#6e40c9}.logs .g6{background:#0e5560}.logs .g7{background:#b1bac4}
 .logs .g8{background:#6e7681}.logs .g9{background:#da3633}.logs .g10{background:#2ea043}.logs .g11{background:#bb8009}.logs .g12{background:#1f6feb}.logs .g13{background:#8957e5}.logs .g14{background:#1b7c83}.logs .g15{background:#fff}
 .logs .fb{font-weight:700}.logs .fd{opacity:.7}.logs .fi{font-style:italic}.logs .fu{text-decoration:underline}
+.logs .ln.err{background:rgba(239,68,68,0.12);border-left:3px solid #ef4444}
+.logs .ln.err .t{color:#fca5a5;font-weight:500}
+.logs .err-badge{display:inline-flex;align-items:center;height:24px;padding:0 8px;margin-left:8px;border:0;border-radius:12px;background:#ef4444;color:#fff;font-size:12px;font-weight:600;cursor:pointer}
+.logs .err-badge:hover{background:#dc2626}
 .logs .empty{display:flex;align-items:center;gap:20px;padding:40px 28px;border:1px solid var(--line);border-radius:10px;background:#fafbfd}
 .logs .empty .ic{width:34px;height:34px;color:#667085}
 .logs .empty b{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em}
@@ -239,6 +243,26 @@ if (lv) {
   }
   if (pane) {
     const lines = Array.from(pane.querySelectorAll(".ln"));
+    const ERR_RE = /(?:^|\b)(?:error|fail(?:ed|ure)?|fatal|panic|exception)(?::|\b)/i;
+    const errLines = [];
+    for (const l of lines) {
+      const text = l.querySelector(".t")?.textContent || "";
+      if (ERR_RE.test(text)) {
+        l.classList.add("err");
+        errLines.push(l);
+      }
+    }
+    const errBadge = lv.querySelector("[data-err-badge]");
+    if (errBadge && errLines.length > 0) {
+      errBadge.textContent = errLines.length === 1 ? "1 error" : errLines.length + " errors";
+      errBadge.hidden = false;
+      let errIdx = -1;
+      errBadge.addEventListener("click", () => {
+        errIdx = (errIdx + 1) % errLines.length;
+        errLines[errIdx].scrollIntoView({ block: "center" });
+        setFollow(false);
+      });
+    }
     const follow = lv.querySelector("[data-follow]");
     const wrap = lv.querySelector("[data-wrap]");
     const input = lv.querySelector("[data-search]");
@@ -377,7 +401,7 @@ function pane(v: RunLogsView): string {
 	const body = v.lines.length === 0 ? `<p class="t">${e(L.empty)}</p>` : rows;
 	const stat = `${e(L.lines(v.lines.length))}<i></i><span class="sz">${e(L.size(v.job.log_bytes ?? 0))}</span>`;
 	return (
-		`<div class="vw"><div class="vh">${icon("terminal")}<b>${e(L.fileName(v.job.name))}</b><span class="stat">${stat}</span></div>` +
+		`<div class="vw"><div class="vh">${icon("terminal")}<b>${e(L.fileName(v.job.name))}</b><button type="button" class="err-badge" data-err-badge data-js hidden title="Jump to error"></button><span class="stat">${stat}</span></div>` +
 		`<div class="vb" data-pane tabindex="0" role="region" aria-label="${e(L.logLabel(v.job.name))}">${body}</div></div>`
 	);
 }
@@ -399,11 +423,13 @@ export function runLogsPage(v: RunLogsView): Promise<Response> {
 	const permalink = logPath(base, run.run_id, v.job.name, "/view");
 	const commitUrl = run.repo_name === null ? null : D.githubCommitUrl(run.repo_name, run.sha);
 	const github = commitUrl === null ? "" : `<a class="bt" href="${e(commitUrl)}" rel="noopener noreferrer">${icon("out")}${e(T.openInGithub)}</a>`;
+	const download = logPath(base, run.run_id, v.job.name, "/download");
+	const downloadBtn = v.state === "available" ? `<a class="bt" href="${e(download)}">${icon("download")}${e(L.download)}</a>` : "";
 	const main =
 		`<div class="bc"><a href="${base}/runs">${icon("back")}${e(T.breadcrumb)}</a>${icon("chev")}` +
 		`<a href="${e(`${base}/runs/${encodeURIComponent(run.run_id)}`)}">${e(T.run(String(run.run_number)))}</a>${icon("chev")}<b>${e(L.title)}</b></div>` +
 		`<div class="top"><div class="who"><h1>${e(L.title)}</h1><span class="st ${stateLook(v.job.state).tone}"><span aria-hidden="true">${statusCircle(v.job.state)}</span>${e(v.job.state === "success" ? L.succeeded : (D.state[v.job.state] ?? v.job.state))}</span></div>` +
-		`<div class="acts">${github}<button type="button" class="bt" data-copy="${e(permalink)}" hidden>${icon("link")}${e(L.copyPermalink)}</button></div></div>` +
+		`<div class="acts">${downloadBtn}${github}<button type="button" class="bt" data-copy="${e(permalink)}" hidden>${icon("link")}${e(L.copyPermalink)}</button></div></div>` +
 		`${metaRows(v)}` +
 		`<section class="card lc" data-logs>${toolbar(v, base)}${pane(v)}${strip(v, base)}</section>`;
 	return appPage({

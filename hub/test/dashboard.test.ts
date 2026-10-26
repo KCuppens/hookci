@@ -8,6 +8,7 @@ import { issueSession } from "../src/oauth/state";
 import { escapeHtml } from "../src/pages/layout";
 import { QUOTAS } from "../src/quotas";
 import { S } from "../src/strings";
+import { PAGE_SCRIPT } from "../src/pages/dashboard";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { createFakeGitHub, serveInstallationTokens } from "./fakes/github";
@@ -670,5 +671,10 @@ describe("GET /:installationId/runs/:runId/logs/:job", () => {
     const res = await get(`/${ACME}/runs/${acme.runId}/logs/${acme.job}`, await sessionFor([ACME]));
     expect(res.status).toBe(404);
     expect(await res.text()).not.toContain("secret log");
+  });
+});
+describe("PAGE_SCRIPT", () => {
+  it("is syntactically valid JavaScript", () => {
+    expect(() => new Function(PAGE_SCRIPT)).not.toThrow();
   });
 });

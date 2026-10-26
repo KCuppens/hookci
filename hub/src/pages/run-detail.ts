@@ -130,6 +130,9 @@ body.detail{background:#f8f9fa}
 .detail .jlist details{margin:0 17px 0 20px;border-top:1px solid var(--line-2)}
 .detail .jlist details:first-child{border-top:0}
 .detail .jlist{padding-bottom:3px}
+.detail .setup-phase{background:#f8faff;border-radius:6px;margin:2px 17px 2px 20px;border-top:0!important}
+.detail .setup-phase summary{border-radius:6px}
+.detail .chip.setup{margin-left:8px;padding:2px 8px;border-radius:10px;background:#e0e7ff;color:#3730a3;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
 .detail .jr2{display:flex;align-items:center;gap:14px;padding:10px 5px 11px 6px;list-style:none;cursor:pointer}
 .detail .jr2::-webkit-details-marker{display:none}
 .detail .jr2 .tx{flex:1;min-width:0;margin:3px 0 0 10px}
@@ -377,7 +380,15 @@ function summaryCard(v: RunDetailView, commitUrl: string | null): string {
 	const created = createdAt(run);
 	const mins = created === null ? 0 : Math.floor((v.now - created) / 60_000);
 	const label = created === null ? "" : mins >= 1 && mins < 60 ? T.createdMinutes(mins) : T.createdAgo(agoPlain(created, v.now));
-	const started = created === null ? "" : `<p class="made">${e(label)}</p>`;
+	const running = run.state === "running" || run.state === "verifying" || run.state === "rolling_back";
+	const elapsed = running && run.started_at !== null && run.started_at <= v.now ? v.now - run.started_at : null;
+	const dur =
+		run.duration_ms !== null
+			? ` \u00b7 <span class="dur">${e(durationText(run.duration_ms))}</span>`
+			: elapsed !== null
+				? ` \u00b7 <span class="dur" data-ms="${elapsed}">${e(durationText(elapsed))}</span>`
+				: "";
+	const started = created === null ? "" : `<p class="made">${e(label)}${dur}</p>`;
 	const reason =
 		run.reason === null || GATED_REASONS.includes(run.reason) ? "" : `<p class="made">${e(T.reasonLabel)}: ${e(run.reason)}</p>`;
 	return (
@@ -433,7 +444,11 @@ function jobRow(job: JobLogRow, base: string, runId: string, now: number, runSta
 	const elapsed = running && job.duration_ms === null && startedAt !== null && startedAt <= now ? now - startedAt : null;
 	const duration =
 		elapsed !== null ? `<span class="du" data-ms="${elapsed}">${e(durationText(elapsed))}</span>` : `<span class="du">${job.duration_ms === null ? dash() : e(durationText(job.duration_ms))}</span>`;
-	const tail = running ? `<pre class="lg" data-tail="${e(`${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job.name)}/stream`)}" data-wait="${e(D.liveWait)}"></pre>` : "";
+	const tail = running
+		? `<pre class="lg" data-tail="${e(`${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job.name)}/stream`)}" data-wait="${e(D.liveWait)}"></pre>`
+		: job.log_key !== null
+			? `<pre class="lg" data-log="${e(`${base}/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(job.name)}`)}" data-wait="${e(D.logLoading)}"></pre>`
+			: "";
 	const detail = [stepLine, stepName, stepFor].filter((x): x is string => x !== null);
 	const href = logHref(base, runId, job.name);
 	const log =
@@ -445,8 +460,11 @@ function jobRow(job: JobLogRow, base: string, runId: string, now: number, runSta
 		job.log_key !== null && job.log_bytes !== null ? `${job.log_bytes} bytes` : D.noLogYet,
 		job.log_key !== null && job.log_truncated === 1 ? D.logTruncated(QUOTAS.logBytes / 1_048_576) : null,
 	].filter((x): x is string => x !== null);
+	const isSetup = job.name === SETUP_JOB;
+	const cls = isSetup ? ' class="setup-phase"' : "";
+	const setupChip = isSetup ? `<span class="chip setup">setup phase</span>` : "";
 	return (
-		`<details${running ? " open" : ""}><summary class="jr2">${jobMark(job.state)}<div class="tx"><div class="nm"><b>${e(job.name)}</b>${badge(job.state)}</div>` +
+		`<details${cls}${running || job.state === "failed" ? " open" : ""}><summary class="jr2">${jobMark(job.state)}<div class="tx"><div class="nm"><b>${e(job.name)}</b>${badge(job.state)}${setupChip}</div>` +
 		`${detail.length === 0 ? "" : `<span class="d">${detail.map(e).join('<i class="sep">\u00b7</i>')}</span>`}</div>` +
 		`${duration}${log}${icon("chevd", "cv")}</summary><p class="jmore">${e(more.join(" \u00b7 "))}</p>${tail}</details>`
 	);

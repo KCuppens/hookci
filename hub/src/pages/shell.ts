@@ -22,6 +22,19 @@ export const FONT_PATH = "/assets/inter.woff2";
 export const SHELL_CSS = `
 @font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:block;src:url(${FONT_PATH}) format("woff2")}
 :root{--ink:#0f141d;--ink-2:#3b4350;--muted:#6b7280;--line:#e8e9ec;--line-2:#eeeef1;--orange:#ff6a2c;--orange-soft:#fff1ea;--orange-line:#ffb08f;--nh:81px;--app-w:1410px;--gutter:24px;--edge:max(var(--gutter),calc((100% - var(--app-w)) / 2));--ls:.139;--ly:0px;--ry:0px;--nfs:15px;--ph:41px;--pw:14.5px;--ffs:14.5px;--fp:29px;--g10:21px;--bh:51px;--bfs:16px;--br:10px;--g6:0px}
+button.busy{opacity:.7;cursor:wait;pointer-events:none}
+@media (prefers-color-scheme:dark){
+:root{--ink:#f0f3f8;--ink-2:#c2c9d6;--muted:#8b94a5;--line:#282d38;--line-2:#1f242e;--orange:#ff7d45;--orange-soft:#2a1a14;--orange-line:#733219}
+body{background:#0e1117!important;color:var(--ink)!important}
+.card{background:#161b22!important;border-color:#282d38!important}
+.app{background:#161b22!important;border-bottom-color:#282d38!important}
+.tabs a{color:#8b94a5!important}
+.tabs a:hover,.tabs a.on{color:#f0f3f8!important}
+.ob{background:#21262d!important;border-color:#30363d!important;color:#c9d1d9!important}
+.ob:hover{background:#30363d!important}
+.ob.dk{background:#ff6a2c!important;border-color:#ff6a2c!important;color:#fff!important}
+input,select,textarea{background:#0d1117!important;border-color:#30363d!important;color:#f0f3f8!important}
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{position:relative;min-height:100vh;overflow-x:hidden;background:#fafafa;color:var(--ink);font-family:${FONT};font-size:16px;line-height:1.4;letter-spacing:.005em;-webkit-font-smoothing:antialiased}
@@ -220,7 +233,7 @@ export async function shellResponse(p: ShellPage, init: PageInit = {}): Promise<
 	const curves = p.curves === undefined ? "" : `<svg class="curves" viewBox="0 0 1024 683" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">${p.curves}</svg>`;
 	const inner = `<div class="bg" aria-hidden="true"></div>${curves}${p.body}`;
 	const html =
-		`<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light"><title>${e(p.title)}</title><link rel="preload" href="${FONT_PATH}" as="font" type="font/woff2" crossorigin><style>${css}</style></head>` +
+		`<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>${e(p.title)}</title><link rel="preload" href="${FONT_PATH}" as="font" type="font/woff2" crossorigin><style>${css}</style></head>` +
 		`<body class="${e(p.bodyClass)}">${defs(inner, p.icons ?? {})}${inner}${p.script === undefined ? "" : `<script>${p.script}</script>`}</body></html>`;
 	return new Response(html, { status: init.status ?? 200, headers });
 }

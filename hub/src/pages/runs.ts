@@ -101,8 +101,10 @@ body.runs{--ink:#060913;--muted:#4f5b79;--line:#ebeef3;--line-2:#f0f2f5;backgrou
 .live i{position:relative;left:-1px;top:-1px;width:11px;height:11px;border-radius:50%;background:#1ab477}
 .rc .sel{width:144px}
 .rc .ob{height:42px}
-.fb{display:grid;grid-template-columns:198px 173px 161px 162px 161px 165px minmax(0,1fr);column-gap:13px;padding:12px}
-.fb .fs{margin-left:4px}
+.fb{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:12px}
+.fb .fs{grid-column:span 1}
+.fb-clear{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#475569;font-size:13px;font-weight:500;text-decoration:none}
+.fb-clear:hover{background:#f1f5f9;color:#0f172a;text-decoration:none}
 ${TABLE_UI_CSS}
 ${PILL_CSS}
 .rtb td a.rp,.rtb td a.rp:hover{text-decoration:none}
@@ -244,6 +246,9 @@ ${PILL_CSS}
 .rtb td.mn{background:#fdfdfd}
 .rtb td.mn:has(.mnu[open]){z-index:3}
 }
+@media (min-width:768px) and (max-width:1150px){
+.fb{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
 @media (max-width:900px){
 .rc{align-self:stretch;width:100%}
 .rc .sel{flex:1 1 180px;width:auto}
@@ -296,13 +301,15 @@ function selectBox(name: string, label: string, ic: string, first: string, optio
 	return `<label class="sel"><span class="sr">${e(label)}</span>${icon(ic, "l")}<select name="${name}">${opts.join("")}</select>${icon("chevd", "r")}</label>`;
 }
 
-function filterBar(v: RunsView): string {
+function filterBar(v: RunsView, base: string): string {
 	const f = v.filters;
 	const o = v.options;
 	const same = (xs: readonly string[]): (readonly [string, string])[] => xs.map((x) => [x, x] as const);
 	const search =
 		`<label class="sel fs"><span class="sr">${e(L.shaLabel)}</span>${icon("search", "l")}` +
 		`<input type="search" name="sha" value="${e(f.sha)}" placeholder="${e(L.shaSearch)}" maxlength="40" autocomplete="off" spellcheck="false"></label>`;
+	const hasFilters = FILTER_KEYS.some((k) => f[k] !== "");
+	const clearBtn = hasFilters ? `<a class="fb-clear" href="${base}/runs">${icon("x")}${e(L.reset)}</a>` : "";
 	return (
 		`<div class="card fb">` +
 		selectBox("repo", L.filterLabels.repo, "monitor", L.allRepos, o.repos.map((r) => [String(r.repo_id), r.full_name] as const), f.repo) +
@@ -311,7 +318,7 @@ function filterBar(v: RunsView): string {
 		selectBox("agent", L.filterLabels.agent, "stack", L.allAgents, o.agents.map((a) => [a.agent_id, a.name] as const), f.agent) +
 		selectBox("author", L.filterLabels.author, "user", L.allAuthors, same(o.authors), f.author) +
 		selectBox("event", L.filterLabels.event, "bolt", L.allEvents, same(o.events), f.event) +
-		`${search}</div>`
+		`${search}${clearBtn}</div>`
 	);
 }
 
@@ -372,8 +379,14 @@ function runTable(v: RunsView, base: string): string {
 	const heads = Object.values(L.cols).map((label) => `<th>${e(label)}</th>`);
 	const head = `<thead><tr>${heads.join("")}<th><span class="sr">${e(D.menu.label)}</span></th></tr></thead>`;
 	const cols = `<colgroup>${"<col>".repeat(13)}</colgroup>`;
-	const empty = v.total === 0 && FILTER_KEYS.every((k) => v.filters[k] === "") ? D.noRuns : L.noMatch;
-	const body = v.runs.length === 0 ? `<tr><td class="empty" colspan="13">${e(empty)}</td></tr>` : v.runs.map((run) => runRow(v, base, run)).join("");
+	const hasFilters = FILTER_KEYS.some((k) => v.filters[k] !== "");
+	const empty =
+		v.runs.length === 0
+			? hasFilters
+				? `<div class="empty-wrap"><p>${e(L.noMatch)}</p><a class="btn primary" href="${base}/runs">${e(L.reset)}</a></div>`
+				: e(D.noRuns)
+			: "";
+	const body = v.runs.length === 0 ? `<tr><td class="empty" colspan="13">${empty}</td></tr>` : v.runs.map((run) => runRow(v, base, run)).join("");
 	return `<div class="scroll"><table class="rtb">${cols}${head}<tbody>${body}</tbody></table></div>`;
 }
 
@@ -428,7 +441,7 @@ export function runsListPage(v: RunsView): Promise<Response> {
 	const form =
 		`<form class="rf" id="runs-filter" method="get" action="${base}/runs" data-auto role="search" aria-label="${e(L.filters)}">` +
 		`<div class="ph"><div><h1>${e(L.title)}</h1><p class="sub">${e(L.subtitle)}</p></div>${controls}</div>` +
-		`${filterBar(v)}<noscript><button class="ob" type="submit">${e(L.apply)}</button></noscript></form>`;
+		`${filterBar(v, base)}<noscript><button class="ob" type="submit">${e(L.apply)}</button></noscript></form>`;
 	const main =
 		`${accountNav(v.accounts, v.account.id)}${form}${liveBanner(v, base)}` +
 		`<section class="card rl" data-swap="runs" data-idle="20000"${activeAttr(v.runs.map((r) => r.state))}>${runTable(v, base)}<div class="rf2"><span>${e(L.showing(v.runs.length))}</span>${pager(v, base)}</div></section>`;

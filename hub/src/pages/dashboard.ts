@@ -472,6 +472,27 @@ const wire = (root) => {
     const end = () => { es.close(); if (buf) put(clean(buf)); buf = ""; };
     for (const n of ["eof", "offline", "error"]) es.addEventListener(n, end);
   }
+  for (const p of root.querySelectorAll("pre[data-log]:not([data-on])")) {
+    p.dataset.on = "1";
+    const load = () => {
+      if (p._loaded || p._loading) return;
+      p._loading = true;
+      p.textContent = p.dataset.wait || "...";
+      fetch(p.dataset.log, { credentials: "same-origin" })
+        .then((r) => r.ok ? r.text() : Promise.reject())
+        .then((t) => {
+          p._loaded = true;
+          const lines = t.split("\\n");
+          const cut = lines.length > 1000 ? lines.slice(-1000).join("\\n") : t;
+          p.textContent = cut;
+          p.scrollTop = p.scrollHeight;
+        })
+        .catch(() => { p.textContent = "Log unavailable"; });
+    };
+    const d = p.closest("details");
+    if (d && d.open) load();
+    if (d) d.addEventListener("toggle", () => { if (d.open) load(); });
+  }
 };
 const fmt = (ms) => {
   const s = Math.round(ms / 1000);
@@ -484,6 +505,15 @@ setInterval(() => {
   for (const el of document.querySelectorAll("[data-ms]")) el.textContent = fmt(Number(el.dataset.ms) + Date.now() - (el._t0 || Date.now()));
 }, 1000);
 for (const form of document.querySelectorAll("form[data-auto]")) form.addEventListener("change", () => form.requestSubmit());
+document.addEventListener("submit", (ev) => {
+  const f = ev.target;
+  if (!f || f.method?.toLowerCase() !== "post") return;
+  const b = f.querySelector('button[type="submit"]:not([disabled])');
+  if (b) {
+    b.classList.add("busy");
+    b.setAttribute("aria-busy", "true");
+  }
+});
 wire(document);
 for (const n of document.querySelectorAll("[data-newer]")) {
   const form = document.getElementById("runs-filter");
@@ -540,7 +570,22 @@ if (targets.length > 0) {
         kept[0].scrollTop = kept[1];
         tails.delete(p.dataset.tail);
       });
-      for (const [old] of tails.values()) if (old._es) old._es.close();
+      for (const [tailUrl, [old, top]] of tails.entries()) {
+        if (old._es) old._es.close();
+        const jobKey = old.closest("details")?.querySelector(":scope > summary b")?.textContent;
+        if (jobKey) {
+          for (const d of el.querySelectorAll("details")) {
+            if (d.querySelector(":scope > summary b")?.textContent === jobKey) {
+              const freshLog = d.querySelector("pre[data-log]");
+              if (freshLog && old.textContent) {
+                freshLog.textContent = old.textContent;
+                freshLog._loaded = true;
+                freshLog.scrollTop = top;
+              }
+            }
+          }
+        }
+      }
       el.querySelectorAll("input[type=checkbox]").forEach((c, i) => { if (i < checks.length) c.checked = checks[i]; });
       el.querySelectorAll(".scroll").forEach((s, i) => { s.scrollLeft = scrolls[i] || 0; });
       wire(el);
