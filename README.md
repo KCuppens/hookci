@@ -12,6 +12,14 @@ Status: pre-alpha, M0 (agent core).
 
 M0 delivers the agent core only. The hub connection, GitHub reporting and Slack integration are planned for later milestones.
 
+## Install on the shared hub
+
+- GitHub App: https://github.com/apps/hookci/installations/new
+- Slack App: https://app.hookci.com/slack/install (needs the GitHub App installed first and a signed-in GitHub session)
+- Dashboard: https://app.hookci.com
+
+Then pair an agent on your server: `curl -fsSL https://app.hookci.com/install | sh -s -- <pair-token>`. The pair token is shown after the GitHub App install.
+
 ## Which pushes and pull requests run
 
 Like a GitHub Actions workflow's `on:`, `.hookci.yml` picks the events. The hub reads it at the pushed commit (for a fork pull request, at the base commit) and drops events that do not match, so they get no check and no Slack message. A repository without a `.hookci.yml` is skipped entirely; an empty file opts in with the defaults below.
