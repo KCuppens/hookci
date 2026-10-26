@@ -4,7 +4,7 @@ import { countActiveAgents, getAgentByCredentialHash, insertAgent, listAgents, t
 import { bind, bindAllRepos, getBinding, listBindingsForAgent } from "../../src/db/bindings";
 import { getInstallation, listPurgeDue, markDeleted, markSuspended, upsertInstallation } from "../../src/db/installations";
 import { getRepoByFullName, listRepos, removeRepos, upsertRepos } from "../../src/db/repos";
-import { findRunByTrigger, getJobOfRun, getRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
+import { findRunByTrigger, getJobOfRun, getNextAttempt, getRun, insertRun, type NewRun, updateRunState, upsertJob } from "../../src/db/runs";
 import { tenantDb } from "../../src/db/tenant";
 import { addWatch, listWatchesForRepo, markWatchBroken, removeWatch } from "../../src/db/watches";
 import {
@@ -189,6 +189,32 @@ describe("runs", () => {
     expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ step: "build", step_started_at: 1000 });
     await upsertJob(one, { ...job, step: "push" }, 4000);
     expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ step: "push", step_started_at: 4000 });
+  });
+  it("upsertJob sets started_at when leaving queued states and never overwrites it", async () => {
+    await insertRun(one, run("r1", "t1"));
+    const job = { run_id: "r1", name: "test", step: null, step_index: null, steps_total: null, duration_ms: null };
+    await upsertJob(one, { ...job, state: "queued" }, 1000);
+    expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ state: "queued", started_at: null });
+    await upsertJob(one, { ...job, state: "running" }, 2000);
+    expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ state: "running", started_at: 2000 });
+    await upsertJob(one, { ...job, state: "success" }, 3000);
+    expect(await getJobOfRun(one, "r1", "test")).toMatchObject({ state: "success", started_at: 2000 });
+  });
+  it("getNextAttempt finds the latest later attempt matching trigger and null env", async () => {
+    const r1 = { ...run("r1", "t1"), attempt: 1, env: null };
+    const r2 = { ...run("r2", "t1"), attempt: 2, env: null, state: "running" as const };
+    const rDiffEnv = { ...run("r3", "t1"), attempt: 3, env: "staging" };
+    const rDiffSha = { ...run("r4", "t1"), sha: "b".repeat(40), attempt: 4, env: null };
+    await insertRun(one, r1);
+    await insertRun(one, r2);
+    await insertRun(one, rDiffEnv);
+    await insertRun(one, rDiffSha);
+
+    const next = await getNextAttempt(one, (await getRun(one, "r1"))!);
+    expect(next).toEqual({ run_id: "r2", run_number: expect.any(Number), attempt: 2, state: "running" });
+
+    const noNext = await getNextAttempt(one, (await getRun(one, "r2"))!);
+    expect(noNext).toBeNull();
   });
 
   it("findRunByTrigger returns the latest run of the trigger in this installation", async () => {

@@ -69,7 +69,7 @@ func Serve(ctx context.Context, sockPath string, token func(ctx context.Context)
 
 func answer(ctx context.Context, c net.Conn, token func(ctx context.Context) (string, error)) {
 	defer c.Close()
-	if err := checkPeer(c); err != nil {
+	if checkPeer(c) != nil {
 		return
 	}
 	tok, err := token(ctx)

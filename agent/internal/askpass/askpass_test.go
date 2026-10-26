@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 )
@@ -75,5 +77,17 @@ func TestAskpassSocketMode(t *testing.T) {
 	t.Setenv(EnvSock, sock)
 	if code, _ := run("Password for 'https://github.com': "); code != 1 {
 		t.Fatalf("Password after stop = %d, want 1", code)
+	}
+}
+
+func TestCheckPeerRejectsNonUnixConn(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("peer check is linux-only")
+	}
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	if err := checkPeer(c1); err == nil {
+		t.Fatal("checkPeer(net.Pipe) succeeded, want error")
 	}
 }

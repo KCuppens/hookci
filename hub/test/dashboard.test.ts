@@ -460,6 +460,35 @@ describe("GET /:installationId/runs/:runId", () => {
     expect(html).toContain(escapeHtml(S.dashboard.noLogYet));
     expect(html).not.toContain("/logs/");
   });
+  it("renders live duration and inline tail for running jobs and next-attempt redirect when available", async () => {
+    await seedRun(ACME, acme.repoId, "run_live", acme.agentId, "test", {
+      state: "running",
+      started_at: 10,
+      finished_at: null,
+      duration_ms: null,
+    });
+    await env.DB.prepare("UPDATE jobs SET state = 'running', started_at = 10, duration_ms = NULL WHERE run_id = 'run_live'").run();
+    const cookie = await sessionFor([ACME]);
+    const runningHtml = await (await get(`/${ACME}/runs/run_live`, cookie)).text();
+    expect(runningHtml).toMatch(/data-ms="\d+"/);
+    expect(runningHtml).toContain(`data-tail="/${ACME}/runs/run_live/logs/test/stream"`);
+
+    // Seed attempt 2 of run_live to verify nextAttempt banner and data-goto
+    const runRow = await env.DB.prepare("SELECT * FROM runs WHERE run_id = 'run_live'").first<{ repo_id: number; sha: string; ref: string; event: string; env: string | null }>();
+    await env.DB.prepare(
+      "INSERT INTO runs (run_id, installation_id, repo_id, sha, ref, event, env, attempt, trigger_id, state, created_at) VALUES ('run_live_2', ?1, ?2, ?3, ?4, ?5, ?6, 2, 'trig_live_2', 'running', 20000)"
+    ).bind(ACME, runRow!.repo_id, runRow!.sha, runRow!.ref, runRow!.event, runRow!.env).run();
+
+    const bannerHtml = await (await get(`/${ACME}/runs/run_live`, cookie)).text();
+    expect(bannerHtml).toContain(`href="/${ACME}/runs/run_live_2"`);
+    expect(bannerHtml).toContain(`data-goto="/${ACME}/runs/run_live_2"`);
+  });
+
+  it("sets data-active on the summary swap when notice is retried and no next attempt exists yet", async () => {
+    const cookie = await sessionFor([ACME]);
+    const html = await (await get(`/${ACME}/runs/${acme.runId}?notice=retried`, cookie)).text();
+    expect(html).toContain("data-active");
+  });
 
   it("shows the setup stage of a running run whose jobs have not started, and drops it once one has", async () => {
     await seedRun(ACME, acme.repoId, "run_setup", acme.agentId, "build", { state: "running", finished_at: null, duration_ms: null });

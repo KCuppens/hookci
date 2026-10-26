@@ -269,12 +269,14 @@ export async function cancelOpenRuns(t: TenantDb, at: number): Promise<void> {
  * run is not this installation's. Progress columns given as null keep their
  * stored value. A step that differs from the stored one starts at at.
  */
+const NOT_STARTED_SQL = "('received', 'pending', 'queued', 'gated')";
+
 export async function upsertJob(t: TenantDb, job: JobRow, at: number = Date.now()): Promise<boolean> {
 	const res = await t.run(
 		`INSERT INTO jobs (run_id, name, state, step, step_index, steps_total, duration_ms, step_started_at, started_at)
-		SELECT run_id, ?3, ?4, ?5, ?6, ?7, ?8, CASE WHEN ?5 IS NULL THEN NULL ELSE ?9 END, CASE WHEN ?4 IN ('received', 'pending', 'queued', 'gated') THEN NULL ELSE ?9 END FROM runs WHERE installation_id = ?1 AND run_id = ?2
+		SELECT run_id, ?3, ?4, ?5, ?6, ?7, ?8, CASE WHEN ?5 IS NULL THEN NULL ELSE ?9 END, CASE WHEN ?4 IN ${NOT_STARTED_SQL} THEN NULL ELSE ?9 END FROM runs WHERE installation_id = ?1 AND run_id = ?2
 		ON CONFLICT (run_id, name) DO UPDATE SET state = excluded.state,
-			started_at = CASE WHEN jobs.started_at IS NULL AND excluded.state NOT IN ('received', 'pending', 'queued', 'gated') THEN ?9 ELSE jobs.started_at END,
+			started_at = CASE WHEN jobs.started_at IS NULL AND excluded.state NOT IN ${NOT_STARTED_SQL} THEN ?9 ELSE jobs.started_at END,
 			step_started_at = CASE WHEN excluded.step IS NOT NULL AND excluded.step IS NOT jobs.step THEN ?9 ELSE jobs.step_started_at END,
 			step = coalesce(excluded.step, step), step_index = coalesce(excluded.step_index, step_index),
 			steps_total = coalesce(excluded.steps_total, steps_total), duration_ms = coalesce(excluded.duration_ms, duration_ms)`,

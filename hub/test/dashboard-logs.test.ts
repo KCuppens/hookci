@@ -320,6 +320,23 @@ describe("GET /:installationId/runs/:runId/logs/:job/download", () => {
   });
 });
 
+describe("GET /:installationId/runs/:runId/logs/:job/stream", () => {
+  it("returns 409 when the run is already finished", async () => {
+    const cookie = await sessionFor([ACME]);
+    const res = await get(`/${ACME}/runs/${acme.runId}/logs/${acme.job}/stream`, cookie);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "run_finished" });
+  });
+
+  it("answers 404 for an unknown run or job", async () => {
+    const cookie = await sessionFor([ACME]);
+    const resRun = await get(`/${ACME}/runs/does-not-exist/logs/${acme.job}/stream`, cookie);
+    expect(resRun.status).toBe(404);
+    const resJob = await get(`/${ACME}/runs/${acme.runId}/logs/does-not-exist/stream`, cookie);
+    expect(resJob.status).toBe(404);
+  });
+});
+
 describe("markJobLogsLocal", () => {
   it("marks only the installation's own job", async () => {
     expect(await markJobLogsLocal(tenantDb(env.DB, ACME), umbrella.runId, umbrella.job)).toBe(false);

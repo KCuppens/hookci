@@ -449,9 +449,8 @@ func (d *Daemon) next(ctx context.Context) *work {
 }
 
 // pick returns the best startable queued trigger, or nil when none can
-// start right now. d.mu must be held; pick does not remove its pick from
-// d.queue's backing nor touch d.running — callers that take the result do
-// both.
+// start right now. d.mu must be held; pick removes the chosen trigger from
+// d.queue; callers only add it to d.running.
 //
 // A trigger may start when its lane is idle, it is under the lane cap
 // (maxLanes), and every running trigger has its trust: check jobs of all
@@ -465,7 +464,7 @@ func (d *Daemon) next(ctx context.Context) *work {
 // branch goes first, then push to "staging", then everything else
 // (priority); ties keep arrival order.
 func (d *Daemon) pick() *work {
-	if max := d.maxLanes(); max > 0 && len(d.running) >= max {
+	if laneCap := d.maxLanes(); laneCap > 0 && len(d.running) >= laneCap {
 		return nil
 	}
 	var best *work

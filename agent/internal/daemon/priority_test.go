@@ -174,3 +174,66 @@ func TestDaemonPriorityStagingBetweenMasterAndPR(t *testing.T) {
 	h.waitTrigger("staging_1", store.TriggerRunning)
 	h.waitTrigger("pr_7", store.TriggerAccepted)
 }
+
+// TestDaemonPriorityTrustBarrierStopsScan: an untrusted trigger blocked by an
+// active trusted run prevents a lower-ranked (or default-branch) push behind it
+// from skipping ahead of it.
+func TestDaemonPriorityTrustBarrierStopsScan(t *testing.T) {
+	src := &fakeSource{Head: map[string]string{ConfigFile: unitOnly}, Base: map[string]string{ConfigFile: unitOnly}}
+	pool := capacity.New(capacity.Options{CPUCount: 16})
+	h := newHarnessPool(t, src, &fakeRunner{Block: true}, pool, Budget{CPUs: config.DefaultJobCPUs})
+
+	// Start a trusted run (push to default branch).
+	trustedRun := h.trigger("trusted", false)
+	h.send(trustedRun)
+	<-h.runner.running
+	h.waitTrigger("trusted", store.TriggerRunning)
+
+	// Queue an untrusted PR run (held back because a trusted run is active).
+	untrustedPR := h.trigger("untrusted_pr", true)
+	h.send(untrustedPR)
+	h.waitTrigger("untrusted_pr", store.TriggerAccepted)
+
+	// Queue another push to the default branch (different lane/sha).
+	// Even though default-branch push has higher priority (0) than the PR (2),
+	// pick() must stop at untrustedPR so the queue can drain and run untrustedPR next.
+	master2 := h.trigger("master_2", false)
+	master2.Sha = strings.Repeat("d", 40)
+	master2.Ref = "refs/heads/master2"
+	h.send(master2)
+	h.waitTrigger("master_2", store.TriggerAccepted)
+
+	// With the trusted run blocking untrustedPR, master2 must not start.
+	select {
+	case <-h.runner.running:
+		t.Fatal("queued trigger started despite trust barrier stop")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Now finish the trusted run. Once it finishes, untrustedPR is reachable and runs.
+	finish(h, "trusted")
+	select {
+	case <-h.runner.running:
+	case <-time.After(10 * time.Second):
+		t.Fatal("untrustedPR did not start after trusted run finished")
+	}
+	h.waitTrigger("untrusted_pr", store.TriggerRunning)
+	h.waitTrigger("master_2", store.TriggerAccepted)
+}
+
+func TestDaemonMaxLanesEdgeCases(t *testing.T) {
+	d := &Daemon{}
+	if got := d.maxLanes(); got != 0 {
+		t.Errorf("maxLanes() with nil pool = %d, want 0", got)
+	}
+
+	d.o.Pool = capacity.New(capacity.Options{CPUs: 1, CPUCount: 16})
+	if got := d.maxLanes(); got != 1 {
+		t.Errorf("maxLanes() with 1 CPU budget (< DefaultJobCPUs) = %d, want 1", got)
+	}
+
+	d.o.Pool = capacity.New(capacity.Options{CPUs: 8, CPUCount: 16})
+	if got := d.maxLanes(); got != 4 {
+		t.Errorf("maxLanes() with 8 CPU budget = %d, want 4", got)
+	}
+}

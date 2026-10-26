@@ -18,6 +18,7 @@ export async function authenticateMcpToken(env: Env, authorization: string | und
 	}
 	return row;
 }
+
 const TOUCH_INTERVAL_MS = 60_000;
 
 /** Stamps the token's last_used_at without delaying the response, skipping the write when it was touched within TOUCH_INTERVAL_MS; failures are not fatal. */
