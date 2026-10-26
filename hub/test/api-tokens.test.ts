@@ -126,6 +126,27 @@ describe("POST /:installationId/tokens/:tokenId/revoke", () => {
 		await expect(authenticateMcpToken(env, `Bearer ${token}`, undefined)).rejects.toThrow();
 	});
 
+	it("rejects authentication when the installation is suspended or deleted", async () => {
+		const res = await post(`/${ACME}/tokens`, { body: { name: "suspension check" } });
+		const token = extractRevealedToken(await res.text());
+
+		// Suspended
+		await env.DB.prepare("UPDATE installations SET suspended_at = 12345 WHERE id = ?").bind(ACME).run();
+		await expect(authenticateMcpToken(env, `Bearer ${token}`, undefined)).rejects.toThrow();
+
+		// Restored
+		await env.DB.prepare("UPDATE installations SET suspended_at = NULL WHERE id = ?").bind(ACME).run();
+		const row = await authenticateMcpToken(env, `Bearer ${token}`, undefined);
+		expect(row.installation_id).toBe(ACME);
+
+		// Deleted
+		await env.DB.prepare("UPDATE installations SET deleted_at = 12345 WHERE id = ?").bind(ACME).run();
+		await expect(authenticateMcpToken(env, `Bearer ${token}`, undefined)).rejects.toThrow();
+
+		// Clean up for other tests
+		await env.DB.prepare("UPDATE installations SET deleted_at = NULL WHERE id = ?").bind(ACME).run();
+	});
+
 	it("never touches another installation's token", async () => {
 		await post(`/${ACME}/tokens`, { body: { name: "acme token" } });
 		const tokenId = (await listApiTokens(tenantDb(env.DB, ACME)))[0]?.token_id ?? "";

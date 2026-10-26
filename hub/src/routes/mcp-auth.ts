@@ -2,6 +2,7 @@
 // token as the last path segment for clients that cannot set headers.
 
 import { API_TOKEN_PREFIX, type ApiTokenRow, apiTokenHash, getApiTokenByHash, touchApiToken } from "../db/api-tokens";
+import { getInstallation } from "../db/installations";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 
@@ -11,9 +12,12 @@ export async function authenticateMcpToken(env: Env, authorization: string | und
 	if (!credential?.startsWith(API_TOKEN_PREFIX)) throw new HubError("auth_failed", 401);
 	const row = await getApiTokenByHash(env.DB, await apiTokenHash(credential));
 	if (!row || row.revoked_at !== null) throw new HubError("auth_failed", 401);
+	const installation = await getInstallation(env.DB, row.installation_id);
+	if (!installation || installation.deleted_at !== null || installation.suspended_at !== null) {
+		throw new HubError("auth_failed", 401);
+	}
 	return row;
 }
-
 const TOUCH_INTERVAL_MS = 60_000;
 
 /** Stamps the token's last_used_at without delaying the response, skipping the write when it was touched within TOUCH_INTERVAL_MS; failures are not fatal. */
