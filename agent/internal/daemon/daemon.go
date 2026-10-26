@@ -97,9 +97,10 @@ type Options struct {
 	HubInfo func(ctx context.Context) (hubclient.HubInfo, error)
 }
 
-// Daemon runs the hub's triggers in the order they arrive, one at a time per
-// lane (a branch's pushes, or one pull request) and lanes side by side as
-// far as Options.Pool admits their work.
+// Daemon runs the hub's triggers one at a time per lane (a branch's
+// pushes, or one pull request), lanes side by side up to its CPU-budget
+// lane cap, push to the default branch and to "staging" ahead of
+// everything else, each tier oldest first. See Daemon.pick.
 type Daemon struct {
 	agentID string
 	st      *store.Store
@@ -423,25 +424,16 @@ func (d *Daemon) worker(ctx context.Context) {
 	}
 }
 
-// next takes the oldest queued trigger that may start, or returns nil once
-// ctx ends. A trigger may start when its lane is idle and every running
-// trigger has its trust: check jobs of all runs share one job user and no
-// PID namespace, so an untrusted run must never overlap a trusted one. The
-// scan stops at the first trigger trust holds back, so the running side
-// drains and that trigger goes next instead of waiting forever.
+// next takes the best startable queued trigger, or returns nil once ctx
+// ends. See Daemon.pick for the selection.
 func (d *Daemon) next(ctx context.Context) *work {
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
 		d.mu.Lock()
-		i := slices.IndexFunc(d.queue, func(w *work) bool {
-			return slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(w) }) ||
-				!slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane })
-		})
-		if i >= 0 && !slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(d.queue[i]) }) {
-			w := d.queue[i]
-			d.queue = slices.Delete(d.queue, i, i+1)
+		w := d.pick()
+		if w != nil {
 			w.ctx, w.cancel = context.WithCancel(ctx)
 			d.running = append(d.running, w)
 			d.mu.Unlock()
@@ -453,6 +445,83 @@ func (d *Daemon) next(ctx context.Context) *work {
 			return nil
 		case <-d.wake:
 		}
+	}
+}
+
+// pick returns the best startable queued trigger, or nil when none can
+// start right now. d.mu must be held; pick does not remove its pick from
+// d.queue's backing nor touch d.running — callers that take the result do
+// both.
+//
+// A trigger may start when its lane is idle, it is under the lane cap
+// (maxLanes), and every running trigger has its trust: check jobs of all
+// runs share one job user and no PID namespace, so an untrusted run must
+// never overlap a trusted one. The scan stops at the first trigger trust
+// holds back rather than skipping it for a lower-priority one that is
+// startable, so the running side drains and that trigger goes next instead
+// of waiting forever.
+//
+// Among triggers reachable before that stop, push to the repo's default
+// branch goes first, then push to "staging", then everything else
+// (priority); ties keep arrival order.
+func (d *Daemon) pick() *work {
+	if max := d.maxLanes(); max > 0 && len(d.running) >= max {
+		return nil
+	}
+	var best *work
+	bestIdx := -1
+	for i, w := range d.queue {
+		if slices.ContainsFunc(d.running, func(r *work) bool { return trusted(r) != trusted(w) }) {
+			break
+		}
+		if slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane }) {
+			continue
+		}
+		if best == nil || priority(w.trig) < priority(best.trig) {
+			best, bestIdx = w, i
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	d.queue = slices.Delete(d.queue, bestIdx, bestIdx+1)
+	return best
+}
+
+// maxLanes caps how many lanes may run at once, derived from the CPU
+// budget: every lane's setup or job claims at least config.DefaultJobCPUs,
+// so admitting more lanes than the budget covers only thins each grant
+// (capacity.Pool.rebalance) without doing more work sooner. 0 means no cap
+// (Options.Pool is nil: "nil admits everything").
+func (d *Daemon) maxLanes() int {
+	if d.o.Pool == nil {
+		return 0
+	}
+	budget := d.o.Pool.Snapshot().BudgetCPUs
+	if budget <= 0 {
+		return 0
+	}
+	if n := int(budget / config.DefaultJobCPUs); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// priority ranks t for pick: push to the repo's default branch runs first,
+// then push to "staging", then everything else (pull requests, other
+// branches, retries of either). Lower runs first.
+func priority(t protocol.Trigger) int {
+	if t.Pr != nil {
+		return 2
+	}
+	branch := strings.TrimPrefix(t.Ref, "refs/heads/")
+	switch {
+	case t.DefaultBranch != nil && branch == *t.DefaultBranch:
+		return 0
+	case branch == "staging":
+		return 1
+	default:
+		return 2
 	}
 }
 

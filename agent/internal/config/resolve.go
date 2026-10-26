@@ -57,8 +57,13 @@ type ResolvedLimits struct {
 	Timeout     time.Duration
 }
 
+// DefaultJobCPUs is a job's CPU minimum when neither the job nor the check
+// sets one. The agent also uses it to size how many lanes may run at once
+// from its CPU budget (see daemon.maxLanes).
+const DefaultJobCPUs = 2
+
 var defaultLimits = ResolvedLimits{
-	CPUs:        2,
+	CPUs:        DefaultJobCPUs,
 	MemoryBytes: 4 << 30,
 	Tasks:       512,
 	Timeout:     10 * time.Minute,
