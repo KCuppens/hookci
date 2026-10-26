@@ -352,6 +352,19 @@ export async function getRunListRow(t: TenantDb, runId: string): Promise<RunList
 	return t.first<RunListRow>(`${RUN_LIST_SELECT} WHERE r.installation_id = ?1 AND r.run_id = ?2`, runId);
 }
 
+/** The latest later attempt of the same trigger (repo, commit, ref, event, env), which a Retry creates as a new run; null when there is none. */
+export async function getNextAttempt(t: TenantDb, run: RunRow): Promise<Pick<RunRow, "run_id" | "run_number" | "attempt" | "state"> | null> {
+	return t.first<Pick<RunRow, "run_id" | "run_number" | "attempt" | "state">>(
+		`SELECT run_id, run_number, attempt, state FROM runs WHERE installation_id = ?1 AND repo_id = ?2 AND sha = ?3 AND ref = ?4 AND event = ?5 AND env IS ?6 AND attempt > ?7 ORDER BY attempt DESC LIMIT 1`,
+		run.repo_id,
+		run.sha,
+		run.ref,
+		run.event,
+		run.env,
+		run.attempt,
+	);
+}
+
 /** A job with where its finished log is stored: log_key is null until the agent uploads it. */
 export interface JobLogRow extends JobRow {
 	log_key: string | null;

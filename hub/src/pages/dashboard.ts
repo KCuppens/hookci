@@ -507,6 +507,7 @@ for (const n of document.querySelectorAll("[data-newer]")) {
   poll();
   setInterval(poll, 30000);
 }
+const seenGoto = document.querySelector("[data-goto]") !== null;
 const targets = [...document.querySelectorAll("[data-swap]")];
 if (targets.length > 0) {
   const holds = (el) => {
@@ -544,6 +545,8 @@ if (targets.length > 0) {
       el.querySelectorAll(".scroll").forEach((s, i) => { s.scrollLeft = scrolls[i] || 0; });
       wire(el);
     }
+    const go = doc.querySelector("[data-goto]");
+    if (go !== null && !seenGoto) location.assign(go.dataset.goto);
     const follow = doc.querySelector("[data-follow]");
     const banner = document.querySelector("[data-follow]");
     if (follow !== null && banner !== null && follow.dataset.after !== banner.dataset.after) {

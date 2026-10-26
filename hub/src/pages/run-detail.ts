@@ -42,6 +42,8 @@ export interface RunDetailView {
 	now: number;
 	run: RunListRow;
 	jobs: readonly JobLogRow[];
+	/** The latest later attempt of this run's trigger (a Retry), or null. */
+	next: Pick<RunListRow, "run_id" | "run_number" | "attempt" | "state"> | null;
 	/** The Approve, Cancel and Retry buttons that apply, and the csrf token their forms carry. */
 	actions: RunActions;
 	csrf: string;
@@ -385,6 +387,17 @@ function summaryCard(v: RunDetailView, commitUrl: string | null): string {
 	);
 }
 
+/** Where a Retry went: the later attempt is its own run, so the finished run points at it, and the page follows it once it shows up. */
+function nextAttemptBanner(v: RunDetailView): string {
+	const next = v.next;
+	if (next === null) return "";
+	const href = `/${v.account.id}/runs/${encodeURIComponent(next.run_id)}`;
+	return (
+		`<p class="notice" role="status" data-goto="${e(href)}">${e(T.nextAttempt(next.attempt, D.state[next.state] ?? next.state))} ` +
+		`<a href="${e(href)}">${e(T.nextAttemptLink(next.attempt, next.run_number))}</a></p>`
+	);
+}
+
 function banner(run: RunListRow): string {
 	if (run.state !== "gated") return "";
 	if (run.reason === "fork_never") return `<div class="warn">${icon("shieldx")}<div><b>${e(T.neverTitle)}</b><p>${e(T.neverBody)}</p></div></div>`;
@@ -616,9 +629,9 @@ function timeline(v: RunDetailView): string {
 /** A finished run keeps polling for late annotations and log links for this long, then stops. */
 const IDLE_POLL_MS = 300_000;
 
-function swap(name: string, v: RunDetailView, html: string): string {
+function swap(name: string, v: RunDetailView, html: string, waiting = false): string {
 	const recent = v.run.finished_at !== null && v.now - v.run.finished_at < IDLE_POLL_MS;
-	return `<div data-swap="${name}"${recent ? ' data-idle="10000"' : ""}${activeAttr([v.run.state])}>${html}</div>`;
+	return `<div data-swap="${name}"${recent ? ' data-idle="10000"' : ""}${waiting ? " data-active" : activeAttr([v.run.state])}>${html}</div>`;
 }
 
 export function runPage(v: RunDetailView): Promise<Response> {
@@ -627,7 +640,7 @@ export function runPage(v: RunDetailView): Promise<Response> {
 	const commitUrl = run.repo_name === null ? null : D.githubCommitUrl(run.repo_name, run.sha);
 	const main =
 		`<div class="bc"><a href="${base}/runs">${icon("back")}${e(T.breadcrumb)}</a>${icon("chev")}<b>${e(T.run(String(run.run_number)))}</b></div>` +
-		`${v.notice === null ? "" : `<p class="notice" role="status">${e(v.notice)}</p>`}${swap("summary", v, summaryCard(v, commitUrl) + banner(run))}` +
+		`${v.notice === null ? "" : `<p class="notice" role="status">${e(v.notice)}</p>`}${swap("summary", v, summaryCard(v, commitUrl) + banner(run) + nextAttemptBanner(v), v.notice === S.runActions.notices.retried && v.next === null)}` +
 		`<div class="cols"><div class="col">${swap("jobs", v, jobsCard(v))}${swap("commit", v, commitCard(v, commitUrl))}</div><div class="col">${swap("config", v, configCard(v))}${swap("logs", v, logsCard(v))}</div></div>` +
 		`<div class="tmw">${swap("timeline", v, timeline(v))}</div>`;
 	return appPage({

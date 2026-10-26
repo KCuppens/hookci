@@ -754,6 +754,8 @@ export const S = {
 			breadcrumb: "Runs",
 			run: (id: string) => `Run #${id}`,
 			attempt: (n: number) => `Attempt ${n}`,
+			nextAttempt: (n: number, state: string) => `Attempt ${n} of this commit is ${state}.`,
+			nextAttemptLink: (n: number, runNumber: number) => `View attempt ${n} (run #${runNumber})`,
 			agent: (name: string) => `Agent: ${name}`,
 			openInGithub: "Open in GitHub",
 			approve: "Approve run",

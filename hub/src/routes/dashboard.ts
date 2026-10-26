@@ -24,7 +24,7 @@ import {
 	newestRunRowid,
 	type RunFilter,
 } from "../db/overview";
-import { getRunListRow, listJobsOfRun, type RunListRow } from "../db/runs";
+import { getNextAttempt, getRunListRow, listJobsOfRun, type RunListRow } from "../db/runs";
 import { type TenantDb, tenantDb } from "../db/tenant";
 import { systemClock } from "../do/clock";
 import type { Env } from "../env";
@@ -225,7 +225,7 @@ export async function dashboardRun(c: AppContext): Promise<Response> {
 	const runId = c.req.param("runId") ?? "";
 	const run = await getRunListRow(scope.t, runId);
 	if (!run) return notFoundPage();
-	const jobs = await listJobsOfRun(scope.t, runId);
+	const [jobs, next] = await Promise.all([listJobsOfRun(scope.t, runId), getNextAttempt(scope.t, run)]);
 	const now = (c.env.__TEST_CLOCK ?? systemClock).now();
 	const chrome = await dashboardChrome(c, scope.session);
 	const view = await runActionsView(c.env, c.req.raw, run, chrome.chrome?.csrf ?? null);
@@ -236,6 +236,7 @@ export async function dashboardRun(c: AppContext): Promise<Response> {
 		now,
 		run,
 		jobs,
+		next,
 		actions: view.actions,
 		csrf: view.csrf,
 		notice: view.notice,
