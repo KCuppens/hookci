@@ -252,6 +252,7 @@ const SESSION_REFUSALS: Record<string, Expected> = {
   "/:installationId/runs/newer": { status: 404, dashboard: "notFoundTitle" },
   "/:installationId/runs/:runId": { status: 404, dashboard: "notFoundTitle" },
   "/:installationId/runs/:runId/logs/:job": { status: 404, dashboard: "notFoundTitle" },
+  "/:installationId/runs/:runId/logs/:job/raw": { status: 404, dashboard: "notFoundTitle" },
   "/:installationId/runs/:runId/logs/:job/view": { status: 404, dashboard: "notFoundTitle" },
   "/:installationId/runs/:runId/logs/:job/stream": { status: 404, dashboard: "notFoundTitle" },
   "/:installationId/runs/:runId/logs/:job/download": { status: 404, dashboard: "notFoundTitle" },

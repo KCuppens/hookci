@@ -21,6 +21,8 @@ beforeEach(async () => {
 	await clearTables();
 	acme = await seedTenant(env, { installationId: ACME, teamId: "T0ACME" });
 	await seedTenant(env, { installationId: OTHER, teamId: "T0OTHER" });
+	// A personal account: its owner, matched by GitHub user id, administers it.
+	await env.DB.prepare("UPDATE installations SET account_type = 'User', account_id = 7001 WHERE id IN (?1, ?2)").bind(ACME, OTHER).run();
 });
 
 async function sessionFor(installationIds: number[]): Promise<string> {
@@ -158,6 +160,19 @@ describe("POST /:installationId/tokens/:tokenId/revoke", () => {
 	it("404s without a session covering the installation, and 403s on a bad csrf", async () => {
 		expect((await post(`/${ACME}/tokens/abc/revoke`, { session: null })).status).toBe(404);
 		expect((await post(`/${ACME}/tokens/abc/revoke`, { csrf: "wrong" })).status).toBe(403);
+	});
+
+	it("refuses a signed-in user who does not administer the account, and leaves the token alone", async () => {
+		await post(`/${ACME}/tokens`, { body: { name: "kept" } });
+		const tokenId = (await listApiTokens(tenantDb(env.DB, ACME)))[0]?.token_id ?? "";
+		await env.DB.prepare("UPDATE installations SET account_id = 9999 WHERE id = ?1").bind(ACME).run();
+		const created = await post(`/${ACME}/tokens`, { body: { name: "intruder" } });
+		expect(created.status).toBe(403);
+		expect(await created.text()).toContain(A.notAdmin);
+		expect((await post(`/${ACME}/tokens/${tokenId}/revoke`)).status).toBe(403);
+		const rows = await listApiTokens(tenantDb(env.DB, ACME));
+		expect(rows.find((r) => r.token_id === tokenId)?.revoked_at).toBeNull();
+		expect(rows.some((r) => r.name === "intruder")).toBe(false);
 	});
 });
 

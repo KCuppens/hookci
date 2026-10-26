@@ -416,6 +416,7 @@ export const S = {
 		createPlaceholder: "Claude Code",
 		create: "Create token",
 		nameRequired: "Enter a name for the token.",
+		notAdmin: "Only an administrator of this GitHub account can create or revoke API tokens.",
 		csrf: "This form expired or came from another site. Reload Settings and try again.",
 		conflictTitle: "Could not create token",
 		backToSettings: "Back to Settings",

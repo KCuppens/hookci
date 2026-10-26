@@ -233,6 +233,8 @@ export async function acceptRun(t: TenantDb, triggerId: string, runId: string, a
 				agentId,
 				provisional.attempt,
 			);
+			// The old attempt's jobs (state, timings, log keys) must not show under the new attempt.
+			await t.run("DELETE FROM jobs WHERE run_id = ?2 AND EXISTS (SELECT 1 FROM runs WHERE installation_id = ?1 AND run_id = ?2)", runId);
 		}
 		await t.run("DELETE FROM runs WHERE installation_id = ?1 AND run_id = ?2 AND trigger_id = ?2", triggerId);
 		return true;

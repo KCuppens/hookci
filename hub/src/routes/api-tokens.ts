@@ -12,7 +12,8 @@ import { logEvent } from "../observability";
 import { notFoundPage } from "../pages/dashboard";
 import { escapeHtml, page } from "../pages/layout";
 import { S } from "../strings";
-import { scopeOf } from "./dashboard";
+import { commandGitHub, isInstallationAdmin } from "../slack/resolve";
+import { type Scope, scopeOf } from "./dashboard";
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -22,6 +23,15 @@ const NAME_MAX = 100;
 function refusal(installationId: number, message: string, status: number): Response {
 	const back = `/${installationId}/settings`;
 	return page(T.conflictTitle, `<p>${escapeHtml(message)}</p>\n<p><a href="${escapeHtml(back)}">${escapeHtml(T.backToSettings)}</a></p>`, { status });
+}
+
+/** Tokens act for the whole installation with no per-repo check, so only an administrator of the GitHub account may mint or revoke them. */
+async function isAdmin(c: AppContext, scope: Scope): Promise<boolean> {
+	const { session, account } = scope;
+	const user = { githubUserId: session.githubUserId, githubLogin: session.githubLogin };
+	if (await isInstallationAdmin(c.env, commandGitHub(c.env), account, user, true)) return true;
+	logEvent("tenant_denied", { installation_id: account.id, github_user_id: session.githubUserId, reason: "api_token_not_admin" });
+	return false;
 }
 
 /** The one-time reveal page: the raw token, shown once, never persisted anywhere else. Cache-Control: no-store (page()'s default). */
@@ -40,6 +50,7 @@ export async function createApiTokenForm(c: AppContext): Promise<Response> {
 	const { session, t, account } = scope;
 	const form = await readCheckedForm(c.env, c.req.raw);
 	if (!form) return refusal(account.id, T.csrf, 403);
+	if (!(await isAdmin(c, scope))) return refusal(account.id, T.notAdmin, 403);
 	const name = (form.name ?? "").trim().slice(0, NAME_MAX);
 	if (!name) return refusal(account.id, T.nameRequired, 400);
 	const now = (c.env.__TEST_CLOCK ?? systemClock).now();
@@ -55,6 +66,7 @@ export async function revokeApiTokenForm(c: AppContext): Promise<Response> {
 	const { session, t, account } = scope;
 	const form = await readCheckedForm(c.env, c.req.raw);
 	if (!form) return refusal(account.id, T.csrf, 403);
+	if (!(await isAdmin(c, scope))) return refusal(account.id, T.notAdmin, 403);
 	const tokenId = c.req.param("tokenId") ?? "";
 	const now = (c.env.__TEST_CLOCK ?? systemClock).now();
 	const revoked = await revokeApiToken(t, tokenId, now);
