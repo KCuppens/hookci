@@ -2,7 +2,6 @@
 // it to the agent's AgentDO.
 
 import type { Context } from "hono";
-import { getInstallation } from "../db/installations";
 import { hitIpRate } from "../db/ip-rate";
 import type { Env } from "../env";
 import { HubError } from "../errors";
@@ -19,10 +18,6 @@ export async function agentConnect(c: Context<{ Bindings: Env }>): Promise<Respo
 	}
 
 	const agent = await authenticateAgent(c.env, c.req.header("authorization"));
-	const installation = await getInstallation(c.env.DB, agent.installation_id);
-	if (!installation || installation.suspended_at !== null || installation.deleted_at !== null) {
-		throw new HubError("suspended", 403);
-	}
 
 	const stub = c.env.AGENT_DO.get(c.env.AGENT_DO.idFromName(agent.agent_id));
 	return stub.fetch("https://do/connect", {

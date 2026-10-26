@@ -252,9 +252,11 @@ export async function recordDeployReply(env: Env, installationId: number, reply:
 	if (row && accepted) await reopenDeployRender(env, installationId, reply.run_id, row.agent_id);
 }
 
-/** The highest attempt sent for the commit and env; null when none was. */
-export async function latestDeployTrigger(env: Env, repo: string, sha: string, envName: string): Promise<DeployTriggerRow | null> {
-	return env.DB.prepare("SELECT * FROM deploy_triggers WHERE repo = ?1 COLLATE NOCASE AND sha = ?2 AND env = ?3 ORDER BY attempt DESC LIMIT 1")
-		.bind(repo, sha, envName)
+/** The highest attempt this installation sent for the commit and env; null when none was. */
+export async function latestDeployTrigger(env: Env, installationId: number, repo: string, sha: string, envName: string): Promise<DeployTriggerRow | null> {
+	return env.DB.prepare(
+		"SELECT * FROM deploy_triggers WHERE installation_id = ?1 AND repo = ?2 COLLATE NOCASE AND sha = ?3 AND env = ?4 ORDER BY attempt DESC LIMIT 1",
+	)
+		.bind(installationId, repo, sha, envName)
 		.first<DeployTriggerRow>();
 }

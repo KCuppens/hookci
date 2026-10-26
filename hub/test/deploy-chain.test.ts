@@ -89,7 +89,7 @@ describe("deploy chain", () => {
       expect(frames).toHaveLength(1);
       expect(frames[0]).toMatchObject({ v: 1, type: "trigger", trigger_id: row?.trigger_id, repo: "acme/widgets", sha: SHA, ref: "refs/heads/main", event: "push", env: envName, attempt: 1, trust: "trusted" });
     }
-    expect(await latestDeployTrigger(env, "acme/widgets", SHA, "staging")).toMatchObject({ env: "staging", attempt: 1 });
+    expect(await latestDeployTrigger(env, INSTALLATION, "acme/widgets", SHA, "staging")).toMatchObject({ env: "staging", attempt: 1 });
   });
 
   describe("branch filter", () => {
@@ -182,8 +182,8 @@ describe("deploy chain", () => {
       await sock.request({ type: "accepted", trigger_id: byEnv.get("staging"), run_id: "run_deploy_1" });
       await sock.request({ type: "rejected", trigger_id: byEnv.get("production"), reason: "deployments.production: not configured" });
 
-      expect(await latestDeployTrigger(env, "acme/widgets", SHA, "staging")).toMatchObject({ status: "accepted", run_id: "run_deploy_1", reason: null });
-      expect(await latestDeployTrigger(env, "acme/widgets", SHA, "production")).toMatchObject({
+      expect(await latestDeployTrigger(env, INSTALLATION, "acme/widgets", SHA, "staging")).toMatchObject({ status: "accepted", run_id: "run_deploy_1", reason: null });
+      expect(await latestDeployTrigger(env, INSTALLATION, "acme/widgets", SHA, "production")).toMatchObject({
         status: "rejected",
         run_id: null,
         reason: "deployments.production: not configured",

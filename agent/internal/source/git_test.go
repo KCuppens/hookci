@@ -17,6 +17,8 @@ var wantHardened = []string{
 	"-c", "protocol.file.allow=user",
 	"-c", "submodule.recurse=false",
 	"-c", "credential.helper=",
+	"-c", "http.lowSpeedLimit=1000",
+	"-c", "http.lowSpeedTime=60",
 }
 
 func TestGitArgsHardened(t *testing.T) {

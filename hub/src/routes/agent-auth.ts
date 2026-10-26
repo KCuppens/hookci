@@ -8,6 +8,7 @@ import {
 	getAgentByNextCredentialHash,
 	promoteNextCredential,
 } from "../db/agents";
+import { getInstallation } from "../db/installations";
 import type { Env } from "../env";
 import { HubError } from "../errors";
 import { callAgentDo } from "../pairing/agents";
@@ -33,5 +34,7 @@ export async function authenticateAgent(env: Env, authorization: string | undefi
 		if (!agent) throw new HubError("auth_failed", 401);
 	}
 	if (agent.revoked_at !== null) throw new HubError("revoked", 401);
+	const installation = await getInstallation(env.DB, agent.installation_id);
+	if (!installation || installation.suspended_at !== null || installation.deleted_at !== null) throw new HubError("suspended", 403);
 	return agent;
 }

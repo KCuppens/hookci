@@ -16,13 +16,16 @@ import (
 const stderrLimit = 2048
 
 // hardenedArgs disable hooks, fsmonitor, implicit submodule recursion and
-// credential helpers, and keep file:// remotes to explicit use.
+// credential helpers, keep file:// remotes to explicit use, and abort an HTTP
+// transfer that stays under 1 KB/s for 60 s so a stalled remote cannot hold a run.
 var hardenedArgs = []string{
 	"-c", "core.hooksPath=/dev/null",
 	"-c", "core.fsmonitor=false",
 	"-c", "protocol.file.allow=user",
 	"-c", "submodule.recurse=false",
 	"-c", "credential.helper=",
+	"-c", "http.lowSpeedLimit=1000",
+	"-c", "http.lowSpeedTime=60",
 }
 
 // Git runs git through an execx.Runner with hardened flags.

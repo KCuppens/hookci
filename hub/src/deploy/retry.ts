@@ -52,7 +52,7 @@ export async function handleDeployRetry(env: Env, payload: SlackBlockActionPaylo
 		throw err;
 	}
 
-	const latest = await latestDeployTrigger(env, render.repo, render.sha, render.env);
+	const latest = await latestDeployTrigger(env, trigger.installation_id, render.repo, render.sha, render.env);
 	if (!latest || attempt < latest.attempt) return ephemeral(S.deploy.retryAlreadyRequested);
 
 	const t = tenantDb(env.DB, trigger.installation_id);
