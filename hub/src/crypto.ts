@@ -63,7 +63,7 @@ export function randomToken(prefix: string, bytes = 16): string {
 	return out;
 }
 
-const TOKEN_RE = /(ghs_|ghp_|gho_|ghu_|xoxb-|xoxp-|hci_pair_|hci_agent_)[A-Za-z0-9_-]+/g;
+const TOKEN_RE = /(ghs_|ghp_|gho_|ghu_|xoxb-|xoxp-|hci_pair_|hci_agent_|hci_mcp_)[A-Za-z0-9_-]+/g;
 
 /** Replaces the secret part of GitHub, Slack and HookCI tokens, keeping the prefix. */
 export function redact(s: string): string {

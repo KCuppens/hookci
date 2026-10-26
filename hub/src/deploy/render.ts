@@ -19,7 +19,7 @@ import { createCheckRun, updateCheckRun } from "../github/api";
 import { GitHubClient } from "../github/client";
 import type { CheckRunConclusion } from "../github/types";
 import { defaultFetcher } from "../http";
-import { stableLogLink } from "../logs/links";
+import { runPageLink, stableLogLink } from "../logs/links";
 import { reportError } from "../observability";
 import type { Event as AgentEvent } from "../protocol";
 import type { SinkHost, WaitUntil } from "../sinks/index";
@@ -272,6 +272,7 @@ export async function onDeployEvent(env: Env, installationId: number, ev: AgentE
 			sha: row.sha,
 			state: row.state,
 			runId: row.run_id,
+			runUrl: runPageLink(env, trigger.installation_id, row.run_id),
 			attempt: trigger.attempt,
 			...(row.step !== null ? { step: row.step } : {}),
 			...(row.step_index !== null ? { stepIndex: row.step_index } : {}),

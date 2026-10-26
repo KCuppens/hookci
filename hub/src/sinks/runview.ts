@@ -4,7 +4,7 @@ import type { JobRow, RunRow } from "../db/runs";
 import { tenantDb } from "../db/tenant";
 import type { Env } from "../env";
 import { HubError } from "../errors";
-import { stableLogLink } from "../logs/links";
+import { runPageLink, stableLogLink } from "../logs/links";
 import type { JobView, PendingReason, RunState, RunView } from "./types";
 
 const RUN_STATES: Record<RunState, true> = {
@@ -67,6 +67,7 @@ export async function loadRunView(
 		repo: run.full_name ?? "",
 		triggerId: run.trigger_id,
 		runId: run.run_id === run.trigger_id ? undefined : run.run_id,
+		runLink: run.run_id === run.trigger_id ? undefined : runPageLink(env, installationId, run.run_id),
 		sha: run.sha,
 		shortSha: run.sha.slice(0, 7),
 		ref: run.ref,

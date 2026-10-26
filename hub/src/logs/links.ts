@@ -15,6 +15,11 @@ export function stableLogLink(env: Pick<Env, "HUB_ORIGIN">, runId: string, job: 
 	return `${env.HUB_ORIGIN}/runs/${encodeURIComponent(runId)}/logs?job=${encodeURIComponent(job)}`;
 }
 
+/** HUB_ORIGIN/app/<installationId>/runs/<runId>: the dashboard's run page, which signs in with GitHub like the log link does. */
+export function runPageLink(env: Pick<Env, "HUB_ORIGIN">, installationId: number, runId: string): string {
+	return `${env.HUB_ORIGIN}/app/${installationId}/runs/${encodeURIComponent(runId)}`;
+}
+
 /** "sign_in": the repo is private and nobody is signed in. */
 export type LogAccess = "allowed" | "denied" | "sign_in";
 

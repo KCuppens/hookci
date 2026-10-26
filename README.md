@@ -58,6 +58,8 @@ Setup prints the GitHub App install link and the hub URL at the end. See [docs/s
 
 The hub also serves a read-only web dashboard of runs, logs and agents. See [docs/dashboard.md](docs/dashboard.md).
 
+The hub also exposes an MCP server for run/agent visibility and deploy-retry/run-cancel, authenticated by a per-installation API token. See [docs/mcp.md](docs/mcp.md).
+
 ## Repository layout
 
 - `agent/`: Go agent and the `hookci` CLI.

@@ -8,6 +8,8 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { base64url, hex, hmacSha256 } from "../../src/crypto";
 import { agentCredentialHash, getAgentByCredentialHash } from "../../src/db/agents";
+import { revokeApiToken } from "../../src/db/api-tokens";
+import { tenantDb } from "../../src/db/tenant";
 import { verifyGithubSignature } from "../../src/github/verify";
 import worker from "../../src/index";
 import { verifyLogUrl } from "../../src/logs/signing";
@@ -178,6 +180,14 @@ async function bearerRequest(method: string, path: string, tenant: Tenant, autho
   if (path === "/v1/agent/sinks/:id") return new Request(`${ORIGIN}/v1/agent/sinks/snk_forged`, { method: "DELETE", headers });
   if (path === "/v1/agent/sinks/:id/test") return new Request(`${ORIGIN}/v1/agent/sinks/snk_forged/test`, { method: "POST", headers });
   throw new Error(`no bearer request for ${method} ${path}`);
+}
+
+/** A request to an MCP route; /mcp carries authorization as a header, /mcp/:token carries it in the path and no header. */
+function mcpRequest(method: string, path: string, authorization: string | null): Request {
+  const headers = new Headers({ "cf-connecting-ip": "203.0.113.7" });
+  const target = path.includes(":token") ? path.replace(":token", authorization === null ? "missing" : authorization.replace(/^Bearer /, "")) : path;
+  if (!path.includes(":token") && authorization !== null) headers.set("authorization", authorization);
+  return new Request(`${ORIGIN}${target}`, { method, headers });
 }
 
 function redeemRequest(pairToken: string | undefined): Request {
@@ -393,6 +403,32 @@ const CASES: Record<Exclude<EndpointAuth, "public">, (endpoint: Endpoint) => Cas
       },
     ];
   },
+
+  api_bearer: ({ method, path }) => [
+    { kind: "missing", name: "no Authorization", request: async () => mcpRequest(method, path, null), expected: { status: 401, json: "auth_failed" } },
+    {
+      kind: "wrong",
+      name: "an API token the hub never issued",
+      request: async () => mcpRequest(method, path, `Bearer hci_mcp_${crypto.randomUUID().replaceAll("-", "")}`),
+      expected: { status: 401, json: "auth_failed" },
+    },
+    {
+      kind: "wrong_bearer",
+      name: "an agent credential in place of the API token",
+      request: async (t) => mcpRequest(method, path, `Bearer ${t.credential}`),
+      expected: { status: 401, json: "auth_failed" },
+    },
+    {
+      kind: "previous",
+      name: "the tenant's API token after it was revoked",
+      request: async (t) => {
+        const revoked = await revokeApiToken(tenantDb(env.DB, t.installationId), t.apiTokenId, testClock.now());
+        expect(revoked).toBe(true);
+        return mcpRequest(method, path, `Bearer ${t.apiToken}`);
+      },
+      expected: { status: 401, json: "auth_failed" },
+    },
+  ],
 
   log_sig: ({ path }) => {
     /** A link to the tenant's job log with kid and a signature over the v1 message made with secret. */

@@ -9,6 +9,8 @@ export type EndpointAuth =
   | "slack_sig"
   /** An agent's `hci_agent_` credential, or a pair token on /v1/pair/redeem. */
   | "agent_bearer"
+  /** An installation-scoped `hci_mcp_` API token, as an Authorization: Bearer header or the :token path segment. */
+  | "api_bearer"
   /** The i, r, j, exp, kid and sig query parameters of a signed log URL. */
   | "log_sig"
   /** A single-use OAuth state, or the browser state cookie it belongs to. */
@@ -92,6 +94,8 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "POST", path: "/app/:installationId/runs/:runId/approve", auth: "session_csrf" },
   { method: "POST", path: "/app/:installationId/runs/:runId/cancel", auth: "session_csrf" },
   { method: "POST", path: "/app/:installationId/runs/:runId/retry", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/tokens", auth: "session_csrf" },
+  { method: "POST", path: "/app/:installationId/tokens/:tokenId/revoke", auth: "session_csrf" },
   { method: "GET", path: "/account/login", auth: "public" },
   { method: "GET", path: "/account/register", auth: "public" },
   { method: "GET", path: "/account/forgot-password", auth: "public" },
@@ -110,4 +114,10 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "POST", path: "/account/verify", auth: "csrf_form" },
   { method: "POST", path: "/account/logout", auth: "csrf_form" },
   { method: "POST", path: "/account/delete", auth: "csrf_form" },
+  { method: "GET", path: "/mcp", auth: "api_bearer" },
+  { method: "POST", path: "/mcp", auth: "api_bearer" },
+  { method: "DELETE", path: "/mcp", auth: "api_bearer" },
+  { method: "GET", path: "/mcp/:token", auth: "api_bearer" },
+  { method: "POST", path: "/mcp/:token", auth: "api_bearer" },
+  { method: "DELETE", path: "/mcp/:token", auth: "api_bearer" },
 ];

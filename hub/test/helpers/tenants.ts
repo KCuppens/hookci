@@ -5,6 +5,7 @@
 import { encryptToken, parseEncKeys } from "../../src/crypto";
 import { agentCredentialHash, insertAgent } from "../../src/db/agents";
 import { insertAnnotations } from "../../src/db/annotations";
+import { apiTokenHash, generateApiToken, insertApiToken } from "../../src/db/api-tokens";
 import { bind } from "../../src/db/bindings";
 import { putCheckRun } from "../../src/db/check-runs";
 import { recordDelivery } from "../../src/db/deliveries";
@@ -45,6 +46,9 @@ export interface Tenant {
   prNumber: number;
   /** An unredeemed pair token. */
   pairToken: string;
+  /** The tenant's one API token (hci_mcp_...) and its id. */
+  apiToken: string;
+  apiTokenId: string;
 }
 
 /** Every table holding installation rows; jobs and the slack_* tables hang off runs. */
@@ -66,6 +70,7 @@ export const TENANT_TABLES = [
   "deliveries",
   "author_cache",
   "author_map",
+  "api_tokens",
 ] as const;
 
 type TenantTable = (typeof TENANT_TABLES)[number];
@@ -204,8 +209,10 @@ export async function seedTenant(env: Env, input: { installationId: number; team
     note: null,
   });
   const { token: pairToken } = await createPairToken(env, { installationId, createdByGithubId: tenant.githubUserId });
+  const { tokenId: apiTokenId, token: apiToken } = generateApiToken(1);
+  await insertApiToken(t, { token_id: apiTokenId, token_hash: await apiTokenHash(apiToken), name: "test token", created_at: 1, created_by_github_id: tenant.githubUserId });
 
-  return { ...tenant, pairToken };
+  return { ...tenant, pairToken, apiToken, apiTokenId };
 }
 
 /** Every row installationId holds in each tenant table, by table, in insertion order. */

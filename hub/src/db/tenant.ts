@@ -24,6 +24,7 @@ export const TENANT_TABLES: readonly string[] = [
 	"sink_messages",
 	"sink_deliveries",
 	"annotations",
+	"api_tokens",
 ];
 
 /**

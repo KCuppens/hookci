@@ -120,6 +120,9 @@ async function seed(id: number): Promise<void> {
     env.DB.prepare(
       "INSERT INTO sink_deliveries (installation_id, sink_id, delivery_id, run_id, attempt, status, http_status, at) VALUES (?1, ?2, 'dlv', ?3, 1, 'ok', 200, 1)",
     ).bind(id, `snk_${id}`, runId),
+    env.DB.prepare(
+      "INSERT INTO api_tokens (installation_id, token_id, token_hash, name, created_at, created_by_github_id) VALUES (?1, ?2, ?3, 'ci token', 1, 7)",
+    ).bind(id, `tok_${id}`, `hash-${id}`),
   ]);
 }
 

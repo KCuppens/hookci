@@ -478,7 +478,11 @@ for (const n of document.querySelectorAll("[data-newer]")) {
 }
 const targets = [...document.querySelectorAll("[data-swap]")];
 if (targets.length > 0) {
-  const holds = (el) => el.contains(document.activeElement) || el.querySelector("details[open]") !== null;
+  const holds = (el) => {
+    const a = document.activeElement;
+    if (a !== null && el.contains(a) && !a.matches("summary.jr2")) return true;
+    return [...el.querySelectorAll("details[open]")].some((d) => d.querySelector(":scope > summary.jr2") === null);
+  };
   const refresh = async () => {
     const r = await fetch(location.href, { credentials: "same-origin", headers: { accept: "text/html" } });
     if (!r.ok || r.redirected) throw new Error();
@@ -487,9 +491,16 @@ if (targets.length > 0) {
       const fresh = doc.querySelector('[data-swap="' + el.dataset.swap + '"]');
       if (fresh === null) continue;
       el.toggleAttribute("data-active", fresh.hasAttribute("data-active"));
+      if (fresh.dataset.idle) el.dataset.idle = fresh.dataset.idle;
+      else delete el.dataset.idle;
       if (holds(el)) continue;
       const scrolls = [...el.querySelectorAll(".scroll")].map((s) => s.scrollLeft);
+      const key = (d, i) => (d.querySelector(":scope > summary b") ? d.querySelector(":scope > summary b").textContent : "#" + i);
+      const opened = new Set([...el.querySelectorAll("details")].filter((d) => d.open).map(key));
+      const checks = [...el.querySelectorAll("input[type=checkbox]")].map((c) => c.checked);
       el.replaceChildren(...fresh.childNodes);
+      el.querySelectorAll("details").forEach((d, i) => { if (opened.has(key(d, i))) d.open = true; });
+      el.querySelectorAll("input[type=checkbox]").forEach((c, i) => { if (i < checks.length) c.checked = checks[i]; });
       el.querySelectorAll(".scroll").forEach((s, i) => { s.scrollLeft = scrolls[i] || 0; });
       wire(el);
     }
@@ -502,7 +513,7 @@ if (targets.length > 0) {
     for (const l of document.querySelectorAll("[data-live]")) l.hidden = false;
   };
   const next = () => {
-    if (targets.some((t) => t.hasAttribute("data-active"))) return 4000;
+    if (targets.some((t) => t.hasAttribute("data-active"))) return 2000;
     const idle = Math.min(...targets.map((t) => Number(t.dataset.idle || Infinity)));
     return Number.isFinite(idle) ? idle : 0;
   };

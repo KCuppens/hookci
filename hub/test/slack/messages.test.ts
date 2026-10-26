@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../../src/slack/blocks";
-import { renderAlert, renderJobReply, renderOfflineDm, renderRunMessage, type SlackMessage, TAIL_LINES, tailBlock } from "../../src/slack/messages";
+import { renderAlert, renderDeployFailure, renderJobReply, renderOfflineDm, renderRunMessage, type SlackMessage, TAIL_LINES, tailBlock } from "../../src/slack/messages";
 import type { PendingReason, RunState, RunView } from "../../src/sinks/types";
 import { S } from "../../src/strings";
 
@@ -82,6 +82,15 @@ describe("Slack messages", () => {
   it("renders no_config as the exact hint", () => {
     const msg = renderRunMessage(runView({ state: "pending", reason: "no_config" }), { notify: "normal" });
     expect(blockTexts(msg.blocks)).toContain("No checks detected: add `.hookci.yml`");
+  });
+
+  it("links the run page in the run message, the alert and the deploy failure", () => {
+    const runLink = "https://hub.test/app/42/runs/run_1";
+    const run = runView({ state: "failed", runLink, jobs: [{ name: "test", state: "failed", logLink: "https://hub.test/runs/run_1/logs?job=test" }] });
+    expect(blockTexts(renderRunMessage(run, { notify: "normal" }).blocks).join("\n")).toContain(`<${runLink}|run>`);
+    expect(blockTexts(renderAlert(run, run.jobs[0]!, ["boom"], null, "https://logs.test/1").blocks).join("\n")).toContain(`https://logs.test/1|log> · <${runLink}|run>`);
+    const deploy = { env: "staging", sha: "abc1234", state: "failed" as const, logUrl: "https://logs.test/2", runUrl: runLink };
+    expect(JSON.stringify(renderDeployFailure("acme/widgets", deploy, [], null).blocks)).toContain(`<${runLink}|run>`);
   });
 
   it("keeps the last 40 tail lines, each cut to 300 chars, in a block under 2900 chars", () => {

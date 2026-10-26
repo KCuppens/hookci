@@ -30,8 +30,10 @@
     "vitest": "4.1.12"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "hono": "4.13.13",
     "wrangler": "4.151.1",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "zod": "3.25.76"
   }
 }

@@ -40,6 +40,8 @@ export interface RunView {
 	repo: string;
 	triggerId: string;
 	runId?: string;
+	/** The dashboard run page (HUB_ORIGIN/app/<installation>/runs/<run>), once the agent accepted the run. */
+	runLink?: string;
 	sha: string;
 	shortSha: string;
 	/** The git ref the run built, as refs/heads/main. */

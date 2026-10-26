@@ -3,6 +3,8 @@
 // installation, and anything else answers the same 404 page.
 
 import type { Context } from "hono";
+import { csrfForForm } from "../accounts/csrf";
+import { listApiTokens } from "../db/api-tokens";
 import { filterRepositories, REPOSITORY_FILTERS, repositoryItems } from "../dashboard/repositories";
 import { getInstallationUsage, listRepositories, listRepositoryBindings, listRepositoryWatches, listSlackLinks, REPOSITORY_LIMIT } from "../db/tabs";
 import { systemClock } from "../do/clock";
@@ -43,6 +45,12 @@ export async function dashboardSettings(c: AppContext): Promise<Response> {
 	const scope = await scopeOf(c);
 	if (!scope) return notFoundPage();
 	const view = await viewOf(c, scope);
-	const [slack, usage] = await Promise.all([listSlackLinks(scope.t), getInstallationUsage(scope.t, new Date(view.now).toISOString().slice(0, 10))]);
-	return settingsPage({ ...view, slack, usage });
+	const [slack, usage, tokens] = await Promise.all([
+		listSlackLinks(scope.t),
+		getInstallationUsage(scope.t, new Date(view.now).toISOString().slice(0, 10)),
+		listApiTokens(scope.t),
+	]);
+	const { token: csrf, cookie } = await csrfForForm(c.env, c.req.header("cookie") ?? null);
+	const cookies = [...(view.cookies ?? []), ...(cookie === null ? [] : [cookie])];
+	return settingsPage({ ...view, slack, usage, tokens, csrf, ...(cookies.length > 0 ? { cookies } : {}) });
 }

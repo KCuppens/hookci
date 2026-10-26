@@ -87,7 +87,7 @@ function signedLink(c: ViewerContext, path: string): string {
 }
 
 /** Up to RENDER_LIMIT_BYTES of the gunzipped log as text, and whether more followed. */
-async function readRenderable(gzipped: ReadableStream<Uint8Array>): Promise<{ text: string; truncated: boolean }> {
+export async function readRenderable(gzipped: ReadableStream<Uint8Array>): Promise<{ text: string; truncated: boolean }> {
 	const reader = gzipped.pipeThrough(new DecompressionStream("gzip")).getReader();
 	const decoder = new TextDecoder();
 	let text = "";

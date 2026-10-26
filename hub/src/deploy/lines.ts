@@ -4,7 +4,7 @@
 
 import type { TenantDb } from "../db/tenant";
 import type { Env } from "../env";
-import { stableLogLink } from "../logs/links";
+import { runPageLink, stableLogLink } from "../logs/links";
 import { BADGE_EMOJI, escapeMrkdwn } from "../slack/badge";
 import { S } from "../strings";
 
@@ -27,6 +27,8 @@ export type DeployBadgeState = {
 	/** The job the log link opens, for the failure reply's log tail. */
 	logJob?: string;
 	runId?: string;
+	/** The dashboard run page of the deploy run. */
+	runUrl?: string;
 	attempt?: number;
 	/** Why the agent rejected the trigger. */
 	reason?: string;
@@ -200,7 +202,7 @@ export async function loadDeployLines(
 			sha,
 			state,
 			attempt: row.attempt,
-			...(row.run_id !== null ? { runId: row.run_id } : {}),
+			...(row.run_id !== null ? { runId: row.run_id, runUrl: runPageLink(env, t.installationId, row.run_id) } : {}),
 			...(row.reason !== null ? { reason: row.reason } : {}),
 			...(row.step !== null ? { step: row.step } : {}),
 			...(row.step_index !== null ? { stepIndex: row.step_index } : {}),

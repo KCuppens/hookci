@@ -606,8 +606,12 @@ function timeline(v: RunDetailView): string {
 	return `<section class="card"><div class="ch"><h2>${e(T.timeline)}</h2></div><ol class="tm">${items.join("")}</ol></section>`;
 }
 
+/** A finished run keeps polling for late annotations and log links for this long, then stops. */
+const IDLE_POLL_MS = 300_000;
+
 function swap(name: string, v: RunDetailView, html: string): string {
-	return `<div data-swap="${name}"${activeAttr([v.run.state])}>${html}</div>`;
+	const recent = v.run.finished_at !== null && v.now - v.run.finished_at < IDLE_POLL_MS;
+	return `<div data-swap="${name}"${recent ? ' data-idle="10000"' : ""}${activeAttr([v.run.state])}>${html}</div>`;
 }
 
 export function runPage(v: RunDetailView): Promise<Response> {
@@ -617,7 +621,7 @@ export function runPage(v: RunDetailView): Promise<Response> {
 	const main =
 		`<div class="bc"><a href="${base}/runs">${icon("back")}${e(T.breadcrumb)}</a>${icon("chev")}<b>${e(T.run(String(run.run_number)))}</b></div>` +
 		`${v.notice === null ? "" : `<p class="notice" role="status">${e(v.notice)}</p>`}${swap("summary", v, summaryCard(v, commitUrl) + banner(run))}` +
-		`<div class="cols"><div class="col">${swap("jobs", v, jobsCard(v))}${commitCard(v, commitUrl)}</div><div class="col">${configCard(v)}${logsCard(v)}</div></div>` +
+		`<div class="cols"><div class="col">${swap("jobs", v, jobsCard(v))}${swap("commit", v, commitCard(v, commitUrl))}</div><div class="col">${swap("config", v, configCard(v))}${swap("logs", v, logsCard(v))}</div></div>` +
 		`<div class="tmw">${swap("timeline", v, timeline(v))}</div>`;
 	return appPage({
 		title: D.runTitle(repoText(run)),

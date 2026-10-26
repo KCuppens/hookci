@@ -74,6 +74,12 @@ function pendingText(run: RunView): string | undefined {
 	return run.state === "gated" ? S.slack.pending.fork_gated : undefined;
 }
 
+/** The log link and, when known, the run page link, as one context line. */
+function runLinks(logLink: string, runLink: string | undefined): string {
+	const log = `<${logLink}|${S.badge.log}>`;
+	return runLink ? `${log}${SEP}<${runLink}|${S.badge.run}>` : log;
+}
+
 function jobLine(job: JobView): string {
 	return S.slack.jobResult(escapeMrkdwn(job.name), stateWord(job.state), job.durationMs === undefined ? undefined : formatDuration(job.durationMs));
 }
@@ -115,6 +121,7 @@ export function renderRunMessage(run: RunView, opts: { notify: "normal" | "quiet
 	if (current?.step) meta.push(escapeMrkdwn(S.slack.currentStep(current.name, current.step, current.stepIndex, current.stepsTotal)));
 	const withLog = logJob(run);
 	if (withLog?.logLink) meta.push(`<${withLog.logLink}|${S.badge.log}>`);
+	if (run.runLink) meta.push(`<${run.runLink}|${S.badge.run}>`);
 	blocks.push(context(meta.join(SEP)));
 	if (withLog) blocks.push(actions(viewLogsButton(run.runId ?? run.triggerId, withLog.name)));
 
@@ -164,7 +171,7 @@ export function renderAlert(run: RunView, job: JobView, tail: string[], mention:
 		blocks.push(context(S.slack.logsLocal));
 	} else {
 		blocks.push(tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail));
-		if (logLink) blocks.push(context(`<${logLink}|${S.badge.log}>`), actions(viewLogsButton(run.runId ?? run.triggerId, job.name)));
+		if (logLink) blocks.push(context(runLinks(logLink, run.runLink)), actions(viewLogsButton(run.runId ?? run.triggerId, job.name)));
 	}
 	return { text: S.slack.alertText(S.slack.state.failed, escapeMrkdwn(run.repo), run.shortSha, escapeMrkdwn(job.name)), blocks };
 }
@@ -183,7 +190,7 @@ export function renderDeployFailure(repo: string, s: DeployBadgeState, tail: str
 	const line = badgeLine({ ...s, logUrl: undefined }, true);
 	const head = `${mention ? `<@${mention}> ` : ""}${DEPLOY_EMOJI.failed} *${S.deploy.checkTitle.failed}* <https://github.com/${repo}|${escapeMrkdwn(repo)}>${SEP}${line}`;
 	const blocks: Block[] = [section(head), tail.length > 0 ? section(tailBlock(tail)) : context(S.slack.alertNoTail)];
-	if (s.logUrl) blocks.push(context(`<${s.logUrl}|${S.badge.log}>`));
+	if (s.logUrl) blocks.push(context(runLinks(s.logUrl, s.runUrl)));
 	if (s.logUrl && s.runId && s.logJob) blocks.push(actions(viewLogsButton(s.runId, s.logJob)));
 	return { text: S.deploy.failureText(`${repo}${SEP}${badgeLine({ ...s, logUrl: undefined }, false)}`), blocks };
 }

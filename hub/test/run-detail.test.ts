@@ -112,6 +112,15 @@ async function setCreatedAt(installationId: number, runId: string, at: number): 
   await env.DB.prepare("UPDATE runs SET created_at = ?1 WHERE installation_id = ?2 AND run_id = ?3").bind(at, installationId, runId).run();
 }
 
+describe("run page idle polling", () => {
+  it("keeps re-checking a run that finished under 5 minutes ago and stops after that", async () => {
+    await seedRun(ACME, acme.repoId, "run_recent", acme.agentId, "build", { state: "success", finished_at: testClock.now() - 4 * 60_000 });
+    await seedRun(ACME, acme.repoId, "run_old", acme.agentId, "build", { state: "success", finished_at: testClock.now() - 6 * 60_000 });
+    expect(await (await page(ACME, "run_recent")).text()).toContain('data-idle="10000"');
+    expect(await (await page(ACME, "run_old")).text()).not.toContain("data-idle");
+  });
+});
+
 describe("run page timeline", () => {
   it("dates the creation of a run from its recorded creation time", async () => {
     await seedRun(ACME, acme.repoId, "run_time", acme.agentId, "build", { state: "gated", reason: "fork_gated", started_at: null, finished_at: null, duration_ms: null });

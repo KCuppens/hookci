@@ -2,6 +2,7 @@
 // stored rows of one installation, in the same chrome as the overview and the
 // run list (dashboard.ts). Every dynamic value goes through escapeHtml.
 
+import type { ApiTokenRow } from "../db/api-tokens";
 import type { InstallationRow } from "../db/installations";
 import type { InstallationUsage, SlackLinkRow } from "../db/tabs";
 import { QUOTAS } from "../quotas";
@@ -49,6 +50,9 @@ export interface SettingsView extends TabView {
 	slack: readonly SlackLinkRow[];
 	usage: InstallationUsage;
 	latestAgentVersion: string;
+	tokens: readonly ApiTokenRow[];
+	/** The csrf token of the API token create and revoke forms. */
+	csrf: string;
 }
 
 /** The granted permissions as name: level chips. A value that is not the JSON object GitHub sent shows as none. */
@@ -128,8 +132,29 @@ function sessionCard(v: SettingsView): string {
 	return `<section class="card"><div class="ch"><h2>${e(T.you)}</h2>${link}</div>${rows}</section>`;
 }
 
+function tokenRow(v: SettingsView, t: ApiTokenRow): string {
+	const A = S.apiTokens;
+	const base = `/app/${v.account.id}/tokens`;
+	const status =
+		t.revoked_at === null
+			? `<form method="post" action="${e(`${base}/${encodeURIComponent(t.token_id)}/revoke`)}" data-confirm="${e(A.revokeConfirm)}"><input type="hidden" name="csrf" value="${e(v.csrf)}"><button class="bt dg" type="submit">${e(A.revoke)}</button></form>`
+			: `<span class="chip prod">${e(A.revoked)}</span>`;
+	const used = t.last_used_at === null ? e(A.never) : dateHtml(t.last_used_at);
+	return `<div class="jr"><div class="tx"><b>${e(t.name)}</b><span class="d mono">${e(t.token_id)}&hellip;</span><span class="d">${e(A.created)}: ${dateHtml(t.created_at)} &middot; ${e(A.lastUsed)}: ${used}</span></div>${status}</div>`;
+}
+
+function tokensCard(v: SettingsView): string {
+	const A = S.apiTokens;
+	const rows = v.tokens.length === 0 ? `<p class="empty">${e(A.none)}</p>` : v.tokens.map((t) => tokenRow(v, t)).join("");
+	const form =
+		`<form class="cf" method="post" action="${e(`/app/${v.account.id}/tokens`)}"><input type="hidden" name="csrf" value="${e(v.csrf)}">` +
+		`<label>${e(A.createLabel)}<input name="name" maxlength="100" placeholder="${e(A.createPlaceholder)}" autocomplete="off" required></label>` +
+		`<button class="bt" type="submit">${e(A.create)}</button></form>`;
+	return `<section class="card"><div class="ch"><h2>${e(A.title)}</h2></div><p class="sub">${e(A.subtitle)}</p>${rows}${form}</section>`;
+}
+
 export function settingsPage(v: SettingsView): Promise<Response> {
 	const T = D.settingsPage;
-	const cards = `${installationCard(v)}<div class="two">${usageCard(v)}${slackCard(v)}</div>${sessionCard(v)}`;
+	const cards = `${installationCard(v)}<div class="two">${usageCard(v)}${slackCard(v)}</div>${sessionCard(v)}${tokensCard(v)}`;
 	return tabPage(v, "settings", pageHead(T.title, T.subtitle), cards);
 }
