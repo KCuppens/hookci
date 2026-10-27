@@ -23,7 +23,7 @@ import { githubWebhook } from "./routes/github-webhook";
 import { info } from "./routes/info";
 import { install } from "./routes/install";
 import { authGithubCallback, logLinks } from "./routes/log-links";
-import { rawLog, streamLog, viewerScript, viewerStylesheet, viewLogPage } from "./routes/log-viewer";
+import { rawLog, streamLog, themeScript, viewerScript, viewerStylesheet, viewLogPage } from "./routes/log-viewer";
 import { uploadLog } from "./routes/logs";
 import { pairRedeem } from "./routes/pair";
 import { publicRoutes } from "./routes/public";
@@ -105,6 +105,7 @@ app.get("/logs/viewer.css", viewerStylesheet);
 app.get("/runs/:runId/logs", logLinks);
 app.get("/auth/github/callback", authGithubCallback);
 app.get("/logs/viewer.js", viewerScript);
+app.get("/logs/theme.js", themeScript);
 /** The dashboard used to live under /app on the ci host; a browser with an old link or bookmark lands on the same page at HUB_ORIGIN. */
 const legacyDashboard = (c: Context<AppEnv>): Response => {
 	const rest = c.req.path.slice("/app".length);

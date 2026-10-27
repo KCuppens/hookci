@@ -53,16 +53,16 @@ export const PILL_CSS = `
 .rp{display:inline-flex;align-items:center;gap:9.5px;min-width:93px;height:28px;margin:-4px 0;padding:0 12px 0 7px;border-radius:14px;vertical-align:top;font-size:13px;line-height:28px;font-weight:450;letter-spacing:-.04em;white-space:nowrap}
 a.rp,a.rp:hover{text-decoration:none}
 .rp .ic{width:20px;height:20px;flex:none;stroke:none}
-.rp.gt{background:#fef3d6;color:#7d2a05;min-width:93px}
-.rp.rn{background:#e5effe;color:#074ee4;min-width:97px}
-.rp.qd{background:#f1f2f6;color:#212d45;min-width:97px}
-.rp.ok{background:#d8f3e6;color:#0d613d;min-width:98px}
-.rp.fl{background:#fee4e6;color:#df0a0e;min-width:93px}
-.rp.sp{background:#eee6fe;color:#351ec3;min-width:110px}
-.rp.cn{background:#e9ebef;color:#2d3951;min-width:105px}
-.rp.sk{background:#f1f2f6;color:#2d3851;min-width:97px}
-.rp.it{background:#fee7e8;color:#ea0c14;min-width:107px}
-.rp.vf{background:#ebe1fd;color:#3816c7;min-width:98px}
+.rp.gt{background:light-dark(#fef3d6,#29210c);color:light-dark(#7d2a05,#d87d5c);min-width:93px}
+.rp.rn{background:light-dark(#e5effe,#252729);color:light-dark(#074ee4,#4b95ff);min-width:97px}
+.rp.qd{background:light-dark(#f1f2f6,#222225);color:light-dark(#212d45,#8696b3);min-width:97px}
+.rp.ok{background:light-dark(#d8f3e6,#192c24);color:light-dark(#0d613d,#5aa47b);min-width:98px}
+.rp.fl{background:light-dark(#fee4e6,#2c2929);color:light-dark(#c4090c,#ff5f4f);min-width:93px}
+.rp.sp{background:light-dark(#eee6fe,#2a2434);color:light-dark(#351ec3,#7d8bff);min-width:110px}
+.rp.cn{background:light-dark(#e9ebef,#292a2c);color:light-dark(#2d3951,#8796b2);min-width:105px}
+.rp.sk{background:light-dark(#f1f2f6,#222225);color:light-dark(#2d3851,#8896b3);min-width:97px}
+.rp.it{background:light-dark(#fee7e8,#2a2727);color:light-dark(#d80000,#ff5f51);min-width:107px}
+.rp.vf{background:light-dark(#ebe1fd,#2e2639);color:light-dark(#3816c7,#818aff);min-width:98px}
 `;
 
 /** The pill of a run state linking to href (already escaped). */

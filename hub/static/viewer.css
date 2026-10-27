@@ -1,54 +1,35 @@
 :root {
 	color-scheme: light dark;
-	--bg: #ffffff;
-	--fg: #1f2328;
-	--muted: #59636e;
-	--pre-bg: #f6f8fa;
-	--border: #d1d9e0;
-	--link: #0969da;
-	--black: #24292f;
-	--red: #cf222e;
-	--green: #116329;
-	--yellow: #7d4e00;
-	--blue: #0550ae;
-	--magenta: #8250df;
-	--cyan: #1b7c83;
-	--white: #6e7781;
-	--bright-black: #57606a;
-	--bright-red: #a40e26;
-	--bright-green: #1a7f37;
-	--bright-yellow: #633c01;
-	--bright-blue: #218bff;
-	--bright-magenta: #a475f9;
-	--bright-cyan: #3192aa;
-	--bright-white: #8c959f;
+	--bg: light-dark(#ffffff, #0d1117);
+	--fg: light-dark(#1f2328, #e6edf3);
+	--muted: light-dark(#59636e, #9198a1);
+	--pre-bg: light-dark(#f6f8fa, #151b23);
+	--border: light-dark(#d1d9e0, #3d444d);
+	--link: light-dark(#0969da, #4493f8);
+	--black: light-dark(#24292f, #484f58);
+	--red: light-dark(#cf222e, #ff7b72);
+	--green: light-dark(#116329, #3fb950);
+	--yellow: light-dark(#7d4e00, #d29922);
+	--blue: light-dark(#0550ae, #58a6ff);
+	--magenta: light-dark(#8250df, #bc8cff);
+	--cyan: light-dark(#1b7c83, #39c5cf);
+	--white: light-dark(#6e7781, #b1bac4);
+	--bright-black: light-dark(#57606a, #6e7681);
+	--bright-red: light-dark(#a40e26, #ffa198);
+	--bright-green: light-dark(#1a7f37, #56d364);
+	--bright-yellow: light-dark(#633c01, #e3b341);
+	--bright-blue: light-dark(#218bff, #79c0ff);
+	--bright-magenta: light-dark(#a475f9, #d2a8ff);
+	--bright-cyan: light-dark(#3192aa, #56d4dd);
+	--bright-white: light-dark(#8c959f, #ffffff);
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--bg: #0d1117;
-		--fg: #e6edf3;
-		--muted: #9198a1;
-		--pre-bg: #151b23;
-		--border: #3d444d;
-		--link: #4493f8;
-		--black: #484f58;
-		--red: #ff7b72;
-		--green: #3fb950;
-		--yellow: #d29922;
-		--blue: #58a6ff;
-		--magenta: #bc8cff;
-		--cyan: #39c5cf;
-		--white: #b1bac4;
-		--bright-black: #6e7681;
-		--bright-red: #ffa198;
-		--bright-green: #56d364;
-		--bright-yellow: #e3b341;
-		--bright-blue: #79c0ff;
-		--bright-magenta: #d2a8ff;
-		--bright-cyan: #56d4dd;
-		--bright-white: #ffffff;
-	}
+:root[data-theme="light"] {
+	color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
 }
 
 body {

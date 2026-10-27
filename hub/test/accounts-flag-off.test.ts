@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearTables } from "./db/helpers";
+import { withoutThemeScript } from "./helpers/theme";
 import { ENDPOINTS } from "./security/endpoints";
 
 const ORIGIN = "https://hub.test";
@@ -77,7 +78,7 @@ describe.each([
     expect(html).toContain('href="/login"');
     expect(html).not.toContain("/account/");
     expect(html).not.toContain("<form");
-    expect(html).not.toContain("<script");
+    expect(withoutThemeScript(html)).not.toContain("<script");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 

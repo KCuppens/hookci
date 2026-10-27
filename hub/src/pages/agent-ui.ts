@@ -23,16 +23,16 @@ export const AGENT_ICONS: Record<string, string> = {
 export const AGENT_UI_CSS = `
 .as{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;font-weight:500;white-space:nowrap}
 .as i{flex:none;width:11px;height:11px;border-radius:50%;background:#8b94a8}
-.as b{display:inline-block;height:25px;padding:0 10px;border-radius:8px;font-weight:500;line-height:25px;background:#eceef2;color:#4a5470}
-.as.online b{background:#dff6ea;color:#0f8f55}
+.as b{display:inline-block;height:25px;padding:0 10px;border-radius:8px;font-weight:500;line-height:25px;background:light-dark(#eceef2,#262729);color:light-dark(#4a5470,#8995b3)}
+.as.online b{background:light-dark(#dff6ea,#232625);color:light-dark(#007b43,#38a96d)}
 .as.online i{background:#14b36f}
-.as.revoked b{background:#fee6e7;color:#c8161f}
+.as.revoked b{background:light-dark(#fee6e7,#2b2727);color:light-dark(#c8161f,#ff5f56)}
 .as.revoked i{background:#e5333b}
-.cb{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;border:1px solid #eceff4;border-radius:10px;background:#f6f7fa;color:#262d42;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:14px}
+.cb{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;border:1px solid light-dark(#eceff4,#333539);border-radius:10px;background:light-dark(#f6f7fa,#161b22);color:light-dark(#262d42,#8b95ae);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:14px}
 .cb code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit;user-select:all}
-.cb .cp{flex:none;display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;background:none;color:#2a3147;cursor:pointer}
+.cb .cp{flex:none;display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;background:none;color:light-dark(#2a3147,#8b95af);cursor:pointer}
 .cb .cp .ic{width:19px;height:19px}
-.cb .cp[data-done]{color:#0e8a55}
+.cb .cp[data-done]{color:light-dark(#007a47,#3ca870)}
 @media (max-width:900px){
 .cb{min-height:52px;padding-top:4px;padding-bottom:4px}
 .cb code{white-space:normal;overflow-wrap:anywhere;text-overflow:clip}

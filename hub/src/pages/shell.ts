@@ -21,23 +21,22 @@ export const FONT_PATH = "/assets/inter.woff2";
 /** Tokens, reset, header, footer, buttons and background layers. Page CSS is appended after it. */
 export const SHELL_CSS = `
 @font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:block;src:url(${FONT_PATH}) format("woff2")}
-:root{--ink:#0f141d;--ink-2:#3b4350;--muted:#6b7280;--line:#e8e9ec;--line-2:#eeeef1;--orange:#ff6a2c;--orange-soft:#fff1ea;--orange-line:#ffb08f;--nh:81px;--app-w:1410px;--gutter:24px;--edge:max(var(--gutter),calc((100% - var(--app-w)) / 2));--ls:.139;--ly:0px;--ry:0px;--nfs:15px;--ph:41px;--pw:14.5px;--ffs:14.5px;--fp:29px;--g10:21px;--bh:51px;--bfs:16px;--br:10px;--g6:0px}
+:root{color-scheme:light dark;--ink:light-dark(#0f141d,#f0f3f8);--ink-2:light-dark(#3b4350,#c9d1dc);--muted:light-dark(#6b7280,#9aa4b2);--line:light-dark(#e8e9ec,#2d333d);--line-2:light-dark(#eeeef1,#242a33);--orange:light-dark(#ff6a2c,#ff8350);--orange-soft:light-dark(#fff1ea,#2b1a12);--orange-line:light-dark(#ffb08f,#7a3a1c);--page:light-dark(#fafafa,#0d1117);--btn:light-dark(#161a23,#eef1f6);--btn-h:light-dark(#2a303c,#fff);--btn-ink:light-dark(#fff,#0d1117);--surface:light-dark(#fff,#161b22);--raised:light-dark(#f4f5f7,#1f2630);--nh:81px;--app-w:1410px;--gutter:24px;--edge:max(var(--gutter),calc((100% - var(--app-w)) / 2));--ls:.139;--ly:0px;--ry:0px;--nfs:15px;--ph:41px;--pw:14.5px;--ffs:14.5px;--fp:29px;--g10:21px;--bh:51px;--bfs:16px;--br:10px;--g6:0px}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark}
+.tg{display:grid;place-items:center;flex:none;width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink-2);cursor:pointer}
+.nav .tg,.app .tg{display:grid;width:34px;height:34px;padding:0;border:1px solid var(--line);background:var(--surface);color:var(--ink-2)}
+.tg:hover{color:var(--ink);border-color:var(--muted)}
+.tg:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+.tg .ic{width:18px;height:18px}
+.tg .sun{display:none}
+:root[data-theme=dark] .tg .sun{display:block}
+:root[data-theme=dark] .tg .moon{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme]) .tg .sun{display:block}:root:not([data-theme]) .tg .moon{display:none}}
 button.busy{opacity:.7;cursor:wait;pointer-events:none}
-@media (prefers-color-scheme:dark){
-:root{--ink:#f0f3f8;--ink-2:#c2c9d6;--muted:#8b94a5;--line:#282d38;--line-2:#1f242e;--orange:#ff7d45;--orange-soft:#2a1a14;--orange-line:#733219}
-body{background:#0e1117!important;color:var(--ink)!important}
-.card{background:#161b22!important;border-color:#282d38!important}
-.app{background:#161b22!important;border-bottom-color:#282d38!important}
-.tabs a{color:#8b94a5!important}
-.tabs a:hover,.tabs a.on{color:#f0f3f8!important}
-.ob{background:#21262d!important;border-color:#30363d!important;color:#c9d1d9!important}
-.ob:hover{background:#30363d!important}
-.ob.dk{background:#ff6a2c!important;border-color:#ff6a2c!important;color:#fff!important}
-input,select,textarea{background:#0d1117!important;border-color:#30363d!important;color:#f0f3f8!important}
-}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
-body{position:relative;min-height:100vh;overflow-x:hidden;background:#fafafa;color:var(--ink);font-family:${FONT};font-size:16px;line-height:1.4;letter-spacing:.005em;-webkit-font-smoothing:antialiased}
+body{position:relative;min-height:100vh;overflow-x:hidden;background:var(--page);color:var(--ink);font-family:${FONT};font-size:16px;line-height:1.4;letter-spacing:.005em;-webkit-font-smoothing:antialiased}
 a{color:inherit}
 [hidden]{display:none}
 .defs{position:absolute;width:0;height:0;overflow:hidden}
@@ -50,21 +49,21 @@ a{color:inherit}
 ${BRAND_CSS}
 .navr{display:flex;align-items:center;transform:translateY(var(--ry))}
 .links{display:flex;align-items:center;gap:36px;margin-right:42px}
-.links a{color:#5f6673;font-size:var(--nfs);text-decoration:none}
+.links a{color:light-dark(#5f6673,#9aa1af);font-size:var(--nfs);text-decoration:none}
 .links a:hover{color:var(--ink)}
-.pill{display:inline-flex;align-items:center;gap:12px;height:var(--ph);padding:0 18px 0 20px;border:1px solid #e1e3e7;border-radius:999px;background:#fff;color:var(--ink);font-size:var(--pw);font-weight:500;text-decoration:none;box-shadow:0 1px 2px rgba(15,20,29,.03),0 6px 20px rgba(15,20,29,.05)}
+.pill{display:inline-flex;align-items:center;gap:12px;height:var(--ph);padding:0 18px 0 20px;border:1px solid light-dark(#e1e3e7,#3c3e43);border-radius:999px;background:light-dark(#fff,#161b22);color:var(--ink);font-size:var(--pw);font-weight:500;text-decoration:none;box-shadow:0 1px 2px light-dark(rgba(15,20,29,.03),rgba(0,0,0,0.075)),0 6px 20px light-dark(rgba(15,20,29,.05),rgba(0,0,0,0.125))}
 .pill .ic{width:22px;height:22px;stroke:none;fill:currentColor}
-.tile{display:grid;place-items:center;flex:none;background:#feebe2;color:var(--orange);border:1px solid #ffd6c2}
+.tile{display:grid;place-items:center;flex:none;background:light-dark(#feebe2,#282523);color:var(--orange);border:1px solid light-dark(#ffd6c2,#5a4032)}
 .tile .ic{width:28px;height:28px}
-.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:var(--bh);margin-top:var(--g6);border:0;border-radius:var(--br);background:#161a23;color:#fff;font-family:inherit;font-size:var(--bfs);font-weight:500;text-decoration:none;cursor:pointer}
-.btn:hover{background:#2a303c}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:var(--bh);margin-top:var(--g6);border:0;border-radius:var(--br);background:var(--btn);color:var(--btn-ink);font-family:inherit;font-size:var(--bfs);font-weight:500;text-decoration:none;cursor:pointer}
+.btn:hover{background:var(--btn-h)}
 .btn .ic{width:18px;height:18px}
 .btn .gh{stroke:none;fill:currentColor}
-.btn.ghost{border:1px solid #e3e6ea;background:#fff;color:var(--ink)}
-.btn.ghost:hover{background:#fcfcfd}
+.btn.ghost{border:1px solid light-dark(#e3e6ea,#393c40);background:light-dark(#fff,#161b22);color:var(--ink)}
+.btn.ghost:hover{background:light-dark(#fcfcfd,#161b22)}
 .foot{display:flex;justify-content:center;margin-top:var(--g10);font-size:var(--ffs)}
 .foot a{padding:0 var(--fp);color:var(--muted);line-height:16px;text-decoration:none}
-.foot a+a{border-left:1px solid #d3d6db}
+.foot a+a{border-left:1px solid light-dark(#d3d6db,#46494d)}
 .foot a:hover{color:var(--ink)}
 .mm{display:none}
 @media (max-width:640px){
@@ -78,12 +77,12 @@ ${BRAND_CSS}
 body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
 .navr{transform:none}
 .mm{display:block;margin-left:8px}
-.mm summary{display:grid;place-items:center;width:44px;height:44px;border:1px solid #e1e3e7;border-radius:12px;background:#fff;color:var(--ink);list-style:none;cursor:pointer}
+.mm summary{display:grid;place-items:center;width:44px;height:44px;border:1px solid light-dark(#e1e3e7,#3c3e43);border-radius:12px;background:light-dark(#fff,#161b22);color:var(--ink);list-style:none;cursor:pointer}
 .mm summary::-webkit-details-marker{display:none}
 .mm .ic{width:22px;height:22px}
-.mmp{position:absolute;top:100%;right:12px;z-index:5;display:flex;flex-direction:column;gap:8px;width:min(240px,calc(100vw - 24px));padding:8px;border:1px solid #e1e3e7;border-radius:14px;background:#fff;box-shadow:0 8px 28px rgba(15,20,29,.12)}
+.mmp{position:absolute;top:100%;right:12px;z-index:5;display:flex;flex-direction:column;gap:8px;width:min(240px,calc(100vw - 24px));padding:8px;border:1px solid light-dark(#e1e3e7,#3c3e43);border-radius:14px;background:light-dark(#fff,#161b22);box-shadow:0 8px 28px light-dark(rgba(15,20,29,.12),rgba(0,0,0,0.3))}
 .mmp a{display:flex;align-items:center;min-height:44px;padding:0 12px;border-radius:8px;color:var(--ink);font-size:16px;text-decoration:none}
-.mmp a:hover{background:#f4f5f7}
+.mmp a:hover{background:light-dark(#f4f5f7,#1e2022)}
 .mm summary:focus-visible,.mmp a:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
 .mm:not([open]) .mmp{display:none}
 .brand{position:relative}
@@ -119,6 +118,12 @@ export function sha256Source(text: string): Promise<string> {
 	return hash;
 }
 
+/**
+ * Applies the saved Light/Dark choice before first paint and flips it on a [data-theme-toggle] click.
+ * Pinned by hash in each page's CSP; /logs/theme.js serves the same text to the log viewer.
+ */
+export const THEME_SCRIPT = `(function(){var d=document.documentElement,k="hookci-theme",m=matchMedia("(prefers-color-scheme: dark)");function cur(){return d.dataset.theme||(m.matches?"dark":"light")}function sync(){var b=document.querySelectorAll("[data-theme-toggle]");for(var i=0;i<b.length;i++)b[i].setAttribute("aria-pressed",String(cur()==="dark"))}try{var s=localStorage.getItem(k);if(s==="light"||s==="dark")d.dataset.theme=s}catch(x){}document.addEventListener("click",function(ev){var t=ev.target.closest&&ev.target.closest("[data-theme-toggle]");if(!t)return;var n=cur()==="dark"?"light":"dark";d.dataset.theme=n;try{localStorage.setItem(k,n)}catch(x){}sync()});document.addEventListener("DOMContentLoaded",sync);m.addEventListener("change",sync)})();`;
+
 // Stroke icons share a 24x24 grid; the filled brand marks carry their own fills.
 const ICONS: Record<string, string> = {
 	mail: `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 8 8 5.5L20 8"/>`,
@@ -139,6 +144,8 @@ const ICONS: Record<string, string> = {
 	alert: `<path d="M12 3.6 2.9 19.4h18.2z"/><path d="M12 10v4.4M12 17.4v.1"/>`,
 	github: `<path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>`,
 	menu: `<path d="M4 7h16M4 12h16M4 17h16"/>`,
+	sun: `<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>`,
+	moon: `<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>`,
 	google: `<path fill="#4285F4" stroke="none" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" stroke="none" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" stroke="none" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.07H2.18a11 11 0 0 0 0 9.86l3.66-2.83z"/><path fill="#EA4335" stroke="none" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A10.9 10.9 0 0 0 12 1 11 11 0 0 0 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>`,
 };
 
@@ -183,9 +190,14 @@ function siteMenu(): string {
 	);
 }
 
+/** Two-state Light/Dark switch; THEME_SCRIPT flips data-theme on <html> and remembers the choice. */
+export function themeToggle(): string {
+	return `<button type="button" class="tg" data-theme-toggle aria-pressed="false" aria-label="${e(T.themeToggle)}" title="${e(T.themeToggle)}">${icon("sun", "sun")}${icon("moon", "moon")}</button>`;
+}
+
 /** The marketing header: logo left, links and one right-hand control. */
 export function siteNav(right: string = githubPill()): string {
-	return `<header class="nav">${brandLink()}<div class="navr">${siteLinks()}${right}${siteMenu()}</div></header>`;
+	return `<header class="nav">${brandLink()}<div class="navr">${siteLinks()}${themeToggle()}${right}${siteMenu()}</div></header>`;
 }
 
 /** Privacy, Terms and Support. */
@@ -219,7 +231,9 @@ export interface ShellPage {
 export async function shellResponse(p: ShellPage, init: PageInit = {}): Promise<Response> {
 	const css = SHELL_CSS + p.css;
 	const style = await sha256Source(css);
-	const script = p.script === undefined ? "" : ` script-src ${await sha256Source(p.script)};`;
+	const scripts = [await sha256Source(THEME_SCRIPT)];
+	if (p.script !== undefined) scripts.push(await sha256Source(p.script));
+	const script = ` script-src ${scripts.join(" ")};`;
 	const connect = p.connect ? " connect-src 'self';" : "";
 	const img = p.imgSrc === undefined ? "" : ` img-src ${p.imgSrc.join(" ")};`;
 	const headers = new Headers({
@@ -233,7 +247,7 @@ export async function shellResponse(p: ShellPage, init: PageInit = {}): Promise<
 	const curves = p.curves === undefined ? "" : `<svg class="curves" viewBox="0 0 1024 683" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">${p.curves}</svg>`;
 	const inner = `<div class="bg" aria-hidden="true"></div>${curves}${p.body}`;
 	const html =
-		`<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>${e(p.title)}</title><link rel="preload" href="${FONT_PATH}" as="font" type="font/woff2" crossorigin><style>${css}</style></head>` +
+		`<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>${e(p.title)}</title><link rel="preload" href="${FONT_PATH}" as="font" type="font/woff2" crossorigin><style>${css}</style><script>${THEME_SCRIPT}</script></head>` +
 		`<body class="${e(p.bodyClass)}">${defs(inner, p.icons ?? {})}${inner}${p.script === undefined ? "" : `<script>${p.script}</script>`}</body></html>`;
 	return new Response(html, { status: init.status ?? 200, headers });
 }

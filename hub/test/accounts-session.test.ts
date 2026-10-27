@@ -6,6 +6,7 @@ import { S } from "../src/strings";
 import { testClock } from "./clock";
 import { createFakeGitHub } from "./fakes/github";
 import { accountEnvironment, Browser, GOOD_PASSWORD, registerVerified } from "./helpers/accounts";
+import { withoutThemeScript } from "./helpers/theme";
 import { seedTenant } from "./helpers/tenants";
 
 const USER_TOKEN = "ghu_accountUserToken0123456789";
@@ -292,7 +293,7 @@ describe("GET /app with accounts on", () => {
     const html = await res.text();
     expect(html).toContain('href="/login"');
     expect(html).not.toContain("/account/");
-    expect(html).not.toContain("<script");
+    expect(withoutThemeScript(html)).not.toContain("<script");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 });

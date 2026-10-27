@@ -15,43 +15,43 @@ const T = S.flow.link;
 const e = escapeHtml;
 
 const CSS = `
-.p-confirm{--nh:55px;--bmw:27.4;--bww:79.5;--bgap:7.5;--bwy:4.4;--ly:0px;--nfs:12px;background:#fcfbfa}
-.p-confirm .nav{background:#fefefe;border-bottom:1px solid #eceef2}
+.p-confirm{--nh:55px;--bmw:27.4;--bww:79.5;--bgap:7.5;--bwy:4.4;--ly:0px;--nfs:12px;background:light-dark(#fcfbfa,#161b22)}
+.p-confirm .nav{background:light-dark(#fefefe,#161b22);border-bottom:1px solid light-dark(#eceef2,#34363a)}
 .p-confirm .links{gap:24px;margin-right:0}
-.p-confirm .links a{color:#5f6a80}
+.p-confirm .links a{color:light-dark(#5f6a80,#8a96ad)}
 .p-confirm{will-change:opacity}
 .p-confirm .bg{background:${blob(154, 211, "-24px 516px", 0.296)},${blob(297, 166, "564px 279px", 0.283)}}
 .p-confirm .mcurves{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-.p-confirm .card{position:relative;z-index:2;width:min(387px,100% - 32px);margin:32px auto 32px;padding:40px 22px 23.25px;border:.5px solid #e8eaf0;border-radius:9px;background:#fefdfd;box-shadow:0 1px 2px rgba(15,20,29,.02),0 12px 36px rgba(15,20,29,.04);text-align:center}
+.p-confirm .card{position:relative;z-index:2;width:min(387px,100% - 32px);margin:32px auto 32px;padding:40px 22px 23.25px;border:.5px solid light-dark(#e8eaf0,#37383d);border-radius:9px;background:light-dark(#fefdfd,#161b22);box-shadow:0 1px 2px light-dark(rgba(15,20,29,.02),rgba(0,0,0,0.05)),0 12px 36px light-dark(rgba(15,20,29,.04),rgba(0,0,0,0.1));text-align:center}
 .p-confirm .g{display:block;flex:none}
 .p-confirm .pair{display:flex;align-items:center;justify-content:center}
-.p-confirm .pair .t{display:grid;place-items:center;flex:none;width:69px;height:67px;border:.5px solid #f0f0f3;border-radius:16px;background:#f6f6f8;color:#0f141d}
+.p-confirm .pair .t{display:grid;place-items:center;flex:none;width:69px;height:67px;border:.5px solid light-dark(#f0f0f3,#333338);border-radius:16px;background:light-dark(#f6f6f8,#1e1e21);color:light-dark(#0f141d,#f8ffff)}
 .p-confirm .pair .t .ic{width:40.5px;height:40.5px;stroke:none;position:relative;top:-.25px}
-.p-confirm .pair .j{display:flex;align-items:center;margin:0 5.3px 0 4.85px;color:#656f83}
+.p-confirm .pair .j{display:flex;align-items:center;margin:0 5.3px 0 4.85px;color:light-dark(#656f83,#8b96ab)}
 .p-confirm .pair .j .g{position:relative;top:-.5px;margin:0 2.4px 0 1.4px}
-.p-confirm .pair .j i{display:block;width:16.8px;height:4px;background:radial-gradient(circle,#d6dbe4 1.1px,transparent 1.5px) 0 50%/5.6px 4px repeat-x}
-.p-confirm h1{margin-top:25.75px;font-size:25.15px;line-height:32px;font-weight:600;letter-spacing:-.03em;word-spacing:1.5px;position:relative;left:1px;top:.25px;color:#080d16}
-.p-confirm .lede{max-width:290px;margin:7.65px auto 0;font-size:12px;line-height:17.3px;letter-spacing:.001em;position:relative;left:.5px;top:.25px;color:#646e84}
-.p-confirm .facts,.p-confirm .note{margin-top:13px;border-radius:12px;background:#f6f7f9;text-align:left}
+.p-confirm .pair .j i{display:block;width:16.8px;height:4px;background:radial-gradient(circle,light-dark(#d6dbe4,#3a3b3e) 1.1px,transparent 1.5px) 0 50%/5.6px 4px repeat-x}
+.p-confirm h1{margin-top:25.75px;font-size:25.15px;line-height:32px;font-weight:600;letter-spacing:-.03em;word-spacing:1.5px;position:relative;left:1px;top:.25px;color:light-dark(#080d16,#f7ffff)}
+.p-confirm .lede{max-width:290px;margin:7.65px auto 0;font-size:12px;line-height:17.3px;letter-spacing:.001em;position:relative;left:.5px;top:.25px;color:light-dark(#646e84,#8b95ad)}
+.p-confirm .facts,.p-confirm .note{margin-top:13px;border-radius:12px;background:light-dark(#f6f7f9,#161b22);text-align:left}
 .p-confirm .facts{margin-top:24px;padding:0 14px}
 .p-confirm .fact{display:flex;align-items:center;gap:18.45px;min-height:57px;padding:8px 1.25px 11px}
 .p-confirm .fact:first-child{min-height:58px;padding:9.2px 1.25px 8px}
-.p-confirm .fact+.fact{border-top:1px solid #eceef3}
-.p-confirm .fact .l{display:block;font-size:10.55px;line-height:16px;letter-spacing:-.04em;color:#5e677c;position:relative;top:.5px}
-.p-confirm .fact .v{display:block;margin-top:.55px;font-size:12.55px;line-height:18.7px;font-weight:500;letter-spacing:-.032em;color:#070a12;position:relative;top:.5px;overflow-wrap:anywhere}
-.p-confirm .fact .g{color:#5c6575}
+.p-confirm .fact+.fact{border-top:1px solid light-dark(#eceef3,#34363a)}
+.p-confirm .fact .l{display:block;font-size:10.55px;line-height:16px;letter-spacing:-.04em;color:light-dark(#5e677c,#8c95ac);position:relative;top:.5px}
+.p-confirm .fact .v{display:block;margin-top:.55px;font-size:12.55px;line-height:18.7px;font-weight:500;letter-spacing:-.032em;color:light-dark(#070a12,#f9ffff);position:relative;top:.5px;overflow-wrap:anywhere}
+.p-confirm .fact .g{color:light-dark(#5c6575,#99a3b4)}
 .p-confirm .fact:first-child .g{margin-top:-3px}
 .p-confirm .fact+.fact .g{margin:1px -.5px 0 .5px}
-.p-confirm .note{display:flex;gap:15.45px;padding:12.1px 15.25px 13.7px;font-size:10.6px;line-height:15.55px;letter-spacing:-.01em;position:relative;left:.5px;top:.25px;color:#566078}
+.p-confirm .note{display:flex;gap:15.45px;padding:12.1px 15.25px 13.7px;font-size:10.6px;line-height:15.55px;letter-spacing:-.01em;position:relative;left:.5px;top:.25px;color:light-dark(#566078,#8b95af)}
 .p-confirm .note p::first-line{letter-spacing:-.0235em}
 .p-confirm .lede::first-line{letter-spacing:.0036em}
-.p-confirm .note .g{margin-top:3.6px;color:#102446}
+.p-confirm .note .g{margin-top:3.6px;color:light-dark(#102446,#7d97c0)}
 .p-confirm form{margin-top:12.25px}
-.p-confirm .btn{--bh:41.5px;--br:8px;--bfs:13px;gap:7.975px;padding-left:.95px;background:#131922;letter-spacing:-.025em}
-.p-confirm .btn .g{color:#fff}
+.p-confirm .btn{--bh:41.5px;--br:8px;--bfs:13px;gap:7.975px;padding-left:.95px;background:var(--btn);letter-spacing:-.025em}
+.p-confirm .btn .g{color:var(--btn-ink)}
 .p-confirm .btn .arrow{margin-left:5px}
 .p-confirm .btn span{margin-left:.475px;position:relative;top:.5px}
-.p-confirm .btn.ghost{height:38.5px;margin-top:11.5px;border:.5px solid #d7dae2;border-radius:6.2px;background:#fefefe;font-size:13.4px;letter-spacing:-.05em;padding-right:2.7px}
+.p-confirm .btn.ghost{height:38.5px;margin-top:11.5px;border:.5px solid light-dark(#d7dae2,#44454a);border-radius:6.2px;background:light-dark(#fefefe,#161b22);font-size:13.4px;letter-spacing:-.05em;padding-right:2.7px}
 @media (max-width:900px){
 .p-confirm .links{display:flex}
 }

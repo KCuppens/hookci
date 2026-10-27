@@ -9,6 +9,7 @@ import { S } from "../src/strings";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { seedTenant, type Tenant } from "./helpers/tenants";
+import { withoutThemeScript } from "./helpers/theme";
 import { seedRun } from "./logs/helpers";
 
 const ORIGIN = "https://hub.test";
@@ -107,7 +108,7 @@ describe("the tab pages", () => {
       expect(res.headers.get("cache-control")).toContain("no-store");
       const html = await res.text();
       if (tab === "repositories" || tab === "agents") expect(res.headers.get("content-security-policy")).toMatch(/script-src[^;]*'sha256-/);
-      else expect(html).not.toMatch(/<script/i);
+      else expect(withoutThemeScript(html)).not.toMatch(/<script/i);
     }
   });
 

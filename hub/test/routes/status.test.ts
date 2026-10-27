@@ -4,6 +4,7 @@ import { type Probes, runStatusChecks } from "../../src/cron/status-check";
 import { S } from "../../src/strings";
 import { testClock } from "../clock";
 import { clearTables } from "../db/helpers";
+import { withoutThemeScript } from "../helpers/theme";
 
 const passing: Probes = { api: async () => {}, agents: async () => {}, logs: async () => {} };
 
@@ -26,7 +27,7 @@ describe("GET /status", () => {
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(body).toContain(S.status.title);
-    expect(body).not.toContain("<script");
+    expect(withoutThemeScript(body)).not.toContain("<script");
   });
 
   it("credits HookCI in the footer with an external link and ships the traced glyph symbols", async () => {

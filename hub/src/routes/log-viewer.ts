@@ -8,6 +8,7 @@
 import type { Context } from "hono";
 import viewerCss from "../../static/viewer.css";
 import viewerJs from "../../static/viewer.js";
+import { THEME_SCRIPT } from "../pages/shell";
 import { getRepo } from "../db/repos";
 import { getRun, type RunRow } from "../db/runs";
 import { type TenantDb, tenantDb } from "../db/tenant";
@@ -45,7 +46,7 @@ const HEADERS: Readonly<Record<string, string>> = {
 function viewerPage(title: string, bodyHtml: string, status = 200): Response {
 	const html = `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="/logs/viewer.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="/logs/viewer.css"><script src="/logs/theme.js"></script></head>
 <body>
 ${bodyHtml}
 </body>
@@ -177,6 +178,11 @@ export async function streamLog(c: ViewerContext): Promise<Response> {
 
 export function viewerScript(): Response {
 	return new Response(viewerJs, { headers: { ...HEADERS, "Content-Type": "text/javascript; charset=utf-8" } });
+}
+
+/** The saved Light/Dark choice for the viewer; the same script the dashboard pins inline. */
+export function themeScript(): Response {
+	return new Response(THEME_SCRIPT, { headers: { ...HEADERS, "Content-Type": "text/javascript; charset=utf-8" } });
 }
 
 export function viewerStylesheet(): Response {

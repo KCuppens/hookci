@@ -41,7 +41,7 @@ export const BRAND_CSS = `
 .brand{--w1:var(--bmw,calc(387 * var(--ls)));--w2:var(--bww,calc(922 * var(--ls)));--gp:var(--bgap,calc(89 * var(--ls)));--dy:var(--bwy,calc(86 * var(--ls)));display:flex;text-decoration:none;transform:translate(var(--lx,0px),var(--ly))}
 .bl{display:block;overflow:visible;width:calc((var(--w1) + var(--gp) + var(--w2)) * 1px);height:calc(var(--w1) * ${MARK_ASPECT} * 1px)}
 .bl .m,.stk .m{fill:#fd7129;stroke:#fd7129;stroke-width:5}
-.bl .w,.stk .w{fill:#0c121b;stroke:#0c121b;stroke-width:3}
+.bl .w,.stk .w{fill:light-dark(#0c121b,#f7ffff);stroke:light-dark(#0c121b,#f7ffff);stroke-width:3}
 .bl .m{transform:scale(calc(var(--w1) / ${MARK_BOX.w}))}
 .bl .w{transform:translate(calc((var(--w1) + var(--gp)) * 1px),calc(var(--dy) * 1px)) scale(calc(var(--w2) / ${WORDMARK_BOX.w}))}
 .stk{--k1:var(--smw,100);--k2:var(--sww,129);--kg:var(--sgp,12);--kw:max(var(--k1),var(--k2));display:block;overflow:visible;margin:0 auto;width:calc(var(--kw) * 1px);height:calc((var(--k1) * ${MARK_ASPECT} + var(--kg) + var(--k2) * ${WORDMARK_ASPECT}) * 1px)}

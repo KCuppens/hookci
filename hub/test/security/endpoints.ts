@@ -71,6 +71,7 @@ export const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/runs/:runId/logs", auth: "public" },
   { method: "GET", path: "/auth/github/callback", auth: "oauth_state" },
   { method: "GET", path: "/logs/viewer.js", auth: "public" },
+  { method: "GET", path: "/logs/theme.js", auth: "public" },
   { method: "GET", path: "/app", auth: "public" },
   { method: "GET", path: "/app/*", auth: "public" },
   { method: "GET", path: "/", auth: "session" },

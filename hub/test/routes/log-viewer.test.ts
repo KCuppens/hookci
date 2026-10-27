@@ -72,8 +72,8 @@ describe("GET /logs/view", () => {
     expect(html).toContain("<code>test</code>");
     expect(html).toContain('<span class="c-red">--- FAIL: TestHub</span>');
     expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
-    expect(html).not.toContain("<script");
-    expect(html).toContain('<link rel="stylesheet" href="/logs/viewer.css">');
+    expect(html).not.toContain("<script>");
+    expect(html).toContain('<link rel="stylesheet" href="/logs/viewer.css"><script src="/logs/theme.js"></script>');
     expect(html).toContain(`href="${escapeHtml(url.replace(`${env.HUB_ORIGIN}/logs/view`, "/logs/raw"))}"`);
   });
 
@@ -157,7 +157,8 @@ describe("GET /logs/viewer.css", () => {
     expect(res.headers.get("content-type")).toBe("text/css; charset=utf-8");
     expectSecurityHeaders(res);
     const css = await res.text();
-    expect(css).toContain("@media (prefers-color-scheme: dark)");
+    expect(css).toContain("light-dark(");
+    expect(css).toContain(':root[data-theme="dark"]');
     expect(css).toContain(".c-red");
   });
 });

@@ -12,6 +12,7 @@ import { PAGE_SCRIPT } from "../src/pages/dashboard";
 import { testClock } from "./clock";
 import { clearTables } from "./db/helpers";
 import { createFakeGitHub, serveInstallationTokens } from "./fakes/github";
+import { withoutThemeScript } from "./helpers/theme";
 import type { FakeService } from "./fakes/http";
 import { generateAppKey } from "./github/helpers";
 import { seedTenant, type Tenant } from "./helpers/tenants";
@@ -118,7 +119,7 @@ describe("GET /", () => {
     const html = await res.text();
     expect(html).toContain(escapeHtml(S.dashboard.signInTitle));
     expect(html).toContain('href="/login"');
-    expect(html).not.toContain("<script");
+    expect(withoutThemeScript(html)).not.toContain("<script");
   });
 
   it("shows the sign-in page for an expired session", async () => {

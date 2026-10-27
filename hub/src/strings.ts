@@ -1008,6 +1008,7 @@ export const S = {
 		navSupport: "Support",
 		navGithub: "View on GitHub",
 		navMenu: "Menu",
+		themeToggle: "Dark mode",
 		navSignIn: "Sign in",
 		footerPrivacy: "Privacy",
 		footerTerms: "Terms",
