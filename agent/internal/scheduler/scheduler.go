@@ -53,6 +53,10 @@ type Options struct {
 	// Demand asks for nothing.
 	Pool   *capacity.Pool
 	Demand func(job string) capacity.Demand
+	// Skip, when set, is asked about every job that is ready to start. A
+	// true answer settles the job as skipped without a slot or capacity
+	// grant, and without failing the run or the jobs that need it.
+	Skip func(run store.Run, job string) (reason string, skip bool)
 }
 
 var (
@@ -122,6 +126,7 @@ type Scheduler struct {
 	log    *slog.Logger
 	pool   *capacity.Pool
 	demand func(job string) capacity.Demand
+	skip   func(run store.Run, job string) (reason string, skip bool)
 	unsub  func() // drops the pool subscription; nil without a pool
 
 	base     context.Context
@@ -162,6 +167,7 @@ func New(st *store.Store, runner JobRunner, opts Options) *Scheduler {
 		log:      logger,
 		pool:     opts.Pool,
 		demand:   opts.Demand,
+		skip:     opts.Skip,
 		base:     base,
 		stopAll:  stopAll,
 		kick:     make(chan struct{}, 1),
@@ -439,6 +445,7 @@ func (s *Scheduler) loop() {
 // waits, and nothing behind it in this scheduler starts; other runs sharing
 // the pool may still take freed shares first.
 func (s *Scheduler) dispatch() {
+	s.skipReady()
 	for !s.closed && s.free > 0 {
 		rs, job := s.nextJob()
 		if rs == nil {
@@ -465,6 +472,38 @@ func (s *Scheduler) dispatch() {
 			s.startJob(rs, job, grant)
 		}
 	}
+}
+
+// skipReady settles every ready job the Skip hook rejects. It needs no free
+// slot, and runs until no new job becomes ready by it.
+func (s *Scheduler) skipReady() {
+	if s.skip == nil {
+		return
+	}
+	for again := true; again; {
+		again = false
+		for _, rs := range slices.Clone(s.active) {
+			if !rs.setupDone || rs.stopState != "" {
+				continue
+			}
+			for _, name := range rs.graph.Ready() {
+				if reason, skip := s.skip(rs.run, name); skip {
+					s.skipJob(rs, name, reason)
+					again = true
+				}
+			}
+		}
+	}
+}
+
+// skipJob settles a ready job as skipped without starting it: it takes no
+// slot or capacity, and its dependents are no longer held back by it.
+func (s *Scheduler) skipJob(rs *runState, name, reason string) {
+	if err := s.st.TransitionJob(context.Background(), rs.run.ID, name, []store.JobState{store.JobQueued}, store.JobSkipped, store.JobUpdate{Reason: reason}); err != nil {
+		s.writeFailed(rs, name, err)
+	}
+	rs.graph.MarkFiltered(name)
+	s.maybeFinish(rs)
 }
 
 func (s *Scheduler) nextJob() (*runState, string) {

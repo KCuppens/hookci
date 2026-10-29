@@ -1046,6 +1046,13 @@ type Job struct {
 	// Jobs that must succeed before this one starts.
 	Needs []string `json:"needs,omitempty,omitzero" yaml:"needs,omitempty"`
 
+	// Globs relative to the repository root. When set, the job runs only if the run
+	// changes a matching file (a pull request against its base, a push since the
+	// branch's last successful run); otherwise it is skipped, and a skipped job does
+	// not fail the run or block jobs that need it. A run whose changes cannot be
+	// listed runs every job.
+	Paths []string `json:"paths,omitempty,omitzero" yaml:"paths,omitempty"`
+
 	// Shell command.
 	Run string `json:"run" yaml:"run"`
 
@@ -1096,6 +1103,9 @@ func (j *Job) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if plain.Paths != nil && len(plain.Paths) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "paths", 1)
 	}
 	if plain.Timeout != nil {
 		if matched, _ := regexp.MatchString(`^[0-9]+(s|m|h)$`, string(*plain.Timeout)); !matched {

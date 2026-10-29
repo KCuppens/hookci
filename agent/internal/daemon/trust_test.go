@@ -78,7 +78,7 @@ func TestDaemonSkipsUntrustedDeploy(t *testing.T) {
 	h := newHarness(t, &fakeSource{}, &fakeRunner{})
 	w, run := deployRun(h, "trg_1", protocol.TriggerTrustUntrusted)
 
-	h.d.drive(h.ctx, w, run, h.runner, optionsForTrust(protocol.TriggerTrustUntrusted), nil)
+	h.d.drive(h.ctx, w, run, h.runner, optionsForTrust(protocol.TriggerTrustUntrusted), nil, nil)
 
 	if len(h.runner.jobs) != 0 {
 		t.Fatalf("jobs run = %v, want none", h.runner.jobs)
@@ -119,7 +119,7 @@ func TestDaemonRunsTrustedDeploy(t *testing.T) {
 	h := newHarness(t, &fakeSource{}, &fakeRunner{})
 	w, run := deployRun(h, "trg_1", protocol.TriggerTrustTrusted)
 
-	h.d.drive(h.ctx, w, run, h.runner, optionsForTrust(protocol.TriggerTrustTrusted), nil)
+	h.d.drive(h.ctx, w, run, h.runner, optionsForTrust(protocol.TriggerTrustTrusted), nil, nil)
 
 	if !slices.Equal(h.runner.jobs, []string{"deploy", "migrate"}) {
 		t.Fatalf("jobs run = %v, want [deploy migrate]", h.runner.jobs)

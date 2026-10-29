@@ -132,6 +132,9 @@ type Daemon struct {
 	// deployConfig loads the trusted .hookci.yml at a deploy run's sha.
 	deployConfig func(context.Context, store.DeployRun) (*config.Config, error)
 	collector    *gc.Collector // removes old deploy images and run dirs
+	// changes returns the GitHub client that lists the files a check run
+	// changes, for job paths.
+	changes func(runID string) deploy.ChangeLister
 }
 
 // work is one accepted trigger.
@@ -209,6 +212,9 @@ func New(conf *agentconf.AgentConfig, st *store.Store, exec ExecutorFunc, o Opti
 		}
 	}
 	d.deployRefs = githubRefs("", github, d.tokens.Request)
+	d.changes = func(runID string) deploy.ChangeLister {
+		return githubRefs("", github, d.tokens.Request)(store.DeployRun{RunID: runID})
+	}
 	d.deployConfig = githubConfig(d.deployRefs)
 	d.deploySched = d.newDeployScheduler(credential, conf.AgentConfig, hubDeployEvents{client: d.client, log: o.Logger})
 	d.collector = newCollector(st, o, conf.AgentConfig)
@@ -613,15 +619,15 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 			d.log.Error("report head config failed", "run", w.runID, "err", err)
 		}
 	}
-	d.drive(ctx, w, run, runner, policy, p.checks)
+	d.drive(ctx, w, run, runner, policy, p.checks, d.jobSkipper(w, p.checks))
 	d.client.Flush()
 }
 
 // drive submits w's stored run and waits for it to end. A deploy run that
 // policy forbids is not submitted: its jobs are skipped.
-func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy, checks *config.ResolvedChecks) {
+func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy, checks *config.ResolvedChecks, skip func(store.Run, string) (string, bool)) {
 	bg := context.WithoutCancel(ctx)
-	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks)})
+	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks), Skip: skip})
 	defer func() {
 		if err := sched.Close(); err != nil {
 			d.log.Error("close scheduler failed", "run", w.runID, "err", err)
