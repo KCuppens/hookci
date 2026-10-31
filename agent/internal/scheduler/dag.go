@@ -17,6 +17,10 @@ type Graph struct {
 	needs      map[string][]string
 	dependents map[string][]string
 	state      map[string]store.JobState
+	// filtered holds the jobs skipped because their paths matched no
+	// changed file. Unlike a job skipped behind a failure, they count as
+	// satisfied needs and do not fail the run.
+	filtered map[string]bool
 }
 
 // NewGraph builds the graph of jobs. A job with an empty state counts as
@@ -27,6 +31,7 @@ func NewGraph(jobs []store.Job) (*Graph, error) {
 		needs:      make(map[string][]string, len(jobs)),
 		dependents: make(map[string][]string, len(jobs)),
 		state:      make(map[string]store.JobState, len(jobs)),
+		filtered:   make(map[string]bool),
 	}
 	for _, j := range jobs {
 		if j.Name == "" {
@@ -104,7 +109,7 @@ func (g *Graph) Ready() []string {
 		}
 		ok := true
 		for _, need := range g.needs[name] {
-			if g.state[need] != store.JobSuccess {
+			if !g.satisfied(need) {
 				ok = false
 				break
 			}
@@ -114,6 +119,18 @@ func (g *Graph) Ready() []string {
 		}
 	}
 	return ready
+}
+
+// satisfied reports whether a need no longer holds back its dependents.
+func (g *Graph) satisfied(name string) bool {
+	return g.state[name] == store.JobSuccess || g.filtered[name]
+}
+
+// MarkFiltered records that the queued job name is skipped because no
+// changed file matches its paths.
+func (g *Graph) MarkFiltered(name string) {
+	g.state[name] = store.JobSkipped
+	g.filtered[name] = true
 }
 
 // MarkRunning records that name started.
@@ -169,8 +186,8 @@ func (g *Graph) Done() bool {
 // Final is the run state the job states imply: success when every job
 // succeeded (or there are no jobs), failed otherwise.
 func (g *Graph) Final() store.RunState {
-	for _, st := range g.state {
-		if st != store.JobSuccess {
+	for name := range g.state {
+		if !g.satisfied(name) {
 			return store.RunFailed
 		}
 	}

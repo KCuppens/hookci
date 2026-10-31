@@ -1046,6 +1046,13 @@ type Job struct {
 	// Jobs that must succeed before this one starts.
 	Needs []string `json:"needs,omitempty,omitzero" yaml:"needs,omitempty"`
 
+	// Globs relative to the repository root. When set, the job runs only if the run
+	// changes a matching file (a pull request against its base, a push since the
+	// branch's last successful run); otherwise it is skipped, and a skipped job does
+	// not fail the run or block jobs that need it. A run whose changes cannot be
+	// listed runs every job.
+	Paths []string `json:"paths,omitempty,omitzero" yaml:"paths,omitempty"`
+
 	// Shell command.
 	Run string `json:"run" yaml:"run"`
 
@@ -1096,6 +1103,9 @@ func (j *Job) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if plain.Paths != nil && len(plain.Paths) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "paths", 1)
 	}
 	if plain.Timeout != nil {
 		if matched, _ := regexp.MatchString(`^[0-9]+(s|m|h)$`, string(*plain.Timeout)); !matched {
@@ -1182,6 +1192,19 @@ type SetupStep struct {
 	// Directories restored before and saved after the step.
 	Cache *SetupStepCache `json:"cache,omitempty,omitzero" yaml:"cache,omitempty"`
 
+	// Jobs that wait for this step. A step with for runs as its own job named
+	// setup-1, setup-2, ... (in the order of such steps) after the other setup steps
+	// finish, in parallel with the jobs not listed, which start without it. Use it
+	// for a slow warm-up only some jobs need.
+	For []string `json:"for,omitempty,omitzero" yaml:"for,omitempty"`
+
+	// Globs relative to the repository root. When set, the step runs only if the run
+	// changes a matching file (a pull request against its base, a push since the
+	// branch's last successful run); otherwise it is skipped, and its cache is
+	// neither restored nor saved. A run whose changes cannot be listed runs every
+	// step.
+	Paths []string `json:"paths,omitempty,omitzero" yaml:"paths,omitempty"`
+
 	// Shell command.
 	Run string `json:"run" yaml:"run"`
 }
@@ -1235,6 +1258,12 @@ func (j *SetupStep) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if plain.For != nil && len(plain.For) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "for", 1)
+	}
+	if plain.Paths != nil && len(plain.Paths) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "paths", 1)
 	}
 	if utf8.RuneCountInString(string(plain.Run)) < 1 {
 		return fmt.Errorf("field %s length: must be >= %d", "run", 1)

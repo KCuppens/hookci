@@ -32,8 +32,10 @@ import (
 	"github.com/KCuppens/hookci/agent/internal/store"
 )
 
-// RunDirMaxAge is how long the dir of a finished run is kept.
-const RunDirMaxAge = 24 * time.Hour
+// RunDirMaxAge is how long the dir of a finished run is kept. A run dir holds
+// a full checkout, node_modules and build targets (about 9 GB for a large
+// monorepo), so a day of runs fills a disk; logs live on the hub.
+const RunDirMaxAge = 3 * time.Hour
 
 // CacheMaxAge is how long a setup step cache entry is kept after its last
 // use. gc.cache_max_bytes caps the total size of the younger ones.

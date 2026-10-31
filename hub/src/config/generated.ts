@@ -152,6 +152,18 @@ export interface SetupStep {
    */
   run: string;
   /**
+   * Globs relative to the repository root. When set, the step runs only if the run changes a matching file (a pull request against its base, a push since the branch's last successful run); otherwise it is skipped, and its cache is neither restored nor saved. A run whose changes cannot be listed runs every step.
+   *
+   * @minItems 1
+   */
+  paths?: [string, ...string[]];
+  /**
+   * Jobs that wait for this step. A step with for runs as its own job named setup-1, setup-2, ... (in the order of such steps) after the other setup steps finish, in parallel with the jobs not listed, which start without it. Use it for a slow warm-up only some jobs need.
+   *
+   * @minItems 1
+   */
+  for?: [string, ...string[]];
+  /**
    * Directories restored before and saved after the step.
    */
   cache?: {
@@ -185,6 +197,12 @@ export interface Job {
    * Jobs that must succeed before this one starts.
    */
   needs?: string[];
+  /**
+   * Globs relative to the repository root. When set, the job runs only if the run changes a matching file (a pull request against its base, a push since the branch's last successful run); otherwise it is skipped, and a skipped job does not fail the run or block jobs that need it. A run whose changes cannot be listed runs every job.
+   *
+   * @minItems 1
+   */
+  paths?: [string, ...string[]];
   limits?: Limits1;
   /**
    * Wall clock timeout with an s, m or h suffix. Overrides limits.timeout.

@@ -100,11 +100,7 @@ func cmdRun(ctx context.Context, d Deps, args []string, stdout, stderr io.Writer
 		fmt.Fprintf(stderr, "hookci: %v\n", err)
 		return ExitInternal
 	}
-	jobs := make([]store.Job, 0, len(checks.Jobs))
-	for _, j := range checks.Jobs {
-		jobs = append(jobs, store.Job{Name: j.Name, Needs: j.Needs})
-	}
-	jobs = store.WithSetup(jobs)
+	jobs := config.PlanJobs(checks)
 	run := store.Run{
 		ID:          runID,
 		Repo:        co.Repo,

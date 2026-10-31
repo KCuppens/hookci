@@ -43,6 +43,7 @@ type ResolvedJob struct {
 	Run      string
 	Needs    []string
 	Annotate string
+	Paths    []string
 	Limits   ResolvedLimits
 }
 
@@ -115,6 +116,7 @@ func resolveChecks(cfg *HookCIConfig, raw any) *ResolvedChecks {
 			Needs:  job.Needs,
 			Limits: mergeLimits(rc.Limits, job.Limits, mapAt(mapAt(rawJobs, name), "limits")),
 		}
+		rj.Paths = job.Paths
 		if job.Annotate != nil {
 			rj.Annotate = string(*job.Annotate)
 		}
