@@ -60,3 +60,29 @@ func TestSkipDoesNotMaskFailure(t *testing.T) {
 	h.wantJob("r", "b", store.JobSkipped, "needs a failed")
 	h.wantJob("r", "c", store.JobSkipped, "no match")
 }
+
+// When every job is skipped, nothing would use what setup builds: setup is
+// skipped too, never reaches the runner, and the run succeeds.
+func TestAllJobsSkippedSkipsSetup(t *testing.T) {
+	h := newSkipHarness(t, skipOnly("a", "b"))
+	h.submit(h.createPlanned(pushRun("r", "sha1", "main"), job("a"), job("b", "a")))
+	h.idle()
+	h.wantRun("r", store.RunSuccess, "")
+	h.wantJob("r", store.SetupJob, store.JobSkipped, "every job was skipped by paths")
+	h.wantJob("r", "a", store.JobSkipped, "no match")
+	h.wantJob("r", "b", store.JobSkipped, "no match")
+	wantStarts(t, h.runner)
+	if got := h.runner.Finishes("r"); len(got) != 0 {
+		t.Errorf("FinishRun called for a run whose setup never ran: %v", got)
+	}
+}
+
+// One job that still runs keeps setup.
+func TestSetupRunsWhenAnyJobRuns(t *testing.T) {
+	h := newSkipHarness(t, skipOnly("a"))
+	h.submit(h.createPlanned(pushRun("r", "sha1", "main"), job("a"), job("b")))
+	h.idle()
+	h.wantRun("r", store.RunSuccess, "")
+	h.wantJob("r", store.SetupJob, store.JobSuccess, "")
+	wantStarts(t, h.runner, "r:setup", "r:b")
+}

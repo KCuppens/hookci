@@ -290,11 +290,7 @@ func (h *harness) create(t *testing.T, run store.Run, cfg *config.ResolvedChecks
 // with the setup job in front of the configured ones.
 func (h *harness) createWithSetup(t *testing.T, run store.Run, cfg *config.ResolvedChecks) {
 	t.Helper()
-	jobs := make([]store.Job, len(cfg.Jobs))
-	for i, j := range cfg.Jobs {
-		jobs[i] = store.Job{Name: j.Name, Needs: j.Needs}
-	}
-	if err := h.st.CreateRun(context.Background(), run, store.WithSetup(jobs)); err != nil {
+	if err := h.st.CreateRun(context.Background(), run, config.PlanJobs(cfg)); err != nil {
 		t.Fatal(err)
 	}
 }

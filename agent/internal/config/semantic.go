@@ -26,6 +26,7 @@ func checkSemantics(cfg *HookCIConfig, opts ParseOptions, li lineIndex) Diagnost
 		diags = append(diags, checkNeeds(c.Jobs, li)...)
 		diags = append(diags, checkCommands(c, li)...)
 		diags = append(diags, checkCachePaths(c.Setup, li)...)
+		diags = append(diags, checkSetupFor(c, li)...)
 		diags = append(diags, checkPostgresImage(c.Services, li)...)
 		diags = append(diags, checkLimits(c, li)...)
 	}
@@ -46,6 +47,12 @@ func checkReservedJobNames(jobs ChecksJobs, li lineIndex) Diagnostics {
 		if _, ok := jobs[name]; ok {
 			diags = append(diags, li.errorf(joinKey("checks.jobs", name), "rename the job, for example "+quote(name+"-job"),
 				"job name %s is reserved for the setup phase", quote(name)))
+		}
+	}
+	for _, name := range sortedKeys(jobs) {
+		if IsDeferredName(name) {
+			diags = append(diags, li.errorf(joinKey("checks.jobs", name), "rename the job, for example "+quote(name+"-job"),
+				"job name %s is reserved for a setup step with for", quote(name)))
 		}
 	}
 	return diags

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/KCuppens/hookci/agent/internal/config"
@@ -15,10 +16,16 @@ import (
 // searched for the previous good run of a branch.
 const lastSuccessScan = 200
 
-// usesPaths reports whether any job of checks restricts itself by paths.
+// usesPaths reports whether any job or setup step of checks restricts itself
+// by paths.
 func usesPaths(checks *config.ResolvedChecks) bool {
 	for _, j := range checks.Jobs {
 		if len(j.Paths) > 0 {
+			return true
+		}
+	}
+	for _, s := range checks.Setup {
+		if len(s.Paths) > 0 {
 			return true
 		}
 	}
@@ -65,22 +72,52 @@ func (d *Daemon) changedFiles(ctx context.Context, t protocol.Trigger, runID str
 // runs: no job sets paths, or the changed files are unknown (a failure is
 // logged, never fatal).
 func (d *Daemon) jobSkipper(w *work, checks *config.ResolvedChecks) func(store.Run, string) (string, bool) {
+	_, skip := d.applyPaths(w, checks)
+	return skip
+}
+
+// applyPaths lists the run's changed files once and returns checks without
+// the setup steps whose paths match none of them, and the scheduler's Skip
+// hook for jobs. checks is not modified. When no path is set or the files
+// are unknown it returns checks and a nil hook: everything runs.
+func (d *Daemon) applyPaths(w *work, checks *config.ResolvedChecks) (*config.ResolvedChecks, func(store.Run, string) (string, bool)) {
 	if !usesPaths(checks) || d.changes == nil {
-		return nil
+		return checks, nil
 	}
 	files, ok, err := d.changedFiles(w.ctx, w.trig, w.runID)
 	if err != nil {
-		d.log.Warn("list changed files failed; running every job", "run", w.runID, "err", err)
-		return nil
+		d.log.Warn("list changed files failed; running every job and setup step", "run", w.runID, "err", err)
+		return checks, nil
 	}
 	if !ok {
-		return nil
+		return checks, nil
 	}
-	return skipByPaths(checks, files)
+	return skipSetupSteps(checks, files, d.log, w.runID), skipByPaths(checks, files)
+}
+
+// skipSetupSteps returns checks with the plain setup steps dropped whose
+// paths match none of files. A dropped step neither runs nor touches its
+// cache. Steps with for stay: they are jobs, which skipByPaths settles.
+func skipSetupSteps(checks *config.ResolvedChecks, files []string, log *slog.Logger, runID string) *config.ResolvedChecks {
+	keep := make([]config.SetupStep, 0, len(checks.Setup))
+	for i, s := range checks.Setup {
+		if len(s.For) == 0 && len(s.Paths) > 0 && !deploy.MatchPaths(s.Paths, files) {
+			log.Info("setup step skipped: no changed file matches paths", "run", runID, "step", i, "paths", s.Paths)
+			continue
+		}
+		keep = append(keep, s)
+	}
+	if len(keep) == len(checks.Setup) {
+		return checks
+	}
+	out := *checks
+	out.Setup = keep
+	return &out
 }
 
 // skipByPaths decides, for the scheduler, which jobs a run skips: those whose
-// paths match none of files.
+// paths match none of files. A deferred setup job is skipped when its own
+// paths match none, or when every job it is for is skipped.
 func skipByPaths(checks *config.ResolvedChecks, files []string) func(store.Run, string) (string, bool) {
 	paths := make(map[string][]string, len(checks.Jobs))
 	for _, j := range checks.Jobs {
@@ -88,11 +125,32 @@ func skipByPaths(checks *config.ResolvedChecks, files []string) func(store.Run, 
 			paths[j.Name] = j.Paths
 		}
 	}
-	return func(run store.Run, name string) (string, bool) {
+	jobSkipped := func(name string) bool {
 		globs := paths[name]
-		if run.Kind == kindDeploy || len(globs) == 0 || deploy.MatchPaths(globs, files) {
+		return len(globs) > 0 && !deploy.MatchPaths(globs, files)
+	}
+	deferred := make(map[string]config.DeferredStep)
+	for _, d := range config.DeferredSteps(checks.Setup) {
+		deferred[d.Name] = d
+	}
+	return func(run store.Run, name string) (string, bool) {
+		if run.Kind == kindDeploy {
 			return "", false
 		}
-		return "no changed file matches paths (" + strings.Join(globs, ", ") + ")", true
+		if d, ok := deferred[name]; ok {
+			if len(d.Step.Paths) > 0 && !deploy.MatchPaths(d.Step.Paths, files) {
+				return "no changed file matches paths (" + strings.Join(d.Step.Paths, ", ") + ")", true
+			}
+			for _, job := range d.Step.For {
+				if !jobSkipped(job) {
+					return "", false
+				}
+			}
+			return "every job it is for was skipped", true
+		}
+		if jobSkipped(name) {
+			return "no changed file matches paths (" + strings.Join(paths[name], ", ") + ")", true
+		}
+		return "", false
 	}
 }

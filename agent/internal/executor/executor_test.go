@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1071,5 +1072,44 @@ func TestSetupHandsRunDirToJobUser(t *testing.T) {
 	}
 	if h.src.released != 1 {
 		t.Errorf("local checkout released %d times, want once at teardown", h.src.released)
+	}
+}
+
+// A setup step with for runs as its own job after the plain steps, and only
+// the jobs it lists start after it finished.
+func TestDeferredSetupGatesOnlyListedJobs(t *testing.T) {
+	cfg := &config.ResolvedChecks{
+		Setup: []config.SetupStep{{Run: "npm ci"}, {Run: "warm", For: []string{"rust"}}},
+		Jobs:  []config.ResolvedJob{{Name: "rust", Run: "cargo"}, {Name: "web", Run: "make"}},
+	}
+	h := newHarness(t, "none", cfg, nil)
+	run := localRun()
+	h.createWithSetup(t, run, cfg)
+	var warmed atomic.Bool
+	var rustSawWarm bool
+	h.iso.jobs["setup-1"] = func(_ context.Context, s isolation.Spec) (isolation.Result, error) {
+		if s.Argv[2] != "warm" {
+			t.Errorf("setup-1 ran %q, want the warm step", s.Argv[2])
+		}
+		warmed.Store(true)
+		return isolation.Result{}, nil
+	}
+	h.iso.jobs["rust"] = func(context.Context, isolation.Spec) (isolation.Result, error) {
+		rustSawWarm = warmed.Load()
+		return isolation.Result{}, nil
+	}
+	h.iso.jobs["web"] = func(context.Context, isolation.Spec) (isolation.Result, error) { return isolation.Result{}, nil }
+
+	if state := drive(t, h, run.ID); state != store.RunSuccess {
+		t.Fatalf("run = %s, want success", state)
+	}
+	if !rustSawWarm {
+		t.Error("rust started before its warm-up finished")
+	}
+	jobs := jobsByName(t, h, run.ID)
+	for _, name := range []string{"setup", "setup-1", "rust", "web"} {
+		if jobs[name].State != store.JobSuccess {
+			t.Errorf("%s = %s, want success", name, jobs[name].State)
+		}
 	}
 }

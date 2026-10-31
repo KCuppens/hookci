@@ -155,6 +155,7 @@ type runState struct {
 	serviceEnv []string
 	cacheKeys  []cache.Key
 	cleanups   []func() error
+	cacheMu    sync.Mutex // guards cacheKeys and cleanups: deferred setup jobs restore while jobs run
 
 	stageN     int // setup stages started so far
 	stageTotal int // stages in all once the config is read; 0 before
@@ -327,7 +328,7 @@ func (e *Executor) setup(ctx context.Context, rs *runState) error {
 	}
 
 	// Checkout and config come first, before the total is known; the rest are counted.
-	rs.stageTotal = rs.stageN + 2 + len(cfg.Setup)
+	rs.stageTotal = rs.stageN + 2 + len(config.PlainSetupSteps(cfg.Setup))
 	if err := e.stage(ctx, rs, "Starting network", func() error { return e.startNetwork(ctx, rs) }); err != nil {
 		return err
 	}
@@ -500,63 +501,72 @@ func cachePaths(ps []string) ([]string, error) {
 	return out, nil
 }
 
-// restoreCaches computes each setup step's cache key before setup runs, so
-// Save stores what this lockfile produced even if setup rewrites it, and
-// restores the first entry found along cacheScopes. A run saves under its own
+// restoreCaches restores the cache of every plain setup step before setup
+// runs. Deferred steps restore their own in their job.
+func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
+	for i, step := range rs.cfg.Setup {
+		if len(step.For) == 0 {
+			e.restoreStepCache(ctx, rs, i, step)
+		}
+	}
+}
+
+// restoreStepCache computes the step's cache key before it runs, so Save
+// stores what this lockfile produced even if setup rewrites it, and restores
+// the first entry found along cacheScopes. A run saves under its own
 // branch unless a fallback branch's entry hit: that entry already holds what
 // the lockfile produced. Cache errors are logged and never fail the run.
-func (e *Executor) restoreCaches(ctx context.Context, rs *runState) {
-	if e.o.Hooks.Cache == nil {
+func (e *Executor) restoreStepCache(ctx context.Context, rs *runState, i int, step config.SetupStep) {
+	if e.o.Hooks.Cache == nil || step.Cache == nil {
 		return
 	}
 	platform := runtime.GOOS + "-" + runtime.GOARCH
 	scopes, ownScope := cacheScopes(rs.run, e.o.CacheFallback)
-	for i, step := range rs.cfg.Setup {
-		if step.Cache == nil {
-			continue
+	if len(scopes) == 0 {
+		rs.logf("cache setup[%d]: no branch to restore from", i)
+		return
+	}
+	keyFiles := make([]string, len(step.Cache.Key))
+	for j, f := range step.Cache.Key {
+		keyFiles[j] = filepath.ToSlash(filepath.Join("src", f))
+	}
+	paths, err := cachePaths(step.Cache.Paths)
+	if err != nil {
+		rs.logf("cache setup[%d]: %v", i, err)
+		return
+	}
+	k, err := cache.ComputeKey(cacheDomain(rs.run), scopes[0], platform, rs.dir.Root, keyFiles, paths)
+	if err != nil {
+		rs.logf("cache setup[%d]: key: %v", i, err)
+		return
+	}
+	save := ownScope
+	for j, scope := range scopes {
+		lookup := k
+		if j > 0 {
+			lookup = k.InScope(scope)
 		}
-		if len(scopes) == 0 {
-			rs.logf("cache setup[%d]: no branch to restore from", i)
-			continue
+		hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, lookup, rs.dir.Root)
+		if cleanup != nil {
+			rs.cacheMu.Lock()
+			rs.cleanups = append(rs.cleanups, cleanup)
+			rs.cacheMu.Unlock()
 		}
-		keyFiles := make([]string, len(step.Cache.Key))
-		for j, f := range step.Cache.Key {
-			keyFiles[j] = filepath.ToSlash(filepath.Join("src", f))
-		}
-		paths, err := cachePaths(step.Cache.Paths)
 		if err != nil {
-			rs.logf("cache setup[%d]: %v", i, err)
-			continue
+			rs.logf("cache setup[%d]: restore %s from %q: %v", i, lookup.Hash, scope, err)
+			break
 		}
-		k, err := cache.ComputeKey(cacheDomain(rs.run), scopes[0], platform, rs.dir.Root, keyFiles, paths)
-		if err != nil {
-			rs.logf("cache setup[%d]: key: %v", i, err)
-			continue
+		if hit {
+			rs.logf("cache setup[%d]: hit %s from %q", i, lookup.Hash, scope)
+			save = save && j == 0
+			break
 		}
-		save := ownScope
-		for j, scope := range scopes {
-			lookup := k
-			if j > 0 {
-				lookup = k.InScope(scope)
-			}
-			hit, cleanup, err := e.o.Hooks.Cache.Restore(ctx, lookup, rs.dir.Root)
-			if cleanup != nil {
-				rs.cleanups = append(rs.cleanups, cleanup)
-			}
-			if err != nil {
-				rs.logf("cache setup[%d]: restore %s from %q: %v", i, lookup.Hash, scope, err)
-				break
-			}
-			if hit {
-				rs.logf("cache setup[%d]: hit %s from %q", i, lookup.Hash, scope)
-				save = save && j == 0
-				break
-			}
-			rs.logf("cache setup[%d]: miss %s in %q", i, lookup.Hash, scope)
-		}
-		if save {
-			rs.cacheKeys = append(rs.cacheKeys, k)
-		}
+		rs.logf("cache setup[%d]: miss %s in %q", i, lookup.Hash, scope)
+	}
+	if save {
+		rs.cacheMu.Lock()
+		rs.cacheKeys = append(rs.cacheKeys, k)
+		rs.cacheMu.Unlock()
 	}
 }
 
@@ -608,9 +618,10 @@ func (e *Executor) startServices(ctx context.Context, rs *runState) error {
 	return nil
 }
 
-// runSetupSteps runs setup[] in order under the check-level limits.
+// runSetupSteps runs the plain setup[] steps in order under the check-level
+// limits. Steps with for run later, as jobs.
 func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
-	if len(rs.cfg.Setup) == 0 {
+	if len(config.PlainSetupSteps(rs.cfg.Setup)) == 0 {
 		return nil
 	}
 	pipe, err := logpipe.New(logpipe.Options{
@@ -627,6 +638,9 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 	defer pipe.Close()
 	lim := EffectiveLimits(rs.run, rs.cfg.Limits, config.ResolvedJob{})
 	for i, step := range rs.cfg.Setup {
+		if len(step.For) > 0 {
+			continue
+		}
 		rs.logf("setup[%d]: %s", i, step.Run)
 		err := e.stage(ctx, rs, stepStageName(rs, i, step.Run), func() error {
 			if out := e.execute(ctx, rs, setupJob, step.Run, lim, nil, pipe); out.State != store.JobSuccess {
@@ -640,6 +654,46 @@ func (e *Executor) runSetupSteps(ctx context.Context, rs *runState) error {
 		}
 	}
 	return nil
+}
+
+// runDeferredSetup runs the setup step behind the job named name: it
+// restores the step's cache, runs the command under the check-level limits
+// and logs to logs/<name>.log. The unit name, the log and the events carry the
+// job name, so the step is a job like any other.
+func (e *Executor) runDeferredSetup(ctx context.Context, rs *runState, name string) (scheduler.JobOutcome, error) {
+	var step config.SetupStep
+	idx, n := -1, 0
+	for i, s := range rs.cfg.Setup {
+		if len(s.For) == 0 {
+			continue
+		}
+		n++
+		if config.DeferredName(n) == name {
+			step, idx = s, i
+			break
+		}
+	}
+	if idx < 0 {
+		return scheduler.JobOutcome{}, fmt.Errorf("executor: job %s is not in the config", name)
+	}
+	pipe, err := logpipe.New(logpipe.Options{
+		RunDir:   rs.dir.Root,
+		Job:      name,
+		Redactor: rs.redactor,
+		Workdir:  rs.dir.Src(),
+		Mirror:   e.o.Mirror,
+		Now:      e.o.Clock,
+	})
+	if err != nil {
+		return scheduler.JobOutcome{}, err
+	}
+	e.restoreStepCache(ctx, rs, idx, step)
+	out := e.execute(ctx, rs, name, step.Run, EffectiveLimits(rs.run, rs.cfg.Limits, config.ResolvedJob{}), capacity.GrantFrom(ctx), pipe)
+	if err := pipe.Close(); err != nil {
+		rs.log.Warn("executor: close job log", "job", name, "err", err)
+	}
+	out.Tail = pipe.Tail()
+	return out, nil
 }
 
 // setCPUsRetry is how long lendCPUs waits before trying a failed change
@@ -698,6 +752,9 @@ func (e *Executor) RunJob(ctx context.Context, run store.Run, job store.Job) (sc
 	rs, err := e.state(run.ID)
 	if err != nil {
 		return scheduler.JobOutcome{}, err
+	}
+	if config.IsDeferredName(job.Name) {
+		return e.runDeferredSetup(ctx, rs, job.Name)
 	}
 	i := slices.IndexFunc(rs.cfg.Jobs, func(j config.ResolvedJob) bool { return j.Name == job.Name })
 	if i < 0 {

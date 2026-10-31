@@ -587,7 +587,8 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 		return
 	}
 	policy := optionsForTrust(t.Trust)
-	inner, err := d.exec(co, p.checks, policy, cacheFallback(t))
+	checks, skip := d.applyPaths(w, p.checks)
+	inner, err := d.exec(co, checks, policy, cacheFallback(t))
 	if err != nil {
 		discard()
 		d.reject(bg, w, ReasonAgentError, err)
@@ -619,7 +620,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 			d.log.Error("report head config failed", "run", w.runID, "err", err)
 		}
 	}
-	d.drive(ctx, w, run, runner, policy, p.checks, d.jobSkipper(w, p.checks))
+	d.drive(ctx, w, run, runner, policy, p.checks, skip)
 	d.client.Flush()
 }
 
@@ -886,9 +887,5 @@ func retryTrigger(retry store.Run) protocol.Trigger {
 
 // storeJobs plans checks' jobs behind the setup job.
 func storeJobs(checks *config.ResolvedChecks) []store.Job {
-	jobs := make([]store.Job, 0, len(checks.Jobs))
-	for _, j := range checks.Jobs {
-		jobs = append(jobs, store.Job{Name: j.Name, Needs: j.Needs})
-	}
-	return store.WithSetup(jobs)
+	return config.PlanJobs(checks)
 }
