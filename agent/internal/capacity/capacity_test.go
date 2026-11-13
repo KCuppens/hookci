@@ -375,6 +375,22 @@ func TestBetterRankedWaiterHoldsBackWorseRuns(t *testing.T) {
 	held.Release()
 }
 
+// The run whose job empties the pool retries first; it must not take the pool
+// back from a better run that was woken by the same release.
+func TestEmptiedPoolGoesToTheBetterWaiter(t *testing.T) {
+	p := New(Options{CPUs: 4, Host: roomy(), CPUCount: 8})
+	dev, main := Rank{Tier: 2, Seq: 1}, Rank{Tier: 0, Seq: 2}
+	job := acquire(t, p, Demand{Run: "dev", CPUs: 2, Rank: dev})
+	if _, ok := p.TryAcquire(Demand{Run: "main", CPUs: 3, Rank: main}); ok {
+		t.Fatal("admitted 5 cores on a 4-core budget")
+	}
+	job.Release()
+	if _, ok := p.TryAcquire(Demand{Run: "dev", CPUs: 2, Rank: dev}); ok {
+		t.Fatal("dev took the emptied pool past a waiting main run")
+	}
+	acquire(t, p, Demand{Run: "main", CPUs: 3, Rank: main})
+}
+
 func TestIdleBudgetIsLentToTheBestRankFirst(t *testing.T) {
 	p := New(Options{CPUs: 8, Host: calm(), CPUCount: 16})
 	dev := acquire(t, p, Demand{Run: "dev", CPUs: 2, MaxCPUs: WholeBudget, Rank: Rank{Tier: 2}})

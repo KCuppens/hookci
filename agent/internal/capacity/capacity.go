@@ -261,15 +261,15 @@ func GrantFrom(ctx context.Context) *Grant {
 // TryAcquire admits d when it fits, and returns its grant, which holds the
 // share until Release. It reports false when d does not fit, or when another
 // run that ranks better than d is waiting: the refused run stays waiting
-// until it is admitted or Withdraws. With nothing held d is always
-// admitted, but the host is sampled all the same so the grants know whether
-// CPU can be lent.
+// until it is admitted or Withdraws. With nothing held d is admitted unless
+// outranked, whatever its size or the host's load, but the host is sampled
+// all the same so the grants know whether CPU can be lent.
 func (p *Pool) TryAcquire(d Demand) (*Grant, bool) {
 	d.CPUs = max(d.CPUs, 0)
 	d.MemoryBytes = max(d.MemoryBytes, 0)
 	p.mu.Lock()
 	held := len(p.grants) > 0
-	fits := !held || (!p.outranked(d) && p.fitsBudget(d))
+	fits := !p.outranked(d) && (!held || p.fitsBudget(d))
 	var busy string
 	var cleared bool
 	if fits {
@@ -278,7 +278,7 @@ func (p *Pool) TryAcquire(d Demand) (*Grant, bool) {
 			p.note(busy)
 		}
 	}
-	if held && (!fits || busy != "") {
+	if !fits || (held && busy != "") {
 		p.refused = true
 		p.waiting[d.Run] = d.Rank
 		wake := p.wakeIf(cleared)
