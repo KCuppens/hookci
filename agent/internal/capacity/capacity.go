@@ -12,6 +12,10 @@
 // moment other work needs room or the host comes under pressure. Memory is
 // never lent. Nothing is ever killed: backing off stops admitting and
 // shrinks grants, nothing more.
+//
+// Demands carry a Rank and the pool is greedy by it: while a run that
+// ranks better waits for room, no worse-ranked run is admitted past it, and
+// idle CPU is lent to the best-ranked grants first.
 package capacity
 
 import (
@@ -20,6 +24,7 @@ import (
 	"log/slog"
 	"math"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -54,6 +59,24 @@ type Demand struct {
 	// Run, Job and Lane say whom the grant belongs to, for Snapshot. Job is
 	// empty for a run's setup.
 	Run, Job, Lane string
+	// Rank orders the demand against other runs' demands; every demand of
+	// one run carries the same Rank.
+	Rank Rank
+}
+
+// Rank orders runs for admission and lending: lower Tier first, then lower
+// Seq.
+type Rank struct {
+	Tier int
+	Seq  uint64
+}
+
+// Less reports whether r goes before o.
+func (r Rank) Less(o Rank) bool {
+	if r.Tier != o.Tier {
+		return r.Tier < o.Tier
+	}
+	return r.Seq < o.Seq
 }
 
 // Sample is the host's state at one instant.
@@ -137,6 +160,7 @@ type Pool struct {
 	subs    map[uint64]func()
 	nextSub uint64
 	watches map[*watch]struct{}
+	waiting map[string]Rank // runs refused since their last admission, by Demand.Run
 
 	sample  Sample // the last successful one; meaningful when sampled
 	sampled bool   // the last host sample succeeded
@@ -165,7 +189,7 @@ func New(o Options) *Pool {
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Pool{o: o, subs: map[uint64]func(){}, watches: map[*watch]struct{}{}}
+	return &Pool{o: o, subs: map[uint64]func(){}, watches: map[*watch]struct{}{}, waiting: map[string]Rank{}}
 }
 
 // Grant is an admitted demand's share. Release it when the work is done.
@@ -235,15 +259,17 @@ func GrantFrom(ctx context.Context) *Grant {
 }
 
 // TryAcquire admits d when it fits, and returns its grant, which holds the
-// share until Release. It reports false when d does not fit. With nothing
-// held d is always admitted, but the host is sampled all the same so the
-// grants know whether CPU can be lent.
+// share until Release. It reports false when d does not fit, or when another
+// run that ranks better than d is waiting: the refused run stays waiting
+// until it is admitted or Withdraws. With nothing held d is always
+// admitted, but the host is sampled all the same so the grants know whether
+// CPU can be lent.
 func (p *Pool) TryAcquire(d Demand) (*Grant, bool) {
 	d.CPUs = max(d.CPUs, 0)
 	d.MemoryBytes = max(d.MemoryBytes, 0)
 	p.mu.Lock()
 	held := len(p.grants) > 0
-	fits := !held || p.fitsBudget(d)
+	fits := !held || (!p.outranked(d) && p.fitsBudget(d))
 	var busy string
 	var cleared bool
 	if fits {
@@ -254,18 +280,43 @@ func (p *Pool) TryAcquire(d Demand) (*Grant, bool) {
 	}
 	if held && (!fits || busy != "") {
 		p.refused = true
+		p.waiting[d.Run] = d.Rank
 		wake := p.wakeIf(cleared)
 		p.mu.Unlock()
 		call(wake)
 		return nil, false
 	}
+	_, waited := p.waiting[d.Run]
+	delete(p.waiting, d.Run)
 	g := &Grant{p: p, d: d, cpus: d.CPUs, ch: make(chan float64, 1)}
 	p.grants = append(p.grants, g)
 	p.settle()
-	wake := p.wakeIf(cleared)
+	wake := p.wakeIf(cleared || waited)
 	p.mu.Unlock()
 	call(wake)
 	return g, true
+}
+
+// Withdraw drops run from the waiters, once it no longer wants room, and
+// wakes the work its wait held back.
+func (p *Pool) Withdraw(run string) {
+	p.mu.Lock()
+	_, ok := p.waiting[run]
+	delete(p.waiting, run)
+	wake := p.wakeIf(ok)
+	p.mu.Unlock()
+	call(wake)
+}
+
+// outranked reports whether a run other than d's that ranks better than d
+// is waiting. p.mu must be held.
+func (p *Pool) outranked(d Demand) bool {
+	for run, r := range p.waiting {
+		if run != d.Run && r.Less(d.Rank) {
+			return true
+		}
+	}
+	return false
 }
 
 // SetBudget replaces the budget; <= 0 means none. Grants are rebalanced to
@@ -562,11 +613,12 @@ func (p *Pool) settle() {
 	p.notify()
 }
 
-// rebalance gives every grant its minimum, then splits what is left of the
-// CPU budget evenly among grants that may be lent more, each up to its
-// ceiling. Nobody is lent anything while the host is under pressure or gives
-// no pressure information, or when the minimums already fill the budget.
-// p.mu must be held.
+// rebalance gives every grant its minimum, then lends what is left of the
+// CPU budget to grants that may be lent more, each up to its ceiling, best
+// Rank first: a worse-ranked grant is lent only what the better ones cannot
+// take. Grants of one Rank split their part evenly. Nobody is lent anything
+// while the host is under pressure or gives no pressure information, or
+// when the minimums already fill the budget. p.mu must be held.
 func (p *Pool) rebalance() {
 	if len(p.grants) == 0 {
 		return
@@ -587,19 +639,37 @@ func (p *Pool) rebalance() {
 			open = append(open, i)
 		}
 	}
-	for spare > epsilon && len(open) > 0 {
-		share := spare / float64(len(open))
-		next := open[:0:0]
-		for _, i := range open {
-			room := ceiling(p.grants[i].d, budget) - want[i]
-			give := math.Min(share, room)
-			want[i] += give
-			spare -= give
-			if room-give > epsilon {
-				next = append(next, i)
-			}
+	slices.SortStableFunc(open, func(a, b int) int {
+		ra, rb := p.grants[a].d.Rank, p.grants[b].d.Rank
+		switch {
+		case ra.Less(rb):
+			return -1
+		case rb.Less(ra):
+			return 1
 		}
-		open = next
+		return 0
+	})
+	for len(open) > 0 && spare > epsilon {
+		n := 1
+		for n < len(open) && p.grants[open[n]].d.Rank == p.grants[open[0]].d.Rank {
+			n++
+		}
+		group := open[:n]
+		open = open[n:]
+		for spare > epsilon && len(group) > 0 {
+			share := spare / float64(len(group))
+			next := group[:0:0]
+			for _, i := range group {
+				room := ceiling(p.grants[i].d, budget) - want[i]
+				give := math.Min(share, room)
+				want[i] += give
+				spare -= give
+				if room-give > epsilon {
+					next = append(next, i)
+				}
+			}
+			group = next
+		}
 	}
 	for i, g := range p.grants {
 		if math.Abs(want[i]-g.cpus) > epsilon {

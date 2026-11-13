@@ -121,6 +121,7 @@ type Daemon struct {
 	mu      sync.Mutex
 	queue   []*work // accepted, not started
 	running []*work // taken by the worker, one per lane
+	seq     uint64  // last work.seq handed out; guarded by mu
 
 	deploys     DeployIntake
 	deployWake  chan struct{}
@@ -139,6 +140,7 @@ type work struct {
 	trig  protocol.Trigger
 	runID string
 	lane  string // scheduler.SupersedeKey of its run
+	seq   uint64 // arrival order across the daemon, for rank
 	// retry: runID is the queued retry recovery stored for the trigger's
 	// interrupted run, so the run exists before the worker takes it.
 	retry bool
@@ -346,7 +348,8 @@ func (d *Daemon) accept(ctx context.Context, t protocol.Trigger) error {
 	}
 	d.client.Flush()
 	d.mu.Lock()
-	d.queue = append(d.queue, &work{trig: t, runID: runID, lane: lane(t)})
+	d.seq++
+	d.queue = append(d.queue, &work{trig: t, runID: runID, lane: lane(t), seq: d.seq})
 	d.mu.Unlock()
 	d.kick()
 	return nil
@@ -456,13 +459,12 @@ func (d *Daemon) next(ctx context.Context) *work {
 // (maxLanes), and every running trigger has its trust: check jobs of all
 // runs share one job user and no PID namespace, so an untrusted run must
 // never overlap a trusted one. The scan stops at the first trigger trust
-// holds back rather than skipping it for a lower-priority one that is
+// holds back rather than skipping it for a lower-ranked one that is
 // startable, so the running side drains and that trigger goes next instead
 // of waiting forever.
 //
-// Among triggers reachable before that stop, push to the repo's default
-// branch goes first, then push to "staging", then everything else
-// (priority); ties keep arrival order.
+// Among triggers reachable before that stop, the lowest rank goes first:
+// the tier of the branch it targets, then the oldest.
 func (d *Daemon) pick() *work {
 	if laneCap := d.maxLanes(); laneCap > 0 && len(d.running) >= laneCap {
 		return nil
@@ -476,7 +478,7 @@ func (d *Daemon) pick() *work {
 		if slices.ContainsFunc(d.running, func(r *work) bool { return r.lane == w.lane }) {
 			continue
 		}
-		if best == nil || priority(w.trig) < priority(best.trig) {
+		if best == nil || rank(w).Less(rank(best)) {
 			best, bestIdx = w, i
 		}
 	}
@@ -506,21 +508,32 @@ func (d *Daemon) maxLanes() int {
 	return 1
 }
 
-// priority ranks t for pick: push to the repo's default branch runs first,
-// then push to "staging", then everything else (pull requests, other
-// branches, retries of either). Lower runs first.
-func priority(t protocol.Trigger) int {
-	if t.Pr != nil {
-		return 2
-	}
+// rank orders w against every other trigger, in pick and in the capacity
+// pool: by the tier of the branch it targets, then by arrival.
+func rank(w *work) capacity.Rank {
+	return capacity.Rank{Tier: tier(w.trig), Seq: w.seq}
+}
+
+// tier classes the branch t targets, the base branch of a pull request or
+// else the pushed branch: the repo's default branch (main or master when the
+// trigger does not name one) is 0, "staging" 1, "dev" 2, any other 3. A
+// retry recovered after a restart has lost its base branch. Lower runs first.
+func tier(t protocol.Trigger) int {
 	branch := strings.TrimPrefix(t.Ref, "refs/heads/")
+	if t.Pr != nil && t.Pr.BaseRef != nil {
+		branch = *t.Pr.BaseRef
+	}
 	switch {
 	case t.DefaultBranch != nil && branch == *t.DefaultBranch:
 		return 0
+	case t.DefaultBranch == nil && (branch == "main" || branch == "master"):
+		return 0
 	case branch == "staging":
 		return 1
-	default:
+	case branch == "dev":
 		return 2
+	default:
+		return 3
 	}
 }
 
@@ -621,7 +634,7 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 // policy forbids is not submitted: its jobs are skipped.
 func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy, checks *config.ResolvedChecks) {
 	bg := context.WithoutCancel(ctx)
-	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks)})
+	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks, rank(w))})
 	defer func() {
 		if err := sched.Close(); err != nil {
 			d.log.Error("close scheduler failed", "run", w.runID, "err", err)
@@ -654,8 +667,8 @@ func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner sched
 // effective limits, the setup (job "") the check-level ones. A job's CPUs are
 // its guaranteed minimum and its MaxCPUs what idle budget CPU may lend it,
 // the whole budget when the config sets no max_cpus; the setup is never
-// lent CPU. nil checks ask for nothing.
-func jobDemand(run store.Run, checks *config.ResolvedChecks) func(job string) capacity.Demand {
+// lent CPU. Every unit carries the run's rank r. nil checks ask for nothing.
+func jobDemand(run store.Run, checks *config.ResolvedChecks, r capacity.Rank) func(job string) capacity.Demand {
 	if checks == nil {
 		return nil
 	}
@@ -665,7 +678,7 @@ func jobDemand(run store.Run, checks *config.ResolvedChecks) func(job string) ca
 			job = checks.Jobs[i]
 		}
 		l := executor.EffectiveLimits(run, checks.Limits, job)
-		d := capacity.Demand{CPUs: l.CPUs, MemoryBytes: l.MemoryBytes}
+		d := capacity.Demand{CPUs: l.CPUs, MemoryBytes: l.MemoryBytes, Rank: r}
 		if name != "" {
 			d.MaxCPUs = l.MaxCPUs
 			if d.MaxCPUs <= 0 {
@@ -802,7 +815,8 @@ func (d *Daemon) recoverTriggers(ctx context.Context) error {
 			return fmt.Errorf("daemon: recover trigger %s: %w", t.ID, err)
 		case run.State == store.RunQueued && run.RetryOf != nil:
 			d.mu.Lock()
-			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true, lane: scheduler.SupersedeKey(run)})
+			d.seq++
+			d.queue = append(d.queue, &work{trig: retryTrigger(run), runID: run.ID, retry: true, lane: scheduler.SupersedeKey(run), seq: d.seq})
 			d.mu.Unlock()
 			continue
 		case run.State == store.RunQueued:
