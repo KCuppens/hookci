@@ -16,18 +16,19 @@ func TestJobDemandIsElasticForJobsOnly(t *testing.T) {
 			{Name: "open", Limits: config.ResolvedLimits{CPUs: 2, MemoryBytes: gib}},
 		},
 	}
-	demand := jobDemand(store.Run{}, checks)
+	r := capacity.Rank{Tier: 1, Seq: 7}
+	demand := jobDemand(store.Run{}, checks, r)
 
-	if got, want := demand("capped"), (capacity.Demand{CPUs: 2, MaxCPUs: 6, MemoryBytes: gib}); got != want {
+	if got, want := demand("capped"), (capacity.Demand{CPUs: 2, MaxCPUs: 6, MemoryBytes: gib, Rank: r}); got != want {
 		t.Errorf("capped = %+v, want %+v", got, want)
 	}
 	if got := demand("open"); got.CPUs != 2 || got.MaxCPUs != capacity.WholeBudget {
 		t.Errorf("open = %+v, want min 2 and the whole budget as ceiling", got)
 	}
-	if got := demand(""); got.CPUs != 2 || got.MaxCPUs != 0 {
+	if got := demand(""); got.CPUs != 2 || got.MaxCPUs != 0 || got.Rank != r {
 		t.Errorf("setup = %+v, want min 2 and no lending", got)
 	}
-	if jobDemand(store.Run{}, nil) != nil {
+	if jobDemand(store.Run{}, nil, r) != nil {
 		t.Error("nil checks should ask for nothing")
 	}
 }

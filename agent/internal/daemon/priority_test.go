@@ -237,3 +237,57 @@ func TestDaemonMaxLanesEdgeCases(t *testing.T) {
 		t.Errorf("maxLanes() with 8 CPU budget = %d, want 4", got)
 	}
 }
+
+func TestTierRanksMainStagingDevOther(t *testing.T) {
+	str := func(s string) *string { return &s }
+	pr := func(base string) protocol.Trigger {
+		return protocol.Trigger{Ref: "refs/pull/7/head", Pr: &protocol.TriggerPr{BaseRef: str(base)}}
+	}
+	cases := []struct {
+		name string
+		trig protocol.Trigger
+		want int
+	}{
+		{"push main", protocol.Trigger{Ref: "refs/heads/main"}, 0},
+		{"push master", protocol.Trigger{Ref: "refs/heads/master"}, 0},
+		{"push named default", protocol.Trigger{Ref: "refs/heads/trunk", DefaultBranch: str("trunk")}, 0},
+		{"main is not default when another is named", protocol.Trigger{Ref: "refs/heads/main", DefaultBranch: str("trunk")}, 3},
+		{"push staging", protocol.Trigger{Ref: "refs/heads/staging"}, 1},
+		{"push dev", protocol.Trigger{Ref: "refs/heads/dev"}, 2},
+		{"push feature", protocol.Trigger{Ref: "refs/heads/feat/x"}, 3},
+		{"pr into main", pr("main"), 0},
+		{"pr into staging", pr("staging"), 1},
+		{"pr into dev", pr("dev"), 2},
+		{"pr into feature", pr("feat/x"), 3},
+		{"retry without base", protocol.Trigger{Ref: "refs/pull/7/head", Pr: &protocol.TriggerPr{}}, 3},
+	}
+	for _, c := range cases {
+		if got := tier(c.trig); got != c.want {
+			t.Errorf("%s: tier = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestPickBestTierThenOldest: pick takes the best tier first and, within a
+// tier, the trigger that arrived first, whatever the queue order.
+func TestPickBestTierThenOldest(t *testing.T) {
+	w := func(lane, ref string, seq uint64) *work {
+		return &work{trig: protocol.Trigger{Ref: ref}, lane: lane, seq: seq}
+	}
+	dev := w("dev", "refs/heads/dev", 1)
+	feat := w("feat", "refs/heads/feat", 2)
+	stagingNew := w("staging-new", "refs/heads/staging", 6)
+	stagingOld := w("staging-old", "refs/heads/staging", 3)
+	mainNew := w("main-new", "refs/heads/main", 5)
+	mainOld := w("main-old", "refs/heads/main", 4)
+	d := &Daemon{queue: []*work{dev, feat, stagingNew, stagingOld, mainNew, mainOld}}
+
+	for _, want := range []*work{mainOld, mainNew, stagingOld, stagingNew, dev, feat} {
+		if got := d.pick(); got != want {
+			t.Fatalf("picked %s, want %s", got.lane, want.lane)
+		}
+	}
+	if got := d.pick(); got != nil {
+		t.Fatalf("picked %s from an empty queue", got.lane)
+	}
+}

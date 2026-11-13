@@ -344,6 +344,69 @@ func TestIdleBudgetIsLentUpToMaxAndTakenBack(t *testing.T) {
 	}
 }
 
+func TestBetterRankedWaiterHoldsBackWorseRuns(t *testing.T) {
+	p := New(Options{CPUs: 4, Host: roomy(), CPUCount: 8})
+	main, staging, dev := Rank{Tier: 0, Seq: 9}, Rank{Tier: 1, Seq: 1}, Rank{Tier: 2, Seq: 2}
+	held := acquire(t, p, Demand{Run: "dev", CPUs: 2, Rank: dev})
+	if _, ok := p.TryAcquire(Demand{Run: "main", CPUs: 4, Rank: main}); ok {
+		t.Fatal("admitted 6 cores on a 4-core budget")
+	}
+	var woke atomic.Int32
+	p.Subscribe(func() { woke.Add(1) })
+
+	if _, ok := p.TryAcquire(Demand{Run: "staging", CPUs: 2, Rank: staging}); ok {
+		t.Fatal("admitted staging past a waiting main run")
+	}
+	if _, ok := p.TryAcquire(Demand{Run: "dev", CPUs: 0, Rank: dev}); ok {
+		t.Fatal("admitted more dev work past a waiting main run")
+	}
+	woke.Store(0)
+
+	p.Withdraw("main")
+	if woke.Load() != 1 {
+		t.Fatalf("withdraw woke %d times, want 1", woke.Load())
+	}
+	if _, ok := p.TryAcquire(Demand{Run: "dev", CPUs: 2, Rank: dev}); ok {
+		t.Fatal("admitted dev past a waiting staging run")
+	}
+	acquire(t, p, Demand{Run: "staging", CPUs: 2, Rank: staging})
+	// staging was admitted, so it waits no more; dev is only short of room.
+	acquire(t, p, Demand{Run: "dev", CPUs: 0, Rank: dev})
+	held.Release()
+}
+
+// The run whose job empties the pool retries first; it must not take the pool
+// back from a better run that was woken by the same release.
+func TestEmptiedPoolGoesToTheBetterWaiter(t *testing.T) {
+	p := New(Options{CPUs: 4, Host: roomy(), CPUCount: 8})
+	dev, main := Rank{Tier: 2, Seq: 1}, Rank{Tier: 0, Seq: 2}
+	job := acquire(t, p, Demand{Run: "dev", CPUs: 2, Rank: dev})
+	if _, ok := p.TryAcquire(Demand{Run: "main", CPUs: 3, Rank: main}); ok {
+		t.Fatal("admitted 5 cores on a 4-core budget")
+	}
+	job.Release()
+	if _, ok := p.TryAcquire(Demand{Run: "dev", CPUs: 2, Rank: dev}); ok {
+		t.Fatal("dev took the emptied pool past a waiting main run")
+	}
+	acquire(t, p, Demand{Run: "main", CPUs: 3, Rank: main})
+}
+
+func TestIdleBudgetIsLentToTheBestRankFirst(t *testing.T) {
+	p := New(Options{CPUs: 8, Host: calm(), CPUCount: 16})
+	dev := acquire(t, p, Demand{Run: "dev", CPUs: 2, MaxCPUs: WholeBudget, Rank: Rank{Tier: 2}})
+	mainOld := acquire(t, p, Demand{Run: "a", CPUs: 2, MaxCPUs: 3, Rank: Rank{Tier: 0, Seq: 1}})
+	mainNew := acquire(t, p, Demand{Run: "b", CPUs: 2, MaxCPUs: WholeBudget, Rank: Rank{Tier: 0, Seq: 2}})
+	// 8 - 6 minimums = 2 spare: the oldest main run takes 1 to its ceiling,
+	// the next main run the other 1, dev nothing.
+	if !near(granted(mainOld), 3) || !near(granted(mainNew), 3) || !near(granted(dev), 2) {
+		t.Fatalf("grants %v %v %v, want 3 3 2", granted(mainOld), granted(mainNew), granted(dev))
+	}
+	mainNew.Release()
+	if !near(granted(mainOld), 3) || !near(granted(dev), 5) {
+		t.Fatalf("grants %v %v after release, want 3 5", granted(mainOld), granted(dev))
+	}
+}
+
 func TestDemandWithoutMaxIsNeverLent(t *testing.T) {
 	p := New(Options{CPUs: 8, Host: calm(), CPUCount: 8})
 	g := acquire(t, p, Demand{CPUs: 2})

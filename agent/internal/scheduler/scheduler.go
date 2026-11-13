@@ -123,6 +123,9 @@ type Scheduler struct {
 	pool   *capacity.Pool
 	demand func(job string) capacity.Demand
 	unsub  func() // drops the pool subscription; nil without a pool
+	// waiting is the run whose work the pool last refused, while it still
+	// wants room; "" when none. Guarded by mu.
+	waiting string
 
 	base     context.Context
 	stopAll  context.CancelFunc
@@ -437,13 +440,31 @@ func (s *Scheduler) loop() {
 // dispatch fills free slots that the pool admits: ready jobs of started
 // runs first, then the setup of the first queued run. Work the pool refuses
 // waits, and nothing behind it in this scheduler starts; other runs sharing
-// the pool may still take freed shares first.
+// the pool may still take freed shares first, unless they rank worse. Once
+// the refused run no longer wants room it is withdrawn from the pool's
+// waiters.
 func (s *Scheduler) dispatch() {
+	if refused := s.fill(); refused != "" {
+		if s.waiting != "" && s.waiting != refused {
+			s.pool.Withdraw(s.waiting)
+		}
+		s.waiting = refused
+		return
+	}
+	if s.waiting != "" {
+		s.pool.Withdraw(s.waiting)
+		s.waiting = ""
+	}
+}
+
+// fill starts what it can and returns the run whose work the pool refused,
+// "" when it stopped for any other reason.
+func (s *Scheduler) fill() string {
 	for !s.closed && s.free > 0 {
 		rs, job := s.nextJob()
 		if rs == nil {
 			if len(s.queue) == 0 {
-				return
+				return ""
 			}
 			rs = s.queue[0]
 		}
@@ -456,7 +477,7 @@ func (s *Scheduler) dispatch() {
 			dem.Run, dem.Job, dem.Lane = rs.run.ID, job, SupersedeKey(rs.run)
 			var ok bool
 			if grant, ok = s.pool.TryAcquire(dem); !ok {
-				return
+				return rs.run.ID
 			}
 		}
 		if job == "" {
@@ -465,6 +486,7 @@ func (s *Scheduler) dispatch() {
 			s.startJob(rs, job, grant)
 		}
 	}
+	return ""
 }
 
 func (s *Scheduler) nextJob() (*runState, string) {
