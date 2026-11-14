@@ -53,6 +53,10 @@ type Options struct {
 	// Demand asks for nothing.
 	Pool   *capacity.Pool
 	Demand func(job string) capacity.Demand
+	// RetryClosed, when set, picks the runs Close interrupts that are
+	// re-queued as their next attempt (store.InterruptRun with retry), so
+	// work cut off by a shutdown runs again after the next start.
+	RetryClosed func(store.Run) bool
 }
 
 var (
@@ -122,6 +126,7 @@ type Scheduler struct {
 	log    *slog.Logger
 	pool   *capacity.Pool
 	demand func(job string) capacity.Demand
+	retry  func(store.Run) bool
 	unsub  func() // drops the pool subscription; nil without a pool
 	// waiting is the run whose work the pool last refused, while it still
 	// wants room; "" when none. Guarded by mu.
@@ -165,6 +170,7 @@ func New(st *store.Store, runner JobRunner, opts Options) *Scheduler {
 		log:      logger,
 		pool:     opts.Pool,
 		demand:   opts.Demand,
+		retry:    opts.RetryClosed,
 		base:     base,
 		stopAll:  stopAll,
 		kick:     make(chan struct{}, 1),
@@ -702,12 +708,23 @@ func (s *Scheduler) finish(rs *runState) {
 	}()
 }
 
-// settleRun moves a torn-down run to the terminal state finish chose.
+// settleRun moves a torn-down run to the terminal state finish chose. A run
+// Close interrupted that RetryClosed picks is interrupted with a retry
+// instead, which also moves its trigger to the retry.
 func (s *Scheduler) settleRun(rs *runState) {
+	rs.final = rs.run.State
+	if rs.run.State == store.RunInterrupted && s.retry != nil && s.retry(rs.run) {
+		created, err := s.st.InterruptRun(context.Background(), rs.run.ID, rs.run.Reason, true)
+		if err != nil {
+			s.writeFailed(rs, "", err)
+			return
+		}
+		s.log.Info("scheduler: interrupted run re-queued", "run", rs.run.ID, "retry", created.ID, "attempt", created.Attempt)
+		return
+	}
 	if err := s.st.Transition(context.Background(), rs.run.ID, []store.RunState{store.RunRunning}, rs.run.State, rs.run.Reason); err != nil {
 		s.writeFailed(rs, "", err)
 	}
-	rs.final = rs.run.State
 }
 
 // forget drops a run that never started and wakes its waiters.

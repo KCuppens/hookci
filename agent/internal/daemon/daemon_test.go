@@ -145,6 +145,7 @@ type harness struct {
 	policies  []executor.RunPolicy // policy of every ExecutorFunc call
 	fallbacks [][]string           // cacheFallback of every ExecutorFunc call
 	seq       int
+	stop      func() // cancels Run and checks it returned context.Canceled; idempotent
 }
 
 func newHarness(t *testing.T, src *fakeSource, runner *fakeRunner) *harness {
@@ -203,12 +204,16 @@ func newHarnessMode(t *testing.T, src *fakeSource, runner *fakeRunner, hubURL st
 	h.ctx = ctx
 	done := make(chan error, 1)
 	go func() { done <- h.d.Run(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		if err := <-done; err != context.Canceled {
-			t.Errorf("Run = %v, want context.Canceled", err)
-		}
-	})
+	var stopOnce sync.Once
+	h.stop = func() {
+		stopOnce.Do(func() {
+			cancel()
+			if err := <-done; err != context.Canceled {
+				t.Errorf("Run = %v, want context.Canceled", err)
+			}
+		})
+	}
+	t.Cleanup(h.stop)
 	<-dialer.dialed
 	return h
 }
@@ -282,7 +287,7 @@ func (h *harness) frames(kind string) []map[string]any {
 
 func (h *harness) runCount() int {
 	h.t.Helper()
-	runs, err := h.st.ListRuns(h.ctx, store.RunFilter{})
+	runs, err := h.st.ListRuns(context.Background(), store.RunFilter{})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -715,6 +720,56 @@ func TestDaemonRunsRecoveredRetry(t *testing.T) {
 	}
 	if len(h.policies) != 1 || !h.policies[0].AllowDeploy {
 		t.Fatalf("policies = %+v, want one trusted run", h.policies)
+	}
+}
+
+// A check running when the agent shuts down is interrupted. Below the attempt
+// cap it is re-queued as a retry that takes over its trigger; either way the
+// trigger stays open for the next start (TestDaemonRunsRecoveredRetry).
+func TestDaemonShutdownRequeuesCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		attempt int
+		retry   bool
+	}{
+		{"first attempt", 1, true},
+		{"last attempt", 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, &fakeSource{Head: map[string]string{ConfigFile: unitOnly}}, &fakeRunner{Block: true})
+			trig := h.trigger("trg_1", false)
+			trig.Attempt = tc.attempt
+			h.send(trig)
+			old := h.waitTrigger("trg_1", store.TriggerRunning).RunID
+			<-h.runner.running
+			h.stop()
+
+			ctx := context.Background()
+			trs, err := h.st.ListTriggers(ctx, store.TriggerRunning)
+			if err != nil || len(trs) != 1 {
+				t.Fatalf("running triggers = %v, %v, want trg_1 left open", trs, err)
+			}
+			run, err := h.st.GetRun(ctx, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.State != store.RunInterrupted {
+				t.Fatalf("run = %s, want interrupted", run.State)
+			}
+			if !tc.retry {
+				if trs[0].RunID != old || h.runCount() != 1 {
+					t.Fatalf("trigger run = %s, runs = %d; want %s and no retry", trs[0].RunID, h.runCount(), old)
+				}
+				return
+			}
+			retry, err := h.st.GetRun(ctx, trs[0].RunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retry.State != store.RunQueued || retry.RetryOf == nil || *retry.RetryOf != old || retry.Attempt != 2 {
+				t.Fatalf("trigger run = %+v, want a queued attempt 2 retry of %s", retry, old)
+			}
+		})
 	}
 }
 
