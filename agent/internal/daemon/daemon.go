@@ -634,10 +634,16 @@ func (d *Daemon) process(ctx context.Context, w *work) {
 // policy forbids is not submitted: its jobs are skipped.
 func (d *Daemon) drive(ctx context.Context, w *work, run store.Run, runner scheduler.JobRunner, policy executor.RunPolicy, checks *config.ResolvedChecks) {
 	bg := context.WithoutCancel(ctx)
-	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks, rank(w))})
+	sched := scheduler.New(d.st, runner, scheduler.Options{Slots: d.o.Slots, Logger: d.log, Pool: d.o.Pool, Demand: jobDemand(run, checks, rank(w)), RetryClosed: recovery.Retryable})
 	defer func() {
 		if err := sched.Close(); err != nil {
 			d.log.Error("close scheduler failed", "run", w.runID, "err", err)
+		}
+		// On shutdown the trigger stays open: Close re-queued a retryable
+		// check, and recoverTriggers runs that retry, or settles the trigger,
+		// at the next start.
+		if ctx.Err() != nil {
+			return
 		}
 		if err := d.st.SetTriggerState(bg, w.trig.TriggerId, store.TriggerDone); err != nil {
 			d.log.Error("record trigger state failed", "trigger", w.trig.TriggerId, "err", err)

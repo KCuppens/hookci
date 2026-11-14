@@ -31,6 +31,13 @@ const MaxCheckAttempts = 3
 // InterruptedReason is recorded on every run and job recovery interrupts.
 const InterruptedReason = "agent restarted"
 
+// Retryable reports whether an interrupted run is re-queued as its next
+// attempt: a hub check below MaxCheckAttempts. A local hookci run has no
+// trigger, so no daemon would ever run its retry.
+func Retryable(run store.Run) bool {
+	return run.Kind == kindCheck && run.TriggerID != "" && run.Attempt < MaxCheckAttempts
+}
+
 const (
 	kindCheck = "check"
 	// sweepTimeout bounds the cleanup sweep so a hung docker daemon or
@@ -191,9 +198,7 @@ func interrupt(ctx context.Context, d Deps, rep *Report, log *slog.Logger) error
 	slices.Reverse(runs) // oldest first, so retries queue in the original order
 
 	for _, run := range runs {
-		// A local hookci run has no trigger, so no daemon would ever run its
-		// retry.
-		retry := run.Kind == kindCheck && run.TriggerID != "" && run.Attempt < MaxCheckAttempts
+		retry := Retryable(run)
 		created, err := d.Store.InterruptRun(ctx, run.ID, InterruptedReason, retry)
 		if err != nil {
 			return fmt.Errorf("recovery: interrupt run %s: %w", run.ID, err)
